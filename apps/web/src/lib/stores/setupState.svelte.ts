@@ -9,7 +9,7 @@
  * setup is complete and every onboarding step is done — nothing left to flip.
  */
 
-import { getSetupState, type DegradedCollector, type SetupStep } from '$lib/api/client';
+import { getSetupState, type DegradedCollector, type SetupState, type SetupStep } from '$lib/api/client';
 
 const POLL_INTERVAL = 60_000; // 60 seconds
 
@@ -67,9 +67,9 @@ class SetupStateStore {
 	}
 
 	/**
-	 * May this box call the models? Account linked, or setup complete without
-	 * one — the second arm is the DIY exemption (`compute_setup_state` requires
-	 * an account only on appliances), mirrored from the old onboarding route.
+	 * May this server call the models? Account linked, or setup complete
+	 * without one: setup requires only the claim (`compute_setup_state`),
+	 * because a server you install yourself may run its own AI key.
 	 */
 	get accountSatisfied(): boolean {
 		const linked = this.setup.find((s) => s.id === 'account')?.done ?? false;
@@ -97,8 +97,9 @@ class SetupStateStore {
 
 		// Always do one fresh check on (re)start — this re-evaluates `finished`,
 		// so a remount after state regressed revives polling rather than being
-		// blocked by a stale latch.
-		this.check();
+		// blocked by a stale latch. A state the layout's load seeded seconds ago
+		// is that check already.
+		if (Date.now() - this.seededAt > SEED_FRESH_MS) this.check();
 		if (this.finished) return; // done — one check, no interval/handler
 
 		this.intervalId = setInterval(() => this.check(), POLL_INTERVAL);
@@ -131,37 +132,56 @@ class SetupStateStore {
 		}
 	}
 
+	/** When `seed` last ran, so `start` can skip a fetch the load just made. */
+	private seededAt = 0;
+
+	/**
+	 * Take a state the app's layout load already fetched. The load asks the
+	 * same endpoint on every cold start before the shell mounts, and fetching
+	 * it again on mount was a second round trip for the same answer.
+	 */
+	seed(data: SetupState) {
+		this.apply(data);
+		this.seededAt = Date.now();
+	}
+
 	/** Fetch setup state (also callable externally to force refresh) */
 	async check() {
 		try {
-			const data = await getSetupState();
-			this.onboarding = data.onboarding ?? [];
-			this.setup = data.setup ?? [];
-			this.setupComplete = data.setup_complete ?? null;
-			this.degraded = data.degraded ?? [];
-			this.interviewStarted = data.interview_started ?? false;
-			this.loaded = true;
-
-			// Flip detection: only a mid-session false → true transition counts.
-			const nowDone = this.remoteAccess?.done ?? null;
-			if (this.prevRemoteDone === false && nowDone === true) {
-				this.remoteAccessFlipped = true;
-			}
-			if (nowDone !== null) {
-				this.prevRemoteDone = nowDone;
-			}
-
-			// Recompute "done" every fetch (revivable, not a permanent latch).
-			// When done, stop the interval; if state later regresses this flips
-			// back to false and the next start()/visibility change resumes.
-			this.finished = this.setupComplete === true && this.allDone;
-			if (this.finished) {
-				this.stop();
-			}
+			this.apply(await getSetupState());
 		} catch {
 			// Network error — keep last state, retry next interval.
 		}
 	}
+
+	private apply(data: SetupState) {
+		this.onboarding = data.onboarding ?? [];
+		this.setup = data.setup ?? [];
+		this.setupComplete = data.setup_complete ?? null;
+		this.degraded = data.degraded ?? [];
+		this.interviewStarted = data.interview_started ?? false;
+		this.loaded = true;
+
+		// Flip detection: only a mid-session false → true transition counts.
+		const nowDone = this.remoteAccess?.done ?? null;
+		if (this.prevRemoteDone === false && nowDone === true) {
+			this.remoteAccessFlipped = true;
+		}
+		if (nowDone !== null) {
+			this.prevRemoteDone = nowDone;
+		}
+
+		// Recompute "done" every fetch (revivable, not a permanent latch).
+		// When done, stop the interval; if state later regresses this flips
+		// back to false and the next start()/visibility change resumes.
+		this.finished = this.setupComplete === true && this.allDone;
+		if (this.finished) {
+			this.stop();
+		}
+	}
 }
+
+/** How recent a seeded state must be for `start` to skip its first fetch. */
+const SEED_FRESH_MS = 10_000;
 
 export const setupStateStore = new SetupStateStore();

@@ -8,6 +8,11 @@
  * Backspace act on it. A list item has a grip of its own: the innermost one
  * under the pointer.
  *
+ * With Flat headings on (`prose--flat-headings` around the editor), a
+ * heading's grip is its level mark: the `#`s the margin already shows, in
+ * the same place, darkening under the pointer. It drags as any grip does,
+ * and a click opens `headingMenu` to change the level instead of selecting.
+ *
  * Typing hides it until the pointer moves. A page that is read only, and a
  * screen with no hover (a phone), draw none; the keys move a block there.
  *
@@ -17,10 +22,17 @@
  * Mouse events stop during a drag, so after one the grip waits for the
  * pointer to move before it shows again.
  *
- * While a block is dragged it shows no picture of itself under the pointer,
- * which would cover the place it is aimed at. The block stays where it was,
+ * With the pointer over the grip, what a drag would move is tinted
+ * (`doc-drag-aim`), and pressing the grip deepens the tint, so you know
+ * what you have before it moves. While a block is dragged, a chip
+ * (`doc-drag-chip`) rides below and right of the pointer: the block's kind
+ * and first words, small enough to leave the drop line and the text around
+ * it in sight. The grip stays,
+ * pressed, beside the block's old place. The block stays where it was,
  * dimmed (`doc-drag-source`), the drop cursor draws a line where it would
- * land, and no line where a drop would do nothing (into itself). Near the
+ * land, and no line where a drop would do nothing (into itself). A drag
+ * that is cancelled sends the chip back to the grip; one that lands fades
+ * it where it landed. Near the
  * top or bottom of the page's scroller the page scrolls, faster nearer the
  * edge. On the drop the blocks that moved slide from where they were
  * (`slideMoved`), unless the person asks for reduced motion, and where it
@@ -53,7 +65,8 @@ import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Tra
 import { dropPoint } from '@tiptap/pm/transform';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 import { moveUnitTo, unitAround, withoutIds } from './commands';
-import { clearDropLine, dropMotion } from './drop-line';
+import { motionMs } from '../utils/motion';
+import { clearDropLine, dropMotion, glowLanded } from './drop-line';
 import { scrollerOf } from './outline';
 import { contract } from './schema';
 
@@ -97,14 +110,109 @@ export interface DragHandleOptions {
 	/** Told when a drag from the grip starts and ends, as a drag from the page's text tells `DragBetweenPages`. */
 	dragStarted: ((view: EditorView) => void) | null;
 	dragEnded: ((view: EditorView) => void) | null;
+	/** Opened by a click on a heading's level mark, under it: the menu that changes the heading at `pos`. */
+	headingMenu: ((view: EditorView, pos: number, at: { x: number; y: number }) => void) | null;
 }
 
 const heldKey = new PluginKey<Held | null>('dragHandle');
+
+/** What the grip under the pointer would move, tinted; `pressed` while the grip is held down. */
+interface Aim {
+	from: number;
+	to: number;
+	pressed: boolean;
+}
+
+const aimKey = new PluginKey<Aim | null>('dragHandleAim');
+
+/** Where the chip sits from the pointer: below and right of it, clear of the drop line it aims. */
+const CHIP_OFFSET_X = 14;
+const CHIP_OFFSET_Y = 12;
+/** How much of a block's text the chip shows; CSS cuts it to two lines. */
+const CHIP_TEXT = 120;
+
+/** The chip's word for a block with no text of its own to show. */
+const WIDGET_WORDS: Record<string, string> = {
+	image: 'Image',
+	audio: 'Audio',
+	video: 'Video',
+	file: 'File',
+	table: 'Table',
+	applet: 'Applet',
+	figure: 'Figure',
+	horizontalRule: 'Divider',
+};
+
+/** What kind of block `node` is, in the page's own marks: #s, ¶, a bullet, a number, a box. */
+function kindMark(node: PmNode, el: HTMLElement): string {
+	switch (node.type.name) {
+		case 'heading':
+			return '#'.repeat(Number(node.attrs.level) || 1);
+		case 'paragraph':
+			return '¶';
+		case 'blockquote':
+			return '\u201C';
+		case 'codeBlock':
+			return '{ }';
+		case 'taskItem':
+			return node.attrs.checked ? '\u2611' : '\u2610';
+		case 'listItem': {
+			const list = el.parentElement;
+			if (list instanceof HTMLOListElement) return `${list.start + [...list.children].indexOf(el)}.`;
+			return '\u2022';
+		}
+		default:
+			return '';
+	}
+}
+
+/**
+ * The chip a drag carries: the block in brief, as its kind and its first
+ * words, or a widget's name and a picture of an image. The page shows the
+ * whole block, dimmed in its old place, and the line shows where it lands.
+ */
+function chipOf(node: PmNode, el: HTMLElement): HTMLDivElement {
+	const chip = document.createElement('div');
+	chip.className = 'doc-drag-chip';
+	chip.setAttribute('aria-hidden', 'true');
+	// Shown while the copy modifier is held: the drop puts in a copy (`is-copy`).
+	const plus = document.createElement('span');
+	plus.className = 'doc-drag-chip-plus';
+	plus.textContent = '+';
+	chip.append(plus);
+	const widget = WIDGET_WORDS[node.type.name];
+	const src = node.type.name === 'image' ? String(node.attrs.src ?? '') : '';
+	if (src) {
+		const thumb = document.createElement('img');
+		thumb.className = 'doc-drag-chip-thumb';
+		thumb.src = el.querySelector('img')?.currentSrc || src;
+		thumb.alt = '';
+		chip.append(thumb);
+	} else {
+		const kind = kindMark(node, el);
+		if (kind) {
+			const mark = document.createElement('span');
+			mark.className = 'doc-drag-chip-kind';
+			mark.textContent = kind;
+			chip.append(mark);
+		}
+	}
+	// A space between the blocks a quote or a list item holds, so their words do not run together.
+	const words = node.textBetween(0, node.content.size, ' ', ' ').trim().replace(/\s+/g, ' ');
+	const named = String(node.attrs.name ?? node.attrs.alt ?? node.attrs.caption ?? '').trim();
+	const text = document.createElement('span');
+	text.className = 'doc-drag-chip-text';
+	text.textContent = (widget ? [widget, named || words].filter(Boolean).join(' \u00B7 ') : words || 'Empty block').slice(0, CHIP_TEXT);
+	chip.append(text);
+	return chip;
+}
 
 const GRIP_WIDTH = 18;
 const GRIP_HEIGHT = 24;
 /** Between the grip and the block (or a list's markers): room enough that the grip reads as the margin's, not the line's. */
 const GRIP_GAP = 12;
+/** A level mark's padding inside its grip (`.doc-grip.is-mark`): the mark's text, not its box, sits GRIP_GAP from the heading. */
+const MARK_PAD = 4;
 /** How far left of the text the pointer still counts as over a block: past the grip, with room to spare. */
 const GUTTER = 48;
 
@@ -121,6 +229,15 @@ const EDGE_STEP = 18;
 const SETTLE_MS = 50;
 /** How long after a drop a drag is ended when its element, taken out of the page by the drop, hears no end. */
 const DROP_END_MS = 100;
+
+/** The `#`s for a heading's level, when Flat headings are on around `host`; null for any other block or mode. */
+function levelMark(host: HTMLElement, node: PmNode, block: HTMLElement): string | null {
+	if (node.type.name !== 'heading' || !host.closest('.prose--flat-headings')) return null;
+	// Where the mark leads the line (a narrow margin, a heading in a quote),
+	// the grip would show it twice: the dots stand in.
+	if (getComputedStyle(block, '::before').position === 'static') return null;
+	return '#'.repeat(Number(node.attrs.level) || 1);
+}
 
 /** Where a drop at `at` would put what `held` carries, or null where it would do nothing. */
 function dropTarget(view: EditorView, at: At, held: Held, moved: boolean): number | null {
@@ -229,6 +346,8 @@ class Grip {
 	/** Where the person is told where a block landed. */
 	private readonly said: HTMLDivElement;
 	private drag: Drag | null = null;
+	/** The level mark the grip shows in place of its dots, or null for the dots. */
+	private mark: string | null = null;
 	/** The pointer's height while a block is dragged, and the frame that scrolls the page by it. */
 	private dragPointer: number | null = null;
 	private scrollFrame = 0;
@@ -240,6 +359,12 @@ class Grip {
 	private relaying = false;
 	/** `view.dragging` as a dragstart in the editor began. ProseMirror's own drag sets a new one. */
 	private draggingBefore: unknown = null;
+	/** The chip that rides beside the pointer while a block is dragged, and the pointer's left as the drag last said it. */
+	private chip: HTMLDivElement | null = null;
+	private dragPointerX = 0;
+	/** Whether this drag's block was put down on this page, and whether anything in the window took a drop. */
+	private landed = false;
+	private dropped = false;
 
 	constructor(
 		private view: EditorView,
@@ -253,6 +378,9 @@ class Grip {
 		this.dom.innerHTML = GRIP_SVG;
 		this.dom.addEventListener('dragstart', this.onGripDragStart);
 		this.dom.addEventListener('click', this.onClick);
+		this.dom.addEventListener('mouseenter', this.onGripEnter);
+		this.dom.addEventListener('mouseleave', this.onGripLeave);
+		this.dom.addEventListener('mousedown', this.onGripDown);
 		this.blank = document.createElement('div');
 		this.blank.style.cssText = 'position:fixed;top:-2px;left:-2px;width:1px;height:1px;opacity:0;pointer-events:none';
 		this.said = document.createElement('div');
@@ -289,6 +417,8 @@ class Grip {
 		this.view.dom.removeEventListener('dragstart', this.onWidgetDragStart);
 		this.blank.remove();
 		this.said.remove();
+		this.chip?.remove();
+		document.removeEventListener('mouseup', this.onGripUp, { capture: true });
 		document.removeEventListener('mousemove', this.onMove, { capture: true });
 		document.removeEventListener('mouseout', this.onOut);
 		document.removeEventListener('scroll', this.onScroll, { capture: true });
@@ -300,7 +430,39 @@ class Grip {
 		cancelAnimationFrame(this.frame);
 		this.unit = null;
 		this.dom.classList.remove('is-shown');
+		// Out of whatever update called this.
+		if (aimKey.getState(this.view.state)) queueMicrotask(() => this.aim(null));
 	}
+
+	/** Tint what the grip would move, or take the tint away. */
+	private aim(aim: Aim | null): void {
+		const { view } = this;
+		if (view.isDestroyed) return;
+		const now = aimKey.getState(view.state);
+		if (now === aim || (now && aim && now.from === aim.from && now.to === aim.to && now.pressed === aim.pressed)) return;
+		view.dispatch(view.state.tr.setMeta(aimKey, aim));
+	}
+
+	private onGripEnter = (): void => {
+		if (this.unit && !this.drag && this.view.editable) this.aim({ from: this.unit.from, to: this.unit.to, pressed: false });
+	};
+
+	private onGripLeave = (): void => {
+		if (!this.drag) this.aim(null);
+	};
+
+	private onGripDown = (event: MouseEvent): void => {
+		if (event.button !== 0 || !this.unit || !this.view.editable) return;
+		this.aim({ from: this.unit.from, to: this.unit.to, pressed: true });
+		document.addEventListener('mouseup', this.onGripUp, { capture: true });
+	};
+
+	/** Let go without a drag: a click, or a press that went nowhere. */
+	private onGripUp = (event: MouseEvent): void => {
+		document.removeEventListener('mouseup', this.onGripUp, { capture: true });
+		const over = event.target instanceof Node && this.dom.contains(event.target);
+		this.aim(over && this.unit ? { from: this.unit.from, to: this.unit.to, pressed: false } : null);
+	};
 
 	private onMove = (event: MouseEvent): void => {
 		// Over the grip, it stays beside the block it was shown for.
@@ -356,7 +518,9 @@ class Grip {
 		const { view, pointer } = this;
 		if (this.drag) return;
 		if (!pointer || !view.editable || view.isDestroyed || !this.near(pointer)) return this.hide();
-		if (this.heading(pointer)) return;
+		// On its way to the grip, the pointer keeps the block, unless the mode
+		// changed under it and the grip must show the other kind.
+		if (this.heading(pointer) && this.markFor(this.unit) === this.mark) return;
 		const content = view.dom.getBoundingClientRect();
 		// Over the gutter, read the row as if the pointer were at the text's edge.
 		const x = Math.min(Math.max(pointer.x, content.left + 1), content.right - 1);
@@ -378,18 +542,48 @@ class Grip {
 			// Level with the line, which runs through the middle of the rule's box.
 			top = (box.top + box.bottom) / 2 - GRIP_HEIGHT / 2;
 		}
+		this.showMark(levelMark(host, unit.node, block));
 		// A list item's marker sits in its list's padding: the grip goes left of it.
 		const list = unit.node.type.name === 'listItem' || unit.node.type.name === 'taskItem' ? block.parentElement : null;
-		const left = (list ?? block).getBoundingClientRect().left - GRIP_WIDTH - GRIP_GAP;
+		const width = this.mark ? this.dom.offsetWidth - MARK_PAD : GRIP_WIDTH;
+		const left = (list ?? block).getBoundingClientRect().left - width - GRIP_GAP;
+		// A scroll under a pointer resting on the grip moves it to another block: the tint goes with it.
+		const aim = aimKey.getState(view.state);
+		if (aim && aim.from !== unit.from) {
+			const hovered = this.dom.matches(':hover');
+			queueMicrotask(() => this.aim(hovered ? { from: unit.from, to: unit.to, pressed: false } : null));
+		}
 		this.unit = unit;
 		this.dom.style.transform = `translate(${Math.round(left - hostBox.left)}px, ${Math.round(top - hostBox.top)}px)`;
 		this.dom.classList.add('is-shown');
+	}
+
+	/** The mark the grip would show for `unit`, as it is drawn now. */
+	private markFor(unit: Unit | null): string | null {
+		const host = this.host();
+		const block = unit && this.view.nodeDOM(unit.from);
+		return unit && host && block instanceof HTMLElement ? levelMark(host, unit.node, block) : null;
+	}
+
+	/** Show `mark` in place of the dots, sized to it, or the dots again for null. */
+	private showMark(mark: string | null): void {
+		if (mark === this.mark) return;
+		this.mark = mark;
+		this.dom.classList.toggle('is-mark', mark !== null);
+		if (mark) this.dom.textContent = mark;
+		else this.dom.innerHTML = GRIP_SVG;
+		this.dom.title = mark ? 'Drag to move. Click to change the level' : 'Drag to move. Click to select';
 	}
 
 	private onClick = (event: MouseEvent): void => {
 		const { unit, view } = this;
 		if (!unit || !view.editable) return;
 		event.preventDefault();
+		if (this.mark && this.options.headingMenu) {
+			const box = this.dom.getBoundingClientRect();
+			this.options.headingMenu(view, unit.from, { x: box.left, y: box.bottom + 4 });
+			return;
+		}
 		const { state } = view;
 		view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, unit.from)));
 		view.focus();
@@ -405,23 +599,26 @@ class Grip {
 		const { state } = view;
 		const selection = NodeSelection.create(state.doc, unit.from);
 		const slice = selection.content();
-		view.dispatch(state.tr.setSelection(selection).setMeta(heldKey, { from: unit.from, to: unit.to, slice }));
+		view.dispatch(
+			state.tr.setSelection(selection).setMeta(heldKey, { from: unit.from, to: unit.to, slice }).setMeta(aimKey, null),
+		);
 		const { dom, text } = view.serializeForClipboard(slice);
 		event.dataTransfer.clearData();
 		event.dataTransfer.setData('text/html', dom.innerHTML);
 		event.dataTransfer.setData('text/plain', text);
 		event.dataTransfer.effectAllowed = 'copyMove';
-		// Nothing under the pointer: the block dimmed in place and the drop
-		// line say what moves and where to.
+		// The browser's picture of the drag is faded and covers the drop
+		// line: it shows nothing, and the chip drawn here rides instead.
 		event.dataTransfer.setDragImage(this.blank, 0, 0);
 		// As ProseMirror's own drag sets it, `node` included: the drop cursor
 		// reads it, and so does a drop on another page.
 		view.dragging = { slice, move: true, node: selection } as EditorView['dragging'];
 		this.options.dragStarted?.(view);
-		// Faded, not hidden: Chrome ends a drag at once when its source stops
-		// taking the pointer during dragstart.
+		// Shown pressed. Hiding it would end the drag: Chrome ends one at once
+		// when its source stops taking the pointer during dragstart.
 		this.dom.classList.add('is-dragging');
-		this.begin(event);
+		document.removeEventListener('mouseup', this.onGripUp, { capture: true });
+		this.begin(event, unit.from);
 	};
 
 	private beforeDragStart = (): void => {
@@ -440,12 +637,15 @@ class Grip {
 		view.dispatch(view.state.tr.setMeta(heldKey, { from: selection.from, to: selection.to, slice: dragging.slice }));
 		event.dataTransfer.setDragImage(this.blank, 0, 0);
 		this.hide();
-		this.begin(event);
+		this.begin(event, selection.from);
 	};
 
-	private begin(event: DragEvent): void {
+	private begin(event: DragEvent, from: number): void {
 		const source = event.target ?? this.dom;
 		this.drag = { source, scroller: scrollerOf(this.view.dom), ended: false };
+		this.landed = false;
+		this.dropped = false;
+		this.lift(from, event.clientX, event.clientY);
 		// On the element itself: one a drop took out of the page still hears its end there.
 		source.addEventListener('dragend', this.onDragEnd);
 		this.dragPointer = event.clientY;
@@ -484,6 +684,8 @@ class Grip {
 	private onDragOver = (event: DragEvent): void => {
 		if (this.relaying) return;
 		this.dragPointer = event.clientY;
+		this.dragPointerX = event.clientX;
+		this.showCopying(copies(event));
 		const at = this.besideText(event);
 		if (!at) {
 			// Off the margin: over the text the drop cursor reads the drag
@@ -524,6 +726,7 @@ class Grip {
 
 	/** A drop in the margin is taken here; one on the text goes through ProseMirror to `handleDrop`. */
 	private onDrop = (event: DragEvent): void => {
+		this.dropped = true;
 		const at = this.besideText(event);
 		if (at && heldKey.getState(this.view.state)) {
 			event.preventDefault();
@@ -544,10 +747,13 @@ class Grip {
 		const node = held && view.state.doc.nodeAt(held.from);
 		const target = held && node ? dropTarget(view, at, held, moved) : null;
 		if (held && node && target !== null) {
+			this.landed = true;
 			const before = reducedMotion() ? null : measure(view);
 			if (!moved) this.copyTo(node, target, before);
 			else if (moveUnitTo(view, held.from, held.to, target)) {
 				if (before) slideMoved(view, before);
+				const { selection } = view.state;
+				if (selection instanceof NodeSelection) glowLanded(view, selection.from, selection.to);
 				this.say(landedWords(view.state));
 			}
 		}
@@ -566,13 +772,80 @@ class Grip {
 		const { selection } = view.state;
 		const copy = placed !== null && selection instanceof NodeSelection ? view.nodeDOM(selection.from) : null;
 		if (copy instanceof HTMLElement) copy.animate([{ opacity: 0 }, { opacity: 1 }], dropMotion());
+		if (placed !== null && selection instanceof NodeSelection) glowLanded(view, selection.from, selection.to);
 		this.say('Block copied');
+	}
+
+	/** Make the chip for the block at `from`, beside the pointer at `x`, `y`. */
+	private lift(from: number, x: number, y: number): void {
+		this.chip?.remove();
+		this.chip = null;
+		const node = this.view.state.doc.nodeAt(from);
+		const el = this.view.nodeDOM(from);
+		if (!node || !(el instanceof HTMLElement)) return;
+		// On the window, not the page: it goes wherever the pointer goes
+		// without making the page wider or taller.
+		const chip = chipOf(node, el);
+		document.body.append(chip);
+		this.chip = chip;
+		this.dragPointerX = x;
+		this.carry(x, y);
+		// Out of the grip, so you see the block come into your hand. A widget
+		// dragged by itself has no grip shown: its chip fades in where it is.
+		const grip = this.dom.classList.contains('is-dragging') ? this.dom.getBoundingClientRect() : null;
+		const frames: Keyframe[] =
+			grip && !reducedMotion()
+				? [
+						{ transform: `translate(${Math.round(grip.left)}px, ${Math.round(grip.top)}px) scale(0.6)`, opacity: 0 },
+						{ transform: chip.style.transform, opacity: 1 },
+					]
+				: [{ opacity: 0 }, { opacity: 1 }];
+		chip.animate(frames, grip && !reducedMotion() ? dropMotion() : { duration: motionMs('--motion-hover-in', 120) });
+	}
+
+	/** Show that the drop will copy (the modifier held) or move: the chip's +, and the old place no longer dimmed. */
+	private showCopying(on: boolean): void {
+		this.chip?.classList.toggle('is-copy', on);
+		this.host()?.classList.toggle('doc-drag-copying', on);
+	}
+
+	/** Keep the chip below and right of the pointer at `x`, `y`, inside the window. */
+	private carry(x: number, y: number): void {
+		const { chip } = this;
+		if (!chip) return;
+		const left = Math.min(x + CHIP_OFFSET_X, window.innerWidth - chip.offsetWidth - 8);
+		const top = Math.min(y + CHIP_OFFSET_Y, window.innerHeight - chip.offsetHeight - 8);
+		chip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+	}
+
+	/** Take the chip away: back to the grip when the drag was called off, faded where it is otherwise. */
+	private putDown(home: boolean): void {
+		const { chip } = this;
+		this.chip = null;
+		if (!chip) return;
+		const grip = this.dom.getBoundingClientRect();
+		const back = home && !reducedMotion() && grip.width > 0;
+		// It fades as marks do, or travels home as moved things do (design.md).
+		let frames: Keyframe[] = [{ opacity: 1 }, { opacity: 0 }];
+		let timing: KeyframeAnimationOptions = { duration: motionMs('--motion-hover-out', 150), easing: dropMotion().easing };
+		if (back) {
+			timing = dropMotion();
+			frames = [
+				{ transform: chip.style.transform, opacity: 1 },
+				{ transform: `translate(${Math.round(grip.left)}px, ${Math.round(grip.top)}px) scale(0.6)`, opacity: 0 },
+			];
+		}
+		const done = (): void => chip.remove();
+		const run = chip.animate(frames, { ...timing, fill: 'forwards' });
+		run.onfinish = done;
+		run.oncancel = done;
 	}
 
 	/** One frame of scrolling while a block is dragged near the top or bottom of the page's scroller. */
 	private scrollStep = (): void => {
 		const y = this.dragPointer;
 		const scroller = this.drag?.scroller;
+		if (y !== null) this.carry(this.dragPointerX, y);
 		if (y !== null && scroller && !this.view.isDestroyed) {
 			const page = scroller === document.scrollingElement;
 			const box = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
@@ -592,7 +865,13 @@ class Grip {
 		document.removeEventListener('dragleave', this.onDragLeave, { capture: true });
 	}
 
-	private onDragEnd = (): void => this.endDrag();
+	/**
+	 * A drag the browser called off (Escape, or let go where nothing takes
+	 * it) sends the chip home. WebKit can say `none` after a drop that
+	 * worked, so a drop anywhere in the window counts as one.
+	 */
+	private onDragEnd = (event: Event): void =>
+		this.endDrag((event as DragEvent).dataTransfer?.dropEffect === 'none' && !this.dropped);
 
 	/**
 	 * The drag is over, dropped or not. Nothing it drew stays: the line, the
@@ -600,15 +879,16 @@ class Grip {
 	 * arrives late has been read (`settle`). The editor takes the focus back
 	 * unless the drop put it in another editor or a field.
 	 */
-	private endDrag = (): void => {
+	private endDrag = (cancelled = false): void => {
 		const { drag, view } = this;
 		if (!drag || drag.ended) return;
 		drag.ended = true;
+		this.putDown(cancelled === true && !this.landed);
 		clearTimeout(this.dropTimer);
 		drag.source.removeEventListener('dragend', this.onDragEnd);
 		this.stopScrolling();
 		this.relayed = false;
-		this.host()?.classList.remove('doc-drop-idle');
+		this.host()?.classList.remove('doc-drop-idle', 'doc-drag-copying');
 		this.dom.classList.remove('is-dragging');
 		// Mouse events stop during a drag: the pointer last read is from before it.
 		this.pointer = null;
@@ -649,12 +929,32 @@ export const DragHandle = Extension.create<DragHandleOptions>({
 	// Ahead of the page's other drop handlers (a paste of what was dropped).
 	priority: 200,
 	addOptions() {
-		return { dragStarted: null, dragEnded: null };
+		return { dragStarted: null, dragEnded: null, headingMenu: null };
 	},
 	addProseMirrorPlugins() {
 		const options = this.options;
 		let grip: Grip | null = null;
 		return [
+			new Plugin<Aim | null>({
+				key: aimKey,
+				state: {
+					init: () => null,
+					apply(tr: Transaction, aim: Aim | null): Aim | null {
+						const meta = tr.getMeta(aimKey) as Aim | null | undefined;
+						if (meta !== undefined) return meta;
+						return tr.docChanged ? null : aim;
+					},
+				},
+				props: {
+					// What the grip under the pointer would move.
+					decorations(state) {
+						const aim = aimKey.getState(state);
+						if (!aim || !state.doc.nodeAt(aim.from)) return null;
+						const cls = aim.pressed ? 'doc-drag-aim is-pressed' : 'doc-drag-aim';
+						return DecorationSet.create(state.doc, [Decoration.node(aim.from, aim.to, { class: cls })]);
+					},
+				},
+			}),
 			new Plugin<Held | null>({
 				key: heldKey,
 				state: {

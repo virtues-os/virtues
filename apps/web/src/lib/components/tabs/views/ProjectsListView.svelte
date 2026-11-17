@@ -23,8 +23,9 @@
 	import {
 		newProject,
 		openProject,
+		outcomeLabel,
 		projectRowMenuItems,
-		unarchiveProject,
+		reopenProject,
 	} from '$lib/utils/projectActions';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
@@ -43,18 +44,18 @@
 		projects.length === 1 ? '1 project' : `${projects.length} projects`
 	);
 
-	// Folded by default: the archive is where finished things wait, not the
+	// Folded by default: finished and dropped projects wait here, out of the
 	// list you scan. The count on the head says there is something there.
 	let archivedOpen = $state(false);
 
 	const columns: Column<ProjectSummary>[] = [
 		{ key: 'name', label: 'Name', icon: PROJECT_ICON, width: '52%', minWidth: '200px' },
-		{ key: 'chat_count', label: 'Chats', icon: 'ri:chat-3-line', width: '14%', minWidth: '70px', format: 'number' },
-		{ key: 'item_count', label: 'Items', icon: 'ri:stack-line', width: '14%', minWidth: '70px', format: 'number', hideOnMobile: true },
+		{ key: 'chat_count', label: 'Chats', icon: 'mynaui:message', width: '14%', minWidth: '70px', format: 'number' },
+		{ key: 'item_count', label: 'Items', icon: 'mynaui:layers-three', width: '14%', minWidth: '70px', format: 'number', hideOnMobile: true },
 		{
 			key: 'updated_at',
 			label: 'Updated',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '20%',
 			minWidth: '110px',
 			hideOnMobile: true,
@@ -78,7 +79,7 @@
 
 <Page title="Projects" {description} maxWidth="wide">
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
+		<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 	{/snippet}
 
 	{#if projects.length === 0 && archived.length === 0 && !firstLoad && !projectStore.error}
@@ -89,7 +90,7 @@
 				A project keeps the chats, pages and files for one piece of work together. Every chat in
 				it follows the brief you give it.
 			</p>
-			<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
+			<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 		</div>
 	{:else}
 		<UniversalDataGrid
@@ -99,7 +100,7 @@
 			loading={firstLoad}
 			error={projectStore.error}
 			emptyIcon={PROJECT_ICON}
-			emptyMessage={projects.length === 0 ? 'Every project is archived' : 'No projects match'}
+			emptyMessage={projects.length === 0 ? 'Every project has ended' : 'No projects match'}
 			loadingMessage="Loading projects…"
 			searchPlaceholder="Search projects…"
 			defaultViewMode="table"
@@ -113,6 +114,10 @@
 					<span class="name-cell">
 						<ProjectGlyph project={p} size={16} />
 						<span class="name-text">{p.name}</span>
+						{#if p.thing_title}
+							<!-- The thing it sits under, said quietly beside its name. -->
+							<span class="name-thing">{p.thing_title}</span>
+						{/if}
 					</span>
 				</td>
 <td class="col-num">{p.chat_count || '—'}</td>
@@ -122,7 +127,7 @@
 
 			{#snippet rowActions(p: ProjectSummary)}
 				<IconButton
-					icon="ri:more-line"
+					icon="mynaui:dots"
 					label={`Actions for ${p.name}`}
 					size="sm"
 					haspopup="menu"
@@ -148,8 +153,8 @@
 				aria-expanded={archivedOpen}
 				onclick={() => (archivedOpen = !archivedOpen)}
 			>
-				<Icon icon={archivedOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="14" />
-				<span>Archived</span>
+				<Icon icon={archivedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
+				<span>Finished and dropped</span>
 				<span class="archived-count">{archived.length}</span>
 			</button>
 			{#if archivedOpen}
@@ -161,9 +166,9 @@
 								<span>{p.name}</span>
 							</button>
 							<span class="archived-when">
-								{p.archived_at ? `Archived ${formatRelativeTimestamp(p.archived_at)}` : ''}
+								{p.archived_at ? `${outcomeLabel(p)} ${formatRelativeTimestamp(p.archived_at)}` : ''}
 							</span>
-							<Button variant="secondary" size="sm" onclick={() => unarchiveProject(p)}>Unarchive</Button>
+							<Button variant="secondary" size="sm" onclick={() => reopenProject(p)}>Reopen</Button>
 						</li>
 					{/each}
 				</ul>
@@ -195,6 +200,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.name-thing {
+		flex-shrink: 0;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
 	}
 	.col-dim,
 	.col-num {
@@ -280,7 +290,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The Archived fold: a group head like the sidebar's, air above it, no rule. */
+	/* The fold of ended projects: a group head like the sidebar's, air above it, no rule. */
 	.archived {
 		margin-top: 32px;
 	}

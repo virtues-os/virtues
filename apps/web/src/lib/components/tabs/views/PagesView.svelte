@@ -49,14 +49,14 @@
 	}
 
 	function getPageIcon(page: { icon: string | null }): string {
-		return page.icon || "ri:file-text-line";
+		return page.icon || "mynaui:file-text";
 	}
 
 	const columns: Column<PageSummary>[] = [
-		{ key: "title", label: "Title", icon: "ri:file-text-line", width: "45%", minWidth: "200px" },
-		{ key: "tags", label: "Tags", icon: "ri:price-tag-3-line", width: "20%", minWidth: "120px", hideOnMobile: true },
-		{ key: "updated_at", label: "Updated", icon: "ri:time-line", width: "17%", minWidth: "100px", getValue: (p) => formatDate(p.updated_at) },
-		{ key: "created_at", label: "Created", icon: "ri:calendar-line", width: "18%", minWidth: "100px", hideOnMobile: true, getValue: (p) => formatDate(p.created_at) },
+		{ key: "title", label: "Title", icon: "mynaui:file-text", width: "45%", minWidth: "200px" },
+		{ key: "tags", label: "Tags", icon: "mynaui:tag", width: "20%", minWidth: "120px", hideOnMobile: true },
+		{ key: "updated_at", label: "Updated", icon: "mynaui:clock-circle", width: "17%", minWidth: "100px", getValue: (p) => formatDate(p.updated_at) },
+		{ key: "created_at", label: "Created", icon: "mynaui:calendar", width: "18%", minWidth: "100px", hideOnMobile: true, getValue: (p) => formatDate(p.created_at) },
 	];
 
 	function handlePageClick(page: PageSummary, e?: MouseEvent) {
@@ -75,7 +75,7 @@
 			{
 				id: "open-new-tab",
 				label: "Open in New Tab",
-				icon: "ri:external-link-line",
+				icon: "mynaui:external-link",
 				action: () => {
 					windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 						forceNew: true,
@@ -92,7 +92,7 @@
 			{
 				id: "delete",
 				label: "Delete",
-				icon: "ri:delete-bin-line",
+				icon: "mynaui:trash",
 				variant: "destructive",
 				dividerBefore: true,
 				// No confirm: the page goes to Recently deleted and the toast
@@ -135,7 +135,7 @@
 		<Button
 			variant="secondary"
 			size="sm"
-			icon="ri:add-line"
+			icon="mynaui:plus"
 			loading={creating}
 			onclick={createNewPage}>New page</Button
 		>
@@ -147,7 +147,7 @@
 		entityType="page"
 		{loading}
 		{error}
-		emptyIcon="ri:file-text-line"
+		emptyIcon="mynaui:file-text"
 		emptyMessage="No pages yet"
 		loadingMessage="Loading pages…"
 		searchPlaceholder="Search pages…"

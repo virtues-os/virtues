@@ -37,6 +37,13 @@ pub fn statement(arguments: &serde_json::Value) -> Result<String, ToolError> {
 
 /// `timezone` is the owner's, as for `sql_query`.
 pub async fn execute(pool: &PgPool, sql: &str, timezone: Option<&str>) -> Result<ToolResult, ToolError> {
+    // Resolved apart from the transaction, which the bare path below skips;
+    // the rows' times go on the owner's clock either way. If it fails, they
+    // go out in UTC, marked `+00:00`, which is still the right instant.
+    let zone = crate::timezone::resolve_timezone(pool, timezone)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "sql_sudo: zone lookup failed; times stay UTC"))
+        .ok();
     let ran = match in_transaction(pool, sql, timezone).await {
         // VACUUM, CREATE INDEX CONCURRENTLY and ALTER SYSTEM refuse a
         // transaction before doing anything, so running them bare is not
@@ -52,7 +59,7 @@ pub async fn execute(pool: &PgPool, sql: &str, timezone: Option<&str>) -> Result
     let row_count = rows.len();
     let capped = row_count.min(RETURN_ROWS_MAX);
     let mut data = serde_json::json!({
-        "rows": super::sql_query::convert_rows_to_json(&rows[..capped]),
+        "rows": super::sql_query::convert_rows_to_json(&rows[..capped], zone.as_deref()),
         "row_count": row_count,
         "rows_affected": rows_affected,
     });

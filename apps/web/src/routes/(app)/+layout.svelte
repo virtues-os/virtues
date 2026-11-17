@@ -173,6 +173,21 @@
 	// the app on a computer (`webLinks.ts`).
 	onMount(() => listenForWebLinks());
 
+	// Glass catches the light where the pointer is: the glass under it keeps
+	// the pointer's place in --lq-x and --lq-y, which its glint is drawn at
+	// (`.lq`, app.css). One listener for the whole window.
+	onMount(() => {
+		const follow = (e: PointerEvent) => {
+			const glass = (e.target as Element | null)?.closest?.<HTMLElement>(".lq");
+			if (!glass) return;
+			const box = glass.getBoundingClientRect();
+			glass.style.setProperty("--lq-x", `${Math.round(e.clientX - box.left)}px`);
+			glass.style.setProperty("--lq-y", `${Math.round(e.clientY - box.top)}px`);
+		};
+		document.addEventListener("pointermove", follow, { passive: true });
+		return () => document.removeEventListener("pointermove", follow);
+	});
+
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
 		// Boot-ok (confirming this bundle rendered) lives in the ROOT layout,
@@ -398,7 +413,7 @@
      phone the offset clears the notch/Dynamic Island instead. -->
 <Toaster
 	position="top-center"
-	offset="calc(var(--chrome-row-h, 40px) + 8px)"
+	offset="calc(var(--chrome-row-h, 60px) + 8px)"
 	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `
@@ -430,8 +445,15 @@
 	class:opening
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
-	<!-- One row across the whole window: the ∴, back, forward and new chat
-	     over the sidebar, and each pane's tabs over its pane. -->
+	<!-- The painting along the bottom of the whole window, behind the
+	     sidebar and the panes alike. It does not move between pages: the
+	     glass floats over it and the paper covers it. -->
+	{#if !mobileLayout.isMobile}
+		<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" />
+	{/if}
+
+	<!-- One row across the whole window: the ∴ over the sidebar, each pane's
+	     tabs over its pane, and search and Settings in the corner. -->
 	{#if !mobileLayout.isMobile}
 		<WindowHeader />
 	{/if}
@@ -448,8 +470,6 @@
 	     On the phone `main` is the page itself. -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
-		class:mx-2={!mobileLayout.isMobile}
-		class:mb-2={!mobileLayout.isMobile}
 		class:split-desk={!mobileLayout.isMobile}
 		class:is-mobile={mobileLayout.isMobile}
 		style={mobileLayout.isMobile
@@ -483,7 +503,7 @@
 		title="Exit focus mode (⌘⇧F)"
 		aria-label="Exit focus mode"
 	>
-		<Icon icon="ri:fullscreen-exit-line" width="18" />
+		<Icon icon="mynaui:minimize" width="18" />
 	</button>
 {/if}
 
@@ -553,7 +573,11 @@
 {/if}
 
 <style>
-	main {
+	/* Named only while the app opens from Setup, so the opening can leave
+	   it unanimated (app.css). A named element cuts off what glass inside
+	   it can see behind it, and the home cards are glass over the window's
+	   painting, so the name is never left on. */
+	:global(html.app-opening) main {
 		view-transition-name: main-content;
 	}
 
@@ -607,9 +631,9 @@
 		}
 	}
 
-	/* The pane is its own card, a desk gap from the sidebar's, so opening
-	   and closing the sidebar only moves it: the aside's width animates and
-	   the pane's margin never changes. */
+	/* The pane meets the sidebar edge to edge, so opening and closing the
+	   sidebar only moves it: the aside's width animates and the pane has no
+	   margin. */
 	main:not(.is-mobile) {
 		transition:
 			border-color var(--motion-state) var(--ease-premium),
@@ -658,16 +682,56 @@
 	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
 	   the document has nothing to scroll; only the view's own inner scroller
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
-	/* The desk: what the sidebar and the window header stand on (themes.css,
-	   --desk). The phone keeps its own ground. */
+	/* The desk: the window's ground, with the painting along its bottom.
+	   Its own stacking context, so the painting can sit under everything in
+	   the shell without going under the desk. The phone keeps its own
+	   ground. */
 	.app-shell.desk {
+		position: relative;
+		isolation: isolate;
 		background-color: var(--desk);
 	}
 
-	/* Each pane draws its own card (SplitContainer), a desk gap apart in
-	   split, so `main` is only the desk they stand on. */
+	.window-scene {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: -1;
+		width: 100%;
+		height: 52%;
+		object-fit: cover;
+		object-position: 70% 100%;
+		pointer-events: none;
+		user-select: none;
+		filter: var(--window-scene-filter);
+		-webkit-mask-image: var(--window-scene-mask);
+		mask-image: var(--window-scene-mask);
+		/* When the window opens the painting settles into place out of a
+		   slight zoom and haze, once. */
+		transform-origin: 70% 100%;
+		animation: scene-settle 1100ms var(--ease-premium) both;
+	}
+
+	@keyframes scene-settle {
+		from {
+			opacity: 0;
+			transform: scale(1.03);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.window-scene {
+			animation: none;
+		}
+	}
+
+	/* Each pane draws its own paper (SplitContainer), so `main` is only the
+	   window they stand on. The panes stand the window's air in from its
+	   right and bottom edges. */
 	main.split-desk {
 		background-color: transparent;
+		padding: 0 var(--window-air) var(--window-air) 0;
 	}
 
 	.app-shell.mobile-shell {

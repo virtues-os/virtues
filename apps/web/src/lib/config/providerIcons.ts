@@ -10,14 +10,14 @@ export const PROVIDER_ICONS: Record<string, string> = {
 	google: 'simple-icons:google',
 	openai: 'simple-icons:openai',
 	mistral: 'simple-icons:mistral',
-	cerebras: 'ri:cpu-line',
-	deepseek: 'ri:brain-line',
+	cerebras: 'mynaui:chip',
+	deepseek: 'mynaui:atom',
 	xai: 'simple-icons:x',
-	glm: 'ri:sparkling-line',
-	zai: 'ri:sparkling-line'
+	glm: 'mynaui:sparkles',
+	zai: 'mynaui:sparkles'
 };
 
-export const DEFAULT_PROVIDER_ICON = 'ri:robot-fill';
+export const DEFAULT_PROVIDER_ICON = 'mynaui:chip-solid';
 
 /**
  * Get the icon identifier for a model provider

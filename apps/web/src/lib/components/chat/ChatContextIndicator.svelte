@@ -23,11 +23,11 @@
 	);
 
 	const statusIcon = $derived.by(() => {
-		if (!contextUsage) return "ri:database-2-line";
+		if (!contextUsage) return "mynaui:database";
 		switch (contextUsage.status) {
-			case "critical": return "ri:error-warning-fill";
-			case "warning": return "ri:alert-fill";
-			default: return "ri:database-2-line";
+			case "critical": return "mynaui:danger-circle-solid";
+			case "warning": return "mynaui:danger-triangle-solid";
+			default: return "mynaui:database";
 		}
 	});
 </script>

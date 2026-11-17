@@ -193,8 +193,6 @@ pub struct MessageResponse {
     pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    #[serde(rename = "reasoningDetails", skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<serde_json::Value>,
     #[serde(default, with = "crate::api::chat::wire_parts")]
     pub parts: Option<Vec<UIPart>>,
     /// The span of the turn that wrote an assistant row (migration 0040),
@@ -412,7 +410,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             r#"
             SELECT
                 id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, reasoning_details, created_at, parts,
+                reasoning, tool_calls, intent, subject, created_at, parts,
                 started_at, ended_at
             FROM app_chat_messages
             WHERE chat_id = $1
@@ -435,22 +433,31 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let model: Option<String> = row.get("model");
                 let provider: Option<String> = row.get("provider");
                 let agent_id: Option<String> = row.get("agent_id");
-                let reasoning: Option<String> = row.get("reasoning");
-                let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
                 let subject: Option<String> = row.get("subject");
-                let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
                 let timestamp: Timestamp = row.get("created_at");
                 let parts_raw: Option<serde_json::Value> = row.get("parts");
                 let started_at: Option<Timestamp> = row.get("started_at");
                 let ended_at: Option<Timestamp> = row.get("ended_at");
 
-                let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw.and_then(|tc| {
-                    serde_json::from_value(tc)
-                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
-                        .ok()
-                });
                 let parts: Option<Vec<UIPart>> = parts_raw
                     .and_then(|p| crate::api::chat::parts_from_jsonb(p, &id));
+                // A row with parts carries its reasoning and tool calls inside
+                // them, and the client builds the message from parts alone. The
+                // legacy columns are sent only for older rows without parts:
+                // sending both moved every tool result over the wire twice.
+                let has_parts = parts.as_ref().is_some_and(|p| !p.is_empty());
+                let (reasoning, tool_calls) = if has_parts {
+                    (None, None)
+                } else {
+                    let reasoning: Option<String> = row.get("reasoning");
+                    let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+                    let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw.and_then(|tc| {
+                        serde_json::from_value(tc)
+                            .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                            .ok()
+                    });
+                    (reasoning, tool_calls)
+                };
 
                 MessageResponse {
                     id,
@@ -463,7 +470,6 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                     tool_calls,
                     reasoning,
                     subject,
-                    reasoning_details,
                     parts,
                     started_at,
                     ended_at,
@@ -1197,6 +1203,61 @@ mod tests {
         assert_eq!(got[1].role, "assistant");
         assert_eq!(got[1].subject.as_deref(), Some("interrupted"));
         assert_eq!(got[1].tool_calls.as_ref().map(|t| t[0].tool_name.as_str()), Some("sql_query"));
+    }
+
+    /// A row with parts goes out as parts alone; a legacy row without them
+    /// still carries its tool calls and reasoning. Sending both moved every
+    /// tool result twice.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn transcript_sends_tool_calls_once(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_tx', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let call = ToolCall {
+            tool_name: "sql_query".into(),
+            tool_call_id: Some("c1".into()),
+            arguments: serde_json::json!({"q": 1}),
+            result: Some(serde_json::json!({"rows": [1, 2, 3]})),
+            timestamp: "2026-09-28T00:00:00Z".into(),
+        };
+        for id in ["m_parts", "m_legacy"] {
+            let msg = ChatMessage {
+                id: Some(id.into()),
+                role: "assistant".into(),
+                content: "done".into(),
+                timestamp: Timestamp::now(),
+                model: None,
+                provider: None,
+                agent_id: None,
+                tool_calls: Some(vec![call.clone()]),
+                reasoning: Some("thinking".into()),
+                intent: None,
+                subject: None,
+                reasoning_details: Some(serde_json::json!([{"type": "reasoning.text"}])),
+                parts: Some(vec![UIPart::Text { text: "done".into() }]),
+            };
+            append_message(&pool, "chat_tx".into(), msg).await.unwrap();
+        }
+        sqlx::query("UPDATE app_chat_messages SET parts = NULL WHERE id = 'm_legacy'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let detail = get_chat(&pool, "chat_tx".into()).await.unwrap();
+        let wire = serde_json::to_value(&detail.messages).unwrap();
+        let (with_parts, legacy) = (&wire[0], &wire[1]);
+        assert_eq!(with_parts["id"], "m_parts");
+        assert!(with_parts.get("tool_calls").is_none(), "{with_parts}");
+        assert!(with_parts.get("reasoning").is_none(), "{with_parts}");
+        assert!(with_parts["parts"].is_array());
+        assert_eq!(legacy["id"], "m_legacy");
+        assert_eq!(legacy["tool_calls"][0]["tool_name"], "sql_query");
+        assert_eq!(legacy["reasoning"], "thinking");
+        for m in [with_parts, legacy] {
+            assert!(m.get("reasoningDetails").is_none(), "never read by the client: {m}");
+            assert_eq!(m["content"], "done");
+        }
     }
 
     /// A chat whose title the generator must leave alone never reaches the

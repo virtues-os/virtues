@@ -13,14 +13,14 @@ export function openMenuItems(url: string, label: string): ContextMenuItem[] {
 		{
 			id: 'open-new-tab',
 			label: 'Open in new tab',
-			icon: 'ri:add-box-line',
+			icon: 'mynaui:plus-square',
 			shortcut: `${shortcuts.format('mod')} click`,
 			action: () => void windowShellStore.openInNewTab(url, label),
 		},
 		{
 			id: 'open-beside',
 			label: 'Open beside',
-			icon: 'ri:layout-column-line',
+			icon: 'mynaui:columns',
 			action: () => void windowShellStore.openRouteBeside(url, label),
 		},
 	];

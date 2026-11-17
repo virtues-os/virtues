@@ -188,7 +188,7 @@ impl AgentLoop {
             // The routes replayed history shows, and the handles this turn's
             // tool results get; every link the model writes is checked here.
             let mut cites = citations::Citations::from_messages(&messages);
-            let mut turn = turn::TurnState::new(&budget);
+            let mut turn = turn::TurnState::new(&budget, &tools);
             // How this turn ends. Assigned at each break; reported once, below.
             let finish: FinishReason;
 

@@ -244,6 +244,9 @@ pub async fn purge_deleted_messages(
 /// Attachment `index` of message `message_id` (the row's `id`): its bytes and
 /// type. `NotFound` when the message, the attachment, or its bytes are absent —
 /// including an attachment the Mac has not managed to send yet.
+///
+/// The type is the one the sending device declared, so code that serves the
+/// bytes over HTTP must not pass it through (`middleware::security::inline_type`).
 pub async fn load_attachment(
     pool: &PgPool,
     storage: &Storage,

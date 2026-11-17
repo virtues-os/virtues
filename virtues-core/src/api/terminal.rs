@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::api::owner_proof::OwnerProven;
 use crate::server::webhook::AppState;
 
 /// Bound on the PTY→websocket output queue. When the shell produces output
@@ -71,8 +72,12 @@ fn clamp_dim(v: Option<u16>, default: u16) -> u16 {
     v.unwrap_or(default).clamp(2, 1000)
 }
 
-/// Handler for the terminal WebSocket.
+/// Handler for the terminal WebSocket. The shell runs as the service user,
+/// who has passwordless sudo, so the request needs the app's owner proof
+/// (`api::owner_proof`), carried in the URL because a browser's WebSocket
+/// cannot set a header.
 pub async fn terminal_ws_handler(
+    _proof: OwnerProven,
     ws: WebSocketUpgrade,
     State(_state): State<AppState>,
     Query(params): Query<TerminalParams>,
@@ -182,8 +187,10 @@ fn store_paste(home: &Path, content_type: Option<&str>, body: &[u8]) -> std::io:
 }
 
 /// Take a pasted or dropped blob, write it under $HOME, and hand back the path
-/// for the frontend to type into the terminal.
+/// for the frontend to type into the terminal. It writes as the terminal's
+/// user, so it takes the terminal's owner proof.
 pub async fn terminal_paste_handler(
+    _proof: OwnerProven,
     State(_state): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,

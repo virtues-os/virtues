@@ -512,7 +512,7 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
 ## Articles
 
 Articles are the pages machines write: day pages (`api/day_article.rs`),
-wiki articles, years, stories, chapters and the life page, each owned by a
+wiki articles, years, things, chapters and the life page, each owned by a
 `wiki_articles` row (`kind = 'article'`). They become block pages behind
 `VIRTUES_TREE_ARTICLES=1`, with block pages on
 (`block_move::tree_articles_enabled`). The switch gates the move only: an

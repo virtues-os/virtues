@@ -23,12 +23,13 @@
 		type AppletPage,
 		runApplet,
 		messageApplet,
+		markAppletSeen,
 		patchApplet,
 		type Applet,
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import RecentDots from '$lib/components/applets/RecentDots.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
@@ -36,7 +37,10 @@
 	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { attention } from '$lib/stores/attention.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
+	import { usePageActions, usePageStatus } from '$lib/stores/paneActions.svelte';
+	import { SLOTS } from '$lib/stores/modelSlots.svelte';
 
 	/**
 	 * An applet's home opens on its results: its newest page with every page
@@ -49,6 +53,25 @@
 	 * that one open, which is where the table's dots and Last run link.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
+
+	// On the desktop the applet's name is in the tab's action toolbar and its
+	// controls sit at the toolbar's end; the phone keeps both in the header.
+	const toolbar = usePageActions(() => headActions);
+
+	// An applet with a prompt runs it on a model slot (applet_runner.rs),
+	// and the toolbar names which. A code applet gets no mark: some call a
+	// model themselves (transcription, the day summary), and the applet
+	// record does not say which.
+	usePageStatus(() => {
+		if (!action?.agent) return null;
+		const asked = typeof action.config?.model_slot === 'string' ? action.config.model_slot : 'lite';
+		const slot = SLOTS.find((s) => s.key === (asked === 'chat' ? 'standard' : asked)) ?? SLOTS.find((s) => s.key === 'lite');
+		const name = slot ? `${slot.mark[0].toUpperCase()}${slot.mark.slice(1)} model` : 'Background model';
+		return {
+			label: name,
+			tip: `This applet's prompt runs on your ${name.toLowerCase()}, with what it was written to read.`,
+		};
+	});
 
 	const url = $derived(new URL(tab.route, 'http://localhost'));
 	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
@@ -175,6 +198,11 @@
 			const a = await getApplet(id);
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
+			// Opening the page is reading what it made, so its "new" Inbox
+			// item goes. A failed write only leaves the item up.
+			void markAppletSeen(id)
+				.then(() => attention.refresh())
+				.catch(() => {});
 			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];
@@ -382,7 +410,7 @@
 	const nextRunText = $derived.by(() => {
 		if (!action || action.archived_at) return 'Finished';
 		if (!action.enabled) return 'Off';
-		if (!action.next_due_at) return describeSchedule(action.schedule);
+		if (!action.next_due_at) return describeTriggers(action);
 		return relativeTime(action.next_due_at);
 	});
 	// The week's cost comes with the applet list, not with one applet.
@@ -400,8 +428,8 @@
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
 		// Off keeps its schedule in view: it's what turning it back on brings back.
-		if (!action.enabled) return `Off · ${describeSchedule(action.schedule)}`;
-		return describeSchedule(action.schedule);
+		if (!action.enabled) return `Off · ${describeTriggers(action)}`;
+		return describeTriggers(action);
 	});
 
 	function openMore(e: MouseEvent) {
@@ -410,13 +438,13 @@
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const items: ContextMenuItem[] = [];
 		if (canRunNow) {
-			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void runNow() });
+			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void runNow() });
 		}
 		if (a.has_face) {
 			items.push({
 				id: 'share',
 				label: 'Share',
-				icon: 'ri:share-forward-line',
+				icon: 'mynaui:share',
 				action: () => {
 					sharing = true;
 				}
@@ -424,7 +452,7 @@
 			items.push({
 				id: 'full',
 				label: 'Open full page',
-				icon: 'ri:external-link-line',
+				icon: 'mynaui:external-link',
 				action: () => {
 					windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
 				}
@@ -437,7 +465,7 @@
 			items.push({
 				id: 'delete',
 				label: 'Delete applet',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => {
@@ -448,6 +476,39 @@
 		contextMenu.show({ x: rect.left, y: rect.bottom + 4 }, items);
 	}
 </script>
+
+{#snippet headActions()}
+	{#if action}
+		{#if chatId}
+			<!-- A word with the icon: a speech bubble alone didn't say you
+			     can tell it things or change it there. -->
+			<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
+		{/if}
+		<IconButton
+			icon="mynaui:info-circle"
+			label="Info"
+			pressed={insp}
+			onclick={() => (insp = !insp)}
+		/>
+		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
+		{#if action.archived_at}
+			<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+				Turn back on
+			</Button>
+		{:else}
+			<button
+				type="button"
+				class="switch"
+				class:on={action.enabled}
+				role="switch"
+				aria-checked={action.enabled}
+				aria-label="Run this applet"
+				disabled={saving}
+				onclick={() => setEnabled(!action!.enabled)}
+			></button>
+		{/if}
+	{/if}
+{/snippet}
 
 {#snippet fixAction()}
 	{#if fix}
@@ -492,10 +553,10 @@
 				<div class="insp-row"><span>Next run</span><span class="insp-value">{nextRunText}</span></div>
 				<div class="insp-row"><span>Cost</span><span class="insp-value">{costText}</span></div>
 				<button type="button" class="insp-row link" onclick={() => openInfo('history')}>
-					<span>Run history</span><Icon icon="ri:arrow-right-s-line" width="16" />
+					<span>Run history</span><Icon icon="mynaui:chevron-right" width="16" />
 				</button>
 				<button type="button" class="insp-row link" onclick={() => openInfo('details')}>
-					<span>Technical details</span><Icon icon="ri:arrow-right-s-line" width="16" />
+					<span>Technical details</span><Icon icon="mynaui:chevron-right" width="16" />
 				</button>
 			</Card>
 		</aside>
@@ -513,7 +574,7 @@
 				<div class="narrow">
 					<header class="head sub">
 						<button type="button" class="backlink" onclick={() => showInfo(false)}>
-							<Icon icon="ri:arrow-left-line" width="14" />
+							<Icon icon="mynaui:arrow-left" width="14" />
 							{action.name}
 						</button>
 						<h1 class="title">Info</h1>
@@ -537,40 +598,13 @@
 				<header class="head">
 					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
-						<h1 class="title">{action.name}</h1>
+						{#if !toolbar.inToolbar}<h1 class="title">{action.name}</h1>{/if}
 						<p class="status">{status}</p>
 					</div>
 					<!-- One title block, the icons centred on it, the switch last. -->
-					<div class="head-actions">
-						{#if chatId}
-							<!-- A word with the icon: a speech bubble alone didn't say you
-							     can tell it things or change it there. -->
-							<Button variant="ghost" size="sm" icon="ri:chat-3-line" onclick={openConversation}>Chat</Button>
-						{/if}
-						<IconButton
-							icon="ri:information-line"
-							label="Info"
-							pressed={insp}
-							onclick={() => (insp = !insp)}
-						/>
-						<IconButton icon="ri:more-line" label="More" haspopup="menu" onclick={openMore} />
-						{#if action.archived_at}
-							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
-								Turn back on
-							</Button>
-						{:else}
-							<button
-								type="button"
-								class="switch"
-								class:on={action.enabled}
-								role="switch"
-								aria-checked={action.enabled}
-								aria-label="Run this applet"
-								disabled={saving}
-								onclick={() => setEnabled(!action!.enabled)}
-							></button>
-						{/if}
-					</div>
+					{#if !toolbar.inToolbar}
+						<div class="head-actions">{@render headActions()}</div>
+					{/if}
 				</header>
 
 				{#if err}

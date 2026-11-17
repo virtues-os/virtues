@@ -83,7 +83,7 @@
 	<Popover bind:open placement={align === 'center' ? 'bottom' : 'bottom-end'} offset={6}>
 		{#snippet trigger({ toggle })}
 			<Button {variant} onclick={toggle}>
-				<Icon icon="ri:add-line" width="16" />
+				<Icon icon="mynaui:plus" width="16" />
 				{label}
 			</Button>
 		{/snippet}
@@ -94,7 +94,7 @@
 				</div>
 				{#if catalog.length >= SEARCH_THRESHOLD}
 					<div class="search-row">
-						<Icon icon="ri:search-line" width="14" />
+						<Icon icon="mynaui:search" width="14" />
 						<input
 							bind:this={searchInputEl}
 							type="text"
@@ -112,7 +112,7 @@
 						<li>
 							<button type="button" class="source-row" onclick={() => handlePick(source)}>
 								<div class="row-icon">
-									<Icon icon={source.icon ?? 'ri:plug-line'} width="16" />
+									<Icon icon={source.icon ?? 'mynaui:power'} width="16" />
 								</div>
 								<div class="row-body">
 									<div class="row-title-line">

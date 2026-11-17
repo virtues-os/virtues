@@ -251,7 +251,7 @@
 <section class="updates">
 	<header>
 		<h3>Updates</h3>
-		<Button variant="secondary" size="sm" icon="ri:refresh-line" {loading} onclick={check}>
+		<Button variant="secondary" size="sm" icon="mynaui:refresh" {loading} onclick={check}>
 			Check again
 		</Button>
 	</header>
@@ -262,7 +262,7 @@
 		<div class="state restarting" class:failed={!!restart.error}>
 			{#if restart.error}
 				<p>
-					<Icon icon="ri:error-warning-line" width="14" />
+					<Icon icon="mynaui:danger-circle" width="14" />
 					{restart.error}
 				</p>
 				{#if restart.detail}
@@ -271,12 +271,12 @@
 				<Button variant="secondary" size="sm" onclick={() => (restart = null)}>Done</Button>
 			{:else if restart.phase === 'back'}
 				<p>
-					<Icon icon="ri:check-line" width="14" />
+					<Icon icon="mynaui:check" width="14" />
 					Back up. Reloading…
 				</p>
 			{:else}
 				<p>
-					<Icon icon="ri:loader-4-line" width="14" class="spin" />
+					<Icon icon="mynaui:spinner" width="14" class="spin" />
 					Installing. Your server is restarting and will be back in a minute or two.
 				</p>
 				<p class="how">
@@ -323,7 +323,7 @@
 					</select>
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
-							<Icon icon="ri:alert-line" width="13" />
+							<Icon icon="mynaui:danger-triangle" width="13" />
 							Unreviewed builds install on this server
 						</span>
 					{/if}
@@ -376,7 +376,7 @@
 			     showing the second when the first is true is the kind of lie that
 			     leaves a box unpatched. -->
 			<p class="state error">
-				<Icon icon="ri:error-warning-line" width="14" />
+				<Icon icon="mynaui:danger-circle" width="14" />
 				Couldn't check for updates — {status.check_error}
 			</p>
 		{:else if status.running_ahead}
@@ -386,7 +386,7 @@
 			     it. Say what is running, say what the channel holds, and let the
 			     owner decide. -->
 			<p class="state ahead">
-				<Icon icon="ri:git-branch-line" width="14" />
+				<Icon icon="mynaui:git-branch" width="14" />
 				This box runs <strong>{status.running_version}</strong>, from the
 				{status.running_channel} track — ahead of
 				{status.latest ?? 'the latest release'} on Main. Nothing to install;
@@ -395,7 +395,7 @@
 		{:else if status.update_available}
 			<div class="state available">
 				<p>
-					<Icon icon={staged ? 'ri:check-double-line' : 'ri:download-cloud-line'} width="14" />
+					<Icon icon={staged ? 'mynaui:check' : 'mynaui:cloud-download'} width="14" />
 					{#if status.latest}<strong>{status.latest}</strong>{:else}An update{/if}
 					{staged ? 'is downloaded and ready' : 'is available'}
 				</p>
@@ -413,7 +413,7 @@
 					variant="primary"
 					size="sm"
 					class="self-start"
-					icon={staged ? 'ri:restart-line' : 'ri:download-2-line'}
+					icon={staged ? 'mynaui:refresh-alt' : 'mynaui:download'}
 					disabled={!!restart}
 					onclick={install}
 				>
@@ -424,7 +424,7 @@
 					     is a dev checkout with no /usr/local/bin/virtues, which is
 					     worth saying plainly rather than dressing up as a failure. -->
 					<p class="apply-error">
-						<Icon icon="ri:error-warning-line" width="14" />
+						<Icon icon="mynaui:danger-circle" width="14" />
 						{applyError}
 					</p>
 					<p class="how">You can always run it on the server yourself:</p>
@@ -433,7 +433,7 @@
 			</div>
 		{:else}
 			<p class="state ok">
-				<Icon icon="ri:check-line" width="14" />
+				<Icon icon="mynaui:check" width="14" />
 				Up to date
 			</p>
 		{/if}

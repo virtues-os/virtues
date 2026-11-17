@@ -268,7 +268,7 @@
 		{
 			key: "timestamp",
 			label: "Time",
-			icon: "ri:time-line",
+			icon: "mynaui:clock-circle",
 			width: "5.5rem",
 			minWidth: "5.5rem",
 			getValue: (item) => {
@@ -1095,7 +1095,7 @@
 				<div class="day-more">
 					<Popover bind:open={menuOpen} placement="bottom-end" offset={4}>
 						{#snippet trigger({ toggle })}
-							<IconButton icon="ri:more-fill" label="More" haspopup="menu" expanded={menuOpen} onclick={toggle} />
+							<IconButton icon="mynaui:dots" label="More" haspopup="menu" expanded={menuOpen} onclick={toggle} />
 						{/snippet}
 						{#snippet children({ close })}
 							<div class="day-menu" role="menu" aria-label="More" use:menuKeys>
@@ -1382,7 +1382,7 @@
 									columns={sourceColumns}
 									entityType="day-sources"
 									loading={sourcesLoading}
-									emptyIcon="ri:database-2-line"
+									emptyIcon="mynaui:database"
 									emptyMessage={sourcesEmptyMessage}
 									loadingMessage="Loading sources..."
 									searchPlaceholder="Filter sources..."

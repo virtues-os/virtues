@@ -70,10 +70,10 @@
 	};
 
 	const KIND_ICON: Record<RowKind, string> = {
-		chat: "ri:chat-3-line",
-		page: "ri:file-text-line",
+		chat: "mynaui:message",
+		page: "mynaui:file-text",
 		project: PROJECT_ICON,
-		file: "ri:file-line",
+		file: "mynaui:file",
 	};
 
 	function daysLeft(expiresAt: string): number {
@@ -229,7 +229,7 @@
 >
 	{#snippet actions()}
 		{#if rows.length > 0}
-			<Button variant="danger" size="sm" icon="ri:delete-bin-line" disabled={busy} onclick={emptyAll}>
+			<Button variant="danger" size="sm" icon="mynaui:trash" disabled={busy} onclick={emptyAll}>
 				Empty
 			</Button>
 		{/if}
@@ -247,7 +247,7 @@
 		entityType="trash"
 		{loading}
 		rowIcon={(row) => KIND_ICON[row.kind]}
-		emptyIcon="ri:delete-bin-line"
+		emptyIcon="mynaui:trash"
 		emptyMessage="Nothing here. Anything you delete waits here for 30 days before it's gone."
 		loadingMessage="Loading…"
 		searchPlaceholder="Search Recently deleted"
@@ -257,7 +257,7 @@
 	>
 		{#snippet rowActions(row: TrashRow)}
 			<IconButton
-				icon="ri:arrow-go-back-line"
+				icon="mynaui:undo"
 				label={`Restore ${row.title}`}
 				size="sm"
 				disabled={busy}
@@ -267,7 +267,7 @@
 				}}
 			/>
 			<IconButton
-				icon="ri:delete-bin-7-line"
+				icon="mynaui:trash"
 				label={`Delete ${row.title} forever`}
 				size="sm"
 				variant="danger"

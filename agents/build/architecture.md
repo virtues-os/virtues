@@ -9,14 +9,18 @@ This page does not repeat either.
 
 ## An applet's shape is derived from its fields
 
-There is no `runtime` field. `command` makes a subprocess, `agent` an agent
-loop (after the subprocess, if both are set), and a `face/index.html` with
-neither is a face-only applet that core never invokes. Code that needs the
-shape derives it from field presence; nothing may add a field that declares it.
+An applet is a folder with a `SKILL.md` (`applet_templates/skill.rs` reads
+it; a `manifest.toml` in the state root is converted first by
+`applet_templates/convert.rs`). There is no `runtime` field. `run` naming code
+makes a subprocess, `run: sql …` a read-only query whose empty result skips
+the run, the body an agent loop (after `run`, if both are set), and a
+`view.html` with none of these is a view core never invokes. Code that needs
+the shape derives it from field presence; nothing may add a field that
+declares it.
 
 ## Field ownership
 
-Manifest fields and `app_applets` columns are disjoint: the manifest owns what
+`SKILL.md` keys and `app_applets` columns are disjoint: the file owns what
 the applet *is*, SQL owns what state it is *in* (`enabled`, the current
 schedule, `memory`, runs, a fanned-out `credential_id`). The per-field table is
 in AUTHORING.md's "Field ownership" and is kept there. The contract here is the
@@ -34,8 +38,8 @@ In a dev checkout they are `applets/` and the gitignored `.applet-state/`
 (`shipped_root()` / `state_root()` in `applet_templates/mod.rs`).
 
 - Everything core writes at runtime goes to the state root: chat-authored
-  applets under `user/<slug>/`, Git packs imported through
-  `POST /api/admin/applets/import-git` under their slug.
+  applets under `user/<name>/`, forks of shipped applets under their own
+  name, and the owner's changes to shipped applets under `overrides/`.
 - `resolve_applet_dir()` checks state first, so an applet in the state root
   **shadows** a shipped one with the same dir, and deleting it reverts to the
   shipped version.
@@ -46,9 +50,10 @@ In a dev checkout they are `applets/` and the gitignored `.applet-state/`
 
 ## Reconcile
 
-`reconcile_templates(db)` is the only writer of manifest → SQL. The parsed
+`reconcile_templates(db)` is the only writer of folder → SQL. The parsed
 catalog is cached in a `OnceLock<RwLock<…>>`; `reload_and_reconcile()` is the
-one way to apply on-disk changes (swap the catalog, then reconcile). Callers:
+one way to apply on-disk changes (convert any `manifest.toml` in the state
+root, swap the catalog, then reconcile). Callers:
 boot (`server/mod.rs`, after migrations), `POST /api/admin/reconcile`, Git
 import, and credential or device pairing changes (`api/source_auth.rs`,
 `api/pair.rs`), which change per-credential fan-out.
@@ -64,13 +69,14 @@ It must be idempotent: back-to-back runs produce no diff
 reaches the heavy phase:
 
 1. Fetch the row; reject a trigger the applet does not declare.
-2. Face-only (no command, no agent): skip silently. The scheduler never
+2. View-only (no `run`, no prompt): skip silently. The scheduler never
    enqueues these either.
 3. Webhook: must resolve to a `device_id` or a `credential_id`.
 4. `condition` (SQL): a falsy result skips **without** a run row. The
    `message` wake is exempt; `manual` is not.
 5. Singleton: a wake during a live run records a `skipped` run.
 6. Limits (`applet_runner/limits.rs`), then the run row, then credentials →
+   `run` SQL (no rows records a `skipped` run and calls no model) →
    subprocess → agent.
 
 **Subprocess.** `command[0]` without a `/` resolves to a Cargo-built binary
@@ -78,12 +84,22 @@ reaches the heavy phase:
 running core binary in dev), else it is left for `PATH`. Input
 (`config`, decrypted `credentials`, `payload`) goes on stdin; the environment
 is cleared and rebuilt from `ENV_PASSTHROUGH`, which carries service
-endpoints and paths, never secrets. An applet whose folder does not resolve
-under the shipped root runs jailed under `systemd-run` (`NoNewPrivileges`,
-read-only system, memory and time ceilings); in a Linux release build a
-missing `systemd-run` refuses the run rather than running it unjailed. The
-jail limits blast radius but is not an authority boundary; the comment on
-`build_command` explains why.
+endpoints and paths, never secrets. That is for shipped code, which runs
+directly as the box user.
+
+An applet whose folder does not resolve under the shipped root runs in the
+sandbox (`sandbox`, `applet_runner/sandboxed.rs`): a transient `systemd-run`
+unit with a throwaway user, no network and the box's data hidden. It sees
+its folder read-only at `/skill` (its working directory), its own lake
+folder at `/lake` (indexed into `lake_objects` after each run, and refused
+while over 2 GB), the whole lake read-only at `/data/lake`, and the Postgres
+socket with `DATABASE_URL` logged in as `virtues_applet_writer`. Its
+credentials are a file, `$CREDENTIALS_DIRECTORY/credentials.json`, and stdin
+carries `"credentials": null`. It reaches the internet only through an egress
+proxy for the run (`egress`), which allows any public host, refuses the box
+and its network, and records each request in `app_applet_run_requests`. A
+release build without `systemd-run` refuses the run rather than running it
+unsandboxed.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
 iframe with an opaque origin, and every file carries a CSP `sandbox
@@ -105,8 +121,8 @@ dies with core.
 
 | What | Where |
 |---|---|
-| Manifest schema | [`applets/MANIFEST_SCHEMA.json`](../../applets/MANIFEST_SCHEMA.json) |
+| The format, and converting to it | [`virtues-core/src/applet_templates/skill.rs`](../../virtues-core/src/applet_templates/skill.rs), [`convert.rs`](../../virtues-core/src/applet_templates/convert.rs) |
 | Catalog, roots, reconcile | [`virtues-core/src/applet_templates/mod.rs`](../../virtues-core/src/applet_templates/mod.rs) |
-| Runner, jail, env | [`virtues-core/src/applet_runner/mod.rs`](../../virtues-core/src/applet_runner/mod.rs) |
+| Runner, sandbox, env | [`virtues-core/src/applet_runner/mod.rs`](../../virtues-core/src/applet_runner/mod.rs) |
 | Faces | [`virtues-core/src/server/faces.rs`](../../virtues-core/src/server/faces.rs) |
 | Applets UI | [`apps/web/src/lib/components/applets/`](../../apps/web/src/lib/components/applets/) |

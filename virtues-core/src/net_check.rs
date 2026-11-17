@@ -297,7 +297,7 @@ fn pick_dial_addr(addrs: &[IpAddr]) -> Option<IpAddr> {
 /// when they carry no INET address yet (an unconfigured `wg1` still matters
 /// for the name rules). All unsafe lives here.
 #[cfg(target_os = "linux")]
-fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
+pub(crate) fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
     use std::collections::BTreeMap;
     use std::ffi::CStr;
 
@@ -346,7 +346,7 @@ fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
+pub(crate) fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
     Vec::new()
 }
 

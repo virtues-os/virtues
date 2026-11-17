@@ -55,13 +55,12 @@ interface Harness {
 	changes: string[];
 	attached: File[][];
 	mentions: number;
-	modes: number;
 }
 
 function mount(o: { markdown?: string; mobile?: boolean } = {}): Harness {
 	const element = document.createElement('div');
 	document.body.append(element);
-	const h = { sent: [], changes: [], attached: [], mentions: 0, modes: 0 } as unknown as Harness;
+	const h = { sent: [], changes: [], attached: [], mentions: 0 } as unknown as Harness;
 	h.composer = createComposer({
 		element,
 		markdown: o.markdown,
@@ -71,7 +70,6 @@ function mount(o: { markdown?: string; mobile?: boolean } = {}): Harness {
 		onFocusChange: () => {},
 		onHeight: () => {},
 		onAttach: (files) => h.attached.push(files),
-		onShiftTab: () => h.modes++,
 		onMentionOpen: () => h.mentions++,
 	});
 	open.push(h.composer);
@@ -257,7 +255,7 @@ describe('keys', () => {
 		expect(h.composer.markdown()).toBe('```\n  a\n  b\n  c\n```');
 	});
 
-	it('Shift+Tab takes an indent back in code, and switches the mode outside it', () => {
+	it('Shift+Tab takes an indent back in code, and outside it is left to move the focus', () => {
 		const h = mount();
 		typeIn(h.composer, '```');
 		press(h.composer, 'Enter');
@@ -265,12 +263,10 @@ describe('keys', () => {
 		typeIn(h.composer, 'a');
 		press(h.composer, 'Tab', { shift: true });
 		expect(h.composer.markdown()).toBe('```\na\n```');
-		expect(h.modes).toBe(0);
 
 		const plain = mount();
 		typeIn(plain.composer, 'hello');
-		expect(press(plain.composer, 'Tab', { shift: true })).toBe(true);
-		expect(plain.modes).toBe(1);
+		expect(press(plain.composer, 'Tab', { shift: true })).toBe(false);
 	});
 
 	it('Tab outside a list or code is left to move the focus', () => {

@@ -20,11 +20,17 @@
 //! Schedules are interpreted in the box owner's local timezone (from the
 //! profile), not UTC — so "9am daily" means 9am where the user is. This is a
 //! single-tenant appliance, so there is one timezone per box. If no timezone is
-//! set we fall back to UTC. (Note: the offset is captured when jobs register, so
-//! a DST change is picked up on the next restart/reschedule.)
+//! set we fall back to UTC.
+//!
+//! `tokio-cron-scheduler` turns the zone into a fixed UTC offset when a job is
+//! registered and computes every later firing in that offset. So each job
+//! records the offset it was registered with, and the sync pass re-registers
+//! any job whose zone now has a different offset: a DST change or a new
+//! profile timezone takes effect within one [`REFRESH_INTERVAL`].
 
 pub mod applets;
 pub mod slots;
+pub mod watch;
 
 use chrono_tz::Tz;
 use sqlx::PgPool;
@@ -48,11 +54,13 @@ pub struct Scheduler {
     db: PgPool,
     yjs_state: YjsState,
     scheduler: JobScheduler,
-    /// `applet_id -> (cron_expr, job id)` for everything currently registered.
-    /// The cron expression is kept so an *edited* schedule reads as a change
-    /// rather than a no-op — otherwise a user retiming an applet in the UI
-    /// would keep firing on the old schedule until the next restart.
-    registered: HashMap<String, (String, Uuid)>,
+    /// `applet_id -> (cron_expr, utc offset seconds, job id)` for everything
+    /// currently registered. The cron expression is kept so an *edited*
+    /// schedule reads as a change rather than a no-op — otherwise a user
+    /// retiming an applet in the UI would keep firing on the old schedule
+    /// until the next restart. The offset is kept for the same reason across
+    /// a DST change (see the module docs).
+    registered: HashMap<String, (String, i32, Uuid)>,
 }
 
 impl Scheduler {
@@ -71,7 +79,7 @@ impl Scheduler {
 
     /// Re-derive the registered job set from the database: add rows that have
     /// appeared, drop rows that are gone or disabled, and re-register any whose
-    /// cron expression changed. Returns the number of jobs added.
+    /// cron expression or UTC offset changed. Returns the number of jobs added.
     ///
     /// Called once at startup and then on a timer. It used to be a one-shot at
     /// boot, which meant a source connected while the box was running had its
@@ -92,7 +100,8 @@ impl Scheduler {
                  AND archived_at IS NULL
                  AND schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
-                 AND (command IS NOT NULL OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
+                 AND (command IS NOT NULL OR run_sql IS NOT NULL
+                      OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
             )
             .fetch_all(&self.db)
             .await?;
@@ -102,12 +111,39 @@ impl Scheduler {
                 .map(|(id, name, cron, due)| (id, (name, cron, due)))
                 .collect();
 
+        // Single-tenant box → one timezone for every schedule. Resolved per
+        // sync so a profile timezone change is picked up too.
+        let tz = resolve_schedule_tz(&self.db).await;
+        let offset = utc_offset_seconds(tz, chrono::Utc::now());
+
+        // A job registered under another offset fires an hour off after a
+        // DST change. Its schedule has not changed, so its slot pointer is
+        // still right: re-register it and leave the pointer alone.
+        let shifted: Vec<String> = self
+            .registered
+            .iter()
+            .filter(|(id, (cron, registered_offset, _))| {
+                *registered_offset != offset
+                    && desired.get(*id).is_some_and(|(_, want, _)| want == cron)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for applet_id in shifted {
+            if let Some((_, _, job_id)) = self.registered.remove(&applet_id) {
+                if let Err(e) = self.scheduler.remove(&job_id).await {
+                    tracing::warn!(applet_id, error = %e, "failed to unregister cron job");
+                } else {
+                    tracing::info!(applet_id, offset, "re-registering cron action at a new UTC offset");
+                }
+            }
+        }
+
         // Drop anything that vanished, was disabled, or was retimed. Collect
         // first so we aren't mutating `registered` while reading it.
         let stale: Vec<String> = self
             .registered
             .iter()
-            .filter(|(id, (cron, _))| {
+            .filter(|(id, (cron, _, _))| {
                 desired
                     .get(*id)
                     .map(|(_, want, _)| want != cron)
@@ -116,7 +152,7 @@ impl Scheduler {
             .map(|(id, _)| id.clone())
             .collect();
         for applet_id in stale {
-            if let Some((_, job_id)) = self.registered.remove(&applet_id) {
+            if let Some((_, _, job_id)) = self.registered.remove(&applet_id) {
                 if let Err(e) = self.scheduler.remove(&job_id).await {
                     tracing::warn!(applet_id, error = %e, "failed to unregister cron job");
                 } else {
@@ -141,9 +177,6 @@ impl Scheduler {
             }
         }
 
-        // Single-tenant box → one timezone for every schedule. Resolved per
-        // sync so a profile timezone change is picked up too.
-        let tz = resolve_schedule_tz(&self.db).await;
         let mut added = 0usize;
 
         for (applet_id, (name, cron_expr, next_due_at)) in desired {
@@ -176,7 +209,10 @@ impl Scheduler {
                     // embedding drain is hours) would otherwise leave the slot
                     // unadvanced for its whole duration, and every sync pass
                     // in that window would read the applet as overdue.
-                    stamp_fired_slot(&deps.db, &applet_id, &cron_expr, tz).await;
+                    if !claim_fired_slot(&deps.db, &applet_id, &cron_expr, tz).await {
+                        tracing::info!(applet_id, "cron slot already ran; skipping the repeat");
+                        return;
+                    }
 
                     if let Err(e) =
                         crate::applet_runner::run_applet(&deps, &applet_id, "cron", None).await
@@ -205,7 +241,7 @@ impl Scheduler {
 
             match self.scheduler.add(job).await {
                 Ok(job_id) => {
-                    self.registered.insert(applet_id.clone(), (cron_expr, job_id));
+                    self.registered.insert(applet_id.clone(), (cron_expr, offset, job_id));
                     added += 1;
                     tracing::debug!(applet_id = %applet_id, name = %name, "registered cron action");
                 }
@@ -309,6 +345,10 @@ impl Scheduler {
                 Ok(n) => tracing::info!("scheduler picked up {n} new cron action(s)"),
                 Err(e) => tracing::warn!(error = %e, "scheduler refresh failed; will retry"),
             }
+            let deps = RunnerDeps { db: self.db.clone(), yjs: self.yjs_state.clone() };
+            if let Err(e) = watch::poll(&deps).await {
+                tracing::warn!(error = %e, "data trigger poll failed; will retry");
+            }
         }
     }
 
@@ -379,21 +419,35 @@ pub struct ScheduledApplet {
 /// `next_due_at` forward by that drift on every single firing. Falls back to
 /// the wake moment only if the expression will not yield an occurrence, which
 /// keeps a strange schedule from freezing the pointer entirely.
-async fn stamp_fired_slot(db: &PgPool, applet_id: &str, cron_expr: &str, tz: Tz) {
+/// Claim the slot a cron firing belongs to, and say whether to run. False
+/// only when that slot already ran (or a later one did); a slot that cannot
+/// be named or a failed write runs anyway, as before the claim existed.
+async fn claim_fired_slot(db: &PgPool, applet_id: &str, cron_expr: &str, tz: Tz) -> bool {
     let now = chrono::Utc::now();
     let Some(cron) = slots::parse(cron_expr) else {
-        return;
+        return true;
     };
     let slot = slots::previous_at_or_before(&cron, tz, now).unwrap_or(now);
     let next = slots::next_after(&cron, tz, now);
-    if let Err(e) = slots::mark_slot_handled(db, applet_id, slot, next).await {
-        tracing::warn!(applet_id, error = %e, "failed to stamp fired slot");
+    match slots::claim_slot(db, applet_id, slot, next).await {
+        Ok(claimed) => claimed,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "failed to stamp fired slot");
+            true
+        }
     }
+}
+
+/// The UTC offset `tz` has at `at`, computed the way `Job::new_async_tz`
+/// fixes it when a job is registered.
+fn utc_offset_seconds(tz: Tz, at: chrono::DateTime<chrono::Utc>) -> i32 {
+    use chrono::{Offset, TimeZone};
+    tz.offset_from_utc_datetime(&at.naive_utc()).fix().local_minus_utc()
 }
 
 /// Resolve the timezone cron schedules are interpreted in: the box owner's
 /// profile timezone, falling back to UTC if unset or unrecognized.
-async fn resolve_schedule_tz(db: &PgPool) -> Tz {
+pub(crate) async fn resolve_schedule_tz(db: &PgPool) -> Tz {
     match crate::api::profile::get_timezone(db).await {
         Ok(Some(name)) => match name.parse::<Tz>() {
             Ok(tz) => tz,
@@ -413,6 +467,23 @@ async fn resolve_schedule_tz(db: &PgPool) -> Tz {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// When the clocks go back, a re-registered job wakes again for times in
+    /// the repeated hour. Its slot is already claimed, so it does not run
+    /// twice; the next new slot still runs.
+    #[sqlx::test]
+    async fn a_slot_is_claimed_once(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner, schedule, command) VALUES ('applet_tick', 'Tick', 'user', '0 30 1 * * *', '[\"true\"]')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let at = |s: &str| chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc);
+        let first = at("2031-11-02T06:30:00Z");
+        assert!(slots::claim_slot(&pool, "applet_tick", first, None).await.unwrap());
+        assert!(!slots::claim_slot(&pool, "applet_tick", first, None).await.unwrap(), "the same slot ran twice");
+        assert!(!slots::claim_slot(&pool, "applet_tick", at("2031-11-01T06:30:00Z"), None).await.unwrap());
+        assert!(slots::claim_slot(&pool, "applet_tick", at("2031-11-03T07:30:00Z"), None).await.unwrap());
+    }
 
     // Requires a live Postgres: `#[sqlx::test]` provisions a scratch DB and
     // applies `core/migrations` automatically. Set DATABASE_URL when running.
@@ -484,9 +555,45 @@ mod tests {
 
         assert_eq!(sched.sync_jobs().await.unwrap(), 1, "retimed → re-registered");
         assert_eq!(
-            sched.registered.get("applet_a").map(|(c, _)| c.as_str()),
+            sched.registered.get("applet_a").map(|(c, _, _)| c.as_str()),
             Some("0 */5 * * * *")
         );
+    }
+
+    /// A job registered before a DST change keeps the old UTC offset inside
+    /// tokio-cron-scheduler, so a daily 9:00 fires at 8:00 or 10:00 until the
+    /// job is registered again. The sync pass must re-register it, and must
+    /// not treat it as retimed: the slot pointer still belongs to its schedule.
+    #[sqlx::test]
+    async fn reregisters_a_job_whose_utc_offset_changed(pool: PgPool) {
+        let mut sched = scheduler(&pool).await;
+        insert_applet(&pool, "applet_a", "0 0 9 * * *").await;
+        assert_eq!(sched.sync_jobs().await.unwrap(), 1);
+        let (_, due_before) = pointer(&pool, "applet_a").await;
+        assert!(due_before.is_some(), "the first sync seeds the pointer");
+
+        // The offset the job was registered under, an hour away from now's.
+        sched.registered.get_mut("applet_a").unwrap().1 += 3600;
+
+        assert_eq!(sched.sync_jobs().await.unwrap(), 1, "new offset → re-registered");
+        let tz = resolve_schedule_tz(&pool).await;
+        assert_eq!(
+            sched.registered.get("applet_a").map(|(_, o, _)| *o),
+            Some(utc_offset_seconds(tz, chrono::Utc::now()))
+        );
+        assert_eq!(pointer(&pool, "applet_a").await.1, due_before, "the slot pointer is kept");
+        assert_eq!(sched.sync_jobs().await.unwrap(), 0, "and then left alone");
+    }
+
+    /// The offset is read the way the scheduler crate fixes it, so it moves
+    /// across a DST change.
+    #[test]
+    fn the_utc_offset_moves_across_dst() {
+        let ny: Tz = "America/New_York".parse().unwrap();
+        let summer = chrono::DateTime::parse_from_rfc3339("2026-10-31T12:00:00Z").unwrap();
+        let winter = chrono::DateTime::parse_from_rfc3339("2026-11-02T12:00:00Z").unwrap();
+        assert_eq!(utc_offset_seconds(ny, summer.into()), -4 * 3600);
+        assert_eq!(utc_offset_seconds(ny, winter.into()), -5 * 3600);
     }
 
     type Utc0 = chrono::DateTime<chrono::Utc>;

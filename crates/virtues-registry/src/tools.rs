@@ -60,7 +60,7 @@ pub struct ToolConfig {
 /// These are the core tools that ship with Virtues:
 /// - web_search: Search the web (Parallel)
 /// - sql_query: Read-only SQL queries against user data
-/// - code_interpreter: Execute Python code for calculations and analysis
+/// - shell: bash and Python in a sandbox, for calculations and analysis
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
 /// - edit_page: Edit a block page by block ops, a markdown page by find/replace
@@ -77,13 +77,14 @@ pub fn default_tools() -> Vec<ToolConfig> {
         semantic_search_tool(),
         sql_query_tool(true),
         sql_write_tool(),
+        sudo_tool(),
         shell_tool(),
-        code_interpreter_tool(),
         dispatch_subagents_tool(),
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
         applet_tool(&APPLET_ALL_ACTIONS),
+        use_applet_tool(&[]),
         update_applet_memory_tool(),
         get_project_item_tool(),
         generate_image_tool(),
@@ -92,38 +93,8 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
-    .chain([send_imessage_tool(), create_task_tool(), update_task_tool(), save_skill_tool()])
+    .chain([connection_tool(), send_imessage_tool(), create_task_tool(), update_task_tool()])
     .collect()
-}
-
-/// Save one of the person's own skills: a prompt they can pick from the
-/// composer's `/` menu (virtues-core `api/skills.rs`). Offered only inside the
-/// shipped `new-skill` skill, and gated like applet setup, because a skill
-/// is a prompt that later runs with tools.
-fn save_skill_tool() -> ToolConfig {
-    ToolConfig {
-        id: "save_skill".to_string(),
-        name: "Save Skill".to_string(),
-        description: "Save a skill the person can run from the / menu".to_string(),
-        llm_description: r#"Save one of the user's skills, which they run by typing / in the composer. Agree the name and what it does with them first. `body` is the prompt the skill's turn runs with: say what to read, what to write, and in what shape, addressed to the assistant. `tools`: only what the body needs. `model`: deep only for slow, high-stakes work. Saving an existing name of theirs replaces it."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["name", "description", "body", "tools"],
-            "properties": {
-                "name": { "type": "string", "description": "lowercase-with-dashes" },
-                "description": { "type": "string", "description": "One line: when to use it" },
-                "icon": { "type": "string", "description": "A Remix icon id, e.g. ri:book-line" },
-                "tools": { "type": "array", "items": { "type": "string" } },
-                "body": { "type": "string" },
-                "model": { "type": "string", "enum": ["standard", "deep"] }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:flashlight-line".to_string(),
-        display_order: 0,
-        is_system: false,
-    }
 }
 
 /// Add tasks to the to-do list the owner and the assistant share (virtues-core
@@ -134,7 +105,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. thing_id (a wiki_things id) puts it under a thing in place of a project. recur_every with recur_unit makes the owner's own task recur, that long after they finish it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -149,7 +120,10 @@ fn create_task_tool() -> ToolConfig {
                             "notes": { "type": "string" },
                             "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
                             "for": { "type": "string", "enum": ["owner", "assistant"] },
-                            "project_id": { "type": "string" }
+                            "project_id": { "type": "string" },
+                            "thing_id": { "type": "string" },
+                            "recur_every": { "type": "integer" },
+                            "recur_unit": { "type": "string", "enum": ["day", "week", "month", "year"] }
                         }
                     }
                 },
@@ -170,7 +144,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". due "none" clears it."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, thing_id or recur_unit."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -181,6 +155,9 @@ fn update_task_tool() -> ToolConfig {
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
                 "project_id": { "type": "string" },
+                "thing_id": { "type": "string" },
+                "recur_every": { "type": "integer" },
+                "recur_unit": { "type": "string" },
                 "status": { "type": "string", "enum": ["open", "active", "ready", "done", "dismissed"] },
                 "result": { "type": "string" },
                 "result_url": { "type": "string" },
@@ -190,6 +167,35 @@ fn update_task_tool() -> ToolConfig {
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 47,
+        is_system: false,
+    }
+}
+
+/// A service the owner connected over MCP, such as Linear (virtues-core
+/// `tools/connection.rs`). The chat hands it a whole task, and a worker with
+/// only that service's tools does it, so the chat's tool list stays the same
+/// whatever is connected. A tool that declares itself destructive is not
+/// offered to the worker until the owner agrees and the chat calls again
+/// with `confirmed`.
+fn connection_tool() -> ToolConfig {
+    ToolConfig {
+        id: "connection".to_string(),
+        name: "Use a connected service".to_string(),
+        description: "Do a task in a service you connected, such as Linear".to_string(),
+        llm_description: "Hand a task to a service the owner connected over MCP, such as Linear. A worker with only that service's tools does it and sees only `task`, so write it in full: what to find or change, every value it needs, and how far to go. Tools the service labels as deleting or overwriting are held back and listed in `held_back`; when the worker needs one it says what it would change. Ask the owner, and if they agree, call again with `confirmed: true`. Returns `answer`, with identifiers and links.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "task"],
+            "properties": {
+                "name": { "type": "string", "description": "The service, such as linear" },
+                "task": { "type": "string" },
+                "confirmed": { "type": "boolean", "description": "The owner agreed to the change the worker described" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:plug-line".to_string(),
         display_order: 47,
         is_system: false,
     }
@@ -399,7 +405,7 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with code_interpreter. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["kind"],
@@ -733,11 +739,11 @@ Naming a person, place or org, or dates spanning a week or less, puts `from_your
 }
 
 /// SQL Query tool (read-only data access). `saves` offers `save_as`, which
-/// keeps a result as a CSV in a chat's code_interpreter workspace; a run with
+/// keeps a result as a CSV in a chat's shell workspace; a run with
 /// no chat has no workspace to keep it in, so it is offered the tool without.
 pub fn sql_query_tool(saves: bool) -> ToolConfig {
     let save_as = if saves {
-        "; with save_as up to 10,000 rows go to a CSV in the code_interpreter workspace and you see 20"
+        "; with save_as up to 10,000 rows go to a CSV in the shell workspace and you see 20"
     } else {
         ""
     };
@@ -797,22 +803,25 @@ GROUP BY p.name ORDER BY 2 DESC LIMIT 10"#
     }
 }
 
-/// Code Interpreter tool - execute Python code in a sandbox
-fn code_interpreter_tool() -> ToolConfig {
+/// Shell tool - bash in the sandbox (`virtues::sandbox`): no network, a
+/// throwaway user, the box's data hidden. Python with the pinned packages is
+/// `python3` on its PATH. An applet's run also sees its folder at /skill, and
+/// reaches the hosts its `net(host)` entries ask for that the owner allowed.
+fn shell_tool() -> ToolConfig {
     ToolConfig {
-        id: "code_interpreter".to_string(),
-        name: "Python".to_string(),
-        description: "Execute Python code for calculations and data analysis".to_string(),
-        llm_description: r#"Run Python 3 in a sandbox for anything past a couple of steps in your head: arithmetic over many numbers, statistics, date math, finance, analysis of query results. Not for a single lookup or a fact you can state.
+        id: "shell".to_string(),
+        name: "Shell".to_string(),
+        description: "Run commands and Python in a sandbox".to_string(),
+        llm_description: r#"Run a bash command in a sandbox, for anything past a couple of steps in your head: arithmetic over many numbers, statistics, date math, finance, analysis of query results. Not for a single lookup or a fact you can state.
 
-print() what you want back; only stdout and stderr return. Packages: numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil and the standard library; a result saying packages are not installed yet means standard library only for that call.
+Python is python3, with numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil and the standard library; a result saying packages are not installed yet means standard library only for that call. Write a script with a heredoc (python3 - <<'EOF' … EOF) or python3 -c. Only stdout and stderr return.
 
-The working directory is this chat's workspace and persists between calls; variables do not. A sql_query save_as file is here as a CSV. Save charts to out/ (plt.savefig('out/x.png')): each one shows with your reply, so say what it shows and never link it. No network, 1 GB memory. On a traceback, fix the code and retry."#.to_string(),
+The working directory is this chat's workspace and persists between calls; variables do not. A sql_query save_as file is here as a CSV. Save charts to out/ (plt.savefig('out/x.png')): each one shows with your reply, so say what it shows and never link it. No network, 1 GB memory. On a traceback, fix the command and retry."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["code"],
+            "required": ["command"],
             "properties": {
-                "code": { "type": "string" },
+                "command": { "type": "string", "description": "Run with bash -c" },
                 "timeout": {
                     "type": "integer",
                     "description": "Seconds",
@@ -824,7 +833,7 @@ The working directory is this chat's workspace and persists between calls; varia
         }),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Data,
-        icon: "ri:code-s-slash-line".to_string(),
+        icon: "ri:terminal-line".to_string(),
         display_order: 4,
         is_system: false,
     }
@@ -849,8 +858,8 @@ When to use:
 
 How to use well:
 - Dispatch the FEWEST workers that cover the independent questions — usually 2-4, never more than 5. Don't split one question into redundant workers.
-- Each worker is READ-ONLY (sql_query, semantic_search, web_search, code_interpreter, think) and cannot dispatch further workers. Give each a self-contained objective — workers do NOT see the conversation, only their objective.
-- Tell each worker to compute real statistics with code_interpreter where relevant, cite the specific records/sources it used, and return a CONCISE findings summary (not a transcript).
+- Each worker is READ-ONLY (sql_query, semantic_search, web_search, shell, think) and cannot dispatch further workers. Give each a self-contained objective — workers do NOT see the conversation, only their objective.
+- Tell each worker to compute real statistics with shell where relevant, cite the specific records/sources it used, and return a CONCISE findings summary (not a transcript).
 - Pick each worker's `model` by difficulty: "fast" for simple lookups, "balanced" (default) for normal research, "strong" for hard quantitative analysis.
 
 After they return, synthesize their findings yourself — weigh agreements, surface disagreements, and never assert causation from correlation.
@@ -858,8 +867,8 @@ After they return, synthesize their findings yourself — weigh agreements, surf
 Example:
 {
   "missions": [
-    {"title": "Spending trend", "objective": "Query data_financial_transaction for monthly spending by category over the last 6 months. Use code_interpreter to compute the trend and flag the categories that grew most. Cite the rows.", "model": "balanced"},
-    {"title": "Sleep correlation", "objective": "Pull data_health_sleep and monthly spending for the same period. Compute the correlation with code_interpreter. Report n and how weak/strong it is. Cite sources.", "model": "strong"},
+    {"title": "Spending trend", "objective": "Query data_financial_transaction for monthly spending by category over the last 6 months. Use shell to compute the trend and flag the categories that grew most. Cite the rows.", "model": "balanced"},
+    {"title": "Sleep correlation", "objective": "Pull data_health_sleep and monthly spending for the same period. Compute the correlation with shell. Report n and how weak/strong it is. Cite sources.", "model": "strong"},
     {"title": "Counter-evidence", "objective": "Argue against the idea that spending rose due to one cause. Look for confounders (seasonality, one-off purchases, income changes) in the data. Cite what you find.", "model": "balanced"}
   ]
 }"#.to_string(),
@@ -1007,7 +1016,7 @@ fn sql_write_tool() -> ToolConfig {
         id: "sql_write".to_string(),
         name: "SQL Write".to_string(),
         description: "Write to applet-owned tables".to_string(),
-        llm_description: r#"One INSERT, UPDATE or DELETE on an applet's own tables (applet_* schemas; everything else is read-only). Create tables with the applet tool's setup action (schema_sql) first. Add RETURNING to get rows back (max 500)."#.to_string(),
+        llm_description: r#"One INSERT, UPDATE or DELETE on an applet's own tables (applet_* schemas; everything else is read-only). Create tables with the applet tool's setup action (tables) first. Add RETURNING to get rows back (max 500)."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["sql"],
@@ -1023,19 +1032,20 @@ fn sql_write_tool() -> ToolConfig {
     }
 }
 
-/// Shell tool — a command on the server itself, as its admin account.
-/// Sudo mode only: `ChatMode::tools` lists it for no other mode and
-/// the executor refuses it outside a sudo turn.
-fn shell_tool() -> ToolConfig {
+/// Sudo tool — a command on the server itself, as its admin account.
+/// The admin applet only: no other applet may list it, and the executor
+/// refuses it outside a sudo turn. The sandboxed `shell` is the one chat and
+/// every other applet gets.
+fn sudo_tool() -> ToolConfig {
     ToolConfig {
-        id: "shell".to_string(),
-        name: "Shell".to_string(),
+        id: "sudo".to_string(),
+        name: "Sudo".to_string(),
         description: "Run a command on the server, with sudo".to_string(),
-        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages. Reads run at once; changes wait for the owner to allow them.
+        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages, and read every secret on the server, saved passwords and the box key included. Calls run at once. Two kinds wait for the owner to allow them: a command that deletes data, and virtues backup --init-key, which prints a new backup recovery key.
 
-The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. Returns exit_code, stdout and stderr; long output keeps its beginning and its end.
+The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. It starts from a clean environment, not the server's. Returns exit_code, stdout and stderr; long output keeps its beginning and its end. All of it comes into this chat.
 
-- Database: psql "$DATABASE_URL" -c '…', as the app's role.
+- Database: psql -c '…' with no connection arguments, as the app's role.
 - Logs: journalctl -u virtues --no-pager -n 200 (add -p warning, --since "1 hour ago").
 - Long jobs: raise timeout_seconds (default 120, max 600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
 
@@ -1073,9 +1083,9 @@ This server is running this conversation: restarting the virtues service, reboot
 const APPLET_ACTIONS: [(&str, &str); 6] = [
     ("list", "applets and their last run. Filter with owner (ai = made in a chat), enabled, trigger, include_archived."),
     ("get", "one applet's full config and last 10 runs, by id. Read it before editing or debugging one."),
-    ("setup", "create or update one: a scheduled task, reminder, monitor, tracker or dashboard. First call with guide=true and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."),
-    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, config, memory."),
-    ("run", "run one by id now; it needs the `tool` trigger. `payload` is context for the run; `date` (YYYY-MM-DD) is for a date-scoped applet."),
+    ("setup", "create or change one. An applet is a short file. Give it a `name` of a few words and a one-sentence `description` of what it does for the person and when to use it. Add a `prompt` if it should do something: what to read, what to write and how long, in under 300 words, naming only tables you have seen with sql_query. It runs later with no chat history and your tools (`tools` narrows them); it cannot fetch a URL or send a message, so never write one that needs to. Add a `trigger` if it should start on its own, in the box's time: `every day at 07:00`, `every monday at 09:00`, `every hour`, or `on 2026-11-02 at 09:00` for a one-off; or on rows in a data table: `new data_health_workout`, `30 minutes before data_calendar_event`, `15 minutes after data_calendar_event ends`. Add `run: sql …` that returns a row only when it should run; with a data trigger, it and the prompt get the rows as new_rows. Add `tables` with CREATE TABLE statements for its own records, and send all of them each time; its prompt, `run` and view name them with no schema; its prompt writes them with sql_write. Add a `view` for a page: one HTML document that links virtues.css and virtues.js and reads with `await virtues.query(sql)`. `invoke` is `assistant` unless you add `chat`, which puts it in the owner's / menu. `limit` defaults to $1 per day. The same name changes only the keys you send, a built-in applet's prompt and trigger too. It starts on. If setup returns findings, fix each and call again."),
+    ("edit", "turn one on or off, or set its notes, by id: `patch` takes `enabled` and `memory`. Change what an applet is with setup."),
+    ("run", "run one by id now; its invoke must include assistant. `payload` is context for the run; `date` (YYYY-MM-DD) is for a date-scoped applet."),
     ("delete", "delete a user-owned one by id; system ones refuse, so offer to disable. Confirm unless the ask was explicit."),
 ];
 
@@ -1085,7 +1095,7 @@ pub const APPLET_ALL_ACTIONS: [&str; 6] = ["list", "get", "setup", "edit", "run"
 /// The applet actions that change nothing.
 pub const APPLET_READ_ACTIONS: [&str; 2] = ["list", "get"];
 
-const APPLET_TRIGGERS: [&str; 6] = ["cron", "manual", "tool", "api", "webhook", "message"];
+const APPLET_TRIGGERS: [&str; 5] = ["cron", "manual", "tool", "webhook", "message"];
 
 /// The applet tool, offering `actions`. One tool for everything chat does with
 /// applets, so their schema is sent once per step rather than six times.
@@ -1111,31 +1121,12 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         add("include_archived", serde_json::json!({ "type": "boolean" }));
     }
     if offers("setup") {
-        add("guide", serde_json::json!({ "type": "boolean" }));
-        add("check_only", serde_json::json!({ "type": "boolean" }));
-        add("name", serde_json::json!({ "type": "string" }));
-        add("description", serde_json::json!({ "type": "string" }));
-        add("agent", serde_json::json!({ "type": "string", "description": "Run prompt; omit for a face-only dashboard" }));
-        add("schedule", serde_json::json!({ "type": "string" }));
-        add("triggers", serde_json::json!({ "type": "array", "items": { "type": "string", "enum": APPLET_TRIGGERS } }));
-        add("condition", serde_json::json!({ "type": "string" }));
-        add("until", serde_json::json!({ "type": "string" }));
-        add("schema_sql", serde_json::json!({ "type": "string" }));
-        add("face_html", serde_json::json!({ "type": "string" }));
-        add("delivers", serde_json::json!({ "type": "string", "enum": ["page", "chat", "dashboard"] }));
-        add(
-            "limits",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "max_llm_cost":         { "type": "number"  },
-                    "max_llm_cost_per_day": { "type": "number"  },
-                    "max_runs_per_day":     { "type": "integer" },
-                    "max_runs_per_hour":    { "type": "integer" },
-                    "timeout_s":            { "type": "integer" }
-                }
-            }),
-        );
+        for key in ["name", "description", "prompt", "trigger", "run", "tables", "view", "limit"] {
+            add(key, serde_json::json!({ "type": "string" }));
+        }
+        add("invoke", serde_json::json!({ "type": "array", "items": { "type": "string", "enum": ["chat", "assistant"] } }));
+        add("tools", serde_json::json!({ "type": "array", "items": { "type": "string" } }));
+        add("model", serde_json::json!({ "type": "string", "enum": ["standard", "deep", "lite"] }));
     }
     if offers("edit") {
         add(
@@ -1143,13 +1134,7 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
             serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" },
-                    "agent": { "type": ["string", "null"] },
-                    "schedule": { "type": ["string", "null"] },
                     "enabled": { "type": "boolean" },
-                    "config": { "type": "object" },
-                    "condition": { "type": ["string", "null"] },
-                    "triggers": { "type": "array", "items": { "type": "string" } },
                     "memory": { "type": ["string", "null"] }
                 }
             }),
@@ -1163,10 +1148,9 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         id: "applet".to_string(),
         name: "Applets".to_string(),
         description: "List, read, set up, change, run or delete applets".to_string(),
-        // The authoring contract is applets/AGENTS.md, returned by setup with
-        // `{"guide": true}`. It is one source for the in-box assistant and for
-        // agents working in the repo, and it stays out of the definition every
-        // chat step re-sends.
+        // Setup's line is the whole authoring instruction: an applet is a
+        // short file a modest model writes in one call, so nothing is fetched
+        // by a second one (agents/plan/applet-shape.md, slice 8).
         llm_description: format!(
             "Applets are the owner's scheduled tasks, reminders, monitors, trackers and dashboards. Set `action`:\n{}",
             lines.join("\n")
@@ -1177,6 +1161,99 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         icon: "ri:robot-2-line".to_string(),
         display_order: 8,
         is_system: false,
+    }
+}
+
+/// One applet `use_applet` offers.
+pub struct UsableEntry<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    /// The files its prompt may read, relative to its folder.
+    pub files: &'a [String],
+}
+
+/// How many applets `use_applet` lists, and how much of each description.
+/// Chat re-sends the list every step, so a box with many applets must not
+/// grow it without end: 25 at 160 characters is about 4,500 at most.
+const USE_APPLET_MAX_ENTRIES: usize = 25;
+const USE_APPLET_MAX_DESCRIPTION: usize = 160;
+
+/// `- name: description`, cut to the limits above. With `files`, the
+/// applet's files follow; chat leaves them out, since loading returns them.
+fn usable_lines(entries: &[UsableEntry], files: bool) -> Vec<String> {
+    entries
+        .iter()
+        .take(USE_APPLET_MAX_ENTRIES)
+        .map(|e| {
+            let mut d: String = e.description.chars().take(USE_APPLET_MAX_DESCRIPTION).collect();
+            if files && !e.files.is_empty() {
+                d.push_str(&format!(" Files: {}.", e.files.join(", ")));
+            }
+            format!("- {}: {d}", e.name)
+        })
+        .collect()
+}
+
+/// `use_applet` as chat offers it: the applets the assistant may load, by
+/// name and description (the spec's first stage). Loading one returns its
+/// prompt (the second), and `file` one of its files (the third). The list is
+/// sorted by the caller and changes only when the catalog does, so the
+/// definition stays in the cached prefix between turns.
+///
+/// In the registry with no entries, as a system tool, so the web client has
+/// an entry for it; chat builds the real one from the catalog
+/// (`ChatMode::tools`).
+pub fn use_applet_tool(entries: &[UsableEntry]) -> ToolConfig {
+    let names: Vec<&str> = entries.iter().take(USE_APPLET_MAX_ENTRIES).map(|e| e.name).collect();
+    ToolConfig {
+        llm_description: format!(
+            "Load an applet: instructions the owner keeps for one kind of request. When a request matches an applet below, call this with its name before you answer, then follow the instructions it returns, in this turn, with the tools you have. With `file`, it returns one of that applet's files, which its instructions name.\nApplets:\n{}",
+            usable_lines(entries, false).join("\n")
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string", "enum": names },
+                "file": { "type": "string" }
+            }
+        }),
+        ..use_applet_base()
+    }
+}
+
+/// `use_applet` in an applet's own turn or run whose folder has files: its
+/// prompt is already loaded, so the tool only reads them.
+pub fn applet_files_tool(entry: &UsableEntry) -> ToolConfig {
+    ToolConfig {
+        llm_description: format!(
+            "Read one of this applet's own files when its instructions call for it.\n{}",
+            usable_lines(std::slice::from_ref(entry), true).join("\n")
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "file"],
+            "properties": {
+                "name": { "type": "string", "enum": [entry.name] },
+                "file": { "type": "string", "enum": entry.files }
+            }
+        }),
+        ..use_applet_base()
+    }
+}
+
+fn use_applet_base() -> ToolConfig {
+    ToolConfig {
+        id: "use_applet".to_string(),
+        name: "Use an applet".to_string(),
+        description: "Load an applet's instructions or read one of its files".to_string(),
+        llm_description: String::new(),
+        parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:robot-2-line".to_string(),
+        display_order: 8,
+        is_system: true,
     }
 }
 
@@ -1238,7 +1315,7 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
-        "code_interpreter": true,
+        "shell": true,
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
@@ -1291,7 +1368,8 @@ mod tests {
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
-        assert!(ids.contains(&"code_interpreter"));
+        assert!(ids.contains(&"shell"));
+        assert!(ids.contains(&"sudo"));
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
@@ -1335,7 +1413,7 @@ mod tests {
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("code_interpreter"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("shell"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("create_page"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("get_page_content"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("edit_page"), Some(&serde_json::json!(true)));

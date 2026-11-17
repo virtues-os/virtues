@@ -10,18 +10,6 @@ const COMMANDS: &[&str] = &[
   "reach_status",
   "forget",
   "discover",
-  "provision_open",
-  "provision_networks",
-  "provision_join",
-  "improv_discover",
-  "improv_claim",
-  "improv_grant",
-  "improv_wifi_scan",
-  "improv_provision",
-  "improv_pair",
-  "improv_disconnect",
-  "improv_owner_claim",
-  "reach_rehome",
   "outbox_stats",
   "drain_now",
   "radio_stats",
@@ -30,6 +18,7 @@ const COMMANDS: &[&str] = &[
   "pair_door_status",
   "pair_handoff_create",
   "pair_handoff_accept",
+  "owner_proof_sign",
 ];
 
 fn main() {

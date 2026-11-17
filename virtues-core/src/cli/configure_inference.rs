@@ -125,7 +125,7 @@ pub async fn switch(
     yes: bool,
 ) -> Result<()> {
     let embed_url = normalize_url(embed_url)?;
-    ensure_local(&embed_url, "embedding server").await?;
+    confirm_destination(&embed_url, "embedding server").await?;
     let model = embed_model
         .map(str::to_string)
         .or_else(|| std::env::var("VIRTUES_EMBED_MODEL").ok().filter(|s| !s.trim().is_empty()))
@@ -286,45 +286,61 @@ fn normalize_url(raw: &str) -> Result<String> {
     Ok(u)
 }
 
-/// Inference servers must be on this machine, the LAN, or a VPN — the same rule
-/// and override as the installer's `mode::ensure_local` (two copies: the
-/// installer cannot depend on this crate; change one, change both).
-async fn ensure_local(url: &str, label: &str) -> Result<()> {
+/// Check where an inference server sends your text, using
+/// `search::embedder::locality` and the same override as the installer's
+/// `mode::confirm_destination`. A server on
+/// this machine, the LAN or a VPN passes. A public one passes only over HTTPS,
+/// and only after the owner confirms the host by name at a terminal, because
+/// the server sends it the text of everything it indexes. `--yes` doesn't
+/// cover this question; without a terminal, VIRTUES_ALLOW_REMOTE_INFERENCE=1
+/// is the confirmation.
+async fn confirm_destination(url: &str, label: &str) -> Result<()> {
+    use std::io::IsTerminal;
+
     if std::env::var("VIRTUES_ALLOW_REMOTE_INFERENCE").as_deref() == Ok("1") {
         tracing::warn!("VIRTUES_ALLOW_REMOTE_INFERENCE=1: not checking that {url} is local");
         return Ok(());
     }
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let authority = rest.split('/').next().unwrap_or(rest);
-    // A port is whatever follows the last ':' outside an IPv6 literal's
-    // brackets: `[::1]:8080` has one, `[::1]` and `host` don't.
-    let has_port = match authority.rfind(']') {
-        Some(end) => authority[end..].contains(':'),
-        None => authority.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()),
-    };
-    let lookup = if has_port { authority.to_string() } else { format!("{authority}:80") };
-    let addrs: Vec<std::net::IpAddr> = tokio::net::lookup_host(&lookup)
-        .await
-        .map_err(|e| Error::Other(format!("can't resolve the {label} {url}: {e}")))?
-        .map(|s| s.ip())
-        .collect();
-    let local = |ip: &std::net::IpAddr| match ip {
-        std::net::IpAddr::V4(v4) => {
-            let o = v4.octets();
-            v4.is_loopback() || v4.is_private() || v4.is_link_local() || (o[0] == 100 && (64..128).contains(&o[1]))
+    use crate::search::embedder::{locality, url_host, Locality};
+    match locality(url).await {
+        Locality::Local => return Ok(()),
+        Locality::Unknown => {
+            return Err(Error::Other(format!("can't look up the {label} {url}, so it can't be checked")));
         }
-        // Loopback, unique-local (fc00::/7) and link-local (fe80::/10).
-        std::net::IpAddr::V6(v6) => {
-            let s0 = v6.segments()[0];
-            v6.is_loopback() || (s0 & 0xfe00) == 0xfc00 || (s0 & 0xffc0) == 0xfe80
-        }
+        Locality::Public => {}
+    }
+    let host = url_host(url);
+    let refuse = |why: &str| {
+        Error::Other(format!(
+            "the {label} {url} is a public address, outside your network. {why} Nothing was \
+             changed. Use an HTTPS URL, or a server on this machine, your network or your VPN. \
+             To skip this check in a script, set VIRTUES_ALLOW_REMOTE_INFERENCE=1."
+        ))
     };
-    if addrs.is_empty() || !addrs.iter().all(local) {
+    if !url.starts_with("https://") {
+        return Err(refuse("Over plain HTTP, your text would cross the internet unencrypted."));
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(refuse(
+            "Sending your text there needs your confirmation, and there's no terminal to ask on.",
+        ));
+    }
+    println!();
+    println!("  {host} is outside your network. Your server sends it the text of everything");
+    println!("  it indexes for search, from every source you connect, and whoever runs {host}");
+    println!("  can read that text.");
+    println!();
+    let send = dialoguer::Confirm::new()
+        .with_prompt(format!("Send your search text to {host}?"))
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+    if !send {
         return Err(Error::Other(format!(
-            "the {label} {url} isn't on this machine, your LAN, or your VPN. Inference runs \
-             next to your data; set VIRTUES_ALLOW_REMOTE_INFERENCE=1 to override."
+            "the {label} wasn't changed. Choose a server on your own network instead."
         )));
     }
+    println!("✓ Your search text goes to {host}.");
     Ok(())
 }
 

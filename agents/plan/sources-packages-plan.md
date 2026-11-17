@@ -92,6 +92,6 @@ third-party packages:
   packages.** Silently pulling and running unjailed native code against all
   of the owner's data must not be the default anywhere.
 
-**Not yet:** treating `MANIFEST_SCHEMA.json` as a stable public API. It is
-public and tracked; breaking it starts costing other people once third parties
-build on it.
+**Not yet:** treating the applet format (`SKILL.md`, agents/plan/applet-shape.md)
+as a stable public API. It is public and tracked; breaking it starts costing
+other people once third parties build on it.

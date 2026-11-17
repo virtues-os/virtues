@@ -28,11 +28,11 @@
 				<div class="subagent-card" data-status={s.status}>
 					<span class="subagent-status-icon">
 						{#if s.status === 'thinking'}
-							<Icon icon="ri:loader-4-line" width="13" class="spin" />
+							<Icon icon="mynaui:spinner" width="13" class="spin" />
 						{:else if s.status === 'done'}
-							<Icon icon="ri:check-line" width="13" />
+							<Icon icon="mynaui:check" width="13" />
 						{:else}
-							<Icon icon="ri:close-line" width="13" />
+							<Icon icon="mynaui:x" width="13" />
 						{/if}
 					</span>
 					<span class="subagent-mission" title={s.title}>{s.title}</span>

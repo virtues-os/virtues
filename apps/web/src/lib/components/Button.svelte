@@ -60,7 +60,7 @@
 		disabled?: boolean;
 		/** Working. Holds its size, stops taking clicks, and says `aria-busy`. */
 		loading?: boolean;
-		/** A leading iconify name, e.g. `ri:add-line`. Sizes with the label. */
+		/** A leading iconify name, e.g. `mynaui:plus`. Sizes with the label. */
 		icon?: string;
 		type?: "button" | "submit" | "reset";
 		onclick?: (e: MouseEvent) => void;
@@ -91,7 +91,7 @@
 
 	{#if loading}
 		<span class="v-btn-spinner">
-			<Icon icon="ri:loader-4-line" width="1em" height="1em" />
+			<Icon icon="mynaui:spinner" width="1em" height="1em" />
 		</span>
 	{/if}
 </button>

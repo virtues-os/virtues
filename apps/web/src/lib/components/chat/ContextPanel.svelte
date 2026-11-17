@@ -8,13 +8,18 @@
 	highlighted row, and Escape closes the menu and leaves the text as typed.
 	Left and Right with Shift, Option or Cmd still move or select in the field.
 
-	Uses: GET /api/pages/search/refs (searchRefs) with kinds and created_after.
+	On All, today's moments that match the query (`sky.ts`, the chat sky's
+	day) come first as their own group, picked like any other row.
+
+	Uses: GET /api/pages/search/refs (searchRefs) with kinds and created_after,
+	and GET /api/sky/day (todaySky).
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
-	import { searchRefs, type RefSearchResult } from "$lib/api/client";
+	import { searchRefs, type RefSearchResult, type SkyMoment } from "$lib/api/client";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { SKY_ICONS, momentMatches, span, todaySky } from "./sky";
 	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 	import { inComposition } from "$lib/utils/ime";
 
@@ -74,6 +79,39 @@
 
 	const rangeLabel = $derived(RANGES.find((r) => r.id === range)?.label ?? RANGES[0].label);
 
+	/** How many of today's moments the group shows. */
+	const TODAY_MAX = 4;
+
+	// Today's moments, for the group above the search results. A box without
+	// the sky has none, and the menu lists what search finds.
+	let moments = $state<SkyMoment[]>([]);
+	onMount(() => {
+		todaySky()
+			.then((day) => (moments = day.moments))
+			.catch(() => (moments = []));
+	});
+
+	type Row = RefSearchResult & { when?: string };
+
+	const today = $derived<Row[]>(
+		tab === "all"
+			? moments
+					.filter((m) => m.url && momentMatches(m, query))
+					.slice(0, TODAY_MAX)
+					.map((m) => ({
+						id: m.id,
+						name: m.label,
+						entity_type: "moment",
+						icon: SKY_ICONS[m.kind],
+						url: m.url as string,
+						when: span(m.start_hour, m.end_hour),
+					}))
+			: [],
+	);
+
+	// One list for the arrows and Enter: today's group, then the results.
+	const rows = $derived<Row[]>([...today, ...results]);
+
 	// A short pause, so each keystroke does not send its own search, and
 	// an abort, so a slow answer to an older query cannot replace a newer one.
 	// The first search goes at once: the tray grows to fit what it finds, and
@@ -117,8 +155,8 @@
 	}
 
 	function move(by: number) {
-		if (results.length === 0) return;
-		selected = (selected + by + results.length) % results.length;
+		if (rows.length === 0) return;
+		selected = (selected + by + rows.length) % rows.length;
 		listEl
 			?.querySelector(`#${CSS.escape(`${uid}-row-${selected}`)}`)
 			?.scrollIntoView({ block: "nearest" });
@@ -178,7 +216,7 @@
 		else if (e.key === "ArrowUp") move(-1);
 		else if (e.key === "Tab") cycleTab(e.shiftKey ? -1 : 1);
 		else if (e.key === "Escape") onClose();
-		else if (e.key === "Enter" && !e.shiftKey && results[selected]) onSelect(results[selected]);
+		else if (e.key === "Enter" && !e.shiftKey && rows[selected]) onSelect(rows[selected]);
 		else handled = false;
 		if (handled) {
 			e.preventDefault();
@@ -211,9 +249,9 @@
 			{/each}
 		</div>
 		<button type="button" class="context-range" aria-haspopup="menu" onclick={(e) => pickRange(e.currentTarget)}>
-			<Icon icon="ri:calendar-line" width="14" style="color: inherit" />
+			<Icon icon="mynaui:calendar" width="14" style="color: inherit" />
 			<span>{rangeLabel}</span>
-			<Icon icon="ri:arrow-down-s-line" width="14" style="color: inherit" />
+			<Icon icon="mynaui:chevron-down" width="14" style="color: inherit" />
 		</button>
 	</div>
 
@@ -225,23 +263,18 @@
 		role="listbox"
 		aria-label="Add context"
 	>
+		{#if today.length > 0}
+			<div class="context-group" class:ruled={results.length > 0} role="group" aria-labelledby="{uid}-today">
+				<p class="context-group-name" id="{uid}-today">Today</p>
+				{#each today as r, i (r.id)}
+					{@render row(r, i, r.when ?? "")}
+				{/each}
+			</div>
+		{/if}
 		{#each results as r, i (r.entity_type + r.id)}
-			<button
-				type="button"
-				id="{uid}-row-{i}"
-				class="context-row"
-				class:selected={i === selected}
-				role="option"
-				aria-selected={i === selected}
-				onmousemove={() => (selected = i)}
-				onclick={() => onSelect(r)}
-			>
-				<span class="context-tile"><Icon icon={r.icon} width="15" style="color: inherit" /></span>
-				<span class="context-name">{r.name}</span>
-				<span class="context-date">{dayLabel(r.created_at)}</span>
-			</button>
+			{@render row(r, today.length + i, dayLabel(r.created_at))}
 		{:else}
-			<p class="context-empty" role="status">
+			<p class="context-empty" role="status" hidden={today.length > 0}>
 				{#if failed}
 					Search didn't respond. Check that your server is reachable, then type again.
 				{:else if loading}
@@ -255,6 +288,23 @@
 		{/each}
 	</div>
 </div>
+
+{#snippet row(r: Row, i: number, date: string)}
+	<button
+		type="button"
+		id="{uid}-row-{i}"
+		class="context-row"
+		class:selected={i === selected}
+		role="option"
+		aria-selected={i === selected}
+		onmousemove={() => (selected = i)}
+		onclick={() => onSelect(r)}
+	>
+		<span class="context-tile"><Icon icon={r.icon} width="15" style="color: inherit" /></span>
+		<span class="context-name">{r.name}</span>
+		<span class="context-date">{date}</span>
+	</button>
+{/snippet}
 
 <style>
 	.context-panel {
@@ -371,6 +421,26 @@
 
 	.context-date {
 		flex-shrink: 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* Today's moments, set off from the search results under them. */
+	.context-group {
+		display: flex;
+		flex-direction: column;
+		flex-shrink: 0;
+	}
+
+	.context-group.ruled {
+		padding-bottom: 0.25rem;
+		margin-bottom: 0.25rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.context-group-name {
+		margin: 0;
+		padding: 0.25rem 0.5rem;
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}

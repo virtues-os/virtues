@@ -76,19 +76,19 @@
 				{
 					id: "height-short",
 					label: "Short (240px)",
-					icon: "ri:contract-up-down-line",
+					icon: "mynaui:move-vertical",
 					action: () => view.setAttrs({ height: 240 }),
 				},
 				{
 					id: "height-tall",
 					label: "Tall (480px)",
-					icon: "ri:expand-up-down-line",
+					icon: "mynaui:move-vertical",
 					action: () => view.setAttrs({ height: 480 }),
 				},
 				{
 					id: "remove",
 					label: "Remove applet",
-					icon: "ri:delete-bin-line",
+					icon: "mynaui:trash",
 					variant: "destructive",
 					dividerBefore: true,
 					action: () => view.remove(),
@@ -100,7 +100,7 @@
 
 <figure bind:this={el} class="doc-applet" class:selected={view.selected}>
 	<figcaption class="doc-applet-name">
-		<Icon icon="ri:apps-2-line" width="14" />
+		<Icon icon="mynaui:grid" width="14" />
 		<span>{name ?? ref}</span>
 	</figcaption>
 	<div class="doc-applet-face">

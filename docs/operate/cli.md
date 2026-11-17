@@ -56,21 +56,15 @@ virtues device add         # print a pair code for a new one
 virtues device rm <id>     # revoke one — its next connection is refused
 ```
 
-## Approving sensitive actions
+## Sensitive actions
 
-A few actions are sensitive enough that a paired device can't do them alone:
-exporting all your data, swapping the key for a bring-your-own AI provider,
-wiping the server, revoking the last device other than itself, and importing an
-applet package. Asking for one from the app raises a request that you approve
-at the machine:
-
-```bash
-virtues sudo
-```
-
-With no arguments, it lists open requests and asks you about each one. This
-requires physical access to the server: someone who has stolen your laptop
-can't approve a request remotely, but you can approve it at the server.
+A few actions need the Virtues app itself on one of your paired devices:
+showing a saved password or key, adding a device, and changing the key for
+your own AI provider. The app signs each of these
+requests with that device's own key, and your server refuses the request
+without that signature. There is nothing to approve: the app signs as you
+click. Requests made on the server itself, such as from its own screen, need
+nothing extra.
 
 ## Releases
 
@@ -121,7 +115,7 @@ sudo virtues configure-inference --recommended
 
 With `--embed-url`, the command moves search to another embedding server,
 such as llama.cpp on your GPU
-([Faster search on a GPU or NPU](/docs/setup/accelerators)). It keeps your
+([GPU and NPU acceleration](/docs/setup/accelerators)). It keeps your
 index when the new server runs the same model, and re-embeds from source when
 it doesn't. After that, you manage the model and updates don't change it.
 
@@ -141,4 +135,6 @@ sudo virtues uninstall
 
 Prints the exact manifest of everything it found before touching anything, and
 asks you to type the server's hostname to confirm. Shared infrastructure it
-didn't install - the PostgreSQL server, Avahi - is left alone.
+didn't install - the PostgreSQL server, Avahi - is left alone. If a firewall is
+on, it closes the rules the installer opened for TCP 8000, mDNS and UDP 51820.
+A rule that was already open before the install stays open.

@@ -8,8 +8,9 @@
 //! plan is agents/plan/cli-data-verbs-plan.md.
 //!
 //! Reads run their tool in this process. Writes run theirs in the server,
-//! through `POST /api/console/tool/:tool` over loopback (`server/api/console.rs`
-//! says why), so a write needs the virtues server running on this machine.
+//! through `POST /api/console/tool/:tool` on the console socket
+//! (`server/api/console.rs` says why, `crate::console_socket` says how), so
+//! a write needs the virtues server running on this machine.
 //!
 //! Output follows the `gh` convention: a table on a terminal, tab-separated
 //! lines with no header when piped, the tool's own JSON with `--json`. Data
@@ -27,12 +28,6 @@ use crate::tools::{cli_reads, ToolContext, ToolExecutor};
 
 /// The widest a cell may print on a terminal. Piped output is never cut.
 const MAX_CELL: usize = 60;
-
-/// The daily spend limit an applet put from the CLI gets when it has a prompt
-/// and sets none, in dollars. A scheduled applet written by an outside agent
-/// runs with nobody watching; this is what stops it running up a bill
-/// overnight. The owner can raise or remove it like any limit.
-const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
 
 /// A tool's data says it failed even when the call itself succeeded:
 /// `sql_write` returns `status: "error"`, an applet edit `"refused"`, the
@@ -52,27 +47,63 @@ fn failed_status(data: &Value) -> Option<String> {
 }
 
 /// The server on this machine: every write, and every read from an agent key.
+///
+/// It is reached on its console socket (`crate::console_socket`), which
+/// knows which user is calling. A loopback TCP connection is not the owner
+/// on an installed server, so TCP is used only where there is no socket: a
+/// developer's checkout, whose server takes loopback as the owner under
+/// `ENVIRONMENT=dev`.
 pub(crate) struct Console {
     http: reqwest::Client,
     base: String,
+    socket: Option<std::path::PathBuf>,
     /// The agent key this call came in on, for the server's audit line.
     key: Option<String>,
 }
 
 impl Console {
     pub(crate) fn new(key: Option<String>) -> Self {
+        let socket = crate::console_socket::path();
         Self {
             http: reqwest::Client::new(),
             base: format!("http://127.0.0.1:{}", super::types::default_port()),
+            socket: socket.exists().then_some(socket),
             key,
         }
     }
 
-    async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value, String> {
-        let req = match &self.key {
-            Some(key) => req.header(AGENT_KEY_HEADER, key),
-            None => req,
+    /// Send `body` as JSON to `path` and return the JSON answer, or the
+    /// server's error in words.
+    async fn send(&self, method: reqwest::Method, path: &str, body: &Value) -> Result<Value, String> {
+        let (status, bytes) = match &self.socket {
+            Some(socket) => self.over_socket(socket, &method, path, body).await?,
+            None => self.over_tcp(method, path, body).await?,
         };
+        if self.socket.is_none() && status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(format!(
+                "the virtues server refused a local connection. An installed server is reached through its console socket at {}, which is missing: run `sudo virtues migrate`, then `sudo systemctl restart virtues`",
+                crate::console_socket::path().display()
+            ));
+        }
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("the server answered {status} with no JSON: {e}"))?;
+        if !status.is_success() {
+            let msg = body.get("error").map(cell).filter(|m| !m.is_empty());
+            return Err(msg.unwrap_or_else(|| format!("the server answered {status}")));
+        }
+        Ok(body)
+    }
+
+    async fn over_tcp(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &Value,
+    ) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
+        let mut req = self.http.request(method, format!("{}{path}", self.base)).json(body);
+        if let Some(key) = &self.key {
+            req = req.header(AGENT_KEY_HEADER, key);
+        }
         let resp = req.send().await.map_err(|e| {
             if e.is_connect() {
                 format!(
@@ -84,12 +115,66 @@ impl Console {
             }
         })?;
         let status = resp.status();
-        let body: Value = resp.json().await.map_err(|e| format!("the server answered {status} with no JSON: {e}"))?;
-        if !status.is_success() {
-            let msg = body.get("error").map(cell).filter(|m| !m.is_empty());
-            return Err(msg.unwrap_or_else(|| format!("the server answered {status}")));
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        Ok((status, bytes.to_vec()))
+    }
+
+    #[cfg(unix)]
+    async fn over_socket(
+        &self,
+        socket: &std::path::Path,
+        method: &reqwest::Method,
+        path: &str,
+        body: &Value,
+    ) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
+        use http_body_util::BodyExt;
+        let unreachable = |e: &dyn std::fmt::Display| {
+            format!(
+                "couldn't reach the virtues server at {}: {e}. Writes go through it; check that it is running (systemctl status virtues)",
+                socket.display()
+            )
+        };
+        let stream = tokio::net::UnixStream::connect(socket).await.map_err(|e| unreachable(&e))?;
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .map_err(|e| unreachable(&e))?;
+        tokio::spawn(conn);
+        let mut req = hyper::Request::builder()
+            .method(method.as_str())
+            .uri(path)
+            .header(hyper::header::HOST, "localhost")
+            .header(hyper::header::CONTENT_TYPE, "application/json");
+        if let Some(key) = &self.key {
+            req = req.header(AGENT_KEY_HEADER, key);
         }
-        Ok(body)
+        let req = req
+            .body(http_body_util::Full::new(axum::body::Bytes::from(body.to_string())))
+            .map_err(|e| e.to_string())?;
+        // The server closes the connection, unanswered, on a user it does
+        // not take as the owner's (`console_socket::classify`). A server
+        // that stopped mid-request closes it the same way, so the message
+        // names both.
+        let resp = sender.send_request(req).await.map_err(|_| {
+            format!(
+                "the virtues server closed the connection at {} without answering. Either this user isn't allowed (run this as a login in the {} group, which sudo virtues migrate adds the login that runs it to, or with sudo), or the server stopped (systemctl status virtues)",
+                socket.display(),
+                crate::console_socket::CONSOLE_GROUP
+            )
+        })?;
+        let status = reqwest::StatusCode::from_u16(resp.status().as_u16()).map_err(|e| e.to_string())?;
+        let bytes = resp.into_body().collect().await.map_err(|e| e.to_string())?.to_bytes();
+        Ok((status, bytes.to_vec()))
+    }
+
+    #[cfg(not(unix))]
+    async fn over_socket(
+        &self,
+        _socket: &std::path::Path,
+        _method: &reqwest::Method,
+        _path: &str,
+        _body: &Value,
+    ) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
+        Err("this platform has no console socket".to_string())
     }
 
     /// Run a write tool in the server. Returns the tool's data.
@@ -104,15 +189,13 @@ impl Console {
     /// [`Console::tool`], returning the data of a result whose status says
     /// it failed too, for a verb that prints more of it than the error.
     async fn tool_data(&self, tool: &str, args: Value) -> Result<Value, String> {
-        let url = format!("{}/api/console/tool/{tool}", self.base);
-        let body = self.send(self.http.post(url).json(&args)).await?;
+        let body = self.send(reqwest::Method::POST, &format!("/api/console/tool/{tool}"), &args).await?;
         Ok(body.get("data").cloned().unwrap_or(Value::Null))
     }
 
     /// Turn an applet on or off: the app's own Enable switch.
     async fn set_enabled(&self, id: &str, on: bool) -> Result<Value, String> {
-        let url = format!("{}/api/applets/{id}", self.base);
-        self.send(self.http.patch(url).json(&json!({ "enabled": on }))).await
+        self.send(reqwest::Method::PATCH, &format!("/api/applets/{id}"), &json!({ "enabled": on })).await
     }
 
     /// Move every markdown page of a kind (`which`: user pages or articles)
@@ -123,8 +206,7 @@ impl Console {
         database: &crate::api::page_convert::DatabaseIdentity,
         which: crate::api::page_convert::Which,
     ) -> Result<Value, String> {
-        let url = format!("{}/api/console/pages/convert", self.base);
-        self.send(self.http.post(url).json(&json!({ "database": database, "which": which }))).await
+        self.send(reqwest::Method::POST, "/api/console/pages/convert", &json!({ "database": database, "which": which })).await
     }
 }
 
@@ -326,10 +408,10 @@ impl Verbs {
             let args: Value = serde_json::from_str(&text).map_err(|e| format!("stdin is not JSON: {e}"))?;
             return Ok((args, Vec::new()));
         }
-        let Some((_, pool)) = &self.local else {
+        if self.local.is_none() {
             return Err("an applet folder is read on this machine; send its JSON on stdin with `-`".into());
-        };
-        folder_args(pool, std::path::Path::new(path)).await
+        }
+        folder_args(std::path::Path::new(path)).await
     }
 
     pub async fn applet(&self, cmd: AppletCmd) -> Result<(), String> {
@@ -360,7 +442,7 @@ impl Verbs {
                 let a = &data["action"];
                 for key in [
                     "id", "name", "owner", "enabled", "description", "schedule", "triggers",
-                    "condition", "until", "archived_at",
+                    "until", "archived_at",
                 ] {
                     let v = cell(&a[key]);
                     if !v.is_empty() {
@@ -384,13 +466,6 @@ impl Verbs {
                     // The write would drop these silently; say so instead.
                     table(&["field", "error", "suggestion"], &findings);
                     return Err(format!("{} finding(s); nothing was created", findings.len()));
-                }
-                let has_prompt = args.get("agent").or_else(|| args.get("instruction")).is_some();
-                if has_prompt && args["limits"].get("max_llm_cost_per_day").is_none() {
-                    if !args["limits"].is_object() {
-                        args["limits"] = json!({});
-                    }
-                    args["limits"]["max_llm_cost_per_day"] = json!(DEFAULT_MAX_LLM_COST_PER_DAY);
                 }
                 let console = &self.console;
                 args["action"] = json!("setup");
@@ -736,68 +811,35 @@ fn array_of(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// The manifest keys an authored applet can set: what applet setup writes.
-/// Anything else in a folder's manifest (`command`, `credential`, …) belongs
-/// to shipped or trusted applets, and would not survive being put.
-const AUTHORED_KEYS: &[&str] = &[
-    "name", "description", "owner", "agent", "instruction", "schedule", "triggers",
-    "condition", "until", "default_enabled", "enabled", "config",
-];
-
 /// An applet folder as applet setup arguments, plus the findings only the
-/// folder can have (an unreadable or unauthorable manifest).
+/// folder can have (a `SKILL.md` that does not load, or says something
+/// `setup` cannot write).
 ///
-/// Schema: the versions on disk this box has not applied yet, joined in
+/// Tables: the versions on disk this box has not applied yet, joined in
 /// order, so the dry-run sees an `ALTER` after the `CREATE` it depends on.
 /// None pending means none submitted, which is what a re-put would send.
-async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
-    let manifest_path = dir.join("manifest.toml");
-    let text = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    let manifest: toml::Table = text
-        .parse()
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    let mut args = serde_json::to_value(&manifest).map_err(|e| e.to_string())?;
+async fn folder_args(dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
     let mut findings = Vec::new();
-
-    for key in manifest.keys() {
-        if !AUTHORED_KEYS.contains(&key.as_str()) {
-            findings.push(json!({
-                "field": key,
-                "error": "not a field an authored applet can set",
-                "suggestion": "agent, schedule, triggers, condition, until, config.limits",
-            }));
+    let mut args = match crate::applet_templates::skill_md_as_setup_args(dir) {
+        Ok(args) => args,
+        Err(why) => {
+            findings.push(json!({ "field": "SKILL.md", "error": why }));
+            json!({ "name": dir.file_name().and_then(|n| n.to_str()).unwrap_or_default() })
         }
-    }
-    if let Some(limits) = manifest.get("config").and_then(|c| c.get("limits")) {
-        args["limits"] = serde_json::to_value(limits).map_err(|e| e.to_string())?;
+    };
+
+    let view = dir.join("view.html");
+    if view.is_file() {
+        let html = std::fs::read_to_string(&view).map_err(|e| format!("{}: {e}", view.display()))?;
+        args["view"] = json!(html);
     }
 
-    let face = dir.join("face").join("index.html");
-    if face.is_file() {
-        let html = std::fs::read_to_string(&face).map_err(|e| format!("{}: {e}", face.display()))?;
-        args["face_html"] = json!(html);
-    }
-
+    // Every version together is the whole schema; setup adds what the box
+    // lacks.
     let versions = crate::tools::applet_schema::versions_on_disk(dir);
     if !versions.is_empty() {
-        let name = manifest.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-        let applet_id = format!(
-            "{}{}",
-            crate::scheduler::applets::USER_APPLET_PREFIX,
-            crate::tools::applet_setup::slugify(name)
-        );
-        let latest = crate::tools::applet_schema::applied(pool, &applet_id)
-            .await?
-            .iter()
-            .map(|a| a.version)
-            .max()
-            .unwrap_or(0);
-        let pending: Vec<&str> =
-            versions.iter().filter(|(v, _, _)| *v > latest).map(|(_, _, sql)| sql.as_str()).collect();
-        if !pending.is_empty() {
-            args["schema_sql"] = json!(pending.join("\n\n"));
-        }
+        let all: Vec<&str> = versions.iter().map(|(_, _, sql)| sql.as_str()).collect();
+        args["tables"] = json!(all.join("\n\n"));
     }
     Ok((args, findings))
 }
@@ -915,6 +957,47 @@ pub async fn run(verbs: &Verbs, command: Commands) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The CLI's write path over a real console socket: the request reaches
+    /// the server with its JSON body and the agent key, and a refusal comes
+    /// back as the server's own words.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_write_goes_through_the_console_socket() {
+        use axum::{routing::post, Json};
+        let app = axum::Router::new().route(
+            "/api/console/tool/:tool",
+            post(
+                |axum::extract::Path(tool): axum::extract::Path<String>,
+                 headers: axum::http::HeaderMap,
+                 Json(args): Json<Value>| async move {
+                    if tool == "refuse" {
+                        return (
+                            axum::http::StatusCode::FORBIDDEN,
+                            Json(json!({ "error": "not this one" })),
+                        );
+                    }
+                    let key = headers.get(AGENT_KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
+                    (axum::http::StatusCode::OK, Json(json!({ "data": { "tool": tool, "args": args, "key": key } })))
+                },
+            ),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("console.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        tokio::spawn(crate::console_socket::accept_loop(listener, app, |_| {
+            Some(crate::console_socket::ConsoleCaller::Owner)
+        }));
+        let console = Console {
+            http: reqwest::Client::new(),
+            base: "http://127.0.0.1:1".to_string(),
+            socket: Some(socket),
+            key: Some("laptop".to_string()),
+        };
+        let data = console.tool_data("sql_write", json!({ "sql": "select 1" })).await.unwrap();
+        assert_eq!(data, json!({ "tool": "sql_write", "args": { "sql": "select 1" }, "key": "laptop" }));
+        assert_eq!(console.tool_data("refuse", json!({})).await.unwrap_err(), "not this one");
+    }
     use crate::cli::types::Cli;
     use clap::Parser;
 

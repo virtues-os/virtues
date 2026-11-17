@@ -6,7 +6,7 @@
  */
 import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
-import { openExternal } from '$lib/tauri/bridge';
+import { canSignInSheet, openSignIn, SIGN_IN_CLOSED } from '$lib/tauri/bridge';
 import { isTauri } from '$lib/utils/platform';
 
 export type ConnectIntent =
@@ -18,6 +18,13 @@ export type ConnectIntent =
 	// full-page redirect (browser tab), so the caller is navigating away.
 	| { kind: 'oauth'; external: boolean }
 	| { kind: 'error'; message: string };
+
+/** `next`: where a browser connect lands afterwards. `credentialId`:
+ *  reconnecting that credential, which the box repairs in place. */
+export interface ConnectOptions {
+	next?: string;
+	credentialId?: string;
+}
 
 /**
  * Start a via_proxy OAuth connect. Returns whether the flow was handed to the
@@ -35,7 +42,7 @@ export type ConnectIntent =
  */
 export async function startOAuth(
 	sourceId: string,
-	opts?: { next?: string },
+	opts?: ConnectOptions,
 ): Promise<{ external: boolean }> {
 	const origin = getBackendOrigin() || window.location.origin;
 	// Tauri hands OAuth to the system browser, so the callback's usual 302 into
@@ -47,14 +54,26 @@ export async function startOAuth(
 	// the hardcoded `/sources`, so a connect started from onboarding lands back
 	// on the onboarding screen it left (2026-08-21 — the redirect used to dump
 	// the person into the app mid-flow). Local paths only; the box validates.
+	//
+	// `sheet=1` when the sign-in opens in the iOS sign-in sheet: the box then
+	// closes the sheet instead of showing the page. A box that predates it
+	// shows the native page, and the owner closes the sheet.
+	const sheet = isTauri && (await canSignInSheet());
 	const returnUrl = isTauri
-		? `${origin}/oauth/callback?shell=native`
+		? `${origin}/oauth/callback?shell=native${sheet ? '&sheet=1' : ''}`
 		: opts?.next
 			? `${origin}/oauth/callback?next=${encodeURIComponent(opts.next)}`
 			: `${origin}/oauth/callback`;
-	const { redirect_url } = await oauthStart(sourceId, { return_url: returnUrl });
+	// A reconnect sends `credential_id`. A released box ignores that name and
+	// adds a new row, as it always has. It acts on `existing_credential_id`
+	// and then fails the callback with a 409, so the app never sends that one.
+	// TODO(2026-10-27): migrate oauthStart's opts type in client.ts to
+	// `credential_id`. Until then `body` is a variable, which TypeScript checks
+	// without the excess-property rule.
+	const body = { return_url: returnUrl, credential_id: opts?.credentialId };
+	const { redirect_url } = await oauthStart(sourceId, body);
 	if (isTauri) {
-		await openExternal(redirect_url);
+		await openSignIn(redirect_url);
 		return { external: true };
 	}
 	window.location.assign(redirect_url);
@@ -62,22 +81,25 @@ export async function startOAuth(
 }
 
 /**
- * After an external (system-browser) OAuth handoff, the box finalizes the
- * credential server-side while the user is still in their browser. Re-fetch
- * when they switch back to the app — one-shot on the next window focus.
+ * After a sign-in handed to the system browser or the sign-in sheet, the box
+ * finalizes the credential while the person is still there. Re-fetch when
+ * they come back: one-shot, on the next window focus (the browser) or when
+ * the sheet closes, whichever comes first.
  */
 export function reloadOnReturn(reload: () => void): void {
 	if (typeof window === 'undefined') return;
 	const handler = () => {
 		window.removeEventListener('focus', handler);
+		window.removeEventListener(SIGN_IN_CLOSED, handler);
 		void reload();
 	};
 	window.addEventListener('focus', handler);
+	window.addEventListener(SIGN_IN_CLOSED, handler);
 }
 
 export async function connectIntent(
 	source: SourceCatalogItem,
-	opts?: { next?: string },
+	opts?: ConnectOptions,
 ): Promise<ConnectIntent> {
 	// One narrative for every device app: get the app, then enter the code. The
 	// Mac briefly had its own flow because pairing the Mac app pairs a *viewer*

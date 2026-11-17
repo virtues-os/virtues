@@ -33,7 +33,6 @@ only if it says something the primitive below it cannot.**
 | month · quarter | a calendar range used for filtering | no |
 | **year** | the other span people commonly tell stories about | **yes** |
 | **chapter** | a partition of the life — 5–10 in view at any age | **yes** — named by the person |
-| **story** | a throughline at any scale — narrative or investigative | **yes** — declared by the person |
 | **life** | who this person is | **yes** — exactly one |
 | ∞ (telos) | the person's long-term purpose | no — it is a direction, so it has no page |
 
@@ -45,12 +44,13 @@ only if it says something the primitive below it cannot.**
   become "the twenties"), so older periods get coarser and the count stays
   small enough to read. The system offers a merge to the person; it never
   merges chapters silently.
-- **Story** is a *throughline*: it can be non-contiguous, can overlap other
-  stories, and can resume after a pause, at any scale. Examples: an afternoon
-  (the recital), a year (learning to juggle), a trait (learning patience). A
-  story can also be a *question*: an investigation through the person's own
-  data, like the ones a project contains ("why do I get sad at work
-  sometimes"). The person declares a story; the system never infers one.
+- **What is over stays what it was.** A stretch of the life is a chapter, an
+  afternoon is an event on its day, a finished or dropped project is still a
+  project, and a write-up of any of them is a page. No primitive exists for
+  "something that is over". **Story** is not a word here: it named a subject
+  the person declared until 2026-11-16, when `wiki_stories` became
+  `wiki_things` (see [Thing, project, task](#thing-project-task)), so an
+  older commit message or record that says story means a thing.
 - A day's page is written once on its own, when the day closes, and again
   only when the person asks (Rewrite this page). Years and chapters are
   revised by the wiki editor, when it is on, as the days beneath them are
@@ -99,7 +99,7 @@ Some things with a page have no place on the timeline.
 |---|---|---|
 | Subject · time-shaped | an interval that can hold a story | computed from the interval |
 | Subject · entity-shaped | someone or somewhere in the record | none — a person is not past or future |
-| Subject · thread-shaped | a throughline with a magnet — a story told, a question investigated, a commitment | open until closed |
+| Subject · named | a thing: what goes on in the life, named by the person | none — a thing goes on |
 | Attachment · claim | an unsettled observation, pending a person | whatever it cites |
 | Attachment · citation | record R mentions subject S at time T | the referring record's own |
 | Attachment · rule | a standing constraint that outranks context | none — rules do not expire |
@@ -108,8 +108,8 @@ Some things with a page have no place on the timeline.
   Entities are not on the time axis at all. A day and a person are the same
   *kind* of thing: a subject that can have a page.
 - **A subject counts only if other things can cite it.** Storing it is not
-  enough. A story that cannot link to the events it is built from is only a
-  caption; it makes no checkable claim.
+  enough. A year that could not link to the days it is built from would be
+  only a caption; it would make no checkable claim.
 
 **"Entity" is one of the three shapes. Never use it as a synonym for
 "subject."** The two words both appear in the schema and mean different things
@@ -129,17 +129,53 @@ The registry in
 this section in code: one row per subject, and everything that varies by kind
 hangs off it.
 
-## Project
+## Thing, project, task
 
-A **project** is a workspace over the person's data: material gathered
-around a question, with chat grounded in that material instead of in
+Three words for what a person keeps track of. One question sorts anything
+they name: **can it be finished?**
+
+| Answer | It is |
+|---|---|
+| never | a **thing**, unless it is a person, a place or an organization |
+| yes, in more than one step | a **project** |
+| yes, in one step | a **task** |
+| each time, and it comes around again | a task that recurs, or a recurring calendar event |
+
+A **thing** is something in the person's life that goes on and cannot be
+finished, and that is not a person, a place or an organization. The person
+names it, and it gets a page in the wiki. It is a subject: `wiki_things`,
+subject type `thing`, the API is `/api/wiki/things`, and the route is
+`/thing/{id}`, listed in the wiki's Things room. Only the person names one;
+the server never does. Its page lists the projects and tasks under it. No
+record points at a thing yet, which is the uncitable gap below.
+
+A **project** is something unresolved in the person's life that can be
+finished and takes more than one step. The person makes it, or says yes when
+the server suggests one, and it ends when they finish it or drop it.
+Suggesting one is not built, so today every project is made by hand. An ended
+project has `archived_at` and an `outcome` of `finished` or `dropped`; the
+UI says finish, drop and reopen, and never archive. A project can sit under
+a thing (`thing_id`). It also keeps a workspace over the person's data:
+material gathered in it, with chat grounded in that material instead of in
 everything. It is not a subject: it has no place on the timeline and gets no
-article. In code it is `app_projects`, its contents are
-`app_project_items`, a chat is bound to one by `app_chats.project_id`, the
-API is `/api/projects`, and the routes are `/projects` and `/project/{id}`;
-ids keep the `nb_` prefix. A project cannot contain a project. It was
+article. In code it is `app_projects`, its contents are `app_project_items`,
+a chat is bound to one by `app_chats.project_id`, the API is
+`/api/projects`, and the routes are `/projects` and `/project/{id}`; ids
+keep the `nb_` prefix. A project cannot contain a project. It was
 **Notebook** until 2026-09-21, so an older commit message or record that
 says notebook means this.
+
+A **task** is one step (`app_tasks`). It sits under a project, under a
+thing, or under nothing, with one parent at most. A task can recur: it
+comes back `recur_every` `recur_unit`s after the day the person finishes it,
+so one occurrence is open at a time and a missed one never piles up. What
+recurs on fixed dates is a recurring calendar event. A task assigned to the
+assistant is a request, and a request runs once.
+
+Two kinds of link connect these. **Parent and child**: the child sits under
+the parent (a task under a project or a thing, a project under a thing).
+**Involves**: a project or a record points at a person, a place or an
+organization.
 
 ## Provenance
 
@@ -161,7 +197,7 @@ different things, and different actors close them.
 |---|---|---|
 | **unobserved** | the record itself | a source — or acceptance |
 | **unnamed** | a chapter over real record | the person — the drag-and-name gesture |
-| **uncitable** | the join from a story to its events | the system — let a story cite what it recruited |
+| **uncitable** | the join from a thing to the records about it | the system — filing records under a thing, which is not built |
 | **unplanned** | anything past the horizon | a commitment, or nobody if the person chooses; an unplanned gap is information and not a failure |
 
 The timeline always draws gaps and never hides them. Each gap prompts the next

@@ -137,7 +137,7 @@
 			     beside the count already mean previous and next. -->
 			<IconButton
 				size={touch ? "touch" : "md"}
-				icon={more ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"}
+				icon={more ? "mynaui:chevron-down" : "mynaui:chevron-right"}
 				label={editable ? "Options and replace" : "Options"}
 				expanded={more}
 				onclick={() => (more = !more)}
@@ -154,16 +154,16 @@
 				onkeydown={onKeydown}
 			/>
 			<span class="find-status" aria-live="polite">{status}</span>
-			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-up-s-line" label="Previous match" shortcut="⇧⏎" onclick={() => findPrevious(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-down-s-line" label="Next match" shortcut="⏎" onclick={() => findNext(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:close-line" label="Close find" shortcut="Esc" onclick={close} />
+			<IconButton size={touch ? "touch" : "md"} icon="mynaui:chevron-up" label="Previous match" shortcut="⇧⏎" onclick={() => findPrevious(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="mynaui:chevron-down" label="Next match" shortcut="⏎" onclick={() => findNext(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="mynaui:x" label="Close find" shortcut="Esc" onclick={close} />
 		</div>
 		{#if more}
 			<div class="find-more">
 				<div class="find-options">
-					<IconButton size={touch ? "touch" : "md"} icon="ri:font-size" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
-					<IconButton size={touch ? "touch" : "md"} icon="ri:text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
-					<IconButton size={touch ? "touch" : "md"} icon="ri:asterisk" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
+					<IconButton size={touch ? "touch" : "md"} icon="mynaui:type-text" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
+					<IconButton size={touch ? "touch" : "md"} icon="mynaui:type-text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
+					<IconButton size={touch ? "touch" : "md"} icon="mynaui:asterisk-circle" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
 				</div>
 				{#if editable}
 					<div class="find-replace">

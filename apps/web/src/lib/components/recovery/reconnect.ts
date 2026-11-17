@@ -5,25 +5,10 @@
  * header for what each verdict means.
  */
 
-import { shellSupports } from '$lib/tauri/bridge';
-import type { BoxWifiLink } from '$lib/tauri/boxRadio';
-
-/** `COMMAND_SURFACE_VERSION` that added `reach_rehome` (src-tauri/src/lib.rs). */
-export const REHOME_SURFACE = 6;
-
-/** How long a server that just joined a network gets to answer. A relay
- *  reconnect, a DHCP lease and a first iroh dial fit well inside this. */
-export const COMEBACK_MS = 120_000;
 /** Between checks while nothing is wrong enough to stop checking. */
 export const LISTEN_EVERY_MS = 15_000;
 
-export type Verdict = 'checking' | 'back' | 'rejected' | 'asking' | 'offline' | 'silent';
-export type Phase =
-	| { kind: 'diagnosis' }
-	| { kind: 'opening' }
-	| { kind: 'wifi'; link: BoxWifiLink }
-	| { kind: 'returning'; since: number }
-	| { kind: 'stuck' };
+export type Verdict = 'checking' | 'back' | 'rejected' | 'offline' | 'silent';
 
 /** The plugin's `ReachStatus`, as much of it as this screen reads. */
 export interface ReachStatus {
@@ -31,13 +16,33 @@ export interface ReachStatus {
 	session: 'authed' | 'rejected' | 'unknown' | 'unpaired';
 	reachable?: boolean;
 	path?: string;
+	/** Why this device cannot use the pairing it has, in words for the
+	 *  owner. Absent from an app older than surface 15. */
+	problem?: string | null;
+	/** The device key is gone, so pairing again is the only fix. */
+	keyMissing?: boolean;
+}
+
+/** A pairing this device has but cannot use. */
+export interface PairingProblem {
+	/** The plugin's sentence, shown as it is. */
+	message: string;
+	/** Pairing again fixes it. Only when the device key is gone. After any
+	 *  other problem the key may still be on this device, and quitting and
+	 *  reopening Virtues can bring it back. Pairing again would add a second
+	 *  device to the server's list while the first key still works. */
+	pairAgain: boolean;
+}
+
+/** What is wrong with this device's own pairing, if anything. */
+export function pairingProblem(status: ReachStatus | null): PairingProblem | null {
+	if (!status?.paired || !status.problem) return null;
+	return { message: status.problem, pairAgain: status.keyMissing === true };
 }
 
 /** What the screen needs from the native side; a fake stands in for tests and `?radio=fake`. */
 export interface ReachPort {
 	status(): Promise<ReachStatus>;
-	/** Returns false when this app is too old to have the command. */
-	rehome(url: string): Promise<boolean>;
 	forget(): Promise<void>;
 	online(): boolean;
 }
@@ -75,12 +80,6 @@ export const tauriReach: ReachPort = {
 			{ paired: true, session: 'unknown' } as ReachStatus
 		);
 	},
-	async rehome(url) {
-		if (!(await shellSupports(REHOME_SURFACE))) return false;
-		const { invoke } = await import('@tauri-apps/api/core');
-		await invoke('plugin:reach|reach_rehome', { url });
-		return true;
-	},
 	async forget() {
 		const { invoke } = await import('@tauri-apps/api/core');
 		await invoke('plugin:reach|forget');
@@ -89,21 +88,17 @@ export const tauriReach: ReachPort = {
 };
 
 /**
- * `?radio=fake` in dev: a paired server that moved. Unreachable until its
- * Wi-Fi is set over the fake radio, then back a few seconds later.
+ * `?radio=fake` in dev: a paired server that doesn't answer for the first
+ * twenty seconds, then comes back.
  */
 export function fakeReach(speed = 1): ReachPort {
-	let rejoinedAt = 0;
+	const since = Date.now();
 	const wait = (ms: number) => new Promise((r) => setTimeout(r, ms * speed));
 	return {
 		async status() {
 			await wait(900);
-			const back = rejoinedAt > 0 && Date.now() - rejoinedAt > 4000 * speed;
+			const back = Date.now() - since > 20_000 * speed;
 			return { paired: true, session: back ? 'authed' : 'unknown', reachable: back };
-		},
-		async rehome() {
-			rejoinedAt = Date.now();
-			return true;
 		},
 		async forget() {},
 		online: () => true
@@ -122,17 +117,10 @@ export function pickReach(): ReachPort {
 	return fakeRequested() ? fakeReach() : tauriReach;
 }
 
-/** The pure part: what a status and a Bluetooth scan add up to. */
-export function judge(
-	status: ReachStatus | null,
-	asking: boolean,
-	online: boolean
-): Exclude<Verdict, 'checking'> {
+/** The pure part: what a status adds up to. */
+export function judge(status: ReachStatus | null, online: boolean): Exclude<Verdict, 'checking'> {
 	if (status?.session === 'authed') return 'back';
 	if (status?.session === 'rejected') return 'rejected';
-	// A server asking for its owner is worth offering even when this device
-	// is offline: Bluetooth needs no network, and the fix happens over it.
-	if (asking) return 'asking';
 	if (!online) return 'offline';
 	return 'silent';
 }

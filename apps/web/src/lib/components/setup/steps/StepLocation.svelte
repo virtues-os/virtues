@@ -372,7 +372,7 @@
 				onblur={commit}
 				onkeydown={searchKey}
 			/>
-			<Icon icon="ri:search-line" width="16" class="search-icon" />
+			<Icon icon="mynaui:search" width="16" class="search-icon" />
 			{#if showList}
 				<ul id="home-cities" class="list" role="listbox" aria-label="Cities">
 					{#each matches as c, i (c.name + c.zone)}
@@ -399,7 +399,7 @@
 		<div class="meta">
 			<label class="zone">
 				<span class="zone-text">{zoneName(zone)} · {formatOffset(offset)}</span>
-				<Icon icon="ri:arrow-down-s-line" width="14" />
+				<Icon icon="mynaui:chevron-down" width="14" />
 				<select
 					aria-label="Time zone"
 					value={zone}
@@ -431,7 +431,7 @@
 	{#snippet actions()}
 		<button type="button" class="setup-go" disabled={!city.trim() || saving} onclick={save}>
 			{saving ? "Saving…" : unchanged && initialCity ? "Looks right" : `Set home to ${city.trim() || "this city"}`}
-			<Icon icon="ri:arrow-right-line" width="16" />
+			<Icon icon="mynaui:arrow-right" width="16" />
 		</button>
 		{#if onback}
 			<button type="button" class="setup-past" disabled={saving} onclick={onback}>Back</button>
@@ -448,10 +448,11 @@
 	.globe {
 		display: block;
 		/* As large as the window allows with the title, the city, its time
-		   and the way forward all still on screen: the rest of the step takes
-		   about 540px, so a 1280×800 window gets a 260px globe and the button
-		   above the fold. 360 at most, never under 200. */
-		width: min(100%, 360px, max(200px, 100svh - 540px));
+		   and the way forward all still on screen: on the stage the rest of
+		   the step, with its sheet's margin and padding, takes about 620px, so
+		   a 1280×800 window gets a 200px globe and the button above the fold.
+		   360 at most, never under 200. */
+		width: min(100%, 360px, max(200px, 100svh - 620px));
 		aspect-ratio: 1;
 		cursor: grab;
 		/* A vertical swipe still scrolls the page on a phone; a sideways one turns the globe. */

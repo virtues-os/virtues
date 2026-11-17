@@ -14,7 +14,7 @@
  */
 
 import { Extension, type Editor } from '@tiptap/core';
-import { isChangeOrigin } from '@tiptap/extension-collaboration';
+import { isChangeOrigin } from './ykeys';
 import { DOMSerializer, Fragment, Slice, type Mark as PmMark, type MarkType, type Node as PmNode } from '@tiptap/pm/model';
 import { EditorState, Plugin, type Transaction } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';

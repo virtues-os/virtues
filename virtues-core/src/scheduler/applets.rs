@@ -4,12 +4,13 @@
 //! state. An `AppletRun` is one execution of an action with full history.
 //!
 //! Behavior is inferred from which fields are populated on the row:
-//! - `command` set  → spawn it (subprocess for `function`, daemon for `service`)
-//! - `agent` set    → LLM agent loop (runs after subprocess if both set)
-//! - neither set    → invalid (runner rejects)
+//! - `run_sql` set  → read-only SQL first; no rows skips the run
+//! - `command` set  → spawn it as a subprocess
+//! - `agent` set    → LLM agent loop (runs after the others if set)
+//! - none set       → nothing to run (a view-only applet)
 //!
-//! `triggers` is a JSON array of trigger names controlling who can invoke the
-//! action. Enum: `cron | manual | tool | api | webhook`.
+//! `triggers` is a JSON array of what may start the applet:
+//! `cron | manual | tool | webhook | message | data`.
 
 use crate::error::{Error, Result};
 use crate::ids::generate_id;
@@ -47,10 +48,6 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 
 /// A scheduled action — pure configuration, no runtime state.
 ///
-/// `runtime` declares how the action executes:
-///   - `function` — fork-per-trigger CLI (today's pattern)
-///   - `view`     — pure Svelte component, never invoked server-side
-///
 /// `command` is the argv to spawn (JSON array in SQL). A bare `command[0]`
 /// (no path separator) resolves to a Cargo-built action binary under
 /// `target/{debug,release}`; anything else (`./x`, `python3`, `node`) runs via
@@ -60,19 +57,13 @@ pub struct Applet {
     pub id: String,
     pub owner: String,
     pub name: String,
-    /// The one-sentence intent the manifest carries — what this applet is for,
+    /// The one-sentence intent the SKILL.md carries — what this applet is for,
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
-    /// The prompt we last SHIPPED for this applet, which is a different
-    /// question from the one it is running. They differ when the person has
-    /// written their own — the only way a page can offer them a diff instead
-    /// of a surprise, or offer a way back to the default at all.
-    pub agent_shipped: Option<String>,
     pub schedule: Option<String>,
     pub enabled: bool,
     pub config: serde_json::Value,
-    pub condition: Option<String>,
     pub triggers: Vec<String>,
     pub memory: Option<String>,
     /// Outbound OAuth/API-key actions anchor here (the secret they call with).
@@ -81,6 +72,10 @@ pub struct Applet {
     /// proven iroh key authorizes posts to this action.
     pub device_id: Option<String>,
     pub command: Option<Vec<String>>,
+    /// Read-only SQL run before the prompt; its rows go to the prompt, and
+    /// none means a skipped run (`applet_runner::run_sql`).
+    #[serde(default)]
+    pub run_sql: Option<String>,
     /// Lifecycle: NULL = forever · `"once"` = archive after first success ·
     /// SQL boolean = archive when it evaluates true (checked post-success).
     pub until: Option<String>,
@@ -93,8 +88,18 @@ pub struct Applet {
     /// The slot currently owed. Far enough in the past = "expected but didn't
     /// run". Derived; see [`crate::scheduler::slots`].
     pub next_due_at: Option<crate::types::Timestamp>,
+    /// Its data trigger, from the file ([`crate::scheduler::watch`]).
+    #[serde(default)]
+    pub watch: Option<crate::scheduler::watch::Watch>,
+    /// How far its data trigger's rows have gone to runs. The box's.
+    #[serde(default)]
+    pub watched_through: Option<crate::types::Timestamp>,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
+    /// A shipped applet the owner changed: its override file holds what they
+    /// changed, and `reset` returns it to what ships.
+    #[serde(default)]
+    pub has_override: bool,
 }
 
 /// One execution of an action.
@@ -122,21 +127,20 @@ pub struct AppletRun {
     /// and for every run before spend was attributed at all.
     #[serde(default)]
     pub cost_micros: i64,
+    /// What the run reached through its egress proxy, one entry per host:
+    /// `{host, requests, refused, sent_bytes, received_bytes}`. Empty for a
+    /// run that had no network, which is every run but a sandboxed code one.
+    #[serde(default)]
+    pub requests: serde_json::Value,
     pub created_at: crate::types::Timestamp,
+    /// What the run made: pages, rows per table, tasks.
+    #[serde(default)]
+    pub made: Vec<RunMade>,
 }
 
 // ============================================================================
 // Applet CRUD
 // ============================================================================
-
-/// Get all enabled actions.
-pub async fn get_enabled_applets(db: &PgPool) -> Result<Vec<Applet>> {
-    let rows = sqlx::query("SELECT * FROM app_applets WHERE enabled = TRUE ORDER BY name")
-        .fetch_all(db)
-        .await?;
-
-    rows.iter().map(applet_from_row).collect()
-}
 
 /// Get all actions (for API listing).
 pub async fn get_all_applets(db: &PgPool) -> Result<Vec<Applet>> {
@@ -156,21 +160,6 @@ pub async fn get_applet(db: &PgPool, applet_id: &str) -> Result<Applet> {
         .ok_or_else(|| Error::NotFound(format!("Applet not found: {}", applet_id)))?;
 
     applet_from_row(&row)
-}
-
-/// Toggle an action's enabled state.
-pub async fn toggle_applet(db: &PgPool, applet_id: &str, enabled: bool) -> Result<()> {
-    let affected = sqlx::query("UPDATE app_applets SET enabled = $1 WHERE id = $2")
-        .bind(enabled)
-        .bind(applet_id)
-        .execute(db)
-        .await?
-        .rows_affected();
-
-    if affected == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {}", applet_id)));
-    }
-    Ok(())
 }
 
 /// Update an action's persistent memory (markdown scratchpad across runs).
@@ -326,107 +315,23 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
     Ok(tables)
 }
 
-/// Fields the user can tune on a `system`-owned action row. Must match the
-/// set of fields that template reconcile preserves (see
-/// `applet_templates::upsert_row`) — otherwise the next reconcile would
-/// silently clobber what the user just changed.
-pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "config", "memory"];
+/// Fields that can change on a shipped applet. Its prompt and schedule go
+/// into its override file; `enabled` and `memory` are the box's own state.
+/// `reset` removes the override, returning it to exactly what ships.
+pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "agent", "memory", "reset"];
 
-/// Create a new user-owned action. Used by chat tools + the HTTP POST
-/// endpoint. `id` is generated from the name if not provided.
-#[allow(clippy::too_many_arguments)]
-pub async fn create_user_applet(
-    db: &PgPool,
-    id: Option<&str>,
-    name: &str,
-    agent: Option<&str>,
-    schedule: Option<&str>,
-    triggers: &[String],
-    config: Option<&serde_json::Value>,
-) -> Result<Applet> {
-    if name.trim().is_empty() {
-        return Err(Error::InvalidInput("name cannot be empty".into()));
-    }
-    if triggers.is_empty() {
-        return Err(Error::InvalidInput("triggers cannot be empty".into()));
-    }
-    for t in triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
-            return Err(Error::InvalidInput(format!(
-                "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
-            )));
-        }
-    }
-    if triggers.iter().any(|t| t == "webhook") {
-        return Err(Error::InvalidInput(
-            "webhook trigger requires a credential_id, which user-created actions can't set; use a pairing flow instead".into()
-        ));
-    }
+/// What the box keeps beside the file, written to the row. Every other field
+/// is what the applet is, written to its file (`applet_templates::write_edit`).
+const ROW_FIELDS: &[&str] = &["enabled", "memory"];
 
-    let base_id = match id {
-        Some(s) => s.to_string(),
-        None => format!("{USER_APPLET_PREFIX}{}", slugify(name)),
-    };
-    let triggers_json = serde_json::to_string(triggers)
-        .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
-    let config_json = config
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "{}".to_string());
-
-    // Retry with a numeric suffix on UNIQUE collision so two actions with
-    // the same slug don't fail with an opaque "UNIQUE constraint failed".
-    // Capped at 100 attempts; if the user has 100 actions with identical
-    // slugs something weirder is going on and they can pass an explicit id.
-    const MAX_ATTEMPTS: u32 = 100;
-    let mut applet_id = base_id.clone();
-    for attempt in 1u32..=MAX_ATTEMPTS {
-        let result = sqlx::query(
-            r#"INSERT INTO app_applets (id, name, owner, agent, schedule, enabled, config, triggers)
-               VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
-        )
-        .bind(&applet_id)
-        .bind(name)
-        .bind(agent)
-        .bind(schedule)
-        .bind(&config_json)
-        .bind(&triggers_json)
-        .execute(db)
-        .await;
-
-        match result {
-            Ok(_) => return get_applet(db, &applet_id).await,
-            Err(sqlx::Error::Database(dbe)) if is_unique_violation(&*dbe) => {
-                if id.is_some() {
-                    // Caller supplied an explicit id — don't silently rename.
-                    return Err(Error::InvalidInput(format!(
-                        "action id '{applet_id}' already exists"
-                    )));
-                }
-                applet_id = format!("{base_id}_{}", attempt + 1);
-                continue;
-            }
-            Err(e) => {
-                return Err(Error::Database(format!("failed to create action: {e}")));
-            }
-        }
-    }
-
-    Err(Error::Database(format!(
-        "failed to create action: exhausted {MAX_ATTEMPTS} id variations"
-    )))
-}
-
-/// Detect a Postgres UNIQUE constraint violation from a `DatabaseError`.
-fn is_unique_violation(dbe: &dyn sqlx::error::DatabaseError) -> bool {
-    // sqlx maps Postgres SQLSTATE 23505 (unique_violation) here.
-    dbe.is_unique_violation()
-}
-
-/// Partial update for an action. Applies a JSON patch, enforcing the
-/// system-owner guard: `system` rows accept only `SYSTEM_EDITABLE_FIELDS`.
+/// Partial update for an applet. `enabled` and `memory` are written to the
+/// row. Everything else describes the applet, so it is written to its file,
+/// and the row is rebuilt from the file by a reconcile: the file is the only
+/// source of truth for what an applet is. Shipped applets take only
+/// [`SYSTEM_EDITABLE_FIELDS`].
 ///
-/// Unknown field names are rejected (400). Null values are allowed for
-/// nullable columns (`agent`, `schedule`, `condition`, `memory`).
+/// Unknown field names are rejected (400). `null` clears `agent`, `schedule`
+/// and `memory`.
 pub async fn update_applet(
     db: &PgPool,
     applet_id: &str,
@@ -444,17 +349,13 @@ pub async fn update_applet(
 
     // Validate every field name up front so we either apply the whole patch
     // or reject it cleanly.
-    const ALLOWED: &[&str] = &[
-        "name",
-        "agent",
-        "schedule",
-        "enabled",
-        "config",
-        "condition",
-        "triggers",
-        "memory",
-    ];
+    const ALLOWED: &[&str] = &["name", "agent", "schedule", "enabled", "config", "triggers", "memory", "reset"];
     for key in obj.keys() {
+        if key == "condition" {
+            return Err(Error::InvalidInput(
+                "a condition is SQL in the applet's `run` now: set `run: sql select 1 where (…)` in its SKILL.md".into(),
+            ));
+        }
         if !ALLOWED.contains(&key.as_str()) {
             return Err(Error::InvalidInput(format!(
                 "unknown field '{key}'; allowed: {ALLOWED:?}"
@@ -462,8 +363,16 @@ pub async fn update_applet(
         }
         if is_system && !SYSTEM_EDITABLE_FIELDS.contains(&key.as_str()) {
             return Err(Error::InvalidInput(format!(
-                "field '{key}' is system-managed; only {SYSTEM_EDITABLE_FIELDS:?} are editable on system actions"
+                "field '{key}' is the shipped applet's; only {SYSTEM_EDITABLE_FIELDS:?} change on a shipped applet. Fork it to change the rest."
             )));
+        }
+    }
+    if let Some(s) = obj.get("schedule").and_then(|v| v.as_str()) {
+        validate_cron(s)?;
+    }
+    if let Some(v) = obj.get("enabled") {
+        if !v.is_boolean() {
+            return Err(Error::InvalidInput("enabled must be a bool".into()));
         }
     }
 
@@ -485,197 +394,68 @@ pub async fn update_applet(
         }
     }
 
-    // Build the UPDATE statement. SQL has no "set only these keys" shortcut;
-    // we use conditional per-field binds. The SET-clause loop and the bind
-    // loop walk the fields in the same fixed order so the `$N` placeholders
-    // line up 1-to-1 with the bind values. `config`/`triggers` are JSONB
-    // columns, so their placeholders are cast (`::jsonb`); the string we bind
-    // is a JSON document, mirroring the template upsert in `applet_templates`.
-    let mut sets: Vec<String> = Vec::new();
-    let mut bind_idx = 0u32;
-    let mut next = || {
-        bind_idx += 1;
-        bind_idx
-    };
+    // What the applet is: into its file, then the row is rebuilt from it.
+    // The reconcile lock keeps a reconcile from reading the catalog between
+    // the write and the reload.
+    let reset = obj.get("reset").and_then(|v| v.as_bool()) == Some(true);
+    let file_patch: serde_json::Map<String, serde_json::Value> = obj
+        .iter()
+        .filter(|(k, _)| !ROW_FIELDS.contains(&k.as_str()) && k.as_str() != "reset")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if reset || !file_patch.is_empty() {
+        {
+            let _reconcile = crate::applet_templates::reconcile_lock().lock().await;
+            if reset {
+                crate::applet_templates::reset_to_shipped(applet_id)?;
+            }
+            if !file_patch.is_empty() {
+                crate::applet_templates::write_edit(applet_id, &file_patch)?;
+            }
+        }
+        crate::applet_templates::reload_and_reconcile(db).await?;
+    }
 
-    if obj.contains_key("name") {
-        sets.push(format!("name = ${}", next()));
-    }
-    if obj.contains_key("agent") {
-        sets.push(format!("agent = ${}", next()));
-    }
-    if obj.contains_key("schedule") {
-        sets.push(format!("schedule = ${}", next()));
-    }
-    if obj.contains_key("enabled") {
-        sets.push(format!("enabled = ${}", next()));
+    // What the box keeps beside the file.
+    if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
         // Turning a finished applet back on un-finishes it. There is no
         // coherent "enabled AND archived" state — archiving sets enabled =
         // FALSE precisely so the scheduler skips it, and leaving archived_at
         // behind would show a running applet as finished on its own page.
-        // Takes no bind: it is a consequence of the flag, not a field a
-        // caller may set.
-        if obj.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
-            sets.push("archived_at = NULL".to_string());
+        let res = sqlx::query(
+            "UPDATE app_applets SET enabled = $1, \
+             archived_at = CASE WHEN $1 THEN NULL ELSE archived_at END, updated_at = now() WHERE id = $2",
+        )
+        .bind(enabled)
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
         }
-    }
-    if obj.contains_key("config") {
-        sets.push(format!("config = ${}::jsonb", next()));
-    }
-    if obj.contains_key("condition") {
-        sets.push(format!("condition = ${}", next()));
-    }
-    if obj.contains_key("triggers") {
-        sets.push(format!("triggers = ${}::jsonb", next()));
-    }
-    if obj.contains_key("memory") {
-        sets.push(format!("memory = ${}", next()));
-    }
-
-    sets.push("updated_at = now()".to_string());
-    let id_param = next();
-    let query = format!(
-        "UPDATE app_applets SET {} WHERE id = ${}",
-        sets.join(", "),
-        id_param
-    );
-
-    // Now bind in the same order.
-    let mut q = sqlx::query(&query);
-    if let Some(v) = obj.get("name") {
-        let s = v
-            .as_str()
-            .ok_or_else(|| Error::InvalidInput("name must be a string".into()))?;
-        q = q.bind(s.to_string());
-    }
-    if let Some(v) = obj.get("agent") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v
-                .as_str()
-                .ok_or_else(|| Error::InvalidInput("agent must be a string or null".into()))?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("schedule") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("schedule must be a string or null".into())
-            })?;
-            validate_cron(s)?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("enabled") {
-        let b = v
-            .as_bool()
-            .ok_or_else(|| Error::InvalidInput("enabled must be a bool".into()))?;
-        q = q.bind(b);
-    }
-    if let Some(v) = obj.get("config") {
-        if !v.is_object() {
-            return Err(Error::InvalidInput("config must be an object".into()));
-        }
-        q = q.bind(v.to_string());
-    }
-    if let Some(v) = obj.get("condition") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("condition must be a string or null".into())
-            })?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("triggers") {
-        let arr = v
-            .as_array()
-            .ok_or_else(|| Error::InvalidInput("triggers must be an array".into()))?;
-        let triggers: Vec<String> = arr
-            .iter()
-            .map(|t| {
-                t.as_str()
-                    .map(String::from)
-                    .ok_or_else(|| Error::InvalidInput("each trigger must be a string".into()))
-            })
-            .collect::<Result<_>>()?;
-        for t in &triggers {
-            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
-                return Err(Error::InvalidInput(format!(
-                    "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
-                )));
-            }
-        }
-        q = q.bind(serde_json::to_string(&triggers).map_err(|e| {
-            Error::Other(format!("failed to serialize triggers: {e}"))
-        })?);
     }
     if let Some(v) = obj.get("memory") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v
-                .as_str()
-                .ok_or_else(|| Error::InvalidInput("memory must be a string or null".into()))?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    q = q.bind(applet_id);
-
-    let res = q
-        .execute(db)
-        .await
-        .map_err(|e| Error::Database(format!("failed to update action: {e}")))?;
-    if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
-    }
-
-    // Restore fidelity for chat-authored applets: the user's enable/disable
-    // choice mirrors into the manifest's default_enabled, so a DB rebuilt
-    // from disk comes back in the last chosen state (authoring plan §E).
-    if current.owner == "ai" {
-        if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
-            crate::applet_templates::mirror_enabled_to_manifest(applet_id, enabled);
-        }
+        let memory = match v {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => Some(s.clone()),
+            _ => return Err(Error::InvalidInput("memory must be a string or null".into())),
+        };
+        sqlx::query("UPDATE app_applets SET memory = $1, updated_at = now() WHERE id = $2")
+            .bind(memory)
+            .bind(applet_id)
+            .execute(db)
+            .await?;
     }
 
     get_applet(db, applet_id).await
 }
 
-/// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
-/// an action id suffix.
-fn slugify(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_underscore = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_underscore = false;
-        } else if !last_underscore && !out.is_empty() {
-            out.push('_');
-            last_underscore = true;
-        }
-    }
-    // Trim trailing underscore
-    while out.ends_with('_') {
-        out.pop();
-    }
-    if out.is_empty() {
-        out.push_str("unnamed");
-    }
-    out
-}
-
-/// Validate a cron expression's shape (5 or 6 space-separated fields).
+/// Validate a cron expression the way the scheduler and the SKILL.md reader
+/// read it: six fields, seconds first.
 fn validate_cron(cron: &str) -> Result<()> {
-    let fields: Vec<&str> = cron.split_whitespace().collect();
-    if fields.len() < 5 || fields.len() > 6 {
+    if crate::scheduler::slots::parse(cron).is_none() {
         return Err(Error::InvalidInput(format!(
-            "Invalid cron expression '{cron}': expected 5 or 6 fields"
+            "Invalid cron expression '{cron}': expected 6 fields, seconds first, such as '0 0 7 * * *' for 07:00 daily"
         )));
     }
     Ok(())
@@ -822,13 +602,26 @@ pub async fn last_run(db: &PgPool, applet_id: &str) -> Result<Option<AppletRun>>
 }
 
 /// Query runs with filters.
+/// What runs reached through the egress proxy, one JSON object per host:
+/// `{host, requests, refused, sent_bytes, received_bytes}`, `[]` for none.
+/// `runs` is the SQL condition on `q.run_id` that picks the runs.
+fn requests_by_host(runs: &str) -> String {
+    format!(
+        "COALESCE((SELECT json_agg(h ORDER BY h.host) FROM ( \
+           SELECT q.host, count(*) AS requests, count(q.refused_reason) AS refused, \
+                  sum(q.sent_bytes)::bigint AS sent_bytes, \
+                  sum(q.received_bytes)::bigint AS received_bytes \
+             FROM app_applet_run_requests q WHERE {runs} GROUP BY q.host) h), '[]'::json)"
+    )
+}
+
 pub async fn query_runs(
     db: &PgPool,
     applet_id: Option<&str>,
     status: Option<&str>,
     limit: i64,
 ) -> Result<Vec<AppletRun>> {
-    let rows = sqlx::query(
+    let sql = format!(
         // The cost of a run is not on the run — it is the sum of the model
         // calls it made, which live in `app_ai_calls`. Carried here so the
         // detail page can answer "what did this cost" beside "what did it do",
@@ -837,13 +630,16 @@ pub async fn query_runs(
         r#"SELECT r.*, COALESCE((
                  SELECT SUM(c.cost_micros) FROM app_ai_calls c
                   WHERE c.applet_run_id = r.id
-               ), 0)::bigint AS cost_micros
+               ), 0)::bigint AS cost_micros,
+               {} AS requests
              FROM app_applet_runs r
             WHERE ($1 IS NULL OR r.applet_id = $2)
               AND ($3 IS NULL OR r.status = $4)
             ORDER BY r.created_at DESC
             LIMIT $5"#,
-    )
+        requests_by_host("q.run_id = r.id")
+    );
+    let rows = sqlx::query(&sql)
     .bind(applet_id)
     .bind(applet_id)
     .bind(status)
@@ -852,7 +648,13 @@ pub async fn query_runs(
     .fetch_all(db)
     .await?;
 
-    rows.iter().map(run_from_row).collect()
+    let mut runs: Vec<AppletRun> = rows.iter().map(run_from_row).collect::<Result<_>>()?;
+    let ids: Vec<String> = runs.iter().map(|r| r.id.clone()).collect();
+    let mut made = made_by_runs(db, &ids).await?;
+    for run in &mut runs {
+        run.made = made.remove(&run.id).unwrap_or_default();
+    }
+    Ok(runs)
 }
 
 /// One line of an applet's log: consecutive runs that shared an outcome.
@@ -868,6 +670,11 @@ pub struct LogEntry {
     pub first_at: Option<crate::types::Timestamp>,
     pub last_at: Option<crate::types::Timestamp>,
     pub cost_micros: i64,
+    /// What these runs reached through the egress proxy, summed per host
+    /// across the runs the line stands for, like `cost_micros`.
+    pub requests: serde_json::Value,
+    /// What the line's latest run made.
+    pub made: Vec<RunMade>,
 }
 
 /// The run log with identical consecutive outcomes collapsed into one row.
@@ -886,7 +693,7 @@ pub struct LogEntry {
 pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<LogEntry>> {
     // Gaps-and-islands: a global row_number minus a per-outcome row_number is
     // constant exactly while the outcome repeats, so it names each run.
-    let rows = sqlx::query(
+    let sql = format!(
         r#"WITH ordered AS (
                SELECT r.id, r.status, r.trigger, r.started_at, r.error,
                       coalesce(r.result_summary, '') AS summary,
@@ -901,27 +708,36 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
                           ORDER BY r.started_at DESC) AS grp
                  FROM app_applet_runs r
                 WHERE r.applet_id = $1
+           ),
+           grouped AS (
+               SELECT status, summary, message,
+                      count(*)                 AS occurrences,
+                      min(started_at)          AS first_at,
+                      max(started_at)          AS last_at,
+                      sum(cost_micros)::bigint AS cost_micros,
+                      array_agg(id) AS ids,
+                      (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
+                      (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
+                      (array_agg(error   ORDER BY started_at DESC))[1] AS error
+                 FROM ordered
+                GROUP BY grp, status, summary, message
+                ORDER BY max(started_at) DESC
+                LIMIT $2
            )
-           SELECT status, summary, message,
-                  count(*)                 AS occurrences,
-                  min(started_at)          AS first_at,
-                  max(started_at)          AS last_at,
-                  sum(cost_micros)::bigint AS cost_micros,
-                  (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
-                  (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
-                  (array_agg(error   ORDER BY started_at DESC))[1] AS error
-             FROM ordered
-            GROUP BY grp, status, summary, message
-            ORDER BY max(started_at) DESC
-            LIMIT $2"#,
-    )
+           SELECT g.*, {} AS requests
+             FROM grouped g
+            ORDER BY g.last_at DESC"#,
+        requests_by_host("q.run_id = ANY(g.ids)")
+    );
+    let rows = sqlx::query(&sql)
     .bind(applet_id)
     .bind(limit)
     .fetch_all(db)
     .await?;
 
     let blank_to_none = |s: String| (!s.is_empty()).then_some(s);
-    rows.iter()
+    let mut lines: Vec<LogEntry> = rows
+        .iter()
         .map(|r| {
             Ok(LogEntry {
                 run_id: r.try_get("latest_run_id")?,
@@ -934,9 +750,19 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
                 first_at: r.try_get("first_at")?,
                 last_at: r.try_get("last_at")?,
                 cost_micros: r.try_get("cost_micros")?,
+                requests: r.try_get("requests")?,
+                made: Vec::new(),
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    let ids: Vec<String> = lines.iter().filter_map(|l| l.run_id.clone()).collect();
+    let mut made = made_by_runs(db, &ids).await?;
+    for line in &mut lines {
+        if let Some(id) = &line.run_id {
+            line.made = made.remove(id).unwrap_or_default();
+        }
+    }
+    Ok(lines)
 }
 
 /// One applet's runs on one local day, counted by outcome.
@@ -996,6 +822,95 @@ pub async fn record_page_output(db: &PgPool, run_id: &str, page_id: &str) -> Res
     .bind(page_id)
     .execute(db)
     .await?;
+    Ok(())
+}
+
+/// Record rows a run wrote into one of its tables, adding to what it wrote
+/// there already.
+pub async fn record_rows_output(db: &PgPool, run_id: &str, table: &str, rows: i64) -> Result<()> {
+    if rows <= 0 {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id, item_count) VALUES ($1, 'rows', $2, $3) \
+         ON CONFLICT (run_id, kind, ref_id) DO UPDATE SET item_count = app_applet_run_outputs.item_count + EXCLUDED.item_count",
+    )
+    .bind(run_id)
+    .bind(table)
+    .bind(i32::try_from(rows).unwrap_or(i32::MAX))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Record that a run added a task.
+pub async fn record_task_output(db: &PgPool, run_id: &str, task_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id) VALUES ($1, 'task', $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(run_id)
+    .bind(task_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Whether a run wrote rows or added a task, the things a run can make
+/// besides a page and what it says.
+pub async fn run_made_rows(db: &PgPool, run_id: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM app_applet_run_outputs WHERE run_id = $1 AND kind IN ('rows', 'task'))",
+    )
+    .bind(run_id)
+    .fetch_one(db)
+    .await?)
+}
+
+/// One thing a run made: a page (with its title), the rows it wrote into a
+/// table, or a task.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RunMade {
+    pub kind: String,
+    /// The page or task id, or the table's name.
+    pub ref_id: String,
+    pub title: Option<String>,
+    pub count: i64,
+}
+
+/// What each of `run_ids` made, by run. A page deleted since is left out.
+pub async fn made_by_runs(db: &PgPool, run_ids: &[String]) -> Result<std::collections::HashMap<String, Vec<RunMade>>> {
+    let rows = sqlx::query(
+        r#"SELECT o.run_id, o.kind, o.ref_id, o.item_count::bigint AS item_count, p.title
+             FROM app_applet_run_outputs o
+             LEFT JOIN app_pages p ON o.kind = 'page' AND p.id = o.ref_id AND p.deleted_at IS NULL
+            WHERE o.run_id = ANY($1) AND (o.kind <> 'page' OR p.id IS NOT NULL)
+            ORDER BY o.created_at"#,
+    )
+    .bind(run_ids)
+    .fetch_all(db)
+    .await?;
+    let mut out: std::collections::HashMap<String, Vec<RunMade>> = std::collections::HashMap::new();
+    for r in rows {
+        out.entry(r.try_get("run_id")?).or_default().push(RunMade {
+            kind: r.try_get("kind")?,
+            ref_id: r.try_get("ref_id")?,
+            title: r.try_get("title")?,
+            count: r.try_get("item_count")?,
+        });
+    }
+    Ok(out)
+}
+
+/// Note that the owner opened an applet's page, which clears its "new"
+/// Inbox item.
+pub async fn mark_seen(db: &PgPool, applet_id: &str) -> Result<()> {
+    let res = sqlx::query("UPDATE app_applets SET seen_at = now() WHERE id = $1")
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+    }
     Ok(())
 }
 
@@ -1105,28 +1020,40 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    let id: String = row.try_get("id")?;
+    let owner: String = row.try_get("owner")?;
+    let has_override = owner == "system" && crate::applet_templates::has_override(&id);
     Ok(Applet {
-        id: row.try_get("id")?,
-        owner: row.try_get("owner")?,
+        id,
+        owner,
         name: row.try_get("name")?,
         description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
-        agent_shipped: row.try_get("agent_shipped").ok().flatten(),
         schedule: row.try_get("schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
         config,
-        condition: row.try_get("condition")?,
         triggers,
         memory: row.try_get("memory")?,
         credential_id: row.try_get("credential_id")?,
         device_id: row.try_get("device_id")?,
         command,
+        // absent-ok: a query that does not select it is not running the applet.
+        run_sql: row.try_get("run_sql").ok().flatten(),
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
         last_slot_at: row.try_get("last_slot_at").ok().flatten(),
         next_due_at: row.try_get("next_due_at").ok().flatten(),
+        // absent-ok, as `run_sql`. A watch this build cannot read is no
+        // watch, which the reader's own checks make rare.
+        watch: row
+            .try_get::<Option<serde_json::Value>, _>("watch")
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_value(v).ok()),
+        watched_through: row.try_get("watched_through").ok().flatten(),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        has_override,
     })
 }
 
@@ -1198,13 +1125,41 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         // table alone) — those callers do not show cost, so 0 is right.
         message: row.try_get("message").ok().flatten(),
         cost_micros: row.try_get("cost_micros").unwrap_or(0),
+        // absent-ok: a query that does not join the request log has none to show.
+        requests: row.try_get("requests").unwrap_or_else(|_| serde_json::json!([])),
         created_at: row.try_get("created_at")?,
+        made: Vec::new(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A run's requests show per host on the run and its log line.
+    #[sqlx::test]
+    async fn a_runs_requests_are_summed_per_host(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner) VALUES ('applet_tides', 'Tides', 'user')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        seed_run(&pool, "applet_tides", "success", "ok", 10).await;
+        let run_id: String = sqlx::query_scalar("SELECT id FROM app_applet_runs LIMIT 1").fetch_one(&pool).await.unwrap();
+        for (host, refused, sent) in [("api.weather.gov", None, 100i64), ("api.weather.gov", None, 50), ("inside.example.com", Some("resolves to a private network address"), 0)] {
+            sqlx::query("INSERT INTO app_applet_run_requests (run_id, host, method, sent_bytes, refused_reason) VALUES ($1, $2, 'CONNECT', $3, $4)")
+                .bind(&run_id).bind(host).bind(sent).bind(refused).execute(&pool).await.unwrap();
+        }
+        let runs = query_runs(&pool, Some("applet_tides"), None, 5).await.unwrap();
+        let log = collapsed_log(&pool, "applet_tides", 5).await.unwrap();
+        assert_eq!(log[0].requests, runs[0].requests, "the log line carries the same summary");
+        assert_eq!(
+            runs[0].requests,
+            serde_json::json!([
+                { "host": "api.weather.gov", "requests": 2, "refused": 0, "sent_bytes": 150, "received_bytes": 0 },
+                { "host": "inside.example.com", "requests": 1, "refused": 1, "sent_bytes": 0, "received_bytes": 0 },
+            ])
+        );
+    }
 
     async fn seed_run(pool: &PgPool, applet: &str, status: &str, summary: &str, secs: i64) {
         sqlx::query(
@@ -1424,7 +1379,7 @@ mod tests {
 
     /// The regression this file earned the hard way.
     ///
-    /// `applet_setup` and `create_user_applet` both mint user-applet ids, and
+    /// `applet_setup` mints user-applet ids, and
     /// `applet_schema_name` parses them back. They used to hold three separate
     /// string literals and two of them disagreed about how many underscores
     /// `applet_user__` has — so an applet created through the API parsed as
@@ -1435,8 +1390,8 @@ mod tests {
     /// the two doors. This asserts the round trip both writers depend on.
     #[test]
     fn minted_user_applet_ids_parse_back_to_a_schema() {
-        // Exactly what create_user_applet builds for an unnamed id.
-        let minted = format!("{USER_APPLET_PREFIX}{}", slugify("Heart Rate Explorer"));
+        // Exactly what applet_setup builds for "Heart rate explorer".
+        let minted = format!("{USER_APPLET_PREFIX}{}", "heart-rate-explorer".replace('-', "_"));
         assert_eq!(minted, "applet_user__heart_rate_explorer");
         assert_eq!(
             applet_schema_name(&minted).as_deref(),

@@ -2,6 +2,9 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 import { markInApp } from '$lib/components/setup/inApp';
 import { boxBelowFloor } from '$lib/boxApi';
+import type { SetupState } from '$lib/api/client';
+import { setupStateStore } from '$lib/stores/setupState.svelte';
+import { sidebarDoors } from '$lib/stores/sidebarDoors.svelte';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
 const OFFLINE_DATA = {
@@ -53,8 +56,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// TWO GATES, because there are two different kinds of "not ready".
 		//
-		// SETUP is the box coming up — claimed, and (on an appliance) linked to
-		// an account. A box that hasn't done that can't run the app at all.
+		// SETUP is the server coming up: claimed by its first device. A server
+		// that hasn't been claimed can't run the app at all.
 		//
 		// ONBOARDING is the box becoming worth having — something connected, so
 		// it has a life to keep a record of. It used to gate nothing: the state
@@ -81,7 +84,13 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// Three quick tries, then give up and continue. Onboarding is worth a
 		// second of patience; it is never worth locking someone out of their
 		// own app over a box that blipped.
-		try {
+		//
+		// PARALLEL, because only the session has to come first. Setup state,
+		// the version floor and the profile don't depend on each other, so all
+		// three start now and are read in gate order below. Each one awaited in
+		// turn cost a round trip apiece before the shell, which on the relay is
+		// most of a cold start. A gate that redirects leaves the others unread.
+		const setupP = (async () => {
 			let setup: {
 				setup_complete?: boolean;
 				onboarding_complete?: boolean;
@@ -96,12 +105,23 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 					// keep trying
 				}
 			}
+			return setup;
+		})();
+		const floorP = boxBelowFloor(fetch);
+		const profileP = fetch('/api/profile');
+		// Mark both handled now: a redirect below returns before they're awaited.
+		floorP.catch(() => {});
+		profileP.catch(() => {});
+
+		try {
+			const setup = await setupP;
+			// The shell's setup store and sidebar would ask again on mount;
+			// hand them these answers instead (see `seed` on each).
+			if (setup) setupStateStore.seed(setup as SetupState);
 			if (setup) {
-				// Gate on onboarding_status ONLY — never on setup_complete. On an
-				// appliance, setup_complete also requires the linked account, and
-				// the airlock's account step is skippable: gating the shell on it
-				// bounced "Enter Virtues" straight back to the letter forever,
-				// with the remedy stranded behind the wall it was meant to open.
+				// Gate on onboarding_status ONLY, never on setup_complete. Setup
+				// is the claim; whether the person has finished or dismissed the
+				// rest of Setup is onboarding_status.
 				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
@@ -127,16 +147,17 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// The server is too old for this copy of the app: one clear screen
 		// rather than a half-working app. See $lib/boxApi.ts.
-		if (await boxBelowFloor(fetch)) throw redirect(303, '/server-update');
+		if (await floorP) throw redirect(303, '/server-update');
 
 		// Let in: from here `/setup` opens as a tab in the app, not the stage.
 		markInApp(true);
 
 		// Fetch profile for user preferences
-		const profileResponse = await fetch('/api/profile');
+		const profileResponse = await profileP;
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();
+			sidebarDoors.seed(profile);
 
 			// (Onboarding redirects live above, off /api/setup/state. This fetch
 			// only feeds preferences.)

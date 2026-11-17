@@ -9,6 +9,8 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 import { noteRequestId } from '$lib/log';
 import { backendUrl } from '$lib/config/backend';
+import { isTauri } from '$lib/utils/platform';
+import { shellSupports } from '$lib/tauri/bridge';
 
 const API_BASE = '/api';
 
@@ -60,9 +62,56 @@ export function deadline(ms: number): AbortSignal {
 }
 
 /**
+ * How long a GET may take when the caller passes no signal of its own. A
+ * request stalled on the relay otherwise never settles, and a poll that waits
+ * on it (an `inflight` latch) stops for good. POSTs have no default: some wait
+ * on a model for longer than this.
+ */
+const GET_DEADLINE_MS = 30_000;
+
+/** A response read to text, so callers sharing one fetch each parse their own copy. */
+interface ReadResponse {
+	ok: boolean;
+	status: number;
+	statusText: string;
+	requestId?: string;
+	text: string;
+}
+
+/**
+ * GETs in flight, by URL. Components and stores that mount together ask for
+ * the same endpoint at once (the profile, the assistant profile), and each
+ * used to pay a round trip. A second identical GET while the first is out
+ * waits on it instead. Only the text is shared: each caller parses its own
+ * object, so one store changing its copy cannot reach another's.
+ */
+const inflightGets = new Map<string, Promise<ReadResponse>>();
+
+async function readResponse(url: string, init?: RequestInit): Promise<ReadResponse> {
+	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
+	let text = '';
+	try {
+		text = res.status === 204 ? '' : await res.text();
+	} catch (e) {
+		// A body that failed to read is a failed request when it was meant to
+		// succeed; an error response keeps its status either way.
+		if (res.ok) throw e;
+	}
+	return { ok: res.ok, status: res.status, statusText: res.statusText, requestId, text };
+}
+
+/**
  * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
  * query object, throws {@link ApiError} (with status) on non-2xx, and returns
  * the parsed JSON body (or `undefined` for empty/204 responses).
+ *
+ * A GET without its own signal gets a 30s deadline, and joins an identical GET
+ * already in flight (see `inflightGets`).
  *
  * Not for binary/blob endpoints or progress-tracked uploads — those keep their
  * own `fetch`/XHR (see uploadMedia, downloadDriveFile).
@@ -81,37 +130,45 @@ export async function request<T>(
 		if (q) url += `?${q}`;
 	}
 
-	const res = await fetch(url, init);
-	// Remember it whether or not this request failed: an error thrown LATER,
-	// or an uncaught exception with no request of its own, still wants the
-	// most recent one as a hint. See `noteRequestId`.
-	const requestId = res.headers.get('x-request-id') ?? undefined;
-	if (requestId) noteRequestId(requestId);
+	const { query: _query, ...fetchInit } = init ?? {};
+	const isGet = (fetchInit.method ?? 'GET').toUpperCase() === 'GET';
+	let res: ReadResponse;
+	if (isGet && !fetchInit.signal && fetchInit.body == null) {
+		// Headers would make two GETs differ; the shared ones are header-free.
+		const shareable = fetchInit.headers == null;
+		let pending = shareable ? inflightGets.get(url) : undefined;
+		if (!pending) {
+			pending = readResponse(url, { ...fetchInit, signal: deadline(GET_DEADLINE_MS) });
+			if (shareable) {
+				inflightGets.set(url, pending);
+				const forget = () => {
+					if (inflightGets.get(url) === pending) inflightGets.delete(url);
+				};
+				pending.then(forget, forget);
+			}
+		}
+		res = await pending;
+	} else {
+		res = await readResponse(url, fetchInit);
+	}
 
 	if (!res.ok) {
 		let body: unknown;
 		let message = res.statusText || `HTTP ${res.status}`;
-		try {
-			const text = await res.text();
-			if (text) {
-				try {
-					body = JSON.parse(text);
-					const parsed = body as { error?: string; message?: string };
-					message = parsed?.error || parsed?.message || message;
-				} catch {
-					body = text;
-					message = text;
-				}
+		if (res.text) {
+			try {
+				body = JSON.parse(res.text);
+				const parsed = body as { error?: string; message?: string };
+				message = parsed?.error || parsed?.message || message;
+			} catch {
+				body = res.text;
+				message = res.text;
 			}
-		} catch {
-			/* keep statusText fallback */
 		}
-		throw new ApiError(res.status, message, body, requestId);
+		throw new ApiError(res.status, message, body, res.requestId);
 	}
 
-	if (res.status === 204) return undefined as T;
-	const text = await res.text();
-	return (text ? JSON.parse(text) : undefined) as T;
+	return (res.text ? JSON.parse(res.text) : undefined) as T;
 }
 
 /** GET a JSON endpoint, with an optional query object. */
@@ -129,10 +186,135 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 }
 
 // ============================================================================
+// Owner proof (virtues-core/src/api/owner_proof.rs)
+// ============================================================================
+
+/**
+ * A few routes need a fresh signature from the Virtues app itself, because any
+ * process on a paired Mac reaches the box as that Mac through the app's
+ * loopback port, and only the app holds the device's key: revealing a password
+ * or a key, adding a device or minting a pair code, changing the AI key, the
+ * terminal, and an admin turn with the Allow on its commands. {@link apiSendProven} and {@link requestProven} call the
+ * ordinary routes; the terminal socket and the chat stream take
+ * {@link ownerProof} and {@link ownerProofHeaders} directly.
+ *
+ * The box issues a one-time nonce, and the app signs it with the method and
+ * path (`plugin:reach|owner_proof_sign`); the key never reaches this page.
+ * Outside the app, in a browser on `make dev`, nothing can sign and no header
+ * goes out, and the box's console needs none. A server too old to issue a
+ * nonce answers 404 and does not ask for a proof.
+ *
+ * An app too old to sign gets an error saying to update it, and nothing goes
+ * to the box. Sent unsigned, the request would only come back refused.
+ *
+ * `path` is the whole path the box sees, such as `/ws/terminal`. The result is
+ * the proof's value, or null when no proof goes out.
+ */
+export async function ownerProof(method: string, path: string): Promise<string | null> {
+	if (!isTauri) return null;
+	let nonce: string;
+	try {
+		({ nonce } = await apiSend<{ nonce: string }>('POST', '/owner-proof/nonce'));
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) return null;
+		throw e;
+	}
+	const { invoke } = await import('@tauri-apps/api/core');
+	try {
+		return await invoke<string>('plugin:reach|owner_proof_sign', { method, path, nonce });
+	} catch (e) {
+		// The surface is asked only after the signing failed, so an app that
+		// signs is never told to update. That includes a shell that cannot
+		// report its surface (Android's capabilities don't allow the command).
+		if (!(await shellSupports(OWNER_PROOF_SURFACE))) {
+			throw new ApiError(403, "Update the Virtues app to do this. This version can't sign the check your server asks for.");
+		}
+		throw new Error(e instanceof Error ? e.message : String(e));
+	}
+}
+
+/**
+ * The owner proof header for `method` on `path` under `/api`, or none where
+ * {@link ownerProof} returns none.
+ */
+export async function ownerProofHeaders(method: string, path: string): Promise<Record<string, string>> {
+	const proof = await ownerProof(method, `${API_BASE}${path}`);
+	return proof ? { 'X-Virtues-Owner-Proof': proof } : {};
+}
+
+/** The surface that added `owner_proof_sign` (lib.rs `COMMAND_SURFACE_VERSION`). */
+const OWNER_PROOF_SURFACE = 15;
+
+/**
+ * A server from before the owner proof still asks for a `virtues sudo`
+ * approval on the AI key and on imports, and this app no longer sends one.
+ * The owner sees what to do; the server's own words stay on `body` with the
+ * request id, for support.
+ */
+function explainOldServer(e: unknown): unknown {
+	if (!(e instanceof ApiError) || !/sudo/i.test(e.message)) return e;
+	return new ApiError(
+		e.status,
+		'Your server is older than this app and still asks for an approval at its command line. Update your server, then try again.',
+		e.body,
+		e.requestId,
+	);
+}
+
+/** {@link apiSend} for a route that needs the app's owner proof. */
+export function apiSendProven<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	return requestProven<T>(method, path, {
+		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {},
+		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+	});
+}
+
+/** {@link request} for a route that needs the app's owner proof, with any body. */
+export async function requestProven<T>(
+	method: string,
+	path: string,
+	init: { headers?: Record<string, string>; body?: BodyInit } = {},
+): Promise<T> {
+	const send = async (): Promise<{ result: T } | { error: unknown; proved: boolean }> => {
+		const headers = { ...init.headers, ...(await ownerProofHeaders(method, path)) };
+		try {
+			const result = await request<T>(path, { method, headers, body: init.body });
+			return { result };
+		} catch (error) {
+			return { error, proved: 'X-Virtues-Owner-Proof' in headers };
+		}
+	};
+	let sent = await send();
+	// A signed proof refused once is most often a nonce the server lost when
+	// it restarted. One fresh try settles it; a real refusal repeats.
+	if ('error' in sent && sent.proved && isOwnerProofRefusal(sent.error)) sent = await send();
+	if ('error' in sent) throw explainOldServer(sent.error);
+	return sent.result;
+}
+
+function isOwnerProofRefusal(e: unknown): boolean {
+	return (
+		e instanceof ApiError &&
+		e.status === 403 &&
+		(e.body as { code?: string } | undefined)?.code === 'owner_proof_required'
+	);
+}
+
+// ============================================================================
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message' | 'data';
+
+/** A data trigger: the applet starts on rows in one of your data tables. */
+export interface AppletWatch {
+	table: string;
+	/** `new` rows, a time `before` each row starts, or a time after it ends. */
+	kind: 'new' | 'before' | 'after_end';
+	minutes: number;
+	/** The table as a person says it, "calendar events". */
+	label: string;
+}
 
 export interface AppletRun {
 	id: string;
@@ -154,7 +336,20 @@ export interface AppletRun {
 	 *  gateway's authoritative per-call figures. Zero for runs that called no
 	 *  model, and for every run recorded before spend was attributed. */
 	cost_micros: number;
+	/** What the run reached through its egress proxy, one entry per host.
+	 *  Empty for a run with no network. */
+	requests: HostRequests[];
 	created_at: string;
+}
+
+/** Requests to one host through an applet run's egress proxy. */
+export interface HostRequests {
+	host: string;
+	requests: number;
+	/** How many the proxy refused. */
+	refused: number;
+	sent_bytes: number;
+	received_bytes: number;
 }
 
 export interface AppletLastRun {
@@ -180,21 +375,17 @@ export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
-	/** The applet's one-sentence intent, from its manifest — what it is for,
+	/** The applet's one-sentence intent, from its SKILL.md — what it is for,
 	 *  in the user's terms. The list row's plain-English line and the detail
-	 *  headline. Null only for a row whose manifest omits it. */
+	 *  headline. */
 	description: string | null;
 	agent: string | null;
-	/** The prompt we last SHIPPED, which is a different question from the one
-	 *  the applet is running. They differ once the person has written their
-	 *  own — and knowing that is what lets this page offer a diff and a way
-	 *  back to the default, rather than silently keeping either. */
-	agent_shipped: string | null;
 	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
-	condition: string | null;
 	triggers: AppletTrigger[];
+	/** Its data trigger, when its file has one. */
+	watch?: AppletWatch | null;
 	memory: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
@@ -205,6 +396,10 @@ export interface Applet {
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
 	command: string[] | null;
+	/** A shipped applet you changed: its prompt or schedule is yours, kept
+	 *  apart from the shipped file so a shipped fix still reaches the rest.
+	 *  `reset` in a patch returns it to what ships. */
+	has_override?: boolean;
 	/** Lifecycle: null = forever · "once" = archive after first success ·
 	 *  anything else = SQL boolean checked after each success. */
 	until: string | null;
@@ -220,6 +415,10 @@ export interface Applet {
 	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
+	/** The named keys the applet declares (`secrets` in its manifest), each
+	 *  with whether the owner has set it. Names only. On the single-applet
+	 *  response; absent from list rows and from boxes older than the field. */
+	secrets?: { name: string; is_set: boolean }[];
 	/** The last 10 run statuses, newest first — the card's pulse. Comes with
 	 *  the row so the list does not fetch it per applet. */
 	pulse: AppletRun['status'][];
@@ -298,6 +497,9 @@ export function searchLocal(
 export interface SearchStatus {
 	mode: 'dragon' | 'bundled' | 'manual' | 'unknown' | string;
 	embed_url: string;
+	/** Whether the embedding server is on your network. A public one receives
+	 *  the text of everything your server indexes. */
+	embed_locality: 'local' | 'public' | 'unknown';
 	index_model: string | null;
 	index_dims: number | null;
 	/** A move to another model, built in the background while search keeps
@@ -368,18 +570,17 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 
 export interface ReopenOnboardingResponse {
 	devices: number;
-	credentials: number;
 }
 
 /**
  * Revoke every paired device, keeping data, sources, subscription and box
- * identity. The box becomes unclaimed: it advertises over Bluetooth again and
- * the panel returns to a setup screen.
+ * identity. The server becomes unclaimed and pairs with its standing code
+ * again (`virtues pair` prints it).
  *
  * This device is revoked too — the caller loses its own session, by design.
  */
 export function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
-	return apiSend<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
+	return apiSendProven<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
 }
 
 export interface ApplyUpdateResponse {
@@ -401,85 +602,6 @@ export interface ApplyUpdateResponse {
  */
 export function applyUpdate(): Promise<ApplyUpdateResponse> {
 	return apiSend<ApplyUpdateResponse>('POST', '/system/update/apply');
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Display — the box's attached screen (Settings → Display)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** The face the panel wears in its ambient slot. */
-export interface DisplayFaceConfig {
-	kind: 'builtin' | 'applet';
-	/** Which built-in, when kind is 'builtin': 'record' | 'matte'. */
-	builtin: string;
-	applet_id?: string | null;
-}
-
-export interface DisplayPanelInfo {
-	/** DRM connector name, e.g. `card0-HDMI-A-1`. */
-	connector: string;
-	mode_width?: number;
-	mode_height?: number;
-}
-
-/**
- * What the glass is showing, redacted for the LAN: the mirror may say THAT
- * the panel is on its setup screen, never what the words are.
- */
-export interface DisplayGlassState {
-	claimed: boolean;
-	online: boolean;
-	connectivity: string;
-	devices: number;
-	box_name: string;
-	data_disk_fault?: string | null;
-	record?: Array<{ label: string; count: number }>;
-	record_since?: string | null;
-	updating: boolean;
-	/** Hours is holding the glass dark right now (backlight off). */
-	asleep: boolean;
-}
-
-/** The screen's hours. Times are box-local "HH:MM:SS"; absent = never sleeps. */
-export interface DisplayHours {
-	sleep_start?: string | null;
-	sleep_end?: string | null;
-}
-
-export interface DisplaySettings {
-	/** This box has the kiosk stack installed at all. */
-	attached: boolean;
-	unit_state: 'active' | 'installed but not running' | 'not installed';
-	panel?: DisplayPanelInfo | null;
-	zoom_derived?: number | null;
-	zoom_override?: number | null;
-	face: DisplayFaceConfig;
-	hours: DisplayHours;
-	state: DisplayGlassState;
-}
-
-export function getDisplaySettings(): Promise<DisplaySettings> {
-	return apiGet('/system/display');
-}
-
-export function setDisplayFace(face: {
-	kind: 'builtin' | 'applet';
-	builtin?: string;
-	applet_id?: string;
-}): Promise<DisplayFaceConfig> {
-	return apiSend('PUT', '/system/display/face', face);
-}
-
-export function restartDisplay(): Promise<{ restarted: boolean }> {
-	return apiSend('POST', '/system/display/restart');
-}
-
-/** Set the sleep schedule ("HH:MM" box-local), or both null for never. */
-export function setDisplayHours(hours: {
-	sleep_start: string | null;
-	sleep_end: string | null;
-}): Promise<DisplayHours> {
-	return apiSend('PUT', '/system/display/hours', hours);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -539,44 +661,25 @@ export function adminReconcile(): Promise<{ upserted: number }> {
 	return apiSend<{ upserted: number }>('POST', '/admin/reconcile');
 }
 
-/**
- * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
- * and runs the standard scanner. Any folder under the slug containing a
- * `manifest.toml` becomes an action. Returns added/updated/removed ids.
- */
-export function importActionsFromGit(body: {
-	url: string;
-	ref?: string;
-	/** From `/api/sudo/request` — importing runs someone else's code. */
-	sudo_request_id: string;
-}): Promise<{
-	/** Folder the package landed in — host + owner + repo, so two remotes with
-	 *  the same repo name can't claim each other's. */
-	slug: string;
-	/** Commit actually checked out. The server has always resolved this; the
-	 *  client used to drop it, which is why "is there a newer version" was
-	 *  unanswerable. */
-	commit: string | null;
-	added: string[];
-	updated: string[];
-	removed: string[];
-}> {
-	return apiSend('POST', '/admin/applets/import-git', body);
-}
-
 export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
 	schedule?: string | null;
 	enabled?: boolean;
 	config?: Record<string, unknown>;
-	condition?: string | null;
 	triggers?: AppletTrigger[];
 	memory?: string | null;
+	/** Remove your changes to a shipped applet. */
+	reset?: boolean;
 }
 
 export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
 	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
+}
+
+/** The owner opened an applet's page, which clears its "new" Inbox item. */
+export async function markAppletSeen(id: string): Promise<void> {
+	await request(`/applets/${encodeURIComponent(id)}/seen`, { method: 'POST' });
 }
 
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
@@ -602,6 +705,19 @@ export interface AppletLogEntry {
 	first_at: string | null;
 	last_at: string | null;
 	cost_micros: number;
+	/** Summed per host across the runs this line stands for. */
+	requests: HostRequests[];
+	/** What the line's latest run made. */
+	made?: RunMade[];
+}
+
+/** One thing a run made: a page, the rows it wrote into a table, a task. */
+export interface RunMade {
+	kind: 'page' | 'rows' | 'task';
+	/** The page or task id, or the table's name. */
+	ref_id: string;
+	title: string | null;
+	count: number;
 }
 
 /** A page an applet's runs wrote, with the last time one of them did. */
@@ -793,6 +909,94 @@ export async function revokeCredential(id: string): Promise<void> {
 	await apiSend('DELETE', `/credentials/${encodeURIComponent(id)}`);
 }
 
+// Keys (api/keys.rs)
+
+/** A named key an applet can be given (`OPENAI_API_KEY`). Names only. */
+export interface KeyItem {
+	name: string;
+	is_set: boolean;
+	/** When the value last changed; null for a declared key not yet set. */
+	updated_at: string | null;
+	/** The applets that declare it, by name. */
+	used_by: string[];
+}
+
+export interface KeysOverview {
+	sign_ins: Credential[];
+	keys: KeyItem[];
+}
+
+export function getKeys(): Promise<KeysOverview> {
+	return apiGet<KeysOverview>('/keys');
+}
+
+export async function setKey(name: string, value: string): Promise<void> {
+	await apiSend('PUT', `/keys/${encodeURIComponent(name)}`, { value });
+}
+
+export async function deleteKey(name: string): Promise<void> {
+	await apiSend('DELETE', `/keys/${encodeURIComponent(name)}`);
+}
+
+/** A key's value, fetched only when the owner asks to see it, with the
+ *  owner proof. */
+export async function revealKey(name: string): Promise<string> {
+	const { value } = await apiSendProven<{ value: string }>(
+		'GET',
+		`/keys/${encodeURIComponent(name)}/value`,
+	);
+	return value;
+}
+
+// Passwords (api/passwords.rs)
+//
+// Saved logins in Drive. The list carries no passwords; `revealLogin` fetches
+// one when the owner opens a login.
+
+export interface LoginItem {
+	id: string;
+	/** The site's origin, `https://example.com`. */
+	site: string;
+	name: string;
+	/** Empty when `unreadable`. */
+	username: string;
+	updated_at: string;
+	/** The server's key does not open this login. It can be removed, not
+	 *  opened or edited. Absent from servers that predate the flag. */
+	unreadable?: boolean;
+}
+
+/** A new login, or an edit. On an edit, an empty `password` keeps the saved
+ *  one and a missing `notes` keeps the saved notes. */
+export interface LoginInput {
+	site: string;
+	name?: string;
+	username: string;
+	password?: string;
+	notes?: string;
+}
+
+export function getLogins(): Promise<LoginItem[]> {
+	return apiGet<LoginItem[]>('/passwords');
+}
+
+export function createLogin(input: LoginInput): Promise<LoginItem> {
+	return apiSend<LoginItem>('POST', '/passwords', input);
+}
+
+export function updateLogin(id: string, input: LoginInput): Promise<LoginItem> {
+	return apiSend<LoginItem>('PUT', `/passwords/${encodeURIComponent(id)}`, input);
+}
+
+export async function deleteLogin(id: string): Promise<void> {
+	await apiSend('DELETE', `/passwords/${encodeURIComponent(id)}`);
+}
+
+/** A login's password and notes, with the owner proof. */
+export function revealLogin(id: string): Promise<{ password: string; notes: string }> {
+	return apiSendProven('GET', `/passwords/${encodeURIComponent(id)}/secret`);
+}
+
 // Source catalog
 //
 // One tile per [[source]] in actions/templates.toml. Drives the Sources tab grid.
@@ -831,6 +1035,8 @@ export interface SourceLogin {
 	url: string;
 	cookies: string[];
 	jar_field?: string | null;
+	/** Other domains the sign-in sets cookies on (ChatGPT's openai.com). */
+	domains?: string[];
 }
 
 /**
@@ -909,7 +1115,8 @@ export async function getStreamHealth(): Promise<StreamHealth[]> {
  *  while the condition holds; the item goes when the server sees it fixed. */
 export interface AttentionItem {
 	key: string;
-	/** `update` | `disk` | `backup` | `source` | `stream`, most urgent first. */
+	/** `key` | `update` | `disk` | `backup` | `source` | `connection` |
+	 *  `stream` | `applet` | `applet_new`, most urgent first. */
 	kind: string;
 	title: string;
 	body: string;
@@ -928,8 +1135,10 @@ export async function getAttention(): Promise<AttentionItem[]> {
 
 // ─── Unified pairing (`/api/pair/*`) ─────────────────────────────────────────
 // One token mechanism for every device: the owner's authenticated session mints
-// a token, the new device redeems it at `/api/pair/consume`. The phone scans the
-// QR (`/pair#t=<token>`); the Mac app / collector takes the token directly.
+// a token, the new device redeems it at `/api/pair/consume`. In the apps the
+// person types the server's address and the token; a collector takes the token
+// directly. The response's `qr_svg` is the server's QR of `pair_url`, which
+// nothing here renders.
 
 export interface PairMintResponse {
 	id: string;
@@ -939,9 +1148,10 @@ export interface PairMintResponse {
 	expires_at: string;
 }
 
-/** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
+/** POST /api/pair/mint — auth'd, with the owner proof. Mint a token to add a
+ *  device. */
 function pairMint(intendedKind?: string): Promise<PairMintResponse> {
-	return apiSend<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
+	return apiSendProven<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
 }
 
 /** DELETE /api/devices/:id — best-effort, no confirmation.
@@ -1011,12 +1221,12 @@ export interface MintCollectorResponse {
 }
 
 /**
- * POST /api/pair/mint-collector — auth'd. Mint + self-authorize a token for
- * installing the local collector on THIS machine (handed to
+ * POST /api/pair/mint-collector — auth'd, with the owner proof. Mint a token
+ * for installing the local collector on THIS machine (handed to
  * `installCollector(token)` via the Tauri bridge).
  */
 export function mintCollectorToken(): Promise<MintCollectorResponse> {
-	return apiSend<MintCollectorResponse>('POST', '/pair/mint-collector');
+	return apiSendProven<MintCollectorResponse>('POST', '/pair/mint-collector');
 }
 
 export interface OauthStartResponse {
@@ -1040,7 +1250,7 @@ export interface ApiKeyCompleteResponse {
 export function apikeyComplete(
 	source_id: string,
 	name: string,
-	fields: Record<string, string>,
+	fields: Record<string, unknown>,
 	credentialId?: string
 ): Promise<ApiKeyCompleteResponse> {
 	return apiSend<ApiKeyCompleteResponse>(
@@ -1051,18 +1261,14 @@ export function apikeyComplete(
 }
 
 // Device Pairing
-import type {
-	PairingInitResponse,
-	PairingStatus,
-	PendingPairing
-} from '$lib/types/device-pairing';
+import type { PairingInitResponse, PairingStatus } from '$lib/types/device-pairing';
 
 /**
  * Initiate device pairing via the unified `/api/pair/mint` flow.
  *
  * Returns a `PairingInitResponse` whose `source_id` is the pair-token id (polled
- * via {@link getPairingStatus}), plus the QR/token redemption payload the new
- * device scans (`qr_svg` encodes `/pair#t=<token>`) or types (`token`).
+ * via {@link getPairingStatus}), the `token` the new device types, and the
+ * `pair_url` the sheet takes the server's address from.
  *
  * @param deviceType - "ios" → `mobile_app`, otherwise `desktop_app`.
  * @param _name - Display name (the device labels itself at consume time).
@@ -1076,7 +1282,6 @@ export async function initiatePairing(
 	return {
 		source_id: minted.id,
 		token: minted.token,
-		qr_svg: minted.qr_svg,
 		pair_url: minted.pair_url
 	};
 }
@@ -1842,9 +2047,10 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 // =============================================================================
 // Projects API — the "room" a chat lives in
 //
-// A Project is a manual collection the user returns to: a project, pet, hobby,
-// goal, or topic. It gathers entities, chats, and pages as URL-native members
-// and carries an icon, a color and a brief (`instructions`).
+// A project is something unresolved in the person's life that can be finished
+// and takes more than one step. It ends finished or dropped, and can sit under
+// a thing. It gathers entities, chats, and pages as URL-native members and
+// carries an icon, a color and a brief (`instructions`).
 // A chat lives in at most one Project (see `updateChat`'s `projectId`).
 // =============================================================================
 
@@ -1856,11 +2062,19 @@ export interface Project {
 	accent_color: string | null;
 	instructions: string | null;
 	sort_order: number;
-	/** Set when the project is closed: kept, out of the working view. Not the trash. */
+	/** When the project ended: kept, out of the working view. Not the trash. */
 	archived_at: string | null;
+	/** How it ended, set with `archived_at`. Absent from a box older than the field. */
+	outcome?: ProjectOutcome | null;
+	/** The thing it sits under and that thing's name. Absent from a box older than the fields. */
+	thing_id?: string | null;
+	thing_title?: string | null;
 	created_at: string;
 	updated_at: string;
 }
+
+/** How a project ended. */
+export type ProjectOutcome = 'finished' | 'dropped';
 
 /** List-view summary — adds member and chat counts. */
 export interface ProjectSummary extends Project {
@@ -1940,9 +2154,13 @@ export async function listProjects(opts?: {
 	});
 }
 
-/** POST /api/projects/:id/archive — close a project. Reversible; no confirm needed. */
-export function archiveProject(id: string): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`);
+/**
+ * POST /api/projects/:id/archive — end a project as finished or dropped.
+ * Reversible; no confirm needed. Sent again for an ended project, it changes
+ * only how it ended.
+ */
+export function archiveProject(id: string, outcome: ProjectOutcome): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`, { outcome });
 }
 
 /** POST /api/projects/:id/unarchive — reopen it. */
@@ -1960,14 +2178,16 @@ export function createProject(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
+	/** Start it under this thing. */
+	thing_id?: string | null;
 }): Promise<Project> {
 	return apiSend<Project>('POST', '/projects', body);
 }
 
 /**
  * PUT /api/projects/:id — update a Project. For the nullable fields
- * (`icon`/`accent_color`/`instructions`): omit the key to leave unchanged,
- * send `null` to clear, send a value to set.
+ * (`icon`/`accent_color`/`instructions`/`thing_id`): omit the key to leave
+ * unchanged, send `null` to clear, send a value to set.
  */
 export function updateProject(
 	id: string,
@@ -1977,6 +2197,7 @@ export function updateProject(
 		accent_color?: string | null;
 		instructions?: string | null;
 		sort_order?: number;
+		thing_id?: string | null;
 	}
 ): Promise<Project> {
 	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
@@ -2126,6 +2347,7 @@ export interface PageListResponse {
 export type TaskActor = 'owner' | 'assistant';
 /** `ready`: a request's run finished and its result waits for the owner. */
 export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
+export type RecurUnit = 'day' | 'week' | 'month' | 'year';
 
 export interface Task {
 	id: string;
@@ -2138,6 +2360,16 @@ export interface Task {
 	/** A time, only when one was given. */
 	due_at: string | null;
 	project_id: string | null;
+	/** The thing it sits under. A task has one parent at most: a project or a thing. */
+	thing_id?: string | null;
+	/**
+	 * It recurs every `recur_every` `recur_unit`s, counted from the day it is
+	 * finished. Both null: once. Absent from a box older than the fields.
+	 */
+	recur_every?: number | null;
+	recur_unit?: RecurUnit | null;
+	/** The occurrence this one followed, for a task that recurred. */
+	recurred_from_id?: string | null;
 	/** Who created it: typed into the list, asked for in chat, or the assistant's own. */
 	origin: 'owner' | 'chat' | 'assistant';
 	/** An app URL (`/page/page_…`) the task came from. */
@@ -2181,16 +2413,36 @@ export interface NewTask {
 	due_on?: string | null;
 	due_at?: string | null;
 	project_id?: string | null;
+	thing_id?: string | null;
+	recur_every?: number | null;
+	recur_unit?: RecurUnit | null;
 }
 
-/** A partial edit: `null` clears a field, an absent key leaves it. */
+/**
+ * A partial edit: `null` clears a field, an absent key leaves it. Recurrence
+ * is set or cleared as a pair, and moving a task under a thing takes it out
+ * of its project (and the other way round).
+ */
 export type TaskPatch = Partial<
-	Pick<Task, 'title' | 'notes' | 'assignee' | 'status' | 'due_on' | 'due_at' | 'project_id' | 'sort_order'>
+	Pick<
+		Task,
+		| 'title'
+		| 'notes'
+		| 'assignee'
+		| 'status'
+		| 'due_on'
+		| 'due_at'
+		| 'project_id'
+		| 'thing_id'
+		| 'recur_every'
+		| 'recur_unit'
+		| 'sort_order'
+	>
 >;
 
 export function listTasks(
 	status: 'open' | 'closed' | 'all' = 'open',
-	filter: { assignee?: TaskActor; project_id?: string } = {},
+	filter: { assignee?: TaskActor; project_id?: string; thing_id?: string } = {},
 ): Promise<Task[]> {
 	return apiGet('/tasks', { status, ...filter });
 }
@@ -2222,7 +2474,8 @@ export interface RefSearchResult {
 	created_at?: string;
 }
 
-/** A skill as the composer's `/` menu lists it (`GET /api/skills`). */
+/** An applet `/name` starts, as the composer's `/` menu lists it
+ *  (`GET /api/skills`, the path from when these were skills). */
 export interface SkillSummary {
 	name: string;
 	description: string;
@@ -2265,6 +2518,20 @@ export interface SkyMoment {
 	place_id: string | null;
 	/** A calendar item that has not started yet. */
 	planned: boolean;
+	/** The record the moment is mentioned by, when it has one row. */
+	url: string | null;
+	/** What clicking the dot offers to mention. */
+	links: SkyLink[];
+	/** How unusual its place is for its hour and weekday, 0 (always there
+	 *  then) to 1 (never), or null when there is nothing to compare yet. */
+	novelty: number | null;
+}
+
+/** A place, a person or a purchase a moment opens to (`api::sky::SkyLink`). */
+export interface SkyLink {
+	url: string;
+	label: string;
+	kind: "place" | "person" | "purchase";
 }
 
 export interface SkyDay {
@@ -2280,6 +2547,60 @@ export interface SkyDay {
 export function getSkyDay(date: string): Promise<SkyDay> {
 	return apiGet<SkyDay>(`/sky/day/${encodeURIComponent(date)}`);
 }
+
+/** The Monday-to-Sunday week holding a day (`api::sky::SkyWeek`). */
+export interface SkyWeek {
+	/** The Monday, `YYYY-MM-DD`. */
+	start: string;
+	days: SkyDay[];
+	/** What the week's moments belong to, each moment as `date|id`. */
+	threads: SkyThread[];
+}
+
+export function getSkyWeek(date: string): Promise<SkyWeek> {
+	return apiGet<SkyWeek>(`/sky/week/${encodeURIComponent(date)}`);
+}
+
+/** One thing inside a moment, at its hour on the moment's band (`api::sky::Piece`). */
+export interface SkyPiece {
+	id: string;
+	kind: "arrive" | "leave" | "message" | "voice" | "purchase";
+	hour: number;
+	label: string;
+	detail: string | null;
+	url: string | null;
+}
+
+export interface SkyMomentDetail {
+	date: string;
+	now_hour: number | null;
+	moment: SkyMoment;
+	pieces: SkyPiece[];
+}
+
+/** A moment of a day (its id in `SkyDay`) and what happened inside it. */
+export function getSkyMoment(date: string, id: string): Promise<SkyMomentDetail> {
+	return apiGet<SkyMomentDetail>(`/sky/moment/${encodeURIComponent(date)}?id=${encodeURIComponent(id)}`);
+}
+
+/** A project, page or chat a day's moments belong to (`api::sky::Thread`). */
+export interface SkyThread {
+	url: string;
+	label: string;
+	kind: "project" | "page" | "chat";
+	/** The ids of the moments it links to. */
+	moments: string[];
+}
+
+export interface SkyContext {
+	date: string;
+	threads: SkyThread[];
+}
+
+export function getSkyContext(date: string): Promise<SkyContext> {
+	return apiGet<SkyContext>(`/sky/context/${encodeURIComponent(date)}`);
+}
+
 
 /** The suggestion was drawn, sent or put away; the box keeps a ledger. */
 export function recordSuggestionOutcome(
@@ -2425,7 +2746,7 @@ export interface DegradedCollector {
 
 export interface SetupState {
 	setup: SetupStep[];
-	/** The box is up: claimed, and linked to an account on an appliance. */
+	/** The server is up: claimed by its first device. */
 	setup_complete: boolean;
 	onboarding: SetupStep[];
 	/** The box has something to keep a record of — at least one source. */
@@ -2587,11 +2908,15 @@ export function getBillingUsage<T = unknown>(): Promise<T> {
 export function getByoKey<T = unknown>(): Promise<T> {
 	return apiGet<T>('/settings/byo-key');
 }
+/** Save the AI key, with the owner proof. */
 export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', '/settings/byo-key', body);
+	return apiSendProven<T>('POST', '/settings/byo-key', body);
 }
-export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
-	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
+/** Remove the AI key, with the owner proof. The box reads no body. The empty
+ *  object makes a server that still asks for `virtues sudo` answer about that,
+ *  rather than about a missing body. */
+export function deleteByoKey<T = unknown>(): Promise<T> {
+	return apiSendProven<T>('DELETE', '/settings/byo-key', {});
 }
 
 // ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
@@ -2676,8 +3001,10 @@ export function compactChat<T = unknown>(id: string, force = true): Promise<T> {
 export function getChatPermissions<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/permissions`);
 }
-export function addChatPermission<T = unknown>(id: string, body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
+/** Allowing an admin command (a `sudo:` grant) takes the owner proof. */
+export function addChatPermission<T = unknown>(id: string, body: { entity_id: string } & Record<string, unknown>): Promise<T> {
+	const send = body.entity_id.startsWith('sudo:') ? apiSendProven : apiSend;
+	return send<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
 }
 export function removeChatPermission<T = unknown>(id: string, entityId: string): Promise<T> {
 	return apiSend<T>(
@@ -2796,14 +3123,6 @@ export function setupSubscribeStart<T = unknown>(): Promise<T> {
 }
 export function setupLoginStart<T = unknown>(email: string): Promise<T> {
 	return apiSend<T>('POST', '/setup/login/start', { email });
-}
-
-// ── Sudo (privilege elevation) ───────────────────────────────────────────────
-export function requestSudo<T = unknown>(action: string, actionPayload?: unknown): Promise<T> {
-	return apiSend<T>('POST', '/sudo/request', { action, action_payload: actionPayload });
-}
-export function getSudoStatus<T = unknown>(id: string): Promise<T> {
-	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
 }
 
 // ── Data lake ────────────────────────────────────────────────────────────────

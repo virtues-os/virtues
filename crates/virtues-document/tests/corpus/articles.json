@@ -35,8 +35,8 @@
     "writer": false
   },
   {
-    "name": "story article with a numbered list",
-    "kind": "story",
+    "name": "thing article with a numbered list",
+    "kind": "thing",
     "markdown": "It started with a message from [Nick](/person/person_1) about a cabin near the water.\n\nThe drive took most of a Saturday. You stopped twice:\n\n1. a bakery in [Millbrook](/place/place_9)\n2. a lookout over the bay\n\nBy evening you were on the porch, listening to the tide.\n",
     "export": "It started with a message from [Nick](/person/person_1) about a cabin near the water.\n\nThe drive took most of a Saturday. You stopped twice:\n\n1. a bakery in [Millbrook](/place/place_9)\n2. a lookout over the bay\n\nBy evening you were on the porch, listening to the tide.\n",
     "writer": true

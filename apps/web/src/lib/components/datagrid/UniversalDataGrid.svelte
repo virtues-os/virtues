@@ -59,6 +59,7 @@
 		GridServerSource,
 	} from './types';
 	import { applyFilter, isFilterActive } from './types';
+	import { usePageActions } from '$lib/stores/paneActions.svelte';
 
 	interface Props {
 		items: T[];
@@ -120,8 +121,8 @@
 		 *  a run-history strip) passes ['table'], which also hides the view
 		 *  toggle; a stored preference for another view falls back to the table. */
 		viewModes?: ViewMode[];
-		/** Grid-level actions (add, import…) rendered beside the view controls,
-		 *  so a consumer doesn't need its own header row above the toolbar. */
+		/** Grid-level actions (add, import…). On the desktop they sit in the
+		 *  tab's action toolbar; elsewhere beside the grid's view controls. */
 		toolbarActions?: Snippet;
 		/** Multi-select with checkboxes, shift-range, ⌘A and a bulk action bar. */
 		selectable?: boolean;
@@ -147,6 +148,9 @@
 		 * is the default, not an override.
 		 */
 		rowHref?: (item: T) => string | null | undefined;
+		/** The search field's text, for a consumer that also searches
+		 *  somewhere else with what the reader typed. */
+		searchQuery?: string;
 	}
 
 	let {
@@ -155,7 +159,7 @@
 		entityType,
 		loading = false,
 		error = null,
-		emptyIcon = 'ri:database-2-line',
+		emptyIcon = 'mynaui:database',
 		emptyMessage = 'No items yet',
 		loadingMessage = 'Loading...',
 		searchPlaceholder = 'Search...',
@@ -182,8 +186,11 @@
 		bulkActions,
 		rowActions,
 		rowIcon,
-		rowHref
+		rowHref,
+		searchQuery = $bindable('')
 	}: Props = $props();
+
+	const pageToolbar = usePageActions(() => toolbarActions);
 
 	/**
 	 * The row menu: the consumer's if it has one, otherwise the standard pair
@@ -305,7 +312,6 @@
 	// ────────────────────────────────────────────────────────────────────────
 	// Search
 	// ────────────────────────────────────────────────────────────────────────
-	let searchQuery = $state('');
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 
 	/** Put the caret in the search field — for a door that means "search". */
@@ -546,9 +552,9 @@
 	 * now: set one in card view and the groups become the columns.
 	 */
 	const VIEW_META: Record<ViewMode, { icon: string; label: string }> = {
-		table: { icon: 'ri:list-check-2', label: 'Table' },
-		grid: { icon: 'ri:layout-grid-line', label: 'Cards' },
-		wall: { icon: 'ri:gallery-line', label: 'Wall' },
+		table: { icon: 'mynaui:list-check', label: 'Table' },
+		grid: { icon: 'mynaui:grid', label: 'Cards' },
+		wall: { icon: 'mynaui:image-rectangle', label: 'Wall' },
 	};
 
 	/** Wall is offered only where a tile renderer was supplied. */
@@ -869,7 +875,7 @@
 				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
-				<Icon icon="ri:search-line" width="16" />
+				<Icon icon="mynaui:search" width="16" />
 				<input
 					type="text"
 					bind:this={searchInputEl}
@@ -879,7 +885,7 @@
 				/>
 				{#if searchQuery}
 					<button class="search-clear" onclick={() => (searchQuery = '')}>
-						<Icon icon="ri:close-line" width="16" />
+						<Icon icon="mynaui:x" width="16" />
 					</button>
 				{/if}
 			</div>
@@ -909,7 +915,7 @@
 									aria-label="Add filter"
 									title="Add filter"
 								>
-									<Icon icon="ri:filter-3-line" width="16" />
+									<Icon icon="mynaui:filter" width="16" />
 									{#if activeFilterCount > 0}
 										<span class="filter-badge" aria-hidden="true">{activeFilterCount}</span>
 									{/if}
@@ -940,7 +946,7 @@
 								aria-expanded={groupOpen}
 								title="Group by"
 							>
-								<Icon icon="ri:stack-line" width="16" />
+								<Icon icon="mynaui:layers-three" width="16" />
 								{#if activeGroupCol}
 									<span class="group-btn-value">{activeGroupCol.label}</span>
 								{/if}
@@ -982,7 +988,7 @@
 						<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
 					</button>
 				{/if}
-				{#if toolbarActions}
+				{#if toolbarActions && !pageToolbar.inToolbar}
 					{@render toolbarActions()}
 				{/if}
 			</div>
@@ -1018,7 +1024,7 @@
 		</div>
 	{:else if effectiveError}
 		<div class="error-state" role="alert">
-			<Icon icon="ri:error-warning-line" width="24" />
+			<Icon icon="mynaui:danger-circle" width="24" />
 			<span>{effectiveError}</span>
 			{#if serverMode}
 				<Button variant="secondary" size="sm" onclick={retryServer}>Retry</Button>
@@ -1033,7 +1039,7 @@
 		</div>
 	{:else if displayedItems.length === 0}
 		<div class="empty-state">
-			<Icon icon="ri:search-line" width="32" />
+			<Icon icon="mynaui:search" width="32" />
 			{#if searchQuery.trim()}
 				<p>No results for "{searchQuery}"</p>
 				<Button variant="secondary" size="sm" onclick={() => (searchQuery = '')}>
@@ -1095,8 +1101,8 @@
 										{#if isActive}
 											<Icon
 												icon={sortDir === 'asc'
-													? 'ri:arrow-up-s-line'
-													: 'ri:arrow-down-s-line'}
+													? 'mynaui:chevron-up'
+													: 'mynaui:chevron-down'}
 												width="12"
 											/>
 										{/if}
@@ -1128,7 +1134,7 @@
 											onclick={() => toggleGroup(group.key)}
 											aria-expanded={!collapsedGroups.has(group.key)}
 										>
-											<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+											<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 											<span class="group-name">{group.key}</span>
 											<span class="group-count">{group.items.length}</span>
 										</button>
@@ -1295,7 +1301,7 @@
 							aria-expanded={!collapsedGroups.has(group.key)}
 						>
 							{#if !asBoard}
-								<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+								<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 							{/if}
 							<span class="group-name">{group.key}</span>
 							<span class="group-count">{group.items.length}</span>

@@ -1,28 +1,22 @@
 <!--
-	Step 3 — Subscription. The one required step with no way past: the
-	interview needs AI, and so does everything the assistant does. Any of
-	three ways through settles it — a subscription, signing in to an existing
-	account, or your own AI — and all three unfold on this screen.
+	Subscription, the last step before Arrival. The one required step with
+	no way past: everything the assistant does needs AI. Any of three ways
+	through settles it (a subscription, signing in to an existing account,
+	or your own AI) and all three unfold on this screen. Its one paragraph
+	of reasons, at the foot, is the letter's P.S., in Adam's voice, moved to
+	where it is needed.
 
-	WHY ON THIS SCREEN, NOT THE LETTER'S. It was the letter's close
-	(2026-09-23), when the letter was the last thing before the app. Setup
-	puts the letter first, as a preface, so the subscription's one paragraph
-	of reasons came with it: the server keeps the record, the subscription
-	pays for the intelligence, and the goal is for all of it to run at home.
-	In Adam's voice, still — it is the letter's P.S., moved to where it is
-	needed.
+	YOUR OWN AI, WITHOUT A COMMAND LINE. Saving the key carries the app's
+	owner proof (api/owner_proof.rs), which the app signs with this device's
+	key without an extra step, so setup never sends anyone to a command line
+	for it.
 
-	ONE PRIMARY AND TWO QUIET LINKS, not three equal buttons. Three peers made
-	paying read as one option of three. The price sits under the button, not
-	on it: "$20/mo" in a filled pill reads as "clicking charges me", when the
-	click only opens a checkout.
-
-	YOUR OWN AI, WITHOUT A COMMAND LINE. The first key saved during setup,
-	from the device that set the server up, needs no approval at the
-	server's command line (settings_byo.rs, `first_key_during_setup`): an
-	appliance owner has no command line, and the form used to end at one.
-	Anyone else, or any later change, still gets the approval, so the save
-	tries without it first and asks only when the server says so.
+	TWO CHOICES, SIDE BY SIDE (2026-11-16, the revised Setup the owner
+	approved). The subscription and your own AI are the two ways an
+	assistant gets to think, so they are the two things on the page, as
+	choices; the subscription is chosen when the page opens, and the one way
+	forward follows the choice. Signing in to an account that already pays is
+	a link under them, because it is not a third kind of AI.
 
 	DONE IS A STATE, NOT A TOAST. Once the server reports AI connected — by
 	any of the three paths, or because it already was — the step shows a
@@ -36,17 +30,48 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import Input from "$lib/components/Input.svelte";
-	import SudoModal from "$lib/components/SudoModal.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
 	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import StepFrame from "../StepFrame.svelte";
 	import { setup, intoLabel } from "../setup.svelte";
 
-	let { onnext }: { onnext: () => void } = $props();
+	let {
+		onnext,
+		nextLabel,
+	}: {
+		onnext: () => void;
+		/** What the way on says, when the host knows better than the stage's
+		 *  order (in the app, the next step there, or the list). */
+		nextLabel?: string;
+	} = $props();
 
 	type Mode = "choose" | "checkout" | "signin" | "sending" | "mailed" | "endpoint" | "saving";
 	let mode = $state<Mode>("choose");
+	/** Which way the assistant thinks, as chosen on the page. */
+	let pick = $state<"sub" | "byo">("sub");
+	function choose(next: "sub" | "byo") {
+		if (mode === "checkout" || mode === "saving") return;
+		pick = next;
+		error = null;
+		mode = next === "byo" ? "endpoint" : "choose";
+		if (next === "byo") focusField("setup-endpoint");
+	}
+
+	/** A radio group's keys: the arrows move the choice and its focus, and
+	 *  only the chosen tile is a Tab stop. */
+	function onChoiceKey(e: KeyboardEvent) {
+		const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+		const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+		if (!fwd && !back) return;
+		e.preventDefault();
+		const next = pick === "sub" ? "byo" : "sub";
+		if (mode === "checkout" || mode === "saving") return;
+		pick = next;
+		error = null;
+		mode = next === "byo" ? "endpoint" : "choose";
+		document.querySelector<HTMLElement>(`.choice[data-pick="${next}"]`)?.focus();
+	}
 	let error = $state<string | null>(null);
 	let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -54,7 +79,6 @@
 	let endpointUrl = $state("");
 	let apiKey = $state("");
 	let chatModel = $state("");
-	let showSudo = $state(false);
 	/** "Chat model" waits behind More options: almost nobody needs it. */
 	let moreOptions = $state(false);
 	let checkoutUrl = $state<string | null>(null);
@@ -70,7 +94,7 @@
 	/** Signed in already (before pairing, or earlier), with no subscription on
 	 *  the account: signing in again would change nothing. */
 	const signedIn = $derived(via === "linked");
-	/** Met on Names, the step before this one. */
+	/** Named on Names, earlier in Setup. */
 	const name = $derived(setup.assistantName);
 
 	const still =
@@ -157,12 +181,11 @@
 			error = UNREACHABLE;
 		}
 	}
-	async function saveEndpoint(sudoRequestId?: string) {
+	async function saveEndpoint() {
 		mode = "saving";
 		error = null;
 		try {
 			await setByoKey({
-				...(sudoRequestId ? { sudo_request_id: sudoRequestId } : {}),
 				endpoint_url: endpointUrl.trim(),
 				api_key: apiKey,
 				// `chat` is the Standard slot's old name. Every box reads it
@@ -174,11 +197,6 @@
 			await gettingStarted.refresh();
 		} catch (e) {
 			mode = "endpoint";
-			// Not the first key during setup: the server wants its approval.
-			if (!sudoRequestId && e instanceof Error && e.message === "sudo_not_approved") {
-				showSudo = true;
-				return;
-			}
 			error = e instanceof Error ? e.message : "Your server couldn't save that address. Check it, then try again.";
 		}
 	}
@@ -199,6 +217,7 @@
 <!-- WHY, ON THE SCREEN (2026-09-28): this is the one step with no way past,
      and the page never said so. It is said here only (not on Account). -->
 <StepFrame
+	centered={false}
 	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : `Choose how ${name} thinks`}
 	subtitle={done
 		? undefined
@@ -207,9 +226,9 @@
 			: `${name} can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own.`}
 >
 	{#if !loaded}
-		<div class="card placeholder" aria-hidden="true"></div>
+		<div class="placeholder" aria-hidden="true"></div>
 	{:else if done}
-		<div class="card settled-card" in:fade={{ duration: still ? 0 : 400 }}>
+		<div class="settled-card" in:fade={{ duration: still ? 0 : 400 }}>
 			<span class="check" aria-hidden="true">
 				<svg viewBox="0 0 24 24" width="36" height="36">
 					<circle cx="12" cy="12" r="11" />
@@ -220,22 +239,51 @@
 				{via === "byo" ? "Every AI call goes through the address you gave." : `${name} can answer now.`}
 			</p>
 			<button class="setup-go wide" onclick={onnext}>
-				{intoLabel(setup.upNext("subscription"))}
-				<Icon icon="ri:arrow-right-line" width="16" />
+				{nextLabel ?? intoLabel(setup.upNext("subscription"))}
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		</div>
 	{:else}
-		<div class="card">
-			<p class="kind">Virtues subscription</p>
-			<p class="price"><span class="amount">$20</span> a month</p>
-			<ul class="covers">
-				<li><Icon icon="ri:check-line" width="16" /> {name}, on the best models there are</li>
-				<li><Icon icon="ri:check-line" width="16" /> Web search</li>
-				<li><Icon icon="ri:check-line" width="16" /> Place search</li>
-				<li><Icon icon="ri:check-line" width="16" /> Bank connections</li>
-			</ul>
+		<div class="choices" role="radiogroup" aria-label="How {name} thinks">
+			<button
+				type="button"
+				class="choice"
+				role="radio"
+				data-pick="sub"
+				aria-checked={pick === "sub"}
+				tabindex={pick === "sub" ? 0 : -1}
+				onclick={() => choose("sub")}
+				onkeydown={onChoiceKey}
+			>
+				<span class="choice-head">
+					<span class="choice-name">A Virtues subscription</span>
+					<span class="radio" aria-hidden="true"></span>
+				</span>
+				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
+				<span class="price"><span class="amount">$20</span> a month</span>
+			</button>
+			<button
+				type="button"
+				class="choice"
+				role="radio"
+				data-pick="byo"
+				aria-checked={pick === "byo"}
+				tabindex={pick === "byo" ? 0 : -1}
+				onclick={() => choose("byo")}
+				onkeydown={onChoiceKey}
+			>
+				<span class="choice-head">
+					<span class="choice-name">Your own AI</span>
+					<span class="radio" aria-hidden="true"></span>
+				</span>
+				<span class="choice-line">An API key from a provider, or a model you run yourself. It covers your assistant.</span>
+				<span class="price quiet">You pay your provider</span>
+			</button>
+		</div>
+
+		{#if pick === "sub"}
 			{#if mode === "checkout"}
-				<div class="waiting" in:fly={IN}>
+				<div class="waiting fold narrow" in:fly={IN}>
 					<span class="wait-mark" aria-hidden="true"><ThinkingMark depth={4} size={18} /></span>
 					<p>
 						Finish in the window that opened. This page picks up on its own, and Virtues charges nothing until you
@@ -249,31 +297,26 @@
 					<button class="setup-past" onclick={back}>Back</button>
 				</div>
 			{:else}
-				<button class="setup-go wide" onclick={subscribe}>
-					Set up your subscription
-					<Icon icon="ri:arrow-right-line" width="16" />
-				</button>
-				<p class="fine">You'll confirm in your browser.</p>
+				<div class="go">
+					<button class="setup-go" onclick={subscribe}>
+						Continue to checkout
+						<Icon icon="mynaui:arrow-right" width="16" />
+					</button>
+					<p class="fine">You'll confirm in your browser.</p>
+				</div>
 			{/if}
-		</div>
+		{/if}
 
-		<div class="links">
-			{#if !signedIn}
+		{#if !signedIn && pick === "sub" && mode !== "checkout"}
+			<div class="links">
 				<button
 					class="link"
 					class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
 					aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
 					onclick={() => open("signin")}>I already have an account</button
 				>
-				<span class="dot" aria-hidden="true">·</span>
-			{/if}
-			<button
-				class="link"
-				class:on={mode === "endpoint" || mode === "saving"}
-				aria-expanded={mode === "endpoint" || mode === "saving"}
-				onclick={() => open("endpoint")}>Use my own AI</button
-			>
-		</div>
+			</div>
+		{/if}
 
 		{#if mode === "signin" || mode === "sending"}
 			<form
@@ -316,9 +359,9 @@
 				}}
 			>
 				<p class="help">
-					Any service that answers OpenAI-style chat completions: a gateway such as OpenRouter, a provider's own
-					API, or a local Ollama. Your server stores the key encrypted. Your own AI covers your assistant; web
-					search, place search and bank connections still need a subscription.
+					Any service that answers OpenAI-style chat completions: a gateway such as OpenRouter, a provider's own API,
+					or a local Ollama. Your server stores the key encrypted. Web search, place search and bank connections
+					still need a subscription.
 				</p>
 				<Input
 					id="setup-endpoint"
@@ -359,7 +402,7 @@
 
 		{#if error}
 			<p class="err" role="alert">
-				<Icon icon="ri:error-warning-line" width="15" />
+				<Icon icon="mynaui:danger-circle" width="15" />
 				{error}
 			</p>
 		{/if}
@@ -367,84 +410,123 @@
 		<!-- The letter's P.S., moved here with the question it answers. The
 		     claim is checked against the build: every default model runs under
 		     zero data retention, enforced per request at the gateway. -->
-		<aside class="why">
-			<p class="why-head">Why a subscription</p>
-			<p>
-				Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
-				write it up, and find what you ask for. Every one runs under zero data retention (ZDR): nothing you send
-				is stored or trained on.
-			</p>
-			<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
-		</aside>
+		{#if pick === "sub"}
+			<aside class="why">
+				<p class="why-head">Why a subscription</p>
+				<p>
+					Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
+					write it up, and find what you ask for. Every one runs under zero data retention (ZDR): nothing you send
+					is stored or trained on.
+				</p>
+				<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
+			</aside>
+		{/if}
 	{/if}
 </StepFrame>
 
-<SudoModal
-	bind:show={showSudo}
-	action="change_byo_key"
-	title="Connect your own AI"
-	description="Every AI call will go through this address. Confirm at the server's command line."
-	onApproved={saveEndpoint}
-/>
-
 <style>
-	/* The card: the thing being chosen, centered, a little lifted off the
-	   stage like the letter's sheet. */
-	.card {
-		width: 100%;
-		max-width: 25rem;
-		margin: 0 auto;
-		padding: 1.75rem 1.75rem 1.5rem;
-		border-radius: var(--radius-xl);
-		background: var(--color-surface-overlay, var(--color-surface));
-		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
-		outline-offset: -1px;
+	/* The two ways an assistant thinks, side by side: each a hairline tile
+	   on the sheet, the chosen one drawn in the primary ink. */
+	.choices {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
 		text-align: left;
 		animation: setup-rise var(--m-slow) var(--m-ease) both;
 		animation-delay: 120ms;
 	}
-	.card.placeholder {
-		height: 22rem;
-		opacity: 0;
+	@media (max-width: 560px) {
+		.choices {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
-	.kind {
-		margin: 0;
-		font-size: 13px;
-		letter-spacing: 0.02em;
-		color: var(--color-foreground-subtle);
+	.choice {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 18px 18px 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		background: transparent;
+		font: inherit;
+		color: var(--color-foreground);
+		text-align: left;
+		cursor: pointer;
+		transition:
+			border-color var(--m-quick) ease,
+			background-color var(--m-quick) ease,
+			transform var(--m-base) var(--m-spring);
+	}
+	.choice:hover {
+		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+	}
+	.choice:active {
+		transform: scale(0.985);
+		transition-duration: 90ms;
+	}
+	.choice[aria-checked="true"] {
+		border-color: var(--color-primary);
+		outline: 3px solid color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: color-mix(in srgb, var(--color-primary) 3%, transparent);
+	}
+	.choice:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+	.choice-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+	.choice-name {
+		font-size: 16px;
+		font-weight: 500;
+	}
+	.radio {
+		flex: none;
+		width: 18px;
+		height: 18px;
+		box-sizing: border-box;
+		border-radius: 50%;
+		border: 1.5px solid var(--color-border);
+		transition:
+			border-width var(--m-base) var(--m-spring),
+			border-color var(--m-quick) ease;
+	}
+	.choice[aria-checked="true"] .radio {
+		border: 5px solid var(--color-primary);
+	}
+	.choice-line {
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
 	.price {
-		margin: 0.4rem 0 0;
-		font-size: 15px;
+		margin-top: auto;
+		padding-top: 6px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+	.price.quiet {
+		line-height: 30px;
 	}
 	.amount {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 3rem;
+		font-size: 26px;
 		line-height: 1;
-		letter-spacing: -0.02em;
+		letter-spacing: -0.01em;
 		color: var(--color-foreground);
-		margin-right: 0.25rem;
+		margin-right: 0.2rem;
 	}
-	.covers {
-		margin: 1.25rem 0 1.5rem;
-		padding: 1.1rem 0 0;
-		border-top: 1px solid var(--color-border);
-		list-style: none;
+	.go {
+		margin-top: 1.5rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.6rem;
-		font-size: 15px;
-		color: var(--color-foreground);
+		align-items: flex-start;
 	}
-	.covers li {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-	}
-	.covers :global(svg) {
-		flex: none;
-		color: var(--color-success);
+	.placeholder {
+		height: 12rem;
 	}
 	:global(.setup-go.wide) {
 		width: 100%;
@@ -452,7 +534,6 @@
 	}
 	.fine {
 		margin: 0.7rem 0 0;
-		text-align: center;
 		font-size: 13px;
 		color: var(--color-foreground-subtle);
 	}
@@ -464,18 +545,18 @@
 		margin-top: 0.5rem;
 	}
 	.settled-card {
+		max-width: 25rem;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		text-align: center;
+		align-items: flex-start;
 		gap: 0.9rem;
 	}
 
 	/* The reason, for whoever wants it: the letter's P.S., at the foot, in
 	   the letter's serif, quiet. */
 	.why {
-		max-width: 30rem;
-		margin: 3rem auto 0;
+		max-width: 32rem;
+		margin: 2.5rem 0 0;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 0.975rem;
 		line-height: 1.65;
@@ -501,7 +582,7 @@
 	.links {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
 		flex-wrap: wrap;
 		gap: 0.6rem;
 		margin-top: 1.25rem;
@@ -535,9 +616,6 @@
 		outline-offset: 3px;
 		border-radius: 0;
 	}
-	.dot {
-		color: var(--color-foreground-subtle);
-	}
 	.link.more {
 		align-self: flex-start;
 		font-size: 13px;
@@ -548,7 +626,7 @@
 		flex-direction: column;
 		gap: 0.875rem;
 		max-width: 30rem;
-		margin: 1.25rem auto 0;
+		margin: 1.25rem 0 0;
 		text-align: left;
 	}
 	.fold.narrow {

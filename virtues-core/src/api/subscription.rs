@@ -38,11 +38,22 @@ fn cache() -> &'static Mutex<Option<(Instant, Entitlement)>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+/// The account email from atlas's last answer. Written with `CACHE` and kept
+/// through an outage the same way.
+static EMAIL: Mutex<Option<String>> = Mutex::new(None);
+
+fn last_known_email() -> Option<String> {
+    EMAIL.lock().ok().and_then(|e| e.clone())
+}
+
 /// Drop the cached answer. Called when the box links or re-links, so the UI
 /// reflects a fresh subscription immediately instead of up to `TTL` later.
 pub fn invalidate() {
     if let Ok(mut c) = cache().lock() {
         *c = None;
+    }
+    if let Ok(mut e) = EMAIL.lock() {
+        *e = None;
     }
 }
 
@@ -71,9 +82,12 @@ async fn entitlement(api_key: &str, fresh: bool) -> Option<Entitlement> {
     let http = crate::http_client::virtues_api_client();
     let atlas_url = crate::virtues_api::atlas_url();
     match crate::virtues_api::renew::fetch_entitlement(&http, &atlas_url, api_key).await {
-        Ok(e) => {
+        Ok((e, email)) => {
             if let Ok(mut c) = cache().lock() {
                 *c = Some((Instant::now(), e));
+            }
+            if let Ok(mut m) = EMAIL.lock() {
+                *m = email;
             }
             Some(e)
         }
@@ -92,7 +106,9 @@ async fn entitlement(api_key: &str, fresh: bool) -> Option<Entitlement> {
 /// subscription) and `active` (subscribed). It was two-valued and the middle
 /// case reported `active`, which is the bug this file exists to close.
 /// `entitlement_known` is false when atlas could not be reached and we have no
-/// cached answer — the UI shows neither standing in that case.
+/// cached answer — the UI shows neither standing in that case. `email` is the
+/// account's sign-in email, or null when atlas has not sent one or rejected
+/// the key.
 ///
 /// Fully-local dev (`ENVIRONMENT=dev` + a verbatim `VIRTUES_API_KEY`, i.e. the
 /// seeded local virtues-api) reports subscribed unconditionally: billing is
@@ -103,7 +119,7 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     if crate::middleware::auth::is_dev()
         && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
     {
-        return Ok(payload("active", true, true, true));
+        return Ok(payload("active", true, true, true, None));
     }
 
     // `?`, not `unwrap_or(false)`: a vault read error is not "no api_key", and
@@ -111,17 +127,20 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     let api_key = crate::virtues_api::renew::read_api_key(pool).await?;
     let Some(api_key) = api_key else {
         // Not linked. Nothing to ask atlas about, and the answer is certain.
-        return Ok(payload("none", false, false, true));
+        return Ok(payload("none", false, false, true, None));
     };
 
-    Ok(match entitlement(&api_key, fresh).await {
-        Some(Entitlement::Subscribed) => payload("active", true, true, true),
-        Some(Entitlement::Free) => payload("linked", true, false, true),
+    let standing = entitlement(&api_key, fresh).await;
+    let email = last_known_email();
+    let email = email.as_deref();
+    Ok(match standing {
+        Some(Entitlement::Subscribed) => payload("active", true, true, true, email),
+        Some(Entitlement::Free) => payload("linked", true, false, true, email),
         // The key is dead: linked in name only. Reported as unknown rather than
         // unsubscribed — "you have no subscription" is the wrong instruction
         // when the fix is to link again.
-        Some(Entitlement::KeyUnknown) => payload("linked", true, false, false),
-        None => payload("linked", true, false, false),
+        Some(Entitlement::KeyUnknown) => payload("linked", true, false, false, None),
+        None => payload("linked", true, false, false, email),
     })
 }
 
@@ -197,12 +216,20 @@ pub async fn pays(pool: &PgPool) -> Payment {
     }
 }
 
-fn payload(status: &str, linked: bool, subscribed: bool, known: bool) -> serde_json::Value {
+fn payload(
+    status: &str,
+    linked: bool,
+    subscribed: bool,
+    known: bool,
+    email: Option<&str>,
+) -> serde_json::Value {
     serde_json::json!({
         "status": status,
         "linked": linked,
         "subscribed": subscribed,
         "entitlement_known": known,
+        // The Virtues account this box is linked to, as atlas last reported it.
+        "email": email,
         // Kept for older clients (the iOS bundle ships its own SPA build).
         // Means subscribed, which is what every consumer used it for.
         "is_active": subscribed,

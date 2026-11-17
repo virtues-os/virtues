@@ -3840,7 +3840,7 @@ function getTextAlternativeInternal(element, options) {
       if (role === "textbox" || role === "searchbox") {
         options.visitedElements.add(element);
         if (tagName === "INPUT" || tagName === "TEXTAREA")
-          return compositeString(element.value, element, options.collectElements);
+          return compositeString(virtuesFieldValue(element), element, options.collectElements);
         return compositeString(element.textContent, element, options.collectElements);
       }
       if (["combobox", "listbox"].includes(role)) {
@@ -3855,7 +3855,7 @@ function getTextAlternativeInternal(element, options) {
           selectedOptions = listbox ? queryInAriaOwned(listbox, '[aria-selected="true"]').filter((e) => getAriaRole(e) === "option") : [];
         }
         if (!selectedOptions.length && tagName === "INPUT") {
-          return compositeString(element.value, element, options.collectElements);
+          return compositeString(virtuesFieldValue(element), element, options.collectElements);
         }
         return joinCompositeString(selectedOptions.map((option) => getTextAlternativeInternal(option, childOptions)), " ", options.collectElements);
       }
@@ -4466,6 +4466,43 @@ function computeAriaRef(ariaNode, options) {
   }
   ariaNode.ref = ariaRef.ref;
 }
+// Virtues: the one change to Playwright's script (README.md). The outline is
+// sent to a model, and the shell never lets the model see a password, a
+// one-time code or a card number: it refuses to type into such a field and
+// asks the owner to (src/browser_host.rs), so the outline must not hand back
+// what the owner typed. A field's value reaches the outline only through
+// virtuesFieldValue. Returns "password", "code", "card" or "".
+function virtuesSecretField(element) {
+  const tag = (element.tagName || "").toUpperCase();
+  if (tag !== "INPUT" && tag !== "TEXTAREA")
+    return "";
+  const type = String(element.type || "").toLowerCase();
+  const auto = String(element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  if (type === "password" || auto.includes("current-password") || auto.includes("new-password"))
+    return "password";
+  const view = element.ownerDocument && element.ownerDocument.defaultView;
+  const style = view && view.getComputedStyle(element);
+  if (style && style.webkitTextSecurity && style.webkitTextSecurity !== "none")
+    return "password";
+  if (auto.includes("one-time-code"))
+    return "code";
+  if (auto.some((token) => token.startsWith("cc-")))
+    return "card";
+  const labels = [...element.labels || []].map((label) => label.textContent || "");
+  const hints = [element.name, element.id, element.getAttribute("aria-label"), element.getAttribute("placeholder"), ...labels].join(" ").toLowerCase();
+  // A "show password" toggle turns a password field into type=text, so its
+  // name or label is what is left to go on. "pin code" alone is a postal code.
+  if (/pass(word|wd)|(^|[^a-z0-9])pwd/.test(hints))
+    return "password";
+  if (/(^|[^a-z0-9])(otp|totp|2fa|one[-_ ]?time[-_ ]?(code|pass)|verification[-_ ]?code|auth(entication)?[-_ ]?code|pin(?![-_ ]?code)([^a-z0-9]|$))|sms[-_ ]?code|passcode/.test(hints))
+    return "code";
+  if (/(^|[^a-z0-9])(cc[-_ ]?(num|csc|cvc|cvv)|card[-_ ]?(num|no([^a-z]|$))|credit[-_ ]?card|cvc|cvv|csc|security[-_ ]?code)/.test(hints))
+    return "card";
+  return "";
+}
+function virtuesFieldValue(element) {
+  return element.value && virtuesSecretField(element) ? "(filled, value hidden)" : element.value;
+}
 function toAriaNode(element, options, nameSourceElements) {
   var _a;
   const active = element.ownerDocument.activeElement === element && element.ownerDocument.hasFocus();
@@ -4522,7 +4559,7 @@ function toAriaNode(element, options, nameSourceElements) {
     result.selected = getAriaSelected(element);
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     if (element.type !== "checkbox" && element.type !== "radio" && element.type !== "file")
-      result.children = [element.value];
+      result.children = [virtuesFieldValue(element)];
   }
   return result;
 }

@@ -85,20 +85,27 @@ stripe_webhook_events(stripe_event_id PK, event_type, processed_at)
 
 ### virtues-api (`services/virtues-api/migrations/`)
 ```sql
-accounts(account_id PK, balance_micros, today_spent_micros, today_reset_at,
-         daily_cap_micros, expires_at, created_at, updated_at)
-device_keys(api_key_hash PK, account_id FK, created_at)
-ledger(id PK, account_id FK, micros, kind, ts, ...)      -- append-only, source of truth
+wallets(account_id PK, balance_micros, expires_at, created_at, updated_at)
+device_keys(api_key_hash PK, account_id, box_id, created_at)  -- no FK to wallets
+ledger(id PK, account_id FK → wallets, micros, kind, ts, ...) -- append-only, source of truth
 blocklist(key_hash PK, reason_code, blocked_at, expires_at)
 ```
 
-**`accounts.balance_micros` is a projection** of the ledger. It must always
+`wallets` was named `accounts` until migration 0011. That migration leaves an
+`accounts` view onto it for the image it replaced; drop the view once no
+running or rollback image is older than 0011.
+
+**`wallets.balance_micros` is a projection** of the ledger. It must always
 equal `SUM(ledger.micros)` for that account, and is rebuildable from the ledger
 at any time. The ledger is append-only; nothing is ever updated in place.
 
-**`device_keys` is a separate, rotatable pointer.** Rotating or losing an
-api_key replaces a row there and never touches the balance. This is why recovery
-does not cost the user their wallet.
+**`device_keys` belongs to the account, not the wallet.** `account_id` is
+atlas's account id, and nothing in this database owns it. Rotating or losing an
+api_key replaces a row there and never touches the balance, which is why
+recovery does not cost the user their wallet. A key also outlives its wallet:
+an account that never paid has a key and no wallet, and a lapsed wallet is
+swept without its keys. A key ends only when its box links again, when the
+blocklist stops it, or when it is deleted on purpose.
 
 ---
 
@@ -133,19 +140,23 @@ way. The box is not involved and holds no refresh token.
 
 ### 4.3 Per-call charging
 The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
-SHA-256s it, resolves `device_keys → accounts`, checks the balance and the daily
-cap (lazy reset on the first call after `today_reset_at`), then appends a debit
-to `ledger` and decrements the projection. AI cost is authoritative from Vercel
+SHA-256s it and resolves `device_keys` to the account (`BoxKey`). A paid route
+then needs a live wallet for that account (`BearerAuth`), checks the balance,
+appends a debit to `ledger` and decrements the projection. Routes that cost us
+nothing per owner, such as the OAuth token proxy and `/v1/usage`, need only the
+key, so they keep working through a lapse. AI cost is authoritative from Vercel
 AI Gateway's `usage.cost`; Places charges a constant per call, web search
 (`/v1/ai/search`) charges the model cost plus a per-search fee, and Unsplash
 is not charged; failed upstreams refund by appending a credit.
 
-**402 means the wallet is empty** (surface it, or auto-topup). **401 means the
-key is unknown** (re-link). These are the only two states the box must handle.
+**402 means the account cannot spend**: `wallet_empty` (surface it, or
+auto-topup) or `wallet_expired` (no live wallet: never paid, lapsed, or swept).
+**401 means the key is unknown** (re-link). These are the states the box must
+handle.
 
 ### 4.4 Cancellation / refund
 Stripe webhook → Atlas updates `subscriptions.status` and stops crediting.
-Revocation is by **expiry plus exhaustion**: `accounts.expires_at` is
+Revocation of spending is by **expiry plus exhaustion**: `wallets.expires_at` is
 cohort-aligned to the 1st of the month UTC, and leftover balance is
 use-it-or-lose-it. Unlike the voucher model, Atlas *can* now act on a specific
 account directly if it has to — that capability is a consequence of the shared
@@ -232,10 +243,10 @@ voucher model.
 
 ## 8. Housekeeping
 
-- **virtues-api sweeper** (`sweeper.rs`): hourly. Deletes `accounts` past
-  `expires_at + ACCOUNT_GRACE_DAYS` (which cascades to `device_keys` and
-  `ledger`), and expired `blocklist` rows. It exists to reclaim space; it does
-no privacy work.
+- **virtues-api sweeper** (`sweeper.rs`): hourly. Deletes `wallets` past
+  `expires_at + WALLET_GRACE_DAYS` (which cascades to `ledger` and leaves
+  `device_keys`), and expired `blocklist` rows. It exists to reclaim space; it
+  does no privacy work.
 - **Atlas**: no sweeper. It stores no usage and no per-call state.
 
 ---

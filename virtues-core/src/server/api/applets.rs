@@ -40,7 +40,7 @@ pub fn routes() -> Router<AppState> {
         // Actions API
         .route(
             "/api/applets",
-            get(list_applets_handler).post(create_applet_handler),
+            get(list_applets_handler),
         )
         .route(
             "/api/applets/:id",
@@ -49,6 +49,8 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_applet_handler),
         )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
+        // The owner opened the applet's page, which clears its "new" Inbox item.
+        .route("/api/applets/:id/seen", post(applet_seen_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
         // Read the applet's own code. Read-only, owner-authed like everything
@@ -88,10 +90,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sources", get(list_sources_handler))
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(admin_reconcile_handler))
-        .route(
-            "/api/admin/applets/import-git",
-            post(import_git_applets_handler),
-        )
         // Developer API
         .route("/api/developer/sql", post(execute_sql_handler))
         .route("/api/developer/tables", get(list_tables_handler))
@@ -222,10 +220,10 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let rows = sqlx::query(
         r#"SELECT
             t.id, t.owner, t.name, t.description, t.agent, t.schedule,
-            t.enabled, t.config, t.condition, t.triggers,
+            t.enabled, t.config, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
-            t.until, t.archived_at,
+            t.until, t.archived_at, t.watch,
             t.next_due_at, t.last_slot_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
@@ -298,7 +296,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     // so every action came back with empty config/triggers).
                     let config: serde_json::Value =
                         r.try_get("config").unwrap_or_else(|_| serde_json::json!({}));
-                    let condition: Option<String> = r.try_get("condition").unwrap_or(None);
                     let triggers_val: serde_json::Value =
                         r.try_get("triggers").unwrap_or_else(|_| serde_json::json!([]));
                     let triggers: Vec<String> =
@@ -311,13 +308,14 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
+                    let watch: Option<serde_json::Value> = r.try_get("watch").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let next_due_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("next_due_at").unwrap_or(None);
                     let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("last_slot_at").unwrap_or(None);
-                    let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    let has_face = crate::server::faces::face_for(&id).is_some();
                     let origin = crate::scheduler::applets::origin_of(
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
@@ -376,7 +374,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "schedule": cron,
                         "enabled": enabled,
                         "config": config,
-                        "condition": condition,
                         "triggers": triggers,
                         "memory": memory,
                         "credential_id": credential_id,
@@ -384,6 +381,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "origin": origin,
                         "command": command,
                         "until": until,
+                        "watch": watch,
                         "archived_at": archived_at,
                         "next_due_at": next_due_at,
                         "last_slot_at": last_slot_at,
@@ -507,6 +505,27 @@ pub async fn message_applet_handler(
     }
 }
 
+/// The keys an applet declares (`secrets = [...]` in its manifest), each with
+/// whether the owner has set it. Names only: a value never leaves the box here.
+async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+    let declared = crate::applet_templates::declared_secrets(applet_id);
+    if declared.is_empty() {
+        return Ok(Vec::new());
+    }
+    let set: std::collections::HashSet<String> = crate::secrets::list(pool, crate::secrets::Kind::Env)
+        .await?
+        .into_iter()
+        .map(|n| n.key)
+        .collect();
+    Ok(declared
+        .into_iter()
+        .map(|name| {
+            let is_set = set.contains(&name);
+            serde_json::json!({ "name": name, "is_set": is_set })
+        })
+        .collect())
+}
+
 /// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
@@ -519,6 +538,16 @@ pub async fn get_applet_handler(
                 .await
                 .ok()
                 .flatten();
+            let secrets = match declared_secrets_status(pool, &action.id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("{e:#}") })),
+                    )
+                        .into_response()
+                }
+            };
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -530,7 +559,6 @@ pub async fn get_applet_handler(
                     "schedule": action.schedule,
                     "enabled": action.enabled,
                     "config": action.config,
-                    "condition": action.condition,
                     "triggers": action.triggers,
                     "memory": action.memory,
                     "command": action.command,
@@ -538,10 +566,13 @@ pub async fn get_applet_handler(
                     "device_id": action.device_id,
                     "origin": crate::scheduler::applets::derived_origin(&action),
                     "until": action.until,
+                    "watch": action.watch,
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
-                    "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
+                    "has_face": crate::server::faces::face_for(&action.id).is_some(),
+                    "has_override": action.has_override,
+                    "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "last_run": last_run,
@@ -557,54 +588,51 @@ pub async fn get_applet_handler(
     }
 }
 
-/// POST /api/applets — create a user-owned applet.
-#[derive(Debug, Deserialize)]
-pub struct CreateAppletBody {
-    pub name: String,
-    pub agent: Option<String>,
-    pub schedule: Option<String>,
-    #[serde(default)]
-    pub triggers: Option<Vec<String>>,
-    pub config: Option<serde_json::Value>,
-}
-
-pub async fn create_applet_handler(
-    State(state): State<AppState>,
-    Json(body): Json<CreateAppletBody>,
-) -> Response {
-    let triggers = body.triggers.unwrap_or_else(|| {
-        if body.schedule.is_some() {
-            vec!["cron".into(), "manual".into(), "tool".into()]
-        } else {
-            vec!["manual".into(), "tool".into()]
-        }
-    });
-
-    match crate::scheduler::applets::create_user_applet(
-        state.db.pool(),
-        None,
-        &body.name,
-        body.agent.as_deref(),
-        body.schedule.as_deref(),
-        &triggers,
-        body.config.as_ref(),
-    )
-    .await
-    {
-        Ok(action) => (StatusCode::CREATED, Json(action)).into_response(),
-        Err(e) => error_response(e),
-    }
+/// POST /api/applets/:id/seen — the owner opened the applet's page.
+pub async fn applet_seen_handler(State(state): State<AppState>, Path(applet_id): Path<String>) -> Result<StatusCode, Error> {
+    crate::scheduler::applets::mark_seen(state.db.pool(), &applet_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
 pub async fn patch_applet_handler(
     State(state): State<AppState>,
+    caller: Option<axum::Extension<crate::console_socket::ConsoleCaller>>,
     Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Result<Json<crate::scheduler::applets::Applet>, Error> {
+    // An outside agent reaches this route for `virtues applet enable` and
+    // nothing else (`console_socket::agent_may`): it may turn an applet on
+    // or off, never rewrite its schedule, config or triggers.
+    if matches!(caller, Some(axum::Extension(crate::console_socket::ConsoleCaller::Agent)))
+        && !agent_patch_ok(&patch)
+    {
+        return Err(Error::Unauthorized("an agent key may only turn an applet on or off".into()));
+    }
     Ok(Json(
         crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await?,
     ))
+}
+
+/// An agent's patch: exactly `{"enabled": <bool>}`.
+fn agent_patch_ok(patch: &serde_json::Value) -> bool {
+    patch.as_object().is_some_and(|o| o.len() == 1 && o.get("enabled").is_some_and(|v| v.is_boolean()))
+}
+
+#[cfg(test)]
+mod agent_patch_tests {
+    use super::agent_patch_ok;
+    use serde_json::json;
+
+    #[test]
+    fn an_agent_may_only_flip_enabled() {
+        assert!(agent_patch_ok(&json!({ "enabled": true })));
+        assert!(agent_patch_ok(&json!({ "enabled": false })));
+        assert!(!agent_patch_ok(&json!({ "enabled": true, "schedule": "* * * * *" })));
+        assert!(!agent_patch_ok(&json!({ "config": {} })));
+        assert!(!agent_patch_ok(&json!({ "enabled": "yes" })));
+        assert!(!agent_patch_ok(&json!([])));
+    }
 }
 
 /// DELETE /api/applets/:id?drop_data= — delete a user-owned applet. System rows
@@ -943,54 +971,6 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
         Json(serde_json::json!({ "upserted": upserted })),
     )
         .into_response()
-}
-
-/// `POST /api/admin/actions/import-git`
-///
-/// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
-/// new manifests show up as `app_applets` rows. We scope the per-row diff to
-/// the slug prefix and clean up rows for manifests that disappeared upstream.
-pub async fn import_git_applets_handler(
-    State(state): State<AppState>,
-    user: crate::middleware::auth::AuthUser,
-    Json(body): Json<crate::applet_git_import::ImportRequest>,
-) -> Response {
-    // Sudo-gated: this fetches and runs somebody else's code.
-    let Some(sudo_id) = body.sudo_request_id.as_deref().filter(|s| !s.is_empty()) else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "sudo_required" })),
-        )
-            .into_response();
-    };
-    if let Err(resp) = crate::api::sudo::verify_and_consume(
-        state.db.pool(),
-        sudo_id,
-        "import_applet_package",
-        &user.device_id,
-    )
-    .await
-    {
-        tracing::warn!("applet import: sudo verify failed: {resp}");
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "sudo_not_approved" })),
-        )
-            .into_response();
-    }
-
-    let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
-        Ok(o) => o,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    (StatusCode::OK, Json(outcome)).into_response()
 }
 
 // ============================================================================

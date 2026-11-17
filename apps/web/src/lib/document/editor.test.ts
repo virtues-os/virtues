@@ -2854,12 +2854,12 @@ describe('media', () => {
 			expect(source, file).toMatch(/kindOfLink\(/);
 			expect(source, file).not.toMatch(/jpe\?g|\bjpeg\b|\bmp3\b|\bwebm\b|\bheic\b/);
 		}
-		expect(fileIcon({ filename: 'scan.TIF' })).toBe('ri:image-line');
-		expect(fileIcon({ filename: 'memo.opus' })).toBe('ri:music-2-line');
-		expect(fileIcon({ filename: 'clip.m4v' })).toBe('ri:movie-line');
-		expect(fileIcon({ filename: 'Q3 report.PDF' })).toBe('ri:file-pdf-line');
-		expect(fileIcon({ filename: 'notes' })).toBe('ri:file-line');
-		expect(fileIcon({ mimeType: 'audio/mp4', filename: 'notes' })).toBe('ri:music-2-line');
+		expect(fileIcon({ filename: 'scan.TIF' })).toBe('mynaui:image');
+		expect(fileIcon({ filename: 'memo.opus' })).toBe('mynaui:music');
+		expect(fileIcon({ filename: 'clip.m4v' })).toBe('mynaui:film');
+		expect(fileIcon({ filename: 'Q3 report.PDF' })).toBe('mynaui:file-text');
+		expect(fileIcon({ filename: 'notes' })).toBe('mynaui:file');
+		expect(fileIcon({ mimeType: 'audio/mp4', filename: 'notes' })).toBe('mynaui:music');
 	});
 
 	// The contract takes any path, and a block's address can hold a % that

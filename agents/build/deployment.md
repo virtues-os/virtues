@@ -12,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards, or the `virtues-embed` llama-server sidecar) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
+| **Home box** | `virtues` binary (+ `virtues-qnnd` on NPU boards, or the `virtues-embed` llama-server sidecar) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -33,25 +33,23 @@ redirect(302, 'https://github.com/virtues-os/virtues/releases/latest/download/bo
 
 Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent; its order is `tools/virtues-installer/src/flow.rs`:
 
-1. **System packages.** `apt` (Debian/Ubuntu, adding the PGDG repo) or `dnf` (Fedora): Postgres 18 + pgvector, `avahi-daemon`, `avahi-utils`, `libnss-mdns`.
-2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000.
-3. **Appliance only:** move the fresh Postgres cluster onto the data disk before it holds anything.
-4. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
-5. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
-6. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecar (`virtues-embed`) in bundled mode, nothing for manual endpoints. Then libpdfium.
-7. **Config.** Write the install manifest and the env file `<data dir>/virtues.env` (generating `VIRTUES_ENCRYPTION_KEY` only if it is absent), run migrations, and write `/etc/systemd/system/virtues.service` (`User=virtues`, `EnvironmentFile=-<data dir>/virtues.env`, `server --port 8000`).
-8. **Appliance only:** the first-boot unit (installed with the service unit), then the appliance profile: kiosk display unit, bluetooth for BLE provisioning, unattended security upgrades.
-9. **Start** with `systemctl enable` + `restart`, so a reinstall replaces a running old binary. Run the health check, then exec `virtues init` as the `virtues` user (skipped with `--no-init`).
+1. **System packages.** `apt` (Debian/Ubuntu, adding the PGDG repo) or `dnf` (Fedora): Postgres 18 + pgvector, `avahi-daemon`, `avahi-utils`, `libnss-mdns`. On apt systems, turn on security-only automatic updates with no automatic reboot (`enable_security_updates`).
+2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000. When firewalld or ufw is running, open 8000/tcp, mDNS and the iroh port 51820/udp (`open_firewall`).
+3. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
+4. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
+5. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecar (`virtues-embed`) in bundled mode, nothing for manual endpoints. Then libpdfium.
+6. **Config.** Write the install manifest and the env file `<data dir>/virtues.env` (generating `VIRTUES_ENCRYPTION_KEY` only if it is absent), run migrations, and write `/etc/systemd/system/virtues.service` (`User=virtues`, `EnvironmentFile=-<data dir>/virtues.env`, `server --port 8000`).
+7. **Start** with `systemctl enable` + `restart`, so a reinstall replaces a running old binary. Run the health check, then exec `virtues init` as the `virtues` user (skipped with `--no-init`).
 
 No `make` commands and no `.env` editing. Subscription is opt-in and decoupled from install.
 
 ### Why native and not containers
 
-The earlier plan was Podman + Quadlet on the appliance (rationale was "rootless + self-healing units"). That was abandoned because:
+The earlier plan was Podman + Quadlet on the box (rationale was "rootless + self-healing units"). That was abandoned because:
 
 - **Quadlet adds a layer we don't need.** systemd already gives us restart-on-failure, dependency ordering, and per-unit security hardening (`ProtectSystem=`, `PrivateTmp=`, `CapabilityBoundingSet=`). Wrapping that in Podman wrappers in Quadlet wrappers in systemd stacked leaky abstractions on top of each other.
 - **Native Postgres is simpler.** Postgres-in-container needs volume mounts, init hooks, healthchecks; native Postgres is one apt package with a vendor-maintained systemd unit.
-- **The box drives its own host.** Upgrades flip release slots, the appliance claims disks and runs a display, and the web terminal is a shell on the machine. A container would have to be granted all of that back.
+- **The box drives its own host.** Upgrades flip release slots, repairs change file ownership and units, and the web terminal is a shell on the machine. A container would have to be granted all of that back.
 
 The container trade-off makes sense in the cloud (multi-tenant, immutable infra, deploy via image push). It doesn't make sense on a single-tenant box you own.
 
@@ -157,7 +155,11 @@ automatically. One deploy per service runs at a time.
 **The smoke test runs against the live database, and both services migrate on
 startup.** A failed smoke test leaves the running service untouched, but a
 migration the new image applied stays applied. Migrations are append-only, so
-the old image keeps working on the newer schema — keep it that way.
+the old image keeps working on the newer schema — keep it that way. A rename
+leaves a view under the old name for the image it replaces (virtues-api's
+0011 does). virtues-api starts with sqlx's `ignore_missing`, so a rollback
+image boots past migrations it does not know; an image built before that
+setting cannot, and refuses to start once a newer migration has run.
 
 **Env changes need a recreate.** `docker restart` re-runs the existing
 container, so it neither picks up a new image nor re-reads the env file. After

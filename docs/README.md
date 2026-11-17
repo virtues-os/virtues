@@ -25,10 +25,47 @@ people and agents building Virtues. Pages here are written for the people
   one, so a new note goes at the top of its section. Write each from the
   commits between tags, and leave out fixes to bugs no stable release had.
 - **Follow the website's `DESIGN.md`.** Keep pages short,
-  specific and technical, and get the facts right.
+  specific and technical, and get the facts right. Wording follows the
+  Virtues Copy Guide, and page structure follows "How pages are shaped" below.
 - **Claim only what ships.** A manual page describes the released system. If a
   feature is half-built, its page stays `"planned"` in the manifest until the
   feature lands. In-progress design goes in `../agents/`.
+
+## How pages are shaped
+
+Every page follows the same shape, so readers learn it once.
+
+- **A lean main path first.** The page opens with the steps most readers
+  follow, in order, and nothing else. Number the steps when order matters.
+- **A "Next steps" heading ends the main path,** with one line pointing to the
+  next page.
+- **Everything else goes below a horizontal divider (`---`):** troubleshooting,
+  alternate paths (such as other ways to install), then explanation of how
+  things work.
+- **Explanatory sections describe; they don't instruct.** Don't use "To do X,
+  do Y", "you need" or "run" there. If something is an action the reader
+  should take, it belongs in the steps.
+- **Headings:** imperatives for steps ("Step 1: Choose a model"), noun phrases
+  for topics ("Embedding server requirements"). Mark an optional step
+  "(optional)".
+- **Information goes where the reader needs it:** before the step that uses
+  it, not after.
+- **End a step with its result only when the reader can't see it coming,**
+  such as how long a wait takes, or what to keep for the next step ("ends by
+  printing a six-digit pairing code"). Skip lines that announce what the
+  screen already shows, and don't link to a section that starts right below.
+- **Each fact lives on one page.** Other pages link to it instead of repeating
+  it.
+- **Describe an option as who it's for, what happens, and what to do first.**
+- **Every command gets its own code block,** and every check says what a pass
+  looks like.
+- **Quote the UI exactly:** labels and questions as the app or installer shows
+  them.
+- **Mark untested paths** with "Not yet tested on real hardware." until someone
+  has walked them on a real device.
+- **Installation stays strictly in order** (Prerequisites, System
+  requirements, Install script, Connecting your devices). Optional setups that
+  work before or after installing go in Guides.
 
 ## How it publishes
 

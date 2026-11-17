@@ -106,9 +106,9 @@ describe("the place questions", () => {
 	});
 
 	it("marks each place by its kind, else its category, with its distance", () => {
-		expect(placeIcon("cafe", "dining")).toBe("ri:cup-line");
-		expect(placeIcon("restaurant", "dining")).toBe("ri:restaurant-line");
-		expect(placeIcon("car_repair", "other")).toBe("ri:map-pin-line");
+		expect(placeIcon("cafe", "dining")).toBe("mynaui:coffee");
+		expect(placeIcon("restaurant", "dining")).toBe("mynaui:bowl");
+		expect(placeIcon("car_repair", "other")).toBe("mynaui:map-pin");
 		expect(distance(42.8)).toBe("43 m");
 		expect(distance(1240)).toBe("1.2 km");
 	});

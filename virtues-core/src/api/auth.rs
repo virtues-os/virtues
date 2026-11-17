@@ -2,7 +2,7 @@
 //!
 //! There is no signin/signout and no password/email auth. Authentication happens
 //! at the transport/credential layer (the `AuthUser` extractor: the proven iroh
-//! EndpointId, loopback console, or the dev fallback). This endpoint only reports
+//! EndpointId, the console socket, or the dev fallback). This endpoint only reports
 //! whether the caller is authenticated so the UI can render the app shell vs. a
 //! pair prompt.
 

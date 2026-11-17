@@ -154,7 +154,7 @@
 		<Button
 			variant="secondary"
 			size="sm"
-			icon="ri:add-line"
+			icon="mynaui:plus"
 			loading={saving}
 			onclick={handleSave}
 		>
@@ -184,7 +184,7 @@
 	<div class="versions-list">
 		{#if loading}
 			<div class="empty">
-				<Icon icon="ri:loader-4-line" width="14" class="spin"/>
+				<Icon icon="mynaui:spinner" width="14" class="spin"/>
 			</div>
 		{:else if versions.length === 0}
 			<div class="empty">
@@ -207,7 +207,7 @@
 							<span class="badge-auto">Auto</span>
 						{/if}
 						{#if previewLoading === version.id}
-							<Icon icon="ri:loader-4-line" width="12" class="spin" />
+							<Icon icon="mynaui:spinner" width="12" class="spin" />
 						{/if}
 					</button>
 					{#if tree}

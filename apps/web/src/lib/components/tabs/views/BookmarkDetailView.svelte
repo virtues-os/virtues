@@ -133,7 +133,7 @@
 		<p class="state">Opening…</p>
 	{:else if error}
 		<p class="state error" role="alert">
-			<Icon icon="ri:error-warning-line" width="16" />
+			<Icon icon="mynaui:danger-circle" width="16" />
 			{error}
 		</p>
 	{:else if bookmark}
@@ -189,7 +189,7 @@
 
 		{#if !isInternal}
 			<a class="original" href={bookmark.url} target="_blank" rel="noopener noreferrer">
-				<Icon icon="ri:external-link-line" width="14" />
+				<Icon icon="mynaui:external-link" width="14" />
 				<span>Open on {origin}</span>
 			</a>
 		{/if}

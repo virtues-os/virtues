@@ -71,7 +71,6 @@ pub const AUTH_SESSION_PREFIX: &str = "authsession";
 pub const AUTH_TOKEN_PREFIX: &str = "authtoken";
 pub const DEVICE_PREFIX: &str = "dev";
 pub const PAIR_TOKEN_PREFIX: &str = "pairtok";
-pub const SUDO_REQUEST_PREFIX: &str = "sudo";
 
 // Drive Layer
 pub const DRIVE_FILE_PREFIX: &str = "file";
@@ -94,6 +93,11 @@ pub const WIKI_ARTICLE_PREFIX: &str = "article";
 // this prefix is generated here and parsed by splitting on the first `_`,
 // which is all any caller does.
 pub const CHAPTER_PREFIX: &str = "chapter";
+
+// Things (wiki_things): what goes on in a life and the person named. The
+// prefix is the subject kind, which is how `api/subjects.rs` finds a subject
+// from an id.
+pub const THING_PREFIX: &str = "thing";
 
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";

@@ -6,6 +6,8 @@
 	 * fields are declared by the source. Frontend POSTs to
 	 * `/api/connect/:source_id/complete` with `{name, fields}`; backend
 	 * encrypts via virtues_helpers::auth and writes a fully-active credential row.
+	 * A reconnect also sends `credential_id`, and the box replaces that row's
+	 * secrets, so the form does not ask for a name.
 	 *
 	 * A source that declares a `login` (X, Instagram) is connected by logging in
 	 * instead, where the app can open a window of its own: the shell returns the
@@ -55,7 +57,7 @@
 
 	$effect(() => {
 		if (open && source) {
-			name = `${source.name} key`;
+			name = source.name;
 			values = Object.fromEntries(fields.map((f) => [f, '']));
 			error = null;
 			pasting = false;
@@ -71,15 +73,17 @@
 		}
 	});
 
-	/** The api_key fields a login fills, from the site's cookie jar. */
-	function fieldsFromJar(jar: JarCookie[]): Record<string, string> {
+	/** The api_key fields a login fills, from the site's cookie jar, plus the
+	 *  whole jar as `jar` with every cookie field, which a browser on the box
+	 *  loads as it is. The named fields stay for boxes that read only them. */
+	function fieldsFromJar(jar: JarCookie[]): Record<string, unknown> {
 		const login = source!.login!;
-		if (login.jar_field) {
-			return { [login.jar_field]: jar.map((c) => `${c.name}=${c.value}`).join('; ') };
-		}
-		return Object.fromEntries(
-			login.cookies.map((n) => [n, jar.find((c) => c.name === n)?.value ?? ''])
-		);
+		const named: Record<string, string> = login.jar_field
+			? { [login.jar_field]: jar.map((c) => `${c.name}=${c.value}`).join('; ') }
+			: Object.fromEntries(
+					login.cookies.map((n) => [n, jar.find((c) => c.name === n)?.value ?? ''])
+				);
+		return { ...named, jar };
 	}
 
 	async function logIn() {
@@ -91,7 +95,8 @@
 				source.id,
 				source.login.url,
 				source.login.cookies,
-				`Log in to ${source.name}`
+				`Log in to ${source.name}`,
+				source.login.domains ?? []
 			);
 			waitingForLogin = false;
 			submitting = true;
@@ -122,20 +127,25 @@
 	async function submit() {
 		if (!source) return;
 		const trimmedName = name.trim();
-		if (!trimmedName) {
-			error = 'Name is required';
+		if (!credentialId && !trimmedName) {
+			error = 'Add a name for this sign-in, then connect.';
 			return;
 		}
 		for (const f of fields) {
 			if (!values[f]?.trim()) {
-				error = `Missing field: ${f}`;
+				error = `Paste your ${f}, then connect.`;
 				return;
 			}
 		}
 		submitting = true;
 		error = null;
 		try {
-			const { credential_id } = await apikeyComplete(source.id, trimmedName, values, credentialId);
+			const { credential_id } = await apikeyComplete(
+				source.id,
+				trimmedName || source.name,
+				values,
+				credentialId
+			);
 			onSuccess(credential_id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -155,10 +165,11 @@
 			{#if loginAvailable && !pasting}
 				<p class="muted">
 					Log in to {source.name} {inPane ? 'in the browser beside this view' : 'in a window here'}.
-					Your server keeps the session in its vault, and nothing is copied by hand.
+					Your server saves the session with your other sign-ins in Settings, under Keys, so you
+					don't copy anything by hand.
 				</p>
 				{#if waitingForLogin}
-					<p class="muted">Finish logging in in the window that opened.</p>
+					<p class="muted">Finish logging in to {source.name} in the window that opened.</p>
 				{/if}
 
 				{#if error}
@@ -174,10 +185,12 @@
 					</Button>
 				</div>
 			{:else}
-			<label>
-				<span>Name</span>
-				<Input bind:value={name} placeholder="A label for this credential" />
-			</label>
+			{#if !credentialId}
+				<label>
+					<span>Name</span>
+					<Input bind:value={name} placeholder="A name for this sign-in" />
+				</label>
+			{/if}
 
 			{#each fields as field (field)}
 				<label>

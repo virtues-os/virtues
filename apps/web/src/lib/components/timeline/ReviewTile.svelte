@@ -49,10 +49,10 @@
 			<span class="ic" aria-hidden="true">◎</span>Help Virtues out
 		</button>
 		<span class="steps">
-			<IconButton icon="ri:arrow-up-s-line" label="Previous question" size="xs" disabled={at <= 0} onclick={() => onstep(at - 1)} />
+			<IconButton icon="mynaui:chevron-up" label="Previous question" size="xs" disabled={at <= 0} onclick={() => onstep(at - 1)} />
 			<span class="counter">{count} left</span>
-			<IconButton icon="ri:arrow-down-s-line" label="Next question" size="xs" disabled={answered ? at >= count : at >= count - 1} onclick={() => onstep(answered ? at : at + 1)} />
-			<IconButton icon="ri:close-line" label="Stop" size="xs" onclick={onclose} />
+			<IconButton icon="mynaui:chevron-down" label="Next question" size="xs" disabled={answered ? at >= count : at >= count - 1} onclick={() => onstep(answered ? at : at + 1)} />
+			<IconButton icon="mynaui:x" label="Stop" size="xs" onclick={onclose} />
 		</span>
 	{/if}
 </div>

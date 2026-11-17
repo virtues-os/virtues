@@ -751,7 +751,7 @@ mod tests {
         feed(
             &mut r,
             vec![
-                tool_start("c1", "code_interpreter"),
+                tool_start("c1", "shell"),
                 AgentEvent::ToolCallResult {
                     id: "c1".into(),
                     result: json!({"stderr": "Traceback …\nZeroDivisionError: division by zero", "exit_code": 1}),

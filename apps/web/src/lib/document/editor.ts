@@ -12,7 +12,7 @@
  */
 
 import { Editor, Extension, type AnyExtension } from '@tiptap/core';
-import Collaboration, { isChangeOrigin } from '@tiptap/extension-collaboration';
+import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import UniqueID from '@tiptap/extension-unique-id';
 import { ListKeymap } from '@tiptap/extension-list';
@@ -20,6 +20,7 @@ import { Gapcursor, Placeholder } from '@tiptap/extensions';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type EditorState, type NodeSelection } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
+import { yUndoPluginKey, ySyncPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AiIntent } from '$lib/ai/inlineComplete';
@@ -41,9 +42,17 @@ import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
-import { DragHandle } from './drag-handle';
+import { DragHandle, type DragHandleOptions } from './drag-handle';
 import { dropLine } from './drop-line';
 import { scrollerOf } from './outline';
+import { assertYKeys, isChangeOrigin } from './ykeys';
+
+// The composer path checks the binding's keys by string; prove they match.
+// `PluginKey.key` is ProseMirror's internal name for the string.
+assertYKeys({
+	sync: (ySyncPluginKey as unknown as { key: string }).key,
+	undo: (yUndoPluginKey as unknown as { key: string }).key
+});
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
 export interface EditorBinding {
@@ -66,6 +75,8 @@ export interface PageEditorOptions {
 	/** The node views; the page's own by default. */
 	extras?: Extras;
 	spellcheck?: boolean;
+	/** The menu a click on a heading's level mark opens (Flat headings); none by default. */
+	headingMenu?: DragHandleOptions['headingMenu'];
 }
 
 /**
@@ -325,6 +336,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 			dragEnded: (view) => {
 				if (dragSource === view) dragSource = null;
 			},
+			headingMenu: o.headingMenu ?? null,
 		}),
 		Gapcursor,
 		drawnCaret(),

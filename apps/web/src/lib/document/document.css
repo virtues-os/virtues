@@ -521,11 +521,35 @@
 	color: var(--color-foreground-muted);
 	transition-duration: var(--motion-hover-in);
 }
-.doc-grip.is-dragging {
-	opacity: 0;
+/* With Flat headings on, a heading's grip is its level mark, drawn where
+   prose.css hangs the mark and in its face. Its own background covers the
+   mark behind it, so the two never show at once. */
+.doc-grip.is-mark {
+	width: auto;
+	/* MARK_PAD in drag-handle.ts. */
+	padding: 0 4px;
+	font-family: var(--prose-family, var(--md-body-family));
+	font-size: var(--prose-size, var(--md-body-size));
+	font-weight: 400;
+	line-height: 24px;
+	white-space: nowrap;
+	color: var(--color-foreground-subtle);
+	background: var(--color-background);
 }
-.doc-grip:active {
+.doc-grip.is-mark:hover {
+	background: var(--hover-bg);
+	color: var(--color-foreground);
+}
+.doc-grip:active,
+.doc-grip.is-dragging {
 	cursor: grabbing;
+	color: var(--color-foreground);
+	background: var(--active-bg);
+}
+/* Held through the drag, beside the block's old place: the grip that was
+   shown stays shown, as it was when it was pressed. */
+.doc-grip.is-dragging {
+	opacity: 1;
 }
 @media (hover: none) {
 	.doc-grip {
@@ -533,6 +557,81 @@
 	}
 }
 
+/* What the grip under the pointer would move (drag-handle.ts, `aim`):
+   the selection's tint on hover, deeper while the grip is pressed. The spread shadow
+   carries the tint a little past the text without moving it. */
+.doc-prose .doc-drag-aim {
+	border-radius: var(--radius-sm);
+	background: var(--color-primary-subtle);
+	box-shadow: 0 0 0 4px var(--color-primary-subtle);
+	transition:
+		background var(--motion-hover-in) var(--ease-premium),
+		box-shadow var(--motion-hover-in) var(--ease-premium);
+}
+.doc-prose .doc-drag-aim.is-pressed {
+	--drag-aim-pressed: color-mix(in srgb, var(--color-primary) 14%, var(--color-background));
+	background: var(--drag-aim-pressed);
+	box-shadow: 0 0 0 4px var(--drag-aim-pressed);
+}
+
+/* The block in your hand while it is dragged (drag-handle.ts, `chipOf`):
+   a chip below and right of the pointer with the block's kind and first
+   words, or an image's picture. The whole block stays on the page, dimmed
+   in its old place, so the chip can be small and leave the drop line and
+   the text around it in sight. It is drawn on the window, over everything,
+   with the floating layers' fill, edge and shadow (design.md). */
+.doc-drag-chip {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: var(--z-tooltip);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	max-width: 240px;
+	padding: 6px 12px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-md);
+	background: var(--color-surface);
+	box-shadow: var(--shadow-float);
+	font-family: var(--font-sans);
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--color-foreground);
+	pointer-events: none;
+	user-select: none;
+}
+/* The copy modifier is held: the drop copies. */
+.doc-drag-chip-plus {
+	display: none;
+	flex-shrink: 0;
+	font-weight: 600;
+	color: var(--color-primary);
+}
+.doc-drag-chip.is-copy .doc-drag-chip-plus {
+	display: inline;
+}
+.doc-drag-chip-kind {
+	flex-shrink: 0;
+	color: var(--color-foreground-subtle);
+	font-variant-numeric: tabular-nums;
+}
+.doc-drag-chip-text {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+.doc-drag-chip-thumb {
+	flex-shrink: 0;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-sm);
+	object-fit: cover;
+}
 /* The block being dragged, where it was until it lands. It dims as the
    drag starts and comes back as a cancelled drag ends, so the way back
    needs a transition on every block that can be dragged (a top-level
@@ -541,7 +640,16 @@
 :where(.doc-prose > *, .doc-prose li, .doc-prose .doc-widget) {
 	transition: opacity var(--motion-hover-out) var(--ease-premium);
 }
+/* Faded is enough: the selection's tint, which a drag from the grip sets,
+   goes while the block is away. */
+.doc-prose .doc-drag-source.ProseMirror-selectednode {
+	background: none;
+}
 .doc-prose .doc-drag-source {
 	opacity: var(--drag-source-opacity);
 	transition: opacity var(--motion-hover-in) var(--ease-premium);
+}
+/* A copy leaves the block where it is, so its place is not dimmed. */
+.doc-drag-copying .doc-prose .doc-drag-source {
+	opacity: 1;
 }

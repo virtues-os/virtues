@@ -12,16 +12,39 @@
  */
 
 let open = $state(false);
+let startQuery = $state("");
+/** Where the keyboard was when search opened, so closing can put it back. */
+let returnFocus: HTMLElement | null = null;
 
 export const search = {
 	get open(): boolean {
 		return open;
 	},
-	show(): void {
+	/** What the field holds when it opens: empty, or a scope such as `#pages `. */
+	get startQuery(): string {
+		return startQuery;
+	},
+	show(query = ""): void {
+		if (!open) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		startQuery = query;
 		open = true;
 	},
+	/**
+	 * Close, and put the keyboard back where it was, unless a result took it
+	 * somewhere else. Checked after the flush that opens a chosen result, so
+	 * that result can take focus first.
+	 */
 	hide(): void {
+		if (!open) return;
 		open = false;
+		const back = returnFocus;
+		returnFocus = null;
+		setTimeout(() => {
+			const active = document.activeElement;
+			// Search's own field still holds it while it fades away.
+			const lost = !active || active === document.body || !!active.closest('[data-search]');
+			if (lost && back?.isConnected && back.checkVisibility()) back.focus({ preventScroll: true });
+		}, 0);
 	},
 	/**
 	 * For the keyboard chord only. The summon-from-outside path deliberately
@@ -30,6 +53,7 @@ export const search = {
 	 * half the time for no reason the user could have predicted.
 	 */
 	toggle(): void {
-		open = !open;
+		if (open) search.hide();
+		else search.show();
 	}
 };

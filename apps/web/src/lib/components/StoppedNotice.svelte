@@ -28,29 +28,29 @@
 	role="status"
 >
 	{#if reason === 'length'}
-		<Icon icon="ri:scissors-cut-line" width="13" />
+		<Icon icon="mynaui:scissors" width="13" />
 		<span>Reached its output limit before it finished</span>
 	{:else if reason === 'interrupted'}
-		<Icon icon="ri:flashlight-line" width="13" />
+		<Icon icon="mynaui:zap" width="13" />
 		<span>Interrupted before it finished</span>
 	{:else if reason === 'unavailable'}
-		<Icon icon="ri:cloud-off-line" width="13" />
+		<Icon icon="mynaui:cloud-off" width="13" />
 		<span>Your assistant's provider couldn't answer. Send it again to retry</span>
 	{:else if reason === 'unattended'}
-		<Icon icon="ri:moon-line" width="13" />
+		<Icon icon="mynaui:moon" width="13" />
 		<span>Stopped by your server. Nothing was watching</span>
 	{:else if reason === 'no_reply'}
-		<Icon icon="ri:plug-line" width="13" />
+		<Icon icon="mynaui:power" width="13" />
 		<span>Your server never finished this one</span>
 	{:else if reason === 'max_steps'}
-		<Icon icon="ri:footprint-line" width="13" />
+		<Icon icon="mynaui:activity" width="13" />
 		<span>Used up its steps before it finished</span>
 	{:else if reason === 'budget'}
 		<!-- The turn's own ceiling of cost or time, checked between steps. -->
-		<Icon icon="ri:hourglass-line" width="13" />
+		<Icon icon="mynaui:clock-circle" width="13" />
 		<span>Reached one turn's budget of time or cost before it finished</span>
 	{:else}
-		<Icon icon="ri:stop-fill" width="13" />
+		<Icon icon="mynaui:stop-solid" width="13" />
 		<span>Stopped</span>
 	{/if}
 </div>

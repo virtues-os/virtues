@@ -39,7 +39,7 @@
 
 <!-- Always mounted, so it can fade out as well as in. -->
 <div class="drop-hint" class:shown={dragActive} aria-hidden={!dragActive}>
-	<Icon icon="ri:download-2-line" width="15" />
+	<Icon icon="mynaui:download" width="15" />
 	<span>Drop to attach &middot; images, PDFs, audio, or text</span>
 </div>
 {#if attachments.length > 0}
@@ -52,10 +52,10 @@
 					<span class="attachment-icon">
 						<Icon
 							icon={a.kind === "pdf"
-								? "ri:file-pdf-fill"
+								? "mynaui:file-text-solid"
 								: a.kind === "audio"
-									? "ri:music-2-line"
-									: "ri:file-text-line"}
+									? "mynaui:music"
+									: "mynaui:file-text"}
 							width="18"
 						/>
 					</span>
@@ -77,7 +77,7 @@
 					aria-label="Remove attachment"
 					onclick={() => onRemoveAttachment(a.id)}
 				>
-					<Icon icon="ri:close-line" width="13" />
+					<Icon icon="mynaui:x" width="13" />
 				</button>
 			</div>
 		{/each}
@@ -87,7 +87,7 @@
      its own banner under the header (MobileShell), so this is desktop only. -->
 {#if reachability.unreachable && !mobileLayout.isMobile}
 	<div class="offline-note" role="status" title="Messages won't send until your server answers again.">
-		<Icon icon="ri:wifi-off-line" width="13" />
+		<Icon icon="mynaui:wifi-off" width="13" />
 		<span>Can't reach server</span>
 	</div>
 {/if}
@@ -116,7 +116,7 @@
 					aria-label="Remove queued message"
 					onclick={() => onRemoveQueued(i)}
 				>
-					<Icon icon="ri:close-line" width="13" />
+					<Icon icon="mynaui:x" width="13" />
 				</button>
 			</div>
 		{/each}

@@ -51,7 +51,7 @@
 				{
 					id: "remove",
 					label: "Remove",
-					icon: "ri:delete-bin-line",
+					icon: "mynaui:trash",
 					variant: "destructive" as const,
 					action: () => view.remove(),
 				},

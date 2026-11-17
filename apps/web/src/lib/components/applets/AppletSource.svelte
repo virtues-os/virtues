@@ -88,7 +88,7 @@
 		<p class="muted">{err}</p>
 	{:else if listing}
 		<div class="provenance">
-			<Icon icon={listing.origin_root === 'shipped' ? 'ri:box-3-line' : 'ri:edit-line'} width="14" />
+			<Icon icon={listing.origin_root === 'shipped' ? 'mynaui:box' : 'mynaui:edit'} width="14" />
 			<span>
 				{listing.origin_root === 'shipped'
 					? 'Shipped with Virtues'

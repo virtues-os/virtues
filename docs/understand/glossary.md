@@ -1,7 +1,7 @@
 ---
 title: Glossary
-description: The words Virtues uses for the parts of your life it stores - records, days, events, articles, pages, projects, applets - and what each one means.
-updated: 2026-10-20
+description: The words Virtues uses for the parts of your life it stores - records, days, events, articles, things, projects, tasks, pages, applets - and what each one means.
+updated: 2026-11-16
 ---
 
 Virtues uses one word for each thing. This page defines those words, roughly
@@ -49,11 +49,12 @@ written account of what happened, generated overnight from everything the
 server collected.
 
 **Article** - the page the wiki writes about one subject: a day, a year, a
-chapter, a person, a place, an organization or a story. Your server writes each
+chapter, a person, a place, an organization or a thing. Your server writes each
 day's article overnight. For a person, place, organization or year, choose
 Write the article on its page. If you turn on the Wiki Editor applet, your
-server also writes your chapters and stories, and keeps every article current
-as new records arrive. Any sentence you write stays as you wrote it.
+server also writes the articles for your chapters and things, and keeps every
+article current as new records arrive. Any sentence you write stays as you
+wrote it.
 
 **Note** - a smaller observation attached to a subject: a correction, an
 assessment, something worth remembering about it.
@@ -63,8 +64,8 @@ from. Refs let you check a claim: when the server tells you something about
 your life, the ref shows the record it based that on.
 
 **Wiki** - your encyclopedia, where all of your information is collected. It
-is organized by days and their events in one direction, and by people, places
-and organizations in the other, with articles on both. Your chapters and
+is organized by days and their events in one direction, and by people, places,
+organizations and things in the other, with articles on both. Your chapters and
 narrative identity provide the overall structure.
 
 ## What you write about yourself
@@ -82,12 +83,28 @@ chapter has its own page.
 
 ## What you make
 
+One question sorts the first three: can it be finished? If it never can, it is
+a thing. If it can, in more than one step, it is a project. If one step
+finishes it, it is a task.
+
+**Thing** - something in your life that goes on and can't be finished, and
+that isn't a person, a place or an organization: a garden, a bike, guitar. You
+name it, and it gets a page in your wiki. That page lists the projects and
+tasks you put under it.
+
+**Project** - something unresolved in your life that can be finished and takes
+more than one step. You make it, and it ends when you finish it or drop it. A
+project keeps its chats, pages and files together, and chat inside it answers
+from what you collected instead of from your whole record. It can sit under a
+thing. Projects can't contain other projects.
+
+**Task** - one step. A task sits under a project, under a thing, or on its
+own. A task can recur: when you finish it, the next one is due that long after
+the day you finished, so one is open at a time. A task you hand to your
+assistant is a request, which it works in the background.
+
 **Page** - a document you write. It keeps versions as you go and can be
 shared.
-
-**Project** - a place to collect material around a question, with chat that
-answers from what you collected instead of from your whole record. A project
-contains chats, pages and files. Projects can't contain other projects.
 
 ## What you can build
 

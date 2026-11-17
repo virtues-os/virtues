@@ -133,12 +133,12 @@
 		contextMenu.show(
 			{ x: r.left, y: r.bottom },
 			[
-				{ id: "choose", label: "Choose a new picture", icon: "ri:image-add-line", action: choosePicture },
+				{ id: "choose", label: "Choose a new picture", icon: "mynaui:image", action: choosePicture },
 				{
 					id: "remove",
 					label: "Remove picture",
 					description: "A photo from your contacts won't take its place",
-					icon: "ri:delete-bin-line",
+					icon: "mynaui:trash",
 					action: () => savePicture(""),
 				},
 			],

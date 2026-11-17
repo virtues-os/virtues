@@ -79,7 +79,7 @@
 		bind:this={textContainer}
 		class="text-base text-foreground user-message-content"
 		style="max-height: {maxHeight}; overflow: hidden;"
-	>{#if skill}<span class="skill-badge" title={skill.description}><Icon icon={skill.icon ?? 'ri:flashlight-line'} width="13" style="color: inherit" />/{skill.name}</span>{' '}{/if}{#each segments as seg, i (i)}{#if seg.kind === 'ref'}<Ref displayName={seg.name} url={seg.url} />{:else}{seg.text}{/if}{/each}</div>
+	>{#if skill}<span class="skill-badge" title={skill.description}><Icon icon={skill.icon ?? 'mynaui:zap'} width="13" style="color: inherit" />/{skill.name}</span>{' '}{/if}{#each segments as seg, i (i)}{#if seg.kind === 'ref'}<Ref displayName={seg.name} url={seg.url} />{:else}{seg.text}{/if}{/each}</div>
 
 	{#if shouldTruncate}
 		<button

@@ -1,29 +1,20 @@
 <script lang="ts">
-	import { untitled } from "$lib/refs/identity.svelte";
+	/**
+	 * The search palette (⌘K): a card near the top of the pages, its field
+	 * on top and the results under it (SearchList). It is its own object, so
+	 * it opens at once and at one width, wherever it was opened from. The
+	 * page bar's magnifier, the sidebar and the phone's menu all open it.
+	 *
+	 * On the desktop it stands centred over the pages, right of the
+	 * sidebar, and the window behind it blurs and fades into a fine dot
+	 * screen, clear around the card and denser toward the window's edges.
+	 */
 	import Icon from "$lib/components/Icon.svelte";
-	import { fade, fly } from "svelte/transition";
-	import { cubicOut } from "svelte/easing";
+	import SearchList from "$lib/components/search/SearchList.svelte";
+	import { fade } from "svelte/transition";
+	import { search } from "$lib/stores/search.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { shortcuts } from "$lib/shortcuts/registry.svelte";
-	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
-	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { projectStore } from "$lib/stores/project.svelte";
-	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
-	import { PROJECT_ICON } from "$lib/utils/iconHelpers";
-	import { newProject, openProjects } from "$lib/utils/projectActions";
-	import { visits } from "$lib/stores/visits.svelte";
-	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
-	import {
-		getAvailableThemes,
-		getThemeDisplayName,
-		getTheme,
-		applyTheme,
-		setTheme,
-		themeDefaultLabel,
-		themeMetadata,
-		type Theme,
-	} from "$lib/utils/theme";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 
 	interface Props {
 		open?: boolean;
@@ -32,1048 +23,237 @@
 
 	let { open = false, onClose }: Props = $props();
 
-	// Modal mode: 'search' or 'theme'
-	type ModalMode = "search" | "theme";
-	let mode = $state<ModalMode>("search");
+	let query = $state("");
+	let mode = $state<"search" | "theme">("search");
+	let list = $state<SearchList | null>(null);
+	/** The route of the tab search was opened from, for the empty state. */
+	let here = $state<string | null>(null);
 
-	let searchQuery = $state("");
-	let selectedIndex = $state(0);
-	let inputEl: HTMLInputElement | null = $state(null);
-	let modalEl: HTMLDivElement | null = $state(null);
-	let wasOpen = $state(false); // Track previous open state to detect transitions
-
-	// Theme selection state
-	let originalTheme = $state<Theme | null>(null);
-	let themeSelectedIndex = $state(0);
-	const themes = getAvailableThemes();
-
-	// Focus modal when entering theme mode
-	$effect(() => {
-		if (mode === "theme" && modalEl) {
-			modalEl.focus();
-		}
-	});
-
-	// Create new page action
-	async function createNewPage() {
-		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-			label: page.title,
-			preferEmptyPane: true,
-		});
-	}
-
-	// Enter theme selection mode
-	function enterThemeMode() {
-		originalTheme = getTheme();
-		themeSelectedIndex = themes.indexOf(originalTheme);
-		if (themeSelectedIndex === -1) themeSelectedIndex = 0;
-		mode = "theme";
-	}
-
-	// Exit theme mode without saving
-	function exitThemeMode() {
-		if (originalTheme) {
-			applyTheme(originalTheme);
-		}
-		mode = "search";
-		originalTheme = null;
-	}
-
-	// Save selected theme and exit
-	function saveTheme() {
-		const selectedTheme = themes[themeSelectedIndex];
-		setTheme(selectedTheme);
-		mode = "search";
-		originalTheme = null;
-		onClose();
-	}
-
-	// Preview theme on selection change
-	function previewTheme(index: number) {
-		themeSelectedIndex = index;
-		applyTheme(themes[index]);
-	}
-
-	// Quick actions
-	const quickActions = [
-		{
-			id: "new-chat",
-			label: "New Chat",
-			icon: "ri:add-line",
-			shortcut: shortcuts.format("mod+n"),
-			action: () => windowShellStore.newChat(),
-		},
-		{
-			id: "new-temp-chat",
-			label: "New Temporary Chat",
-			icon: "ri:ghost-line",
-			shortcut: shortcuts.format("mod+shift+i"),
-			action: () =>
-				windowShellStore.openTabFromRoute("/?temporary=1", {
-					label: "Temporary Chat",
-				}),
-		},
-		{
-			id: "new-page",
-			label: "New Page",
-			icon: "ri:file-text-line",
-			shortcut: shortcuts.format("mod+shift+n"),
-			action: createNewPage,
-		},
-		{
-			id: "new-project",
-			label: "New Project",
-			icon: PROJECT_ICON,
-			action: newProject,
-		},
-		{
-			id: "projects",
-			label: "Go to Projects",
-			icon: PROJECT_ICON,
-			action: openProjects,
-		},
-		{
-			id: "wiki",
-			label: "Go to Wiki",
-			icon: "ri:book-2-line",
-			shortcut: shortcuts.format("mod+w"),
-			action: () => windowShellStore.openTabFromRoute("/wiki"),
-		},
-		{
-			id: "sources",
-			label: "Go to Sources",
-			icon: "ri:device-line",
-			action: () => windowShellStore.openTabFromRoute("/sources"),
-		},
-		{
-			id: "change-theme",
-			label: "Change Theme",
-			icon: "ri:palette-line",
-			action: enterThemeMode,
-			keepOpen: true,
-		},
-		{
-			id: "settings",
-			label: "Open Settings",
-			icon: "ri:settings-4-line",
-			action: () => windowShellStore.openTabFromRoute("/virtues/you"),
-		},
-	];
-
-	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#projects`
-	// token narrows results to one kind. Singular and plural both work (`#chat` ==
-	// `#chats`). The token is stripped from the text that's actually matched.
-	type Scope = "chats" | "pages" | "actions" | "projects";
-	const SCOPE_ALIASES: Record<string, Scope> = {
-		chat: "chats", chats: "chats",
-		page: "pages", pages: "pages",
-		action: "actions", actions: "actions",
-		project: "projects", projects: "projects",
-	};
-	const scope = $derived.by<Scope | null>(() => {
-		const token = searchQuery.trimStart().match(/^#(\w+)/)?.[1]?.toLowerCase();
-		return token ? (SCOPE_ALIASES[token] ?? null) : null;
-	});
-	// Only strip the leading token when it resolved to a real scope, so a bare `#`
-	// or an unknown `#foo` is still searched literally.
-	const effectiveQuery = $derived(
-		scope ? searchQuery.trim().replace(/^#\w+\s*/, "") : searchQuery.trim(),
-	);
-
-	// Filter results based on search (respecting any active type scope). Things and
-	// projects only surface once there's a query (or their explicit scope), so the
-	// bare ⌘K stays lean — actions/chats/pages recents only.
-	const filteredResults = $derived.by(() => {
-		const query = effectiveQuery.toLowerCase().trim();
-		const limit = scope ? 25 : 5;
-		const match = (name: string | null) =>
-			!query || (name || "Untitled").toLowerCase().includes(query);
-		const inScope = (s: Scope) => scope === s || (!scope && !!query);
-		// The frecency prior, inside each group only. Ties keep store order
-		// (newest first), so a box that has never recorded a visit ranks as
-		// it always did. Never across groups: the section order below is
-		// fixed, and the row arithmetic in the template depends on it.
-		const byFrecency = <T,>(items: T[], key: (t: T) => number) =>
-			items
-				.map((item, i) => ({ item, i, f: key(item) }))
-				.sort((a, b) => b.f - a.f || a.i - b.i)
-				.map((x) => x.item);
-
-		return {
-			actions:
-				!scope || scope === "actions"
-					? quickActions.filter((a) => !query || a.label.toLowerCase().includes(query))
-					: [],
-			chats:
-				!scope || scope === "chats"
-					? byFrecency(
-							chatSessions.sessions.filter((c) => match(c.title)),
-							(c) => visits.score("chat", c.conversation_id),
-						).slice(0, limit)
-					: [],
-			pages:
-				!scope || scope === "pages"
-					? byFrecency(
-							pagesStore.pages.filter((p) => match(p.title)),
-							(p) => visits.score("page", p.id),
-						).slice(0, limit)
-					: [],
-			projects: inScope("projects")
-				? byFrecency(
-						projectStore.projects.filter((s) => match(s.name)),
-						(s) => visits.score("project", s.id),
-					).slice(0, limit)
-				: [],
-		};
-	});
-
-	// "Ask Virtues" — when there's free text (and no #scope), the top row opens a
-	// real chat with the query. It occupies index 0, shifting nav results down.
-	const showAsk = $derived(!scope && effectiveQuery.trim().length > 0);
-	const askOffset = $derived(showAsk ? 1 : 0);
-
-	// ── Content hits ────────────────────────────────────────────────────────
-	// Everything above this line matches *objects* the client already holds, so
-	// it's instant. Content lives on the box and needs a round trip, so it
-	// arrives late and sits in its own group — never interleaved with the
-	// objects. The two rank on incomparable scales; merging them by score is
-	// the score-scale schism the IR notes warn about.
-	let contentHits = $state<LocalSearchHit[]>([]);
-	let contentLoading = $state(false);
-	let contentSeq = 0;
-
-	$effect(() => {
-		const q = effectiveQuery.trim();
-		// `#scope` tokens filter the object lists, which content search has no
-		// equivalent for — so a scoped query asks for objects only.
-		if (!open || scope || q.length < 2) {
-			contentHits = [];
-			contentLoading = false;
-			return;
-		}
-
-		const seq = ++contentSeq;
-		const controller = new AbortController();
-		contentLoading = true;
-
-		// 180ms: long enough that ordinary typing issues one request per pause
-		// rather than one per keystroke, short enough to feel immediate.
-		const timer = setTimeout(async () => {
-			try {
-				const res = await searchLocal(q, { limit: 6, signal: controller.signal });
-				// Out-of-order responses: a slower earlier request must not
-				// overwrite a newer one's results.
-				if (seq === contentSeq) contentHits = res.hits;
-			} catch (err) {
-				if ((err as Error)?.name !== "AbortError" && seq === contentSeq) {
-					contentHits = [];
-				}
-			} finally {
-				if (seq === contentSeq) contentLoading = false;
-			}
-		}, 180);
-
-		return () => {
-			clearTimeout(timer);
-			controller.abort();
-		};
-	});
-
-	// One flat, ordered list of selectable rows — the single source of truth for
-	// keyboard nav and Enter. Order must match the render order below.
-	type Row =
-		| { kind: "ask" }
-		| { kind: "action"; item: (typeof quickActions)[number] }
-		| { kind: "chat"; item: (typeof chatSessions.sessions)[number] }
-		| { kind: "page"; item: (typeof pagesStore.pages)[number] }
-		| { kind: "project"; item: (typeof projectStore.projects)[number] }
-		| { kind: "content"; item: LocalSearchHit };
-	const orderedRows = $derived.by<Row[]>(() => [
-		...(showAsk ? [{ kind: "ask" } as Row] : []),
-		...filteredResults.actions.map((item) => ({ kind: "action", item }) as Row),
-		...filteredResults.chats.map((item) => ({ kind: "chat", item }) as Row),
-		...filteredResults.pages.map((item) => ({ kind: "page", item }) as Row),
-		...filteredResults.projects.map((item) => ({ kind: "project", item }) as Row),
-		// Last: content arrives asynchronously, and rows appearing *above* the
-		// selection would move it out from under the user mid-keystroke.
-		...contentHits.map((item) => ({ kind: "content", item }) as Row),
-	]);
-
-	/** Index of the first content row, for the render block's numbering. */
-	const contentOffset = $derived(
-		askOffset +
-			filteredResults.actions.length +
-			filteredResults.chats.length +
-			filteredResults.pages.length +
-			filteredResults.projects.length,
-	);
-	const totalResults = $derived(orderedRows.length);
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (mode === "theme") {
-			handleThemeKeydown(e);
-			return;
-		}
-
-		if (e.key === "Escape") {
-			e.preventDefault();
-			onClose();
-		} else if (e.key === "ArrowDown") {
-			e.preventDefault();
-			selectedIndex = Math.min(selectedIndex + 1, totalResults - 1);
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			selectedIndex = Math.max(selectedIndex - 1, 0);
-		} else if (e.key === "Tab") {
-			// Tab asks, from anywhere in the list — the two things you can want
-			// from a query get one key each, instead of both hiding behind Enter
-			// and whichever row happened to be selected. preventDefault is
-			// load-bearing: Tab's default is focus-next, which would leave the
-			// input and strand the palette.
-			e.preventDefault();
-			const q = effectiveQuery.trim();
-			if (!q) return;
-			askVirtues(q);
-			onClose();
-		} else if (e.key === "Enter") {
-			e.preventDefault();
-			selectCurrentItem();
-		}
-	}
-
-	function handleThemeKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") {
-			e.preventDefault();
-			exitThemeMode();
-		} else if (e.key === "ArrowDown") {
-			e.preventDefault();
-			const newIndex = Math.min(themeSelectedIndex + 1, themes.length - 1);
-			previewTheme(newIndex);
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			const newIndex = Math.max(themeSelectedIndex - 1, 0);
-			previewTheme(newIndex);
-		} else if (e.key === "Enter") {
-			e.preventDefault();
-			saveTheme();
-		}
-	}
-
-	/**
-	 * Where a content hit opens, and what to call it.
-	 *
-	 * Most indexed records have no view of their own, so they open in the raw
-	 * record view. The ones that DO have a room must go there instead: a
-	 * bookmark found here used to land on the database row - `Enrichment
-	 * Attempts: 0` beside the note - because the detail page was built and only
-	 * the room's own clicks were repointed at it.
-	 *
-	 * The label matters for the same reason. An untitled hit fell back to the
-	 * ontology name, so the tab was called "content_bookmark".
-	 */
-	function contentTarget(
-		ontology: string,
-		recordId: string,
-		title?: string | null,
-	): { route: string; label: string } {
-		if (ontology === "content_bookmark") {
-			return { route: `/bookmark/${recordId}`, label: title || "Bookmark" };
-		}
-		return {
-			route: `/record/${ontology}/${recordId}`,
-			label: title || ontology,
-		};
-	}
-
-	function selectCurrentItem() {
-		const row = orderedRows[selectedIndex];
-		if (!row) return;
-
-		switch (row.kind) {
-			case "ask":
-				askVirtues(effectiveQuery.trim());
-				onClose();
-				break;
-			case "action":
-				row.item.action();
-				if (!row.item.keepOpen) onClose();
-				break;
-			case "chat":
-				windowShellStore.openTabFromRoute(`/chat/${row.item.conversation_id}`, {
-					label: row.item.title || untitled("chat"),
-				});
-				onClose();
-				break;
-			case "page":
-				windowShellStore.openTabFromRoute(`/page/${row.item.id}`, {
-					label: row.item.title || untitled("page"),
-				});
-				onClose();
-				break;
-			case "project":
-				windowShellStore.openTabFromRoute(`/project/${row.item.id}`, {
-					label: row.item.name || untitled("project"),
-				});
-				onClose();
-				break;
-			case "content": {
-				const target = contentTarget(
-					row.item.ontology,
-					row.item.record_id,
-					row.item.title,
-				);
-				windowShellStore.openTabFromRoute(target.route, { label: target.label });
-				onClose();
-				break;
-			}
-		}
-	}
-
-	function handleBackdropClick(e: MouseEvent) {
-		if (e.target === e.currentTarget) {
-			onClose();
-		}
-	}
-
-	// Focus input and reset state only when modal first opens (not on re-renders)
-	$effect(() => {
-		if (open && !wasOpen) {
-			// Modal just opened - reset state
-			searchQuery = "";
-			selectedIndex = 0;
-			mode = "search";
-			originalTheme = null;
-			// Load pages if not already loaded
-			if (pagesStore.pages.length === 0 && !pagesStore.pagesLoading) {
-				pagesStore.loadPages();
-			}
-			// Load chat sessions so #chats search has data even on a fresh load
-			if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) {
-				chatSessions.load();
-			}
-			// Same for projects so its scope has data to match.
-			if (projectStore.projects.length === 0 && !projectStore.loading) {
-				projectStore.load();
-			}
-			// The frecency prior, refreshed at most once a minute.
-			visits.refresh();
-		}
-		wasOpen = open;
-	});
-
-	// Keep the highlighted row valid as the result set changes with the query.
-	//
-	// Lands on the first *navigable* row, not on Ask. Enter is the common case —
-	// "take me to the thing I'm typing the name of" — and defaulting to Ask made
-	// the palette answer a question nobody had asked yet. Ask keeps its row (and
-	// its click target); it's just no longer what Enter means. With nothing to
-	// navigate to, Ask is the only row and gets the selection by default.
-	$effect(() => {
-		void searchQuery;
-		selectedIndex = defaultIndex();
-	});
-
-	function defaultIndex(): number {
-		return orderedRows.length > askOffset ? askOffset : 0;
-	}
-
-	// Focus input when modal is open and input is available
-	$effect(() => {
-		if (open && inputEl) {
-			inputEl.focus();
-		}
-	});
-
-	// Scroll selected item into view when navigating with keyboard
 	$effect(() => {
 		if (!open) return;
-
-		if (mode === "search" && selectedIndex >= 0) {
-			const selectedEl = document.querySelector(`[data-result-index="${selectedIndex}"]`);
-			if (selectedEl) {
-				selectedEl.scrollIntoView({ block: "nearest" });
-			}
-		} else if (mode === "theme") {
-			const selectedEl = document.querySelector(`[data-theme-index="${themeSelectedIndex}"]`);
-			if (selectedEl) {
-				selectedEl.scrollIntoView({ block: "nearest" });
-			}
-		}
+		query = search.startQuery;
+		mode = "search";
+		here = windowShellStore.activeTab?.route ?? null;
 	});
+
+	// The cursor goes after a scope the field opened with (`#pages `).
+	function focus(node: HTMLInputElement) {
+		node.focus();
+		node.setSelectionRange(node.value.length, node.value.length);
+	}
+
+	/** Comes up in one short step and goes in a shorter one: no travel. */
+	function appear(_node: HTMLElement) {
+		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		return {
+			duration: 100,
+			css: (t: number) => (still ? `opacity: ${t}` : `opacity: ${t}; transform: scale(${0.98 + 0.02 * t})`),
+		};
+	}
 </script>
 
 {#if open}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-	<div 
-		class="modal-backdrop" 
-		onclick={handleBackdropClick}
-		transition:fade={{ duration: 150, easing: cubicOut }}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div
+		class="backdrop"
+		style:--pages-left="{sidebarState.cardLeft}px"
+		onclick={(e) => e.target === e.currentTarget && onClose()}
+		out:fade={{ duration: 120 }}
 	>
-		<div
-			bind:this={modalEl}
-			class="modal"
-			role="dialog"
-			aria-modal="true"
-			aria-label={mode === "theme" ? "Select Theme" : "Search"}
-			tabindex="-1"
-			onkeydown={handleKeydown}
-			transition:fly={{ y: -8, duration: 150, easing: cubicOut }}
-		>
-			{#if mode === "theme"}
-				<!-- Theme Selection Header -->
-				<div class="search-input-container">
-					<button class="back-button" onclick={exitThemeMode}>
-						<Icon icon="ri:arrow-left-line" width="18" />
-					</button>
-					<span class="mode-title">Select Theme</span>
-					<kbd class="escape-hint">Esc</kbd>
-				</div>
-
-				<!-- Theme List -->
-				<div class="results">
-					<div class="result-group">
-						<span class="group-label">Themes</span>
-						{#each themes as theme, i}
-							<button
-								class="result-item"
-								class:selected={themeSelectedIndex === i}
-								data-theme-index={i}
-								onclick={() => {
-									themeSelectedIndex = i;
-									saveTheme();
-								}}
-							>
-								<Icon
-									icon={themeMetadata[theme].icon}
-									width="16"
-									class="result-icon"
-								/>
-								<span class="result-label">
-									{getThemeDisplayName(theme)}
-									<!-- The role rides on the name rather than replacing it:
-									     the theme is called Asgard, and "Virtues Dark" is what
-									     it's for. Both surfaces list the two defaults first
-									     (getAvailableThemes), so this labels the top of the
-									     list rather than asking anyone to search for it. -->
-									{#if themeDefaultLabel(theme)}
-										<span class="theme-role">({themeDefaultLabel(theme)})</span>
-									{/if}
-								</span>
-								<span class="theme-description">{themeMetadata[theme].description}</span>
-							</button>
-						{/each}
-					</div>
-				</div>
-			{:else}
-				<!-- Search Input -->
-				<div class="search-input-container">
-					<Icon
-						icon="ri:search-line"
-						width="18"
-						class="search-icon"
-					/>
-					{#if scope}
-						<span class="scope-chip">#{scope}</span>
-					{/if}
-					<input
-						bind:this={inputEl}
-						bind:value={searchQuery}
-						type="text"
-						placeholder="Search… (try #chats, #pages, #projects)"
-						class="search-input"
-					/>
-					<kbd class="escape-hint">Esc</kbd>
-				</div>
-
-				<!-- Results -->
-				<div class="results">
-				{#if showAsk}
-					<button
-						class="result-item ask-row"
-						class:selected={selectedIndex === 0}
-						data-result-index={0}
-						onclick={() => {
-							askVirtues(effectiveQuery.trim());
-							onClose();
-						}}
-						onmouseenter={() => (selectedIndex = 0)}
-					>
-						<Icon icon="ri:sparkling-2-line" width="16" class="result-icon" />
-						<span class="result-label">Ask Virtues — <span class="ask-q">"{effectiveQuery.trim()}"</span></span>
-						<kbd class="result-shortcut">⏎</kbd>
-					</button>
-				{/if}
-				{#if filteredResults.actions.length > 0}
-					<div class="result-group">
-						<span class="group-label">Quick Actions</span>
-						{#each filteredResults.actions as action, i}
-							{@const index = askOffset + i}
-							<button
-								class="result-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									action.action();
-									if (!action.keepOpen) {
-										onClose();
-									}
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<Icon
-									icon={action.icon}
-									width="16"
-									class="result-icon"
-								/>
-								<span class="result-label">{action.label}</span>
-								{#if action.shortcut}
-									<kbd class="result-shortcut"
-										>{action.shortcut}</kbd
-									>
-								{/if}
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				{#if filteredResults.chats.length > 0}
-					<div class="result-group">
-						<span class="group-label">Recent Chats</span>
-						{#each filteredResults.chats as chat, i}
-							{@const index = askOffset + filteredResults.actions.length + i}
-							<button
-								class="result-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									windowShellStore.openTabFromRoute(
-										`/chat/${chat.conversation_id}`,
-										{
-											label: chat.title || "Chat",
-										},
-									);
-									onClose();
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<Icon
-									icon="ri:message-3-line"
-									width="16"
-									class="result-icon"
-								/>
-								<span class="result-label"
-									>{chat.title || untitled("chat")}</span
-								>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				{#if filteredResults.pages.length > 0}
-					<div class="result-group">
-						<span class="group-label">Recent Pages</span>
-						{#each filteredResults.pages as page, i}
-							{@const index = askOffset + filteredResults.actions.length + filteredResults.chats.length + i}
-							<button
-								class="result-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-										label: page.title || untitled("page"),
-									});
-									onClose();
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<Icon
-									icon="ri:file-text-line"
-									width="16"
-									class="result-icon"
-								/>
-								<span class="result-label"
-									>{page.title || untitled("page")}</span
-								>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				{#if filteredResults.projects.length > 0}
-					<div class="result-group">
-						<span class="group-label">Projects</span>
-						{#each filteredResults.projects as project, i}
-							{@const index =
-								askOffset +
-								filteredResults.actions.length +
-								filteredResults.chats.length +
-								filteredResults.pages.length +
-								i}
-							<button
-								class="result-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									windowShellStore.openTabFromRoute(`/project/${project.id}`, {
-										label: project.name || untitled("project"),
-									});
-									onClose();
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<span class="result-icon glyph-slot"><ProjectGlyph {project} size={16} /></span>
-								<span class="result-label">{project.name || untitled("project")}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				<!-- Content: matched text inside indexed records. Its own group,
-				     below the objects — see the note on orderedRows. -->
-				{#if contentHits.length > 0}
-					<div class="result-group">
-						<span class="group-label">In your records</span>
-						{#each contentHits as hit, i}
-							{@const index = contentOffset + i}
-							<button
-								class="result-item content-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									const target = contentTarget(
-										hit.ontology,
-										hit.record_id,
-										hit.title,
-									);
-									windowShellStore.openTabFromRoute(target.route, {
-										label: target.label,
-									});
-									onClose();
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<Icon icon="ri:file-text-line" width="16" class="result-icon" />
-								<span class="content-text">
-									<span class="result-label">{hit.title || "Untitled"}</span>
-									{#if hit.preview}
-										<span class="content-preview">{hit.preview}</span>
-									{/if}
-								</span>
-								<span class="content-ontology">{hit.ontology}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				<!-- Only honest once the async half has settled: saying "no
-				     results" while content is still in flight is a lie that
-				     corrects itself a moment later. -->
-				{#if totalResults === 0 && searchQuery && !contentLoading}
-					<div class="no-results">
-						<span>No results found for "{searchQuery}"</span>
-					</div>
-				{/if}
+		<div class="card" role="dialog" aria-modal="true" aria-label="Search" data-search in:appear>
+			<div class="field">
+				<Icon icon="atlas:search" width="16" class="field-icon" />
+				<input
+					bind:value={query}
+					onkeydown={(e) => list?.keydown(e)}
+					placeholder={mode === "theme" ? "Filter themes" : "Search, ask, or type an address"}
+					aria-label="Search"
+					use:focus
+				/>
+				<kbd class="esc">esc</kbd>
+				<button class="close" onclick={onClose} aria-label="Close search">
+					<Icon icon="atlas:close" width="16" />
+				</button>
 			</div>
-
-			<!-- Tab's whole discoverability. Nothing about a text field suggests
-			     Tab does anything but move focus, so the split has to be stated
-			     or it doesn't exist. -->
-			<div class="palette-hints">
-				<span class="hint"><kbd>↵</kbd> open</span>
-				<span class="hint"><kbd>⇥</kbd> ask</span>
-				<span class="hint hint-nav"><kbd>↑↓</kbd> navigate</span>
-				<span class="hint"><kbd>esc</kbd> close</span>
+			<div class="results">
+				<SearchList bind:this={list} bind:query bind:mode {here} {onClose} />
 			</div>
-			{/if}
 		</div>
 	</div>
 {/if}
 
 <style>
-	@reference "../../../app.css";
-
-	.modal-backdrop {
+	/* On the desktop the card is centred over the pages, from the pane's
+	   left edge (--pages-left, the sidebar's width and gap) to the window's
+	   air on the right. The window behind it blurs a little and takes a
+	   wash of the background, so the card is the one sharp thing. */
+	.backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.4);
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		/* Bottom inset keeps tall result lists above the home indicator — and,
-		   on a phone, above the keyboard this palette raises the moment it
-		   opens. `--keyboard-inset` is 0 anywhere there isn't one, so the
-		   desktop measure is untouched. */
-		padding-top: max(15vh, env(safe-area-inset-top));
-		padding-bottom: max(16px, env(safe-area-inset-bottom), var(--keyboard-inset, 0px));
+		padding: calc(var(--chrome-row-h) + 9vh) var(--window-air) 16px var(--pages-left, 16px);
 		z-index: var(--z-modal);
+		background: color-mix(in srgb, var(--color-background) 28%, transparent);
+		backdrop-filter: blur(10px) saturate(0.9);
+		-webkit-backdrop-filter: blur(10px) saturate(0.9);
+		animation: veil-in 220ms var(--ease-premium);
 	}
 
-	/* 15vh is a comfortable drop on a desktop window and most of the usable
-	   height on a phone with the keyboard up. */
-	@media (max-width: 768px) {
-		.modal-backdrop {
-			padding-top: max(6vh, env(safe-area-inset-top));
+	/* The dot screen: dots of ink 4px apart, masked so the card's
+	   surroundings stay clear and the screen thickens toward the edges. */
+	.backdrop::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background-image: radial-gradient(
+			color-mix(in srgb, var(--color-foreground) 22%, transparent) 0.75px,
+			transparent 1.25px
+		);
+		background-size: 4px 4px;
+		mask-image: radial-gradient(
+			ellipse 70% 75% at calc(var(--pages-left, 0px) / 2 + 50%) 30%,
+			transparent 25%,
+			var(--color-foreground) 100%
+		);
+		animation: dots-in 320ms var(--ease-premium);
+	}
+
+	@keyframes veil-in {
+		from {
+			background: transparent;
+			backdrop-filter: blur(0) saturate(1);
+			-webkit-backdrop-filter: blur(0) saturate(1);
 		}
 	}
 
-	.modal {
-		width: 100%;
-		max-width: 520px;
-		/* Fits the space the backdrop's padding leaves, rather than running past
-		   it: a column so the results list is the part that gives. */
-		display: flex;
-		flex-direction: column;
-		max-height: 100%;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
-		overflow: hidden;
-		outline: none;
+	@keyframes dots-in {
+		from {
+			opacity: 0;
+		}
 	}
 
-	.search-input-container {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 14px 16px;
-		border-bottom: 1px solid var(--border);
+	@media (prefers-reduced-motion: reduce) {
+		.backdrop,
+		.backdrop::before {
+			animation: none;
+		}
 	}
 
-	:global(.search-icon) {
-		color: var(--foreground-muted) !important;
-		flex-shrink: 0;
+	@media (prefers-reduced-transparency: reduce) {
+		.backdrop {
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			background: color-mix(in srgb, var(--color-background) 70%, transparent);
+		}
 	}
 
-	.scope-chip {
-		flex-shrink: 0;
-		font-family: var(--font-mono);
-		font-size: 11px;
-		font-weight: 500;
-		padding: 3px 7px;
-		border-radius: var(--radius-md);
-		background: var(--primary-subtle);
-		color: var(--primary);
-	}
+	@media (hover: none) {
+		.backdrop {
+			/* Clears the notch on top, and at the bottom the home indicator and
+			   the keyboard this raises the moment it opens. `--keyboard-inset`
+			   is 0 anywhere there isn't one. */
+			padding: max(6vh, env(safe-area-inset-top)) 16px
+				max(16px, env(safe-area-inset-bottom), var(--keyboard-inset, 0px));
+			background: rgba(0, 0, 0, 0.4);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			animation: none;
+		}
 
-	.search-input {
-		flex: 1;
-		border: none;
-		background: transparent;
-		font-size: 15px;
-		color: var(--foreground);
-		outline: none;
-	}
-
-	.search-input::placeholder {
-		color: var(--foreground-subtle);
-	}
-
-	.escape-hint {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		padding: 3px 6px;
-		background: var(--surface-elevated);
-		border-radius: var(--radius-sm);
-		color: var(--foreground-subtle);
-	}
-
-	.results {
-		max-height: 400px;
-		/* …but never more than the modal was given. `min-height: 0` is what lets
-		   a flex child shrink below its content — without it the list keeps its
-		   full height and pushes the palette off the bottom of the screen. */
-		flex: 1 1 auto;
-		min-height: 0;
-		overflow-y: auto;
-		padding: 8px;
-	}
-
-	.result-group {
-		margin-bottom: 8px;
-	}
-
-	.group-label {
-		display: block;
-		font-size: 11px;
-		font-weight: 500;
-		letter-spacing: 0.02em;
-		color: var(--foreground-subtle);
-		padding: 6px 8px;
-	}
-
-	.result-item {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		width: 100%;
-		padding: 10px 12px;
-		border-radius: var(--radius-lg);
-		cursor: pointer;
-		background: transparent;
-		border: none;
-		text-align: left;
-		color: var(--foreground);
-		transition: background-color 80ms ease-out;
-	}
-
-	.result-item:hover,
-	.result-item.selected {
-		background: var(--surface-overlay);
-	}
-
-	.result-item.selected {
-		background: var(--primary-subtle);
-	}
-
-	:global(.result-icon) {
-		color: var(--foreground-muted) !important;
-		flex-shrink: 0;
-	}
-
-	.glyph-slot {
-		display: inline-flex;
-	}
-
-	.result-label {
-		flex: 1;
-		font-size: 14px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.palette-hints {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		padding: 8px 14px;
-		border-top: 1px solid var(--color-border);
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-		user-select: none;
-	}
-
-	.hint {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-	}
-
-	.palette-hints kbd {
-		font-family: var(--font-sans);
-		font-size: 11px;
-		line-height: 1;
-		padding: 2px 5px;
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
-		color: var(--color-foreground-muted);
-	}
-
-	/* Arrow keys are the least surprising of the four — first to go when the
-	   palette is narrow. */
-	@media (max-width: 480px) {
-		.hint-nav {
+		.backdrop::before {
 			display: none;
 		}
 	}
 
-	/* Content rows carry a second line, so they can't be a single flex row of
-	   nowrap text like the object rows above. */
-	.content-item {
-		align-items: flex-start;
-	}
-
-	.content-text {
+	/* A column, so the results are the part that gives when space runs out.
+	   Its height follows the results without animating, so a row never
+	   slides under the selection. */
+	.card {
+		/* Over the dot screen, which is positioned. */
+		position: relative;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-		flex: 1;
-	}
-
-	.content-preview {
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
+		width: 100%;
+		max-width: 600px;
+		max-height: min(560px, 100%);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-float);
 		overflow: hidden;
 	}
 
-	.content-ontology {
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-		font-family: var(--font-mono, monospace);
-		flex-shrink: 0;
-		align-self: center;
-	}
-
-	.result-shortcut {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		padding: 2px 6px;
-		background: var(--surface-elevated);
-		border-radius: var(--radius-sm);
-		color: var(--foreground-subtle);
-	}
-
-	.ask-row {
-		margin-bottom: 4px;
-	}
-
-	.ask-row :global(.result-icon) {
-		color: var(--primary) !important;
-	}
-
-	.ask-q {
-		color: var(--foreground-muted);
-	}
-
-	.no-results {
-		padding: 24px 16px;
-		text-align: center;
-		color: var(--foreground-subtle);
-		font-size: 14px;
-	}
-
-	.back-button {
+	.field {
 		display: flex;
+		flex: none;
 		align-items: center;
-		justify-content: center;
-		padding: 4px;
+		gap: 10px;
+		height: 48px;
+		padding: 0 14px 0 15px;
+	}
+
+	:global(.field-icon) {
+		flex: none;
+		color: var(--color-foreground-muted);
+	}
+
+	input {
+		flex: 1;
+		min-width: 0;
 		border: none;
 		background: transparent;
-		color: var(--foreground-muted);
-		cursor: pointer;
-		border-radius: var(--radius-sm);
-		transition: background-color 80ms ease-out;
-	}
-
-	.back-button:hover {
-		background: var(--surface-overlay);
-		color: var(--foreground);
-	}
-
-	.mode-title {
-		flex: 1;
 		font-size: 15px;
-		font-weight: 500;
-		color: var(--foreground);
+		color: var(--color-foreground);
+		outline: none;
 	}
 
-	.theme-description {
-		font-size: 12px;
-		color: var(--foreground-subtle);
-		white-space: nowrap;
+	/* 16px keeps iOS from zooming the page when the field takes focus. */
+	@media (hover: none) {
+		input {
+			font-size: 16px;
+		}
+		.esc {
+			display: none;
+		}
+		.close {
+			display: flex;
+		}
 	}
 
-	/* Quieter than the name it follows — it names a role, not the theme. */
-	.theme-role {
-		font-size: 12px;
-		font-weight: 400;
-		color: var(--foreground-subtle);
+	input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
+
+	.esc {
+		flex: none;
+		padding: 1px 5px;
+		border-radius: var(--radius-sm);
+		background: var(--hover-bg);
+		font-family: inherit;
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* The phone has no Escape key, so it gets a button. */
+	.close {
+		display: none;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		margin-right: -8px;
+		border: none;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--color-foreground-muted);
+	}
+
+	.results {
+		min-height: 0;
+		overflow-y: auto;
 	}
 </style>

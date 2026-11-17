@@ -11,6 +11,22 @@ pub struct StartResponse {
   pub started: bool,
 }
 
+/// A service's sign-in address, for `sign_in`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInRequest {
+  pub url: String,
+}
+
+/// How the sign-in sheet closed: `finished` (the sign-in's last page closed
+/// it), `closed` (the owner did), `failed`, or `unavailable` where there is
+/// no sheet.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInResponse {
+  pub outcome: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RowsRequest {

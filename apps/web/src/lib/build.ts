@@ -105,10 +105,9 @@ export function installClientHeader(): void {
 // (other tabs, the desktop webview) to reload; only the tab that pressed the
 // update button did. The box now stamps every response with its build
 // (`X-Virtues-Box-Build`); when it moves under us, reload — but only from the
-// background, never out from under someone mid-thought. The always-visible
-// kiosk has its own recovery (`restart_display`), and the bundled mobile SPA
+// background, never out from under someone mid-thought. The bundled mobile SPA
 // serves its chunks locally (a box upgrade cannot strand it), so this guards
-// exactly the surfaces that had none.
+// exactly the surfaces that had no other recovery.
 //
 // WHAT THIS CAN AND CANNOT SEE. `X-Virtues-Box-Build` is stamped from the
 // BINARY's compiled-in commit, once, into a OnceLock — so it moves when the box

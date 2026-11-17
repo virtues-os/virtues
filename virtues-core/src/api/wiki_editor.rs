@@ -23,7 +23,7 @@ pub const CONSTITUTION: &str = include_str!("../../prompts/wiki/constitution.md"
 /// what this page is for.
 pub const YEAR_BRIEF: &str = include_str!("../../prompts/wiki/year.md");
 pub const ENTITY_BRIEF: &str = include_str!("../../prompts/wiki/entity.md");
-pub const STORY_BRIEF: &str = include_str!("../../prompts/wiki/story.md");
+pub const THING_BRIEF: &str = include_str!("../../prompts/wiki/thing.md");
 pub const CHAPTER_BRIEF: &str = include_str!("../../prompts/wiki/chapter.md");
 
 /// Which brief a subject type gets, from the registry.
@@ -73,7 +73,7 @@ pub fn system_prompt(subject_type: &str, rules: &[String]) -> Result<String> {
 ///
 /// The agent phase runs in the generic applet runner, whose system prompt
 /// knows nothing about the wiki. Without this, every revision and every first
-/// write of a chapter or story was made with no constitution, no brief and none
+/// write of a chapter or thing was made with no constitution, no brief and none
 /// of the owner's standing rules, while the task told it the rules were
 /// "above".
 pub async fn handover(pool: &sqlx::PgPool, subject_type: &str, task: &str) -> Result<String> {
@@ -567,7 +567,7 @@ pub async fn dead_links(pool: &sqlx::PgPool, text: &str) -> Result<Vec<String>> 
         // subject_type (`/org/…` is an organization), and keying on the
         // segment meant a hand-written match that named five kinds and let
         // every other link fall through unchecked — including chapters and
-        // stories, which a chapter article is the likeliest thing to write.
+        // things, which a chapter article is the likeliest to link.
         let Some(subject) = crate::api::subjects::by_id(&id) else {
             // Not a subject at all: an external URL, a page, a chat. Those are
             // not this check's business.
@@ -734,7 +734,7 @@ pub async fn due_articles(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<DueArti
                 update_requested_at IS NOT NULL
              OR last_written_at IS NULL
              OR last_written_at < now() - make_interval(days =>
-                  CASE WHEN subject_type IN ('year', 'story') THEN 7 ELSE 30 END)
+                  CASE WHEN subject_type IN ('year', 'thing') THEN 7 ELSE 30 END)
           )
         ORDER BY update_requested_at NULLS LAST, last_written_at NULLS FIRST
         LIMIT $1
@@ -771,11 +771,11 @@ pub async fn evidence_fingerprint(
     // the year would never be revised no matter how much was written beneath
     // it.
     let (refs, last_ref): (i64, Option<chrono::DateTime<chrono::Utc>>) =
-        if article.subject_type == "story" {
-            // A story has no refs and usually no dates, so there is no cheap
+        if article.subject_type == "thing" {
+            // A thing has no refs and usually no dates, so there is no cheap
             // signal that its material grew: finding out would mean running the
             // agent's own searches, which is the expensive thing the gate
-            // exists to avoid. So a story is revised when the person asks or
+            // exists to avoid. So a thing is revised when the person asks or
             // when they accept a note — both explicit, both theirs. The whole
             // record moving underneath it is not, by itself, a reason.
             (0, None)
@@ -840,7 +840,7 @@ pub async fn evidence_fingerprint(
     //
     // A chapter's title, summary and changepoint are the spine of its article,
     // so moving one is the strongest reason there is to rewrite it. The same
-    // goes for a year's name and a story's sentence.
+    // goes for a year's name and a thing's sentence.
     let subject = crate::api::subjects::by_kind(&article.subject_type);
     let authored: Option<chrono::DateTime<chrono::Utc>> = match subject {
         Some(s) if s.authored_fields => {
@@ -1428,7 +1428,7 @@ mod tests {
         // 0022). A kind the schema allows, the UI gives a room, and the editor
         // has no brief for is an article nothing will ever write — which is
         // how chapters sat with a seeded page and no second sentence.
-        for kind in ["year", "story", "chapter", "person", "place", "organization"] {
+        for kind in ["year", "thing", "chapter", "person", "place", "organization"] {
             assert!(brief_for(kind).is_some(), "{kind} has no brief");
             assert!(system_prompt(kind, &[]).is_ok(), "{kind} has no prompt");
         }
@@ -2914,7 +2914,7 @@ mod tests {
         );
     }
 
-    /// A story's seed the page has run on into a longer sentence is no
+    /// A thing's seed the page has run on into a longer sentence is no
     /// longer a sentence of the page, so the move drops it from theirs, as
     /// the next revision's `fold_provenance` drops it, and the article
     /// moves. Held back as a sentence the export cannot place, the article
@@ -2922,17 +2922,17 @@ mod tests {
     /// and stays theirs.
     #[sqlx::test]
     async fn a_seed_sentence_run_into_a_longer_one_is_dropped_and_the_article_moves(pool: sqlx::PgPool) {
-        use crate::api::stories::{create_story, start_article, update_story, StoryFields};
+        use crate::api::things::{create_thing, start_article, update_thing, ThingFields};
         let seed = "Two finished, one abandoned.";
         for (title, page, theirs) in [
             ("The garden", "Two finished, one abandoned. ⟦The third⟧ I still dream about.\n", serde_json::json!([])),
             ("The orchard", "Two finished, one abandoned. The third I still dream about.\n", serde_json::json!([seed])),
         ] {
-            let story = create_story(&pool, title).await.unwrap();
-            update_story(
+            let thing = create_thing(&pool, title).await.unwrap();
+            update_thing(
                 &pool,
-                &story.id,
-                &StoryFields {
+                &thing.id,
+                &ThingFields {
                     title: None,
                     summary: Some(seed.into()),
                     started_at: None,
@@ -2943,7 +2943,7 @@ mod tests {
             )
             .await
             .unwrap();
-            let id = start_article(&pool, &story.id).await.unwrap();
+            let id = start_article(&pool, &thing.id).await.unwrap();
             let page_id: String = sqlx::query_scalar("SELECT page_id FROM wiki_articles WHERE id = $1")
                 .bind(&id)
                 .fetch_one(&pool)

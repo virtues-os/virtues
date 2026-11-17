@@ -67,8 +67,12 @@ export function loadRecentSources() {
 	if (!appletsStore.loaded) void appletsStore.load();
 }
 
-/** Every recent thing, newest first, pinned ones left out. Not capped. */
-export function recentRows(): RecentRow[] {
+/**
+ * Every recent thing, newest first. Not capped. Pinned ones are left out
+ * unless `pinned` is set: search has to find them, and has no Pinned list
+ * beside it.
+ */
+export function recentRows({ pinned = false }: { pinned?: boolean } = {}): RecentRow[] {
 	const rows: RecentRow[] = [];
 
 	for (const session of chatSessions.sessions) {
@@ -117,5 +121,5 @@ export function recentRows(): RecentRow[] {
 		});
 	}
 
-	return rows.filter((r) => r.ts > 0 && !pinsStore.isPinned(r.url)).sort((a, b) => b.ts - a.ts);
+	return rows.filter((r) => r.ts > 0 && (pinned || !pinsStore.isPinned(r.url))).sort((a, b) => b.ts - a.ts);
 }

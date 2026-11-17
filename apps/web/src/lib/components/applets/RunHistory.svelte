@@ -115,7 +115,8 @@
 		tool: 'From a chat',
 		api: 'From another app',
 		webhook: 'From a webhook',
-		message: 'Your message'
+		message: 'Your message',
+		data: 'From your data'
 	};
 
 	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
@@ -131,6 +132,32 @@
 	// folds identical runs into one entry with a count. Retrying is the page
 	// header's job: it sits on the problem line under the applet's name.
 	const recent = $derived(log.slice(0, 5));
+
+	/** "Reached api.weather.gov (3 requests). Refused 1 to elsewhere.example.com." */
+	function reachedLine(e: AppletLogEntry): string {
+		const plural = (n: number) => (n === 1 ? '1 request' : `${n} requests`);
+		const reached = e.requests
+			.filter((h) => h.requests > h.refused)
+			.map((h) => `${h.host} (${plural(h.requests - h.refused)})`);
+		const refused = e.requests.filter((h) => h.refused > 0).map((h) => `${plural(h.refused)} to ${h.host}`);
+		const parts = [];
+		if (reached.length) parts.push(`Reached ${reached.join(', ')}.`);
+		if (refused.length) parts.push(`Refused ${refused.join(', ')}.`);
+		return parts.join(' ');
+	}
+
+	/** "Made Tuesday, 3 March and 3 rows in drinks." */
+	function madeLine(e: AppletLogEntry): string {
+		const parts = (e.made ?? []).map((m) => {
+			if (m.kind === 'page') return m.title ?? 'a page';
+			if (m.kind === 'task') return 'a task';
+			const table = m.ref_id.split('.').pop() ?? m.ref_id;
+			return `${m.count === 1 ? '1 row' : `${m.count} rows`} in ${table}`;
+		});
+		if (parts.length === 0) return '';
+		const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+		return `Made ${list}.`;
+	}
 
 	// Same relaxation DevicesView chose for its fix button: the deep link opens
 	// THIS machine's settings, so it appears only in the native app.
@@ -164,12 +191,20 @@
 			{#if e.summary}
 				<p class="run-text">{e.summary}</p>
 			{/if}
+			{#if e.made?.length}
+				<p class="run-span">{madeLine(e)}</p>
+			{/if}
+			{#if e.requests?.length}
+				<!-- Where its code reached through the egress proxy, so where
+				     its data went is on the run. -->
+				<p class="run-span">{reachedLine(e)}</p>
+			{/if}
 			{#if e.error}
 				<!-- A permission failure is a checkbox in System Settings,
 				     not a stack trace: name the condition and the fix, and
 				     keep the OS's sentence beneath it as evidence. -->
 				{#if why}
-					<p class="run-text"><Icon icon="ri:lock-line" width="12" /> {why.title}. {why.remedy}</p>
+					<p class="run-text"><Icon icon="mynaui:lock" width="12" /> {why.title}. {why.remedy}</p>
 					{#if canFix && why.open}
 						<Button variant="secondary" size="sm" onclick={() => why.open?.()}>
 							Open {why.label} on this computer

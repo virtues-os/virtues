@@ -2,6 +2,7 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import { windowShellStore, SPLIT_GUTTER_PX } from "$lib/stores/window-shell.svelte";
+	import ActionToolbar from "./ActionToolbar.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
@@ -13,6 +14,7 @@
 	import { onMount, untrack } from "svelte";
 	import { listenForBrowserOpen } from "./browserPaneListener";
 	import ChatView from "./views/ChatView.svelte";
+	import type { Tab } from "$lib/tabs/types";
 
 	let isResizing = $state(false);
 	let containerRef = $state<HTMLElement | null>(null);
@@ -29,8 +31,8 @@
 	const MIN_PANE_PX = 360;
 	/** Within this many pixels of the middle, the divider settles on it. */
 	const SNAP_PX = 12;
-	// In split each pane is its own card, with the desk between them. The
-	// gutter is the resize handle's hit area.
+	// In split the panes are two cards with a gap between them. The resize
+	// handle fills the gap and its hit area reaches a few px into each.
 	const GUTTER_PX = SPLIT_GUTTER_PX;
 
 	// Derived state for split mode
@@ -120,7 +122,7 @@
 	// ---------------------------------------------------------------------
 
 	type Side = "left" | "right";
-	/** The two cards' widths (%) and the desk gap between them (px). */
+	/** The two panes' widths (%) and the gap between them (px). */
 	type Frame = { left: number; right: number; gutter: number };
 	type Leaving = { id: string; side: Side; frame: Frame; clip: boolean };
 	type Entering = { side: Side; clip: boolean };
@@ -153,15 +155,19 @@
 			: "left";
 	}
 
-	/** A view's box inside its side's card, 1px in from the card's border. */
+	/** A view's box inside its side's pane, inside the pane's left border.
+	 *  A pane has no right border: the window's edge or the next pane's
+	 *  left border is there. */
 	function slotBox(side: Side, f: Frame): { left: string; width: string } {
 		const half = f.gutter / 2;
-		return side === "left"
-			? { left: "1px", width: `calc(${f.left}% - ${half + 2}px)` }
-			: {
-					left: `calc(${f.left}% + ${half + 1}px)`,
-					width: `calc(${f.right}% - ${half + 2}px)`,
-				};
+		// Inside the card's 1px border on both sides.
+		if (side === "left") {
+			return { left: "1px", width: `calc(${f.left}% - ${half + 2}px)` };
+		}
+		return {
+			left: `calc(${f.left}% + ${half + 1}px)`,
+			width: `calc(${f.right}% - ${half + 2}px)`,
+		};
 	}
 
 	type Arrangement = {
@@ -385,7 +391,6 @@
 	style:--left-width="{frame.left}%"
 	style:--right-width="{frame.right}%"
 	style:--gutter-width="{frame.gutter}px"
-	style:--split-gap="{GUTTER_PX}px"
 >
 	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts.
 	     With one pane only the right half takes a drop, and only when there is
@@ -501,6 +506,7 @@
 		<div
 			class="tab-slot"
 			data-side={side}
+			data-active={isActive ? "" : undefined}
 			data-motion={leaving ? "leave" : entering ? "enter" : undefined}
 			data-clip={(leaving?.clip ?? entering?.clip) ? "" : undefined}
 			style:display={isActive || leaving ? "flex" : "none"}
@@ -519,26 +525,26 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#if leftPaneTabs.length === 0}
 		{@const box = slotBox("left", frame)}
+		{@const newChatTab = {
+			id: "new-chat-left",
+			type: "chat",
+			label: "New Chat",
+			route: "/chat",
+			history: ["/chat"],
+			historyIndex: 0,
+			createdAt: Date.now(),
+		} satisfies Tab}
 		<div
 			class="tab-slot"
 			data-side="left"
+			data-active=""
 			style:display="flex"
 			style:left={box.left}
 			style:width={box.width}
 			onpointerdown={() => isSplitEnabled && handlePaneClick("left")}
 		>
-			<ChatView
-				tab={{
-					id: "new-chat-left",
-					type: "chat",
-					label: "New Chat",
-					route: "/chat",
-					history: ["/chat"],
-					historyIndex: 0,
-					createdAt: Date.now(),
-				}}
-				active={true}
-			/>
+			<ActionToolbar tab={newChatTab} />
+			<ChatView tab={newChatTab} active={true} />
 		</div>
 	{/if}
 </div>
@@ -557,11 +563,12 @@
 		user-select: none;
 	}
 
-	/* Pane shells: each is a card on the desk (`main` is only the desk in
-	   the app layout): the page's surface, the card's border and corners.
-	   The focused pane is told by its active tab's ink, not by its card.
-	   With one pane the right card is zero wide and faded out, so opening
-	   a side is that card growing in from the edge as the gutter opens. */
+	/* Pane shells: each is a sheet of paper standing on the painting
+	   (`main` is only the window in the app layout), rounded and edged by a
+	   hairline, with the gap between two of them showing the picture. The
+	   focused pane is told by its active tab, not by its surface.
+	   With one pane the right pane is zero wide and faded out, so opening
+	   a side is that pane growing in from the window's edge. */
 	.pane-shell {
 		display: flex;
 		flex-direction: column;
@@ -572,11 +579,68 @@
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
 		border: 1px solid var(--card-edge);
-		border-radius: var(--card-radius);
+		border-radius: var(--radius-xl);
+		transition:
+			width var(--motion-layout) var(--ease-premium),
+			background-color var(--motion-layout) var(--ease-premium),
+			border-color var(--motion-layout) var(--ease-premium);
+	}
+
+	/* Home has no paper: its headline, composer and cards stand straight on
+	   the painting. The paper goes at once, so a window that opens on home
+	   never shows a sheet dissolving while the view loads, and comes back
+	   with a fade when the chat begins (the transition above). */
+	.split-container:has(> .tab-slot[data-side="left"][data-active] :global(.page-container.home)) > .pane-shell.left-pane,
+	.split-container:has(> .tab-slot[data-side="right"][data-active] :global(.page-container.home)) > .pane-shell.right-pane {
+		background-color: transparent;
+		background-image: none;
+		border-color: transparent;
 		transition: width var(--motion-layout) var(--ease-premium);
 	}
 
-	/* A card that has closed leaves its border behind as a 2px sliver, so
+	/* Nor a toolbar: there is nothing on home to go back from or to name.
+	   When the chat begins the paper fades in under it (the transition
+	   above) and the toolbar arrives a beat later (below). */
+	.tab-slot:has(:global(.page-container.home)) :global(.action-toolbar) {
+		display: none;
+	}
+
+	/* A page you switch to comes in, rather than cutting: it fades up from
+	   a few pixels below, quickly enough that switching still feels
+	   instant. Its toolbar follows a beat later, and does the same when a
+	   chat leaves home. Moving between panes has its own motion (below),
+	   which takes precedence. Home does not fade: a fading ancestor cuts
+	   its glass cards off from the painting, and they would frost only
+	   once the fade ended. */
+	.tab-slot[data-active]:not(:has(:global(.page-container.home))) {
+		animation: slot-page-in 200ms var(--ease-premium);
+	}
+
+	.tab-slot :global(.action-toolbar) {
+		animation: slot-toolbar-in 260ms var(--ease-premium) 40ms backwards;
+	}
+
+	@keyframes slot-page-in {
+		from {
+			opacity: 0.4;
+			translate: 0 4px;
+		}
+	}
+
+	@keyframes slot-toolbar-in {
+		from {
+			opacity: 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tab-slot[data-active]:not(:has(:global(.page-container.home))),
+		.tab-slot :global(.action-toolbar) {
+			animation: none;
+		}
+	}
+
+	/* A pane that has closed leaves its border behind as a 1px sliver, so
 	   it hides, but only once it has finished closing: fading it on the way
 	   would show the desk through the card that is taking its place. */
 	.pane-shell.collapsed {
@@ -587,16 +651,16 @@
 			opacity 0s linear var(--motion-layout);
 	}
 
-	/* Tab content slots: absolutely positioned inside their side's card.
-	   Their box is set inline (`slotBox`) and eases with the cards, so a
+	/* Tab content slots: absolutely positioned inside their side's pane.
+	   Their box is set inline (`slotBox`) and eases with the panes, so a
 	   view that changes sides slides there. */
 	.tab-slot {
 		position: absolute;
 		top: 1px;
 		bottom: 1px;
+		border-radius: calc(var(--radius-xl) - 1px);
 		flex-direction: column;
 		overflow: hidden;
-		border-radius: calc(var(--card-radius) - 1px);
 		transition:
 			left var(--motion-layout) var(--ease-premium),
 			width var(--motion-layout) var(--ease-premium);
@@ -662,23 +726,23 @@
 	}
 
 	@keyframes slot-open-right {
-		from { clip-path: inset(0 0 0 100% round var(--card-radius)); }
-		to { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+		from { clip-path: inset(0 0 0 100%); }
+		to { clip-path: inset(0 0 0 0); }
 	}
 
 	@keyframes slot-open-left {
-		from { clip-path: inset(0 100% 0 0 round var(--card-radius)); }
-		to { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+		from { clip-path: inset(0 100% 0 0); }
+		to { clip-path: inset(0 0 0 0); }
 	}
 
 	@keyframes slot-close-right {
-		from { clip-path: inset(0 0 0 0 round var(--card-radius)); }
-		to { clip-path: inset(0 0 0 100% round var(--card-radius)); }
+		from { clip-path: inset(0 0 0 0); }
+		to { clip-path: inset(0 0 0 100%); }
 	}
 
 	@keyframes slot-close-left {
-		from { clip-path: inset(0 0 0 0 round var(--card-radius)); }
-		to { clip-path: inset(0 100% 0 0 round var(--card-radius)); }
+		from { clip-path: inset(0 0 0 0); }
+		to { clip-path: inset(0 100% 0 0); }
 	}
 
 	@keyframes slot-drift-in-right {
@@ -713,7 +777,8 @@
 		pointer-events: none;
 	}
 
-	/* The gutter itself is the handle: desk, no line. */
+	/* The handle has no width of its own: it sits on the line between the
+	   panes and its hit area reaches into each. */
 	/* z-index lifts the grip above the panes' own stacked content (the chat
 	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
@@ -724,8 +789,8 @@
 		touch-action: none;
 	}
 
-	/* The grab target reaches 4px past the gutter into each card's edge, so
-	   the seam is easy to find from either side. */
+	/* The grab target reaches 4px into each pane, so the seam is easy to
+	   find from either side. */
 	.resize-handle.visible::after {
 		content: "";
 		position: absolute;
@@ -798,7 +863,6 @@
 		align-items: center;
 		justify-content: center;
 		pointer-events: none; /* Default: pass-through when hidden */
-		border-radius: var(--card-radius);
 		transition: background-color var(--motion-state) var(--ease-premium);
 		background: transparent;
 	}
@@ -808,7 +872,7 @@
 		pointer-events: auto;
 	}
 
-	/* In split each half lies over its own card. */
+	/* In split each half lies over its own pane. */
 	.split-enabled .drag-overlay.left {
 		flex: none;
 		width: calc(var(--left-width) - (var(--gutter-width) / 2));
@@ -820,15 +884,8 @@
 		width: calc(var(--right-width) - (var(--gutter-width) / 2));
 	}
 
-	/* With one pane the halves sit where the two cards would, a desk gap
-	   apart, so the tint is the shape of the card a drop opens. */
-	.split-container:not(.split-enabled) .drag-overlay.left {
-		margin-right: calc(var(--split-gap) / 2);
-	}
-
-	.split-container:not(.split-enabled) .drag-overlay.right {
-		margin-left: calc(var(--split-gap) / 2);
-	}
+	/* With one pane the halves sit where the two panes would, so the tint
+	   is the shape of the pane a drop opens. */
 
 	.drag-overlay.active {
 		background: color-mix(in srgb, var(--color-primary) 15%, transparent);

@@ -39,7 +39,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, Account};
+use crate::entitlement::{self, Wallet};
 use crate::providers::{calculate_cost, get_provider_config, merge_provider_options, upstream_body};
 use crate::AppState;
 
@@ -71,7 +71,7 @@ pub(crate) fn session_affinity(headers: &HeaderMap, account_id: &str) -> Option<
 /// here we gate empty balance so the box surfaces wallet_empty ("Add credits")
 /// before burning upstream spend. There is no per-day wall — the only ceiling
 /// is the monthly top-up cap enforced atlas-side.
-fn budget_gate(acct: &Account) -> Option<Response> {
+fn budget_gate(acct: &Wallet) -> Option<Response> {
     if acct.balance_micros <= 0 {
         return Some(err(StatusCode::PAYMENT_REQUIRED, "wallet_empty", "wallet empty — add credits"));
     }

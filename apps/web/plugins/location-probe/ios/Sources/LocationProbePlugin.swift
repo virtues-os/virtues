@@ -8,6 +8,10 @@ class RowsArgs: Decodable {
   let fixesOnly: Bool?
 }
 
+class SignInArgs: Decodable {
+  let url: String
+}
+
 class LocationProbePlugin: Plugin {
   /// The one moment Tauri hands a plugin the webview. Shell keyboard behavior
   /// (programmatic-focus keyboard, scroll-view parking) hooks in here — see
@@ -56,6 +60,19 @@ class LocationProbePlugin: Plugin {
   @objc public func resumeProbe(_ invoke: Invoke) throws {
     DispatchQueue.main.async { LocationProbe.shared.start(prompt: false) }
     invoke.resolve(["started": true])
+  }
+
+  /// Open a service's sign-in in Apple's sign-in sheet (SignInSheet.swift).
+  /// Resolves when the sheet closes, with `finished`, `closed` or `failed`.
+  @objc public func signIn(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SignInArgs.self)
+    guard let url = URL(string: args.url), url.scheme == "https" || url.scheme == "http" else {
+      invoke.reject("A sign-in address starts with https://.")
+      return
+    }
+    SignInSheet.shared.open(url, over: { self.manager.viewController?.view.window }) {
+      invoke.resolve(["outcome": $0])
+    }
   }
 
   /// Whether the server can reach this phone. Never prompts.

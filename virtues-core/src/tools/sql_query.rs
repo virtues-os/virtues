@@ -30,7 +30,7 @@ pub struct SqlQueryArgs {
     #[serde(default)]
     pub limit: Option<u32>,
     /// Also keep the whole result as a CSV of this name in the chat's
-    /// code_interpreter workspace
+    /// shell workspace
     #[serde(default)]
     pub save_as: Option<String>,
 }
@@ -67,11 +67,14 @@ impl SqlQueryTool {
     /// where there is none to keep it (a ghost chat, an applet run).
     /// `timezone` is the owner's zone the query's dates are read in; None
     /// means `home_timezone` (see `crate::timezone::set_local_timezone`).
+    /// `schema` is the applet whose run or turn this is, whose own tables
+    /// the query may name without it.
     pub async fn execute(
         &self,
         arguments: serde_json::Value,
         chat_id: Option<&str>,
         timezone: Option<&str>,
+        schema: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let args: SqlQueryArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
@@ -95,12 +98,12 @@ impl SqlQueryTool {
                 // the schema offers send '' or ' ' for one they do not want.
                 let Some(name) = args.save_as.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     let limit = args.limit.unwrap_or(50).min(200);
-                    return self.execute_query(&sql, limit, None, timezone).await;
+                    return self.execute_query(&sql, limit, None, timezone, schema).await;
                 };
                 let name = saved_file_name(name)?;
                 let chat_id = chat_id.ok_or_else(|| {
                     ToolError::InvalidParameters(
-                        "save_as keeps a file for code_interpreter in a saved chat, and this \
+                        "save_as keeps a file for shell in a saved chat, and this \
                          conversation has none. Query without save_as."
                             .into(),
                     )
@@ -108,7 +111,7 @@ impl SqlQueryTool {
                 let ws = crate::api::code_env::Workspace::for_chat(chat_id)
                     .map_err(ToolError::ExecutionFailed)?;
                 let limit = args.limit.unwrap_or(MAX_SAVED_ROWS).min(MAX_SAVED_ROWS);
-                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name)), timezone).await
+                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name)), timezone, schema).await
             }
             _ => Err(ToolError::InvalidParameters(format!(
                 "Unknown operation: '{}'. Use: query, list_tables, get_schema",
@@ -430,6 +433,7 @@ impl SqlQueryTool {
         limit: u32,
         save: Option<(&std::path::Path, &str)>,
         timezone: Option<&str>,
+        schema: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let sql_lower = sql.trim().to_lowercase();
 
@@ -476,52 +480,45 @@ impl SqlQueryTool {
             format!("{} LIMIT {}", sql, limit)
         };
 
-        // The actual boundary: Postgres refuses any write in this transaction,
-        // whatever the text says. Mirrors `api::developer::execute_sql` and
-        // `server::faces::run_face_query`.
-        let mut tx = self
-            .pool
-            .begin()
+        // The owner's zone, so a model's `'2026-10-06'`, `::date` and
+        // `to_char(…, 'HH12:MI AM')` mean their day and their clock, as the
+        // prompt's clock does. Left at the server's UTC, a day's window slid
+        // by the offset and a chart labelled a 6 AM point "11:00 AM". The
+        // same zone puts the JSON's timestamptz values on their clock. Read on
+        // the main pool, because the profile it falls back to is hidden from
+        // the reader.
+        let zone = crate::timezone::resolve_timezone(&*self.pool, timezone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
+        // Logged in as the least-privileged role, not the server's.
+        //
+        // READ ONLY bounds writes, not reads. The server's role owns every
+        // table, so a plain `SELECT` under it reads `credentials`: the
+        // encrypted secrets of every source and the box's own keys. The doc
+        // comment above says this tool "runs unattended, over content nobody
+        // reviewed", so the query text is steerable by an email or a saved
+        // page, and the model can hand the result to `web_search`, which is
+        // also allowlisted.
+        //
+        // `virtues_face_reader` is default-deny, SELECT on `data_*`/`wiki_*`
+        // only, and both reads fail closed with "permission denied". It is a
+        // login of its own because a `SET ROLE` drop is undone by
+        // `set_config('role', session_user, true)` inside the query
+        // (`database::restricted`).
+        let mut tx = crate::database::restricted::begin(&self.pool, crate::database::restricted::Login::Reader)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // The actual boundary: Postgres refuses any write in this transaction,
+        // whatever the text says. Mirrors `api::developer::execute_sql` and
+        // `server::faces::run_face_query`.
         sqlx::query("SET TRANSACTION READ ONLY")
             .execute(&mut *tx)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
-        // The owner's zone, so a model's `'2026-10-06'`, `::date` and
-        // `to_char(…, 'HH12:MI AM')` mean their day and their clock, as the
-        // prompt's clock does. Left at the server's UTC, a day's window slid
-        // by the offset and a chart labelled a 6 AM point "11:00 AM". JSON
-        // output is unaffected: `convert_rows_to_json` writes timestamptz as
-        // RFC 3339 UTC either way. Before the role drop, which hides the
-        // profile it falls back to.
-        crate::timezone::set_local_timezone(&mut *tx, timezone)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
-
-        // Drop to the least-privileged role for the rest of this transaction.
-        //
-        // READ ONLY bounds writes, not reads. The pool role owns every table,
-        // so without this drop a plain `SELECT` passes every guard above and
-        // reads `credentials`: the encrypted secrets of every source and the
-        // box's own keys. The doc comment above says this tool "runs
-        // unattended, over content nobody reviewed", so the query text is
-        // steerable by an email or a saved page, and the model can hand the
-        // result to `web_search`, which is also allowlisted. On a box whose
-        // pool role is still a superuser, the same query could also read
-        // `/var/lib/virtues/virtues.env` with `pg_read_file`, and with it the
-        // key that decrypts all of them.
-        //
-        // `virtues_face_reader` is the role `server/faces.rs` drops to for the
-        // same reason: default-deny, SELECT on `data_*`/`wiki_*` only. Under
-        // it both reads fail closed with "permission denied".
-        //
-        // SET LOCAL, so it reverts with the transaction and cannot leak onto a
-        // pooled connection.
-        sqlx::query("SET LOCAL ROLE virtues_face_reader")
-            .execute(&mut *tx)
+        crate::timezone::apply_timezone(&mut tx, &zone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
@@ -534,6 +531,9 @@ impl SqlQueryTool {
         // 30s, and the error names the fix (see `explain_failure`).
         sqlx::query("SET LOCAL statement_timeout = '25s'")
             .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+        crate::server::faces::set_applet_search_path(&mut tx, schema, true)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
@@ -552,7 +552,7 @@ impl SqlQueryTool {
         let _ = tx.rollback().await;
 
         // Convert rows to JSON
-        let mut json_rows = convert_rows_to_json(&rows);
+        let mut json_rows = convert_rows_to_json(&rows, Some(&zone));
 
         // The SELECT's own column order. Each row is a JSON object, whose keys
         // serialize sorted, so this is the only place the order survives; the
@@ -572,7 +572,7 @@ impl SqlQueryTool {
                 "file": name,
                 "rows": json_rows.len(),
                 "columns": columns,
-                "read_with": format!("pandas.read_csv('{name}') in code_interpreter"),
+                "read_with": format!("pandas.read_csv('{name}') in python3, through shell"),
             }));
             json_rows.truncate(SAVED_PREVIEW_ROWS);
         }
@@ -773,8 +773,9 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
 /// five steps of one turn, then replayed it into the rest of that chat.
 const MAX_RESULT_BYTES: usize = 64 * 1024;
 
-/// Convert Postgres rows to JSON array
-pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::Value> {
+/// Convert Postgres rows to JSON array. `timestamptz` values are written on
+/// the owner's clock in `zone` (see [`crate::timezone::owner_rfc3339`]).
+pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow], zone: Option<&str>) -> Vec<serde_json::Value> {
     let mut json_rows = Vec::new();
 
     for row in rows {
@@ -811,9 +812,9 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::V
                 }
                 // Date/time types → strings (RFC3339 for tz-aware)
                 else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i) {
-                    serde_json::Value::String(v.to_rfc3339())
+                    serde_json::Value::String(crate::timezone::owner_rfc3339(v, zone))
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::FixedOffset>, _>(i) {
-                    serde_json::Value::String(v.to_rfc3339())
+                    serde_json::Value::String(crate::timezone::owner_rfc3339(v.to_utc(), zone))
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i) {
                     serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
@@ -1176,7 +1177,7 @@ mod tests {
         );
 
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
-        let result = tool.execute_query(sql, 100, None, None).await;
+        let result = tool.execute_query(sql, 100, None, None, None).await;
 
         assert!(
             result.is_err(),
@@ -1202,7 +1203,7 @@ mod tests {
     #[sqlx::test]
     async fn plain_select_still_succeeds(pool: sqlx::PgPool) {
         let tool = SqlQueryTool::new(Arc::new(pool));
-        let result = tool.execute_query("SELECT 1 AS n", 10, None, None).await;
+        let result = tool.execute_query("SELECT 1 AS n", 10, None, None, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
     }
 
@@ -1215,10 +1216,10 @@ mod tests {
             serde_json::json!({ "operation": "query", "sql": "SELECT 1 AS n", "save_as": save_as })
         };
         for blank in ["", " ", "\t\n"] {
-            let result = tool.execute(query(blank), None, None).await;
+            let result = tool.execute(query(blank), None, None, None).await;
             assert!(result.is_ok(), "save_as {blank:?} must run the query: {result:?}");
         }
-        let result = tool.execute(query("sleep.csv"), None, None).await;
+        let result = tool.execute(query("sleep.csv"), None, None, None).await;
         assert!(matches!(result, Err(ToolError::InvalidParameters(_))), "{result:?}");
     }
 
@@ -1231,11 +1232,12 @@ mod tests {
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
         let sql = "SELECT current_setting('TimeZone') AS tz, \
                    to_char('2026-10-07 11:00:00+00'::timestamptz, 'HH24:MI') AS label, \
-                   '2026-10-07'::timestamptz = '2026-10-07 05:00:00+00' AS local_midnight";
+                   '2026-10-07'::timestamptz = '2026-10-07 05:00:00+00' AS local_midnight, \
+                   '2026-10-14 03:12:00+00'::timestamptz AS sent_at";
         let run = |tz: Option<&'static str>| {
             let tool = &tool;
             async move {
-                let out = tool.execute_query(sql, 10, None, tz).await.expect("query runs");
+                let out = tool.execute_query(sql, 10, None, tz, None).await.expect("query runs");
                 out.data["rows"][0].clone()
             }
         };
@@ -1244,10 +1246,15 @@ mod tests {
         assert_eq!(row["tz"], "America/Chicago");
         assert_eq!(row["label"], "06:00", "an 11:00 UTC point is 6 AM in Chicago");
         assert_eq!(row["local_midnight"], true, "a bare day starts at the owner's midnight");
+        assert_eq!(
+            row["sent_at"], "2026-10-13T22:12:00-05:00",
+            "a timestamptz comes back on the owner's clock, not as 03:12 UTC"
+        );
 
         // No zone known anywhere: UTC.
         assert_eq!(run(Some("Not/AZone")).await["tz"], "UTC");
         assert_eq!(run(None).await["tz"], "UTC");
+        assert_eq!(run(None).await["sent_at"], "2026-10-14T03:12:00+00:00");
 
         // An unknown or absent client zone falls back to the home zone.
         sqlx::query("UPDATE app_user_profile SET home_timezone = 'Europe/Berlin'")

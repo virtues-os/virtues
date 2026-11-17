@@ -1,8 +1,0 @@
-name = "Plaid Investments"
-description = "Keeps your brokerage holdings current."
-owner = "system"
-command = ["plaid_investments_sync"]
-triggers = ["cron", "manual"]
-schedule = "0 0 */12 * * *"
-per_credential = true
-source = { id = "plaid" }

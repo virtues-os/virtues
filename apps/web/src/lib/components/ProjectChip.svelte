@@ -10,9 +10,10 @@
 	 */
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import type { ProjectSummary } from '$lib/api/client';
+	import { outcomeLabel } from '$lib/utils/projectActions';
 
 	interface Props {
-		project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'accent_color' | 'archived_at'>;
+		project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'accent_color' | 'archived_at' | 'outcome'>;
 		onclick: (e: MouseEvent) => void;
 		oncontextmenu?: (e: MouseEvent) => void;
 		/** A title-bar chip: centered, a touch larger, for the phone. */
@@ -34,7 +35,7 @@
 	<ProjectGlyph {project} size={bar ? 15 : 14} />
 	<span class="name">{project.name}</span>
 	{#if project.archived_at}
-		<span class="note">Archived</span>
+		<span class="note">{outcomeLabel(project)}</span>
 	{/if}
 </button>
 
@@ -49,7 +50,7 @@
 		padding: 0 10px 0 8px;
 		border: 0;
 		border-radius: var(--radius-lg);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
 		backdrop-filter: blur(8px);

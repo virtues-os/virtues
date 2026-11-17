@@ -210,9 +210,11 @@ pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "running": state.live_turns.running() })).into_response()
 }
 
-/// GET /api/skills — the shipped skills and the person's own, for the `/` menu.
+/// GET /api/skills — the applets `/name` starts, for the composer's `/` menu.
+/// The path is the one the menu read when these were skills, which older
+/// clients still call.
 pub async fn list_skills_handler() -> Response {
-    Json(crate::api::skills::list()).into_response()
+    Json(crate::api::chat_applets::menu()).into_response()
 }
 
 /// GET /api/suggestions/current — the suggested question for an empty new
@@ -275,6 +277,7 @@ pub async fn generate_chat_title_handler(
 pub async fn chat_handler(
     State(state): State<AppState>,
     user: crate::middleware::auth::AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<crate::api::chat::ChatRequest>,
 ) -> Response {
     crate::api::chat::chat_handler(
@@ -284,6 +287,7 @@ pub async fn chat_handler(
         axum::extract::State(state.live_turns.clone()),
         axum::extract::State(state.ghost_permissions.clone()),
         user,
+        headers,
         Json(request),
     )
     .await
@@ -343,12 +347,25 @@ pub async fn list_chat_permissions_handler(
     api_response(crate::api::chat_permissions::list_permissions(state.db.pool(), &chat_id).await)
 }
 
-/// POST /api/chats/:id/permissions - Add an edit permission
+/// POST /api/chats/:id/permissions - Add an edit permission. Allowing one of
+/// the admin applet's commands (a `sudo:` grant, `tools::sudo_gate`) lets a
+/// root command run, so that grant needs the app's owner proof, as the admin
+/// turn itself does.
 pub async fn add_chat_permission_handler(
     State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    headers: axum::http::HeaderMap,
     Path(chat_id): Path<String>,
     Json(request): Json<crate::api::chat_permissions::AddPermissionRequest>,
 ) -> Response {
+    if request.entity_id.starts_with(crate::tools::sudo_gate::GRANT_PREFIX) {
+        if let Err(refused) =
+            crate::api::owner_proof::check(state.db.pool(), &user, "POST", uri.path(), &headers).await
+        {
+            return refused;
+        }
+    }
     api_response(
         crate::api::chat_permissions::add_permission(
             state.db.pool(),
@@ -378,7 +395,7 @@ pub async fn remove_chat_permission_handler(
 // =============================================================================
 
 /// GET /auth/session — current session (or null if not paired). Authenticated by
-/// the `AuthUser` extractor (proven iroh key / loopback console / dev fallback);
+/// the `AuthUser` extractor (proven iroh key / console socket / dev fallback);
 /// there is no cookie/signout — the credential is the device's iroh key.
 pub async fn auth_session_handler(user: Option<crate::middleware::auth::AuthUser>) -> Response {
     crate::api::auth::session_handler(user).await.into_response()

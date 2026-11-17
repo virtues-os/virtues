@@ -1,8 +1,0 @@
-name = "Plaid Liabilities"
-description = "Keeps your credit cards, mortgage, and loans current."
-owner = "system"
-command = ["plaid_liabilities_sync"]
-triggers = ["cron", "manual"]
-schedule = "0 0 */12 * * *"
-per_credential = true
-source = { id = "plaid" }

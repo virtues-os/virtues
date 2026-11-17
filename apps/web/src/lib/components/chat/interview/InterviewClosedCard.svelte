@@ -82,7 +82,7 @@
 		<button type="button" class="door" onclick={openDocument}>
 			<span class="door-title">In your own words</span>
 			<span class="door-note">Your story, written in the first person.</span>
-			<Icon icon="ri:arrow-right-up-line" width="14" class="door-arrow" />
+			<Icon icon="mynaui:arrow-up-right" width="14" class="door-arrow" />
 		</button>
 		{#if chaptersError}
 			<div class="door door-inert" aria-disabled="true">
@@ -93,7 +93,7 @@
 			<button type="button" class="door" onclick={openChapters}>
 				<span class="door-title">Chapters</span>
 				<span class="door-note">{chaptersNote}</span>
-				<Icon icon="ri:arrow-right-up-line" width="14" class="door-arrow" />
+				<Icon icon="mynaui:arrow-up-right" width="14" class="door-arrow" />
 			</button>
 		{/if}
 	</div>

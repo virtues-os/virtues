@@ -95,10 +95,13 @@ fn invalid(msg: impl Into<String>) -> ToolError {
 
 /// `timezone` is the owner's, as for sql_query: the SQL's dates and labels
 /// are read in it.
+/// `schema` is the applet whose run or turn this is, whose own tables the
+/// SQL names without it.
 pub async fn execute(
     sql_query: &SqlQueryTool,
     arguments: Value,
     timezone: Option<&str>,
+    schema: Option<&str>,
 ) -> Result<ToolResult, ToolError> {
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
@@ -133,7 +136,7 @@ pub async fn execute(
     // One more than the kind draws, so a cut result is seen rather than drawn.
     let limit = kind.max_rows() as u32 + 1;
     let result = sql_query
-        .execute(json!({ "operation": "query", "sql": sql, "limit": limit }), None, timezone)
+        .execute(json!({ "operation": "query", "sql": sql, "limit": limit }), None, timezone, schema)
         .await?;
     let data = result.data;
     if data.get("truncated").is_some() {
@@ -157,13 +160,13 @@ pub async fn execute(
     let mut note = String::from(
         "shown to the owner as drawn from these rows; describe what they show, and quote no figure that is not in them",
     );
-    // A model that sees `+00:00` concludes the figure is in the wrong zone
-    // and draws it again, so the reply carries both. The client puts every
-    // time on the owner's own clock; the zone only matters to the prose.
+    // A model that sees an offset may conclude the figure is in the wrong
+    // zone and draw it again. The rows already carry the owner's offset and
+    // the client draws every time on their clock, so neither needs it.
     if shaped["rows"].as_array().is_some_and(|rows| rows.iter().any(has_offset_time)) {
         note.push_str(
-            ". Times with an offset are drawn on the owner's own clock, so the figure is right as it is: \
-             do not draw it again to convert them. Convert them only in what you write",
+            ". Times are already on the owner's own clock, and so is the figure: \
+             do not draw it again or convert them. Quote the clock times as given",
         );
     }
     shaped.insert("note".into(), json!(note));

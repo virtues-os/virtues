@@ -463,8 +463,12 @@ export async function getMe(fetchFn: FetchFn = fetch): Promise<MeApi | null> {
 	return res.json();
 }
 
-/** A subject the person named because it mattered. Not a span. */
-export interface StoryApi {
+/**
+ * A thing: something in the person's life that goes on and cannot be
+ * finished, named by them. Not a person, a place or an organization.
+ * Projects and tasks can sit under one.
+ */
+export interface ThingApi {
 	id: string;
 	title: string;
 	summary: string | null;
@@ -475,44 +479,60 @@ export interface StoryApi {
 	has_article: boolean;
 }
 
-export async function listStories(fetchFn: FetchFn = fetch): Promise<StoryApi[]> {
-	const res = await fetchFn('/api/wiki/stories');
-	if (!res.ok) return [];
+export async function listThings(fetchFn: FetchFn = fetch): Promise<ThingApi[]> {
+	const res = await fetchFn('/api/wiki/things');
+	// A server from before things has no such route.
+	if (res.status === 404) throw new Error("Your server doesn't have things yet. Update it to use them.");
+	if (!res.ok) throw new Error("Your server couldn't load your things. Try again.");
 	return res.json();
 }
 
-/** Only the person starts one — the editor may not create a subject. */
-export async function createStory(title: string, fetchFn: FetchFn = fetch): Promise<StoryApi> {
-	const res = await fetchFn('/api/wiki/stories', {
+/** A thing as its page reads it: the row, and its article's prose when it has one. */
+export interface ThingDetailApi extends ThingApi {
+	article: string | null;
+	article_updated_at: string | null;
+	article_maintained: boolean;
+}
+
+export async function getThing(id: string, fetchFn: FetchFn = fetch): Promise<ThingDetailApi | null> {
+	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** Only the person names one. The editor may not create a subject. */
+export async function createThing(title: string, fetchFn: FetchFn = fetch): Promise<ThingApi> {
+	const res = await fetchFn('/api/wiki/things', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title })
 	});
-	if (!res.ok) throw new Error('Could not start that');
+	if (!res.ok) throw new Error('Could not name that');
 	return res.json();
 }
 
-export async function updateStory(
+export async function updateThing(
 	id: string,
-	fields: Partial<Pick<StoryApi, 'title' | 'summary' | 'started_at' | 'ended_at'>>,
+	fields: Partial<Pick<ThingApi, 'title' | 'summary' | 'started_at' | 'ended_at'>>,
 	fetchFn: FetchFn = fetch
-): Promise<void> {
-	const res = await fetchFn(`/api/wiki/story/${id}`, {
+): Promise<ThingApi> {
+	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(fields)
 	});
 	if (!res.ok) throw new Error('Could not save that');
+	return res.json();
 }
 
-export async function deleteStory(id: string, fetchFn: FetchFn = fetch): Promise<void> {
-	const res = await fetchFn(`/api/wiki/story/${id}`, { method: 'DELETE' });
+export async function deleteThing(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`, { method: 'DELETE' });
 	if (!res.ok) throw new Error('Could not remove that');
 }
 
-/** Give a story a page, seeded with their words for the editor to fill. */
-export async function startStoryArticle(id: string, fetchFn: FetchFn = fetch): Promise<void> {
-	const res = await fetchFn(`/api/wiki/story/${id}/article`, { method: 'POST' });
+/** Give a thing a page, seeded with their words for the editor to fill. */
+export async function startThingArticle(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}/article`, { method: 'POST' });
 	if (!res.ok) throw new Error('Could not start that page');
 }
 

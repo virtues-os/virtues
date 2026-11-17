@@ -17,6 +17,8 @@ mod client;
 mod endpoint;
 mod server;
 
+pub mod owner_proof;
+
 pub use client::{is_not_allowlisted, NotAllowlisted, PathKind, VirtuesIrohClient};
 pub use endpoint::{
     build_endpoint, install_crypto_provider, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN,
@@ -28,7 +30,7 @@ pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow, CLOSE_NOT_ALLOWLIS
 // that wants to know whether the relay leg is actually UP (rather than
 // whether bind returned) needs it in scope to call `.get()`/`.updated()`.
 // `Signature` is for proofs made with a device's own iroh key away from any
-// iroh connection — the Bluetooth owner proof, when the box is offline.
+// iroh connection — the HTTP owner proof (`owner_proof`).
 pub use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, Signature, Watcher};
 
 #[cfg(test)]

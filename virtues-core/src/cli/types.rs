@@ -23,11 +23,11 @@ pub(crate) fn default_port() -> u16 {
 /// sets its noise floor.
 ///
 /// Deliberately absent: the root-only lifecycle verbs (`upgrade`, `prepare`,
-/// `activate`, `auto-update`, `rollback`, `deprovision`, `uninstall`,
-/// `image-check`, `bringup`), which drive systemd and must not drop
+/// `activate`, `auto-update`, `rollback`, `uninstall`, `bringup`), which
+/// drive systemd and must not drop
 /// privilege.
 pub const RUNS_AS_SERVICE_USER: &[&str] = &[
-    "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
+    "init", "pair", "link", "login", "subscribe", "backup", "reset", "status",
     "migrate",
     // `doctor` reads the env file (inference mode) and the DB (reach legs),
     // both `virtues`-owned. Run as another user it can read neither, so it
@@ -67,6 +67,8 @@ pub const DATA_VERBS: &[&str] = &[
     "pages",
     "agent-key",
     "agent-exec",
+    // Its stdout is the MCP stream; the floor keeps stderr quiet too.
+    "mcp",
 ];
 
 #[derive(Parser)]
@@ -352,44 +354,23 @@ pub enum Commands {
     #[command(hide = true)]
     Init,
 
-    /// Pair a device with your box: print the standing code to type into the
-    /// app, then wait until it's used.
+    /// Pair a device with your server: print a code to enter in the app, then
+    /// wait until a device pairs.
     ///
-    /// Prints the box's multi-use standing code (minting one if none is live),
-    /// NOT a fresh one-time token, and NOT a URL or QR — a browser cannot pair
-    /// (it holds no iroh key) and the desktop app has no camera, so the code is
-    /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
-    /// as needed. THE one human verb for connecting a device to the box
-    /// (agents/build/onboarding.md). `login` and `link` survive as aliases (this used
-    /// to be `virtues login`).
+    /// Before the first device pairs this is the server's standing code, which
+    /// rotates (minted if none is live). Once a device has
+    /// paired it is a fresh one-time code. Either way it prints how long the
+    /// code lasts, the server's addresses beside it, and a QR code of the
+    /// address and code for the iPhone app. A browser cannot pair (it holds no
+    /// iroh key). No `.env` touching, no
+    /// prompts. Run it as often as needed. THE one human verb for connecting a
+    /// device (agents/build/onboarding.md). `login` and `link` are aliases.
     #[command(alias = "login", alias = "link")]
     Pair {
         /// Print the code and exit immediately instead of waiting for it
         /// to be used (scripts, copy-paste workflows).
         #[arg(long)]
         no_wait: bool,
-    },
-
-    /// Approve a pending sudo request from the box.
-    ///
-    /// A "sudo request" is the confirmation step a paired web client triggers
-    /// when it wants to do one of the 5 high-sensitivity actions (export all
-    /// data, swap BYO AI key, wipe the box, revoke the last remaining other
-    /// device, install a third party's applet package — that last one runs
-    /// their code on this box). Running `virtues sudo` proves physical access
-    /// — a thief with your laptop can't do it from outside, but you can sit
-    /// at the box and approve.
-    ///
-    /// With no args: lists open requests and prompts for each.
-    /// With `--id <REQ>`: targets one specific request id (scripting hook).
-    Sudo {
-        /// Approve a specific request id directly (skip the interactive list).
-        #[arg(long)]
-        id: Option<String>,
-
-        /// Deny instead of approve.
-        #[arg(long, conflicts_with = "id")]
-        deny: bool,
     },
 
     /// Manage the devices allowed to reach this box.
@@ -562,44 +543,6 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
     },
-
-    /// Strip every per-unit identity so this box's disk can be imaged and
-    /// cloned. The LAST command before a box ships or its boot card is `dd`'d.
-    ///
-    /// Not a reset and not an uninstall — the software stays installed and
-    /// configured. It removes only what must be unique per unit: the database
-    /// (which holds the iroh secret that IS the box's network identity), the
-    /// lake, `VIRTUES_ENCRYPTION_KEY`, machine-id, SSH host keys, and saved
-    /// wifi. Each clone re-mints them on first boot.
-    ///
-    /// Cloning without this ships every unit as the same box: one EndpointId
-    /// across the fleet, and one data-at-rest key. Neither is visible on the
-    /// bench and neither is fixable in the field.
-    #[command(hide = true)]
-    Deprovision {
-        /// Skip the typed-hostname confirmation (scripts/CI).
-        #[arg(long)]
-        yes: bool,
-
-        /// Bypass the "service is running" check.
-        #[arg(long)]
-        force: bool,
-    },
-
-    /// Is this disk safe to image and clone? Read-only; changes nothing.
-    ///
-    /// The gate between `virtues deprovision` and `dd`. Deprovision reports
-    /// success and tells you to power off, and until now that was the whole
-    /// assurance — nothing ever re-checked the result. A per-unit secret that
-    /// survived into a master image is invisible on the bench and catastrophic
-    /// in the field: the iroh secret IS the box's identity, so clones of an
-    /// un-deprovisioned master are literally the same box, and one leaked
-    /// encryption key decrypts every unit ever shipped.
-    ///
-    /// Exits non-zero on any finding, so it can be the last line of a
-    /// manufacturing script. See agents/build/appliance-image.md.
-    #[command(name = "image-check")]
-    ImageCheck,
 
     /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
@@ -790,6 +733,14 @@ pub enum Commands {
         cmd: AgentKeyCmd,
     },
 
+    /// Serve this box's MCP tools on stdio, for an AI agent.
+    ///
+    /// Each message is relayed to the server's `/api/mcp` on this machine.
+    /// An agent elsewhere reaches it over SSH with an agent key, for example
+    /// `ssh virtues-agent@<box> mcp` as its MCP command. Needs the virtues
+    /// server running here.
+    Mcp,
+
     /// The forced command behind an agent key. sshd runs it; never by hand.
     #[command(hide = true)]
     AgentExec {
@@ -840,8 +791,7 @@ pub enum Commands {
     /// phone or browser; the box never holds a Stripe key.
     ///
     /// A power-user hatch for re-subscribing or dev iteration. In the normal
-    /// flow the app carries the account grant to the box over Bluetooth and
-    /// nobody runs this. (It used to point at `virtues init` as the "full
+    /// flow the app's Setup links the account and nobody runs this. (It used to point at `virtues init` as the "full
     /// first-run wizard: config + subscribe + migrate" — init has been
     /// plumbing-only since the account conversation left the TTY.)
     #[command(alias = "claim", hide = true)]
@@ -852,12 +802,8 @@ pub enum Commands {
     ///
     /// Hidden power-user command, and the distinction it turns on is worth
     /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
-    /// attaches this box to an ACCOUNT. In the normal flow the app carries the
-    /// account grant over Bluetooth (agents/build/onboarding-paradigm.md §7) and
-    /// neither is typed.
-    ///
-    /// (It used to describe itself as pairing with `virtues init`'s "[1] Log
-    /// in" branch — a menu that no longer exists.)
+    /// attaches this box to an ACCOUNT. In the normal flow the app's
+    /// subscription step links the account and neither is typed.
     #[command(name = "account-login", hide = true)]
     AccountLogin,
 
@@ -873,7 +819,8 @@ pub enum Commands {
     #[command(name = "configure-inference")]
     ConfigureInference {
         /// Switch search to this embedding server (an OpenAI-style
-        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
+        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN; a
+        /// public address needs HTTPS and asks before your text goes there).
         #[arg(long)]
         embed_url: Option<String>,
         /// Model name sent with every request; Ollama routes by it.

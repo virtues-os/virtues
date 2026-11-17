@@ -79,7 +79,23 @@ function credentialStatusLabel(c: Credential): string {
 	return c.status;
 }
 
-function fromCredential(c: Credential): Connection {
+/**
+ * The reason line under a credential. Servers write a sentence, but earlier
+ * releases wrote the bare code `token_rejected_by_provider` when a provider
+ * refused a sign-in, and rows marked then still hold it. Any other bare code
+ * gives the reader nothing to act on, so it is dropped, and the overview shows
+ * its default sentence instead.
+ */
+function credentialReason(c: Credential, sourceName: string | undefined): string | null {
+	const reason = c.status_reason ?? null;
+	if (reason === 'token_rejected_by_provider') {
+		return `${sourceName ?? 'The service'} stopped accepting this sign-in. Reconnect to sync again.`;
+	}
+	if (reason !== null && /^[a-z_]+$/.test(reason)) return null;
+	return reason;
+}
+
+function fromCredential(c: Credential, sourceName: string | undefined): Connection {
 	return {
 		kind: 'credential',
 		id: c.id,
@@ -87,7 +103,7 @@ function fromCredential(c: Credential): Connection {
 		name: c.name,
 		status: c.status,
 		statusLabel: credentialStatusLabel(c),
-		statusReason: c.status_reason ?? null,
+		statusReason: credentialReason(c, sourceName),
 		lastSeenAt: c.last_seen_at,
 		appletCount: c.applet_count,
 		broken: isBrokenStatus(c.status),
@@ -238,10 +254,13 @@ class SourcesStore {
 				listDevices<{ devices: DeviceRow[] }>()
 			]);
 			this.catalog = catalog;
+			const catalogById = this.catalogById;
 			this.connections = [
 				// `pending` credentials are a transient pre-pairing state the server
 				// hard-deletes on cancel; they should never reach a list.
-				...creds.filter((c) => c.status !== 'pending' && c.status !== 'revoked').map(fromCredential),
+				...creds
+					.filter((c) => c.status !== 'pending' && c.status !== 'revoked')
+					.map((c) => fromCredential(c, catalogById.get(c.provider)?.name)),
 				// A device that only views — it collects nothing — belongs in
 				// Settings → Devices, not under a source here. `__device__` is the
 				// server's sentinel for exactly that (pair.rs `resolve_source_id`),

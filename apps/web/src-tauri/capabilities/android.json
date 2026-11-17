@@ -5,6 +5,7 @@
   "platforms": ["android"],
   "windows": ["*"],
   "permissions": [
+    "allow-command-surface-version",
     "core:default",
     "core:window:allow-create",
     "reach:default"

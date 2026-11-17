@@ -63,6 +63,88 @@
 	background-blend-mode: multiply;
 }
 
+/* Liquid glass (themes.css, `--lq-*`). One recipe for everything that
+   floats over the painting. The rim and the lift are shadows because glass
+   is the one surface in the shell that is lifted off what is behind it.
+   `.lq-regular` is the frostier glass of surfaces that hold text, and
+   `.lq-selected` the denser glass of the tab you are on. */
+.lq {
+	position: relative;
+	background: var(--lq-sheen), var(--lq-fill);
+	-webkit-backdrop-filter: var(--lq-filter);
+	backdrop-filter: var(--lq-filter);
+	box-shadow: var(--lq-rim), var(--lq-lift); /* design-ok: glass is lifted off the painting */
+}
+
+/* The specular edge: the gradient shows only in a 1.2px ring, masked out
+   of the middle. Glass only frosts what it can see, so nothing between a
+   glass element and the painting may set a filter, opacity below 1, a
+   mask, a clip-path or a view-transition-name: each one makes a backdrop
+   root, and the glass behind it turns into a plain tint. */
+.lq::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	padding: 1.2px;
+	border-radius: inherit; /* design-ok: takes its element's radius */
+	pointer-events: none;
+	background: var(--lq-specular);
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+}
+
+.lq.lq-regular {
+	background: var(--lq-sheen), var(--lq-fill-regular);
+	-webkit-backdrop-filter: var(--lq-filter-regular);
+	backdrop-filter: var(--lq-filter-regular);
+}
+
+.lq.lq-selected {
+	background: var(--lq-sheen), var(--lq-fill-selected);
+	box-shadow: var(--lq-rim), var(--lq-lift-selected); /* design-ok: the selected tab's glass */
+}
+
+/* Glass you can press lights up under the pointer, as glass catches
+   light: the pane brightens a little, and a soft glint sits where the
+   pointer is. The root layout keeps --lq-x and --lq-y on the glass under
+   the pointer (routes/(app)/+layout.svelte). */
+:is(button, [role="button"]).lq:hover {
+	box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
+}
+
+:is(button, [role="button"]).lq.lq-selected:hover {
+	box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift-selected); /* design-ok: the selected tab under the pointer */
+}
+
+:is(button, [role="button"]).lq::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit; /* design-ok: takes its element's radius */
+	z-index: -1; /* above the glass, under its label: glass is a stacking context */
+	pointer-events: none;
+	background: radial-gradient(circle at var(--lq-x, 50%) var(--lq-y, 0%), var(--lq-glint), transparent 65%);
+	opacity: 0;
+	transition: opacity var(--motion-hover-out) var(--ease-premium);
+}
+
+:is(button, [role="button"]).lq:hover::after {
+	opacity: 1;
+	transition-duration: var(--motion-hover-in);
+}
+
+/* Reduce transparency: the glass turns to the plain surface, with its rim
+   and lift, and nothing behind it shows through. */
+@media (prefers-reduced-transparency: reduce) {
+	:root {
+		--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
+		--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
+		--lq-filter: none;
+		--lq-filter-regular: none;
+	}
+}
+
 /* Main content area background */
 .app-content {
 	background-image: var(--background-image, none);
@@ -293,6 +375,13 @@
 html,
 body {
 	background-color: var(--color-background);
+}
+
+/* Grayscale antialiasing for all text. On macOS, WebKit's default thickens
+   each glyph's strokes, which makes Avenir look heavy at the chrome's 14px. */
+html {
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 /* Native phone shell (class set by hooks.client.ts): suppress the iOS

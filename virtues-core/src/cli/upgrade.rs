@@ -443,7 +443,6 @@ async fn activate(
         for unit in &sidecars {
             let _ = service_start(unit);
         }
-        restart_display();
         // The flip restored the binary. If the failure was the migration, the
         // schema is still forward of it — say where the undo lives rather than
         // leaving the operator to discover that rollback does not cover data.
@@ -533,9 +532,6 @@ async fn activate(
             ));
         }
     }
-
-    // The panel has been staring at a dead server for the length of the swap.
-    restart_display();
 
     // A release that is running is no longer a release that is pending. Clear
     // the pointer before pruning, or `prune` would exempt the same slot twice
@@ -864,9 +860,8 @@ pub async fn activate_prepared() -> Result<(), crate::Error> {
     // both use this and document why (a box's tag is baked, the binary's
     // CARGO_PKG_VERSION is whatever it was compiled as). Activation had neither
     // this nor the downgrade guard below, so a staged release could move a box
-    // BACKWARDS with no check — which is exactly how a master that baked in an
-    // older stable build (before deprovision learned to strip staged releases)
-    // would have flipped a customer's box on their first update click.
+    // BACKWARDS with no check, so a stale staged release could flip a box to
+    // an older build on its next update.
     let current = super::super::codename::version();
     let current = current.trim_start_matches('v');
 
@@ -966,7 +961,6 @@ pub async fn rollback() -> Result<(), crate::Error> {
             for unit in &sidecars {
                 let _ = service_start(unit);
             }
-            restart_display();
             return Err(crate::Error::Other(
                 "previous release would not start — flipped forward again".to_string(),
             ));
@@ -975,7 +969,6 @@ pub async fn rollback() -> Result<(), crate::Error> {
     for unit in &sidecars {
         let _ = service_start(unit);
     }
-    restart_display();
 
     println!();
     ui::ok("rolled back — the previous release is active");
@@ -1224,29 +1217,6 @@ fn service_stop(unit: &str) {
     let _ = Command::new("systemctl").arg("stop").arg(unit).status();
 }
 
-/// Put the panel back on a live server.
-///
-/// The kiosk is a WebKit page pointed at `localhost:8000/display`; an upgrade
-/// takes that server away for the length of a stop → flip → migrate → start.
-/// `Restart=always` on `virtues-display.service` does not help, because the
-/// *process* never exits — cage and WebKit are perfectly happy, it is only the
-/// page underneath them that has died. So the panel sat on a stale render
-/// while the box moved between releases, and on the far side it was showing an
-/// old page against a new server.
-///
-/// Best-effort and silent on a box with no display: `systemctl restart` on an
-/// absent unit is a non-zero exit and nothing more. Deliberately fire-and-
-/// forget — a kiosk that fails to come back must never fail an upgrade that
-/// otherwise succeeded.
-fn restart_display() {
-    if !Path::new("/etc/systemd/system/virtues-display.service").exists() {
-        return;
-    }
-    let _ = Command::new("systemctl")
-        .args(["restart", "virtues-display"])
-        .status();
-}
-
 /// Relay migration: retire a leftover `virtues-wireguard.service` from a
 /// WireGuard-era box. Stop + disable + remove the unit and binary so it doesn't
 /// idle reconciling a wg0 that pairing no longer populates. All best-effort and
@@ -1281,7 +1251,7 @@ fn service_start(unit: &str) -> std::io::Result<bool> {
 /// probing the wrong port would roll back a perfectly good upgrade. If the unit
 /// is unreadable or its ExecStart has no `--port`, fall back to the same 8000
 /// the installer writes.
-fn service_port() -> u16 {
+pub(super) fn service_port() -> u16 {
     fs::read_to_string("/etc/systemd/system/virtues.service")
         .ok()
         .and_then(|u| parse_port_from_unit(&u))

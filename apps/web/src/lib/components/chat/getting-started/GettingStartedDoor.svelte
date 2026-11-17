@@ -41,7 +41,7 @@
 	title={underway ? "Your progress is saved. Come back whenever you like" : label}
 	aria-label={label}
 >
-	<Icon icon="ri:door-open-line" width="16" />
+	<Icon icon="mynaui:door-open" width="16" />
 	{#if underway}<span class="label">Stop for now</span>{/if}
 </button>
 

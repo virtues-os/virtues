@@ -8,9 +8,9 @@
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { sidebarDoors, type DoorId } from '$lib/stores/sidebarDoors.svelte';
-import { search } from '$lib/stores/search.svelte';
 import { shortcuts } from '$lib/shortcuts/registry.svelte';
 import { newProject } from '$lib/utils/projectActions';
+import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 /** Where a new thing opens: its route, and the label its tab starts with. */
 export type Opener = (route: string, label: string) => void;
@@ -53,9 +53,21 @@ const DOOR_ROUTES: Partial<Record<DoorId, string>> = {
 };
 
 /**
- * The + menu. New things first, in the sidebar's order, then the ways to
- * reach something that exists: the in-app browser (Mac only, so the caller
- * says whether it is there), search, and the sidebar's doors.
+ * A day's page, `daysAgo` before today. Dated, as an open day tab's route
+ * is, so a day already open in a tab comes to the front (`inNewTab`).
+ */
+function dayPageRoute(daysAgo: number): string {
+	const d = new Date();
+	d.setDate(d.getDate() - daysAgo);
+	return `/day/day_${getLocalDateSlug(d)}`;
+}
+
+/**
+ * The + menu. New things first, in the sidebar's order, then today's and
+ * yesterday's pages, then the ways to reach something that exists: the
+ * in-app browser (Mac only, so the caller says whether it is there) and the
+ * sidebar's doors. Search has its own button in the window's corner, and a
+ * temporary chat its own shortcut (⌘⇧I), so neither is offered here.
  */
 export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { browser: boolean }): ContextMenuItem[] {
 	const open = inNewTab(paneId);
@@ -66,13 +78,6 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			icon: 'atlas:new-chat',
 			shortcut: shortcuts.format('mod+n'),
 			action: () => void windowShellStore.newChat(paneId),
-		},
-		{
-			id: 'new-temporary-chat',
-			label: 'New temporary chat',
-			icon: 'ri:ghost-line',
-			shortcut: shortcuts.format('mod+shift+i'),
-			action: () => open('/?temporary=1', 'Temporary Chat'),
 		},
 		{
 			id: 'new-page',
@@ -95,13 +100,26 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			action: () => newProject(open),
 			dividerAfter: true,
 		},
+		{
+			id: 'today',
+			label: 'Today',
+			icon: 'atlas:day',
+			action: () => open(dayPageRoute(0), 'Today'),
+		},
+		{
+			id: 'yesterday',
+			label: 'Yesterday',
+			icon: 'atlas:calendar',
+			action: () => open(dayPageRoute(1), 'Yesterday'),
+			dividerAfter: true,
+		},
 	];
 
 	if (opts.browser) {
 		items.push({
 			id: 'browser',
 			label: 'Browser',
-			icon: 'ri:global-line',
+			icon: 'mynaui:globe',
 			// One browser, shared with the assistant: an open one comes to the front.
 			action: () => {
 				const browser = windowShellStore.findTab((t) => t.type === 'browser');
@@ -113,16 +131,9 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 
 	items.push(
 		{
-			id: 'search',
-			label: 'Search',
-			icon: 'atlas:search',
-			shortcut: shortcuts.format('mod+k'),
-			action: () => search.show(),
-		},
-		{
 			id: 'go-to',
 			label: 'Go to',
-			icon: 'ri:compass-3-line',
+			icon: 'mynaui:compass',
 			submenu: sidebarDoors.all.flatMap((door) => {
 				const route = DOOR_ROUTES[door.id];
 				return route

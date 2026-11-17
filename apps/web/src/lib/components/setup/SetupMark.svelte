@@ -2,11 +2,8 @@
 	Setup's progress, as the mark itself.
 
 	A small ∴ at the top of every step. Its three dots are the three thirds
-	of Setup, the grouping the close has always drawn: Welcome, the letter
-	and the server are the left foot; Wi-Fi, the subscription and the names
-	the right; the three about your life the apex. Premise, premise,
-	therefore. Each dot fills as its third is done, and the one you are in
-	breathes.
+	of Setup's steps, in order. Premise, premise, therefore. Each dot fills
+	as its third is done, and the one you are in breathes.
 
 	It replaced nine dots and a "Welcome · next, Letter" label (2026-09-25):
 	a progress bar in an admin tool's grammar, over a cold open. Arc shows no
@@ -19,8 +16,8 @@
 	the big one (`from`, the big mark's ink box) and flies up to its place,
 	so the logo visibly becomes the progress.
 
-	THE CLOSE. At the end the mark comes down to the middle of the window,
-	fills, and grows; the app opens beneath it.
+	THE CLOSE. At Arrival the mark comes down into the upper third of the
+	window, fills, and grows, and the greeting rises under it.
 
 	Pressing it lists the steps, the way the dots could be pressed: any step
 	up to the first one still open can be revisited.
@@ -63,7 +60,11 @@
 			return mine.filter((s) => s.status === "done").length / mine.length;
 		}),
 	);
-	const label = $derived(index >= 0 ? `${steps[index].label} · ${index + 1} of ${steps.length}` : "");
+	/** The step's name, shown under the mark on every step: a phone has no
+	 *  hover to ask for it. Where it stands in the walk is for the screen
+	 *  reader, in the button's name. */
+	const label = $derived(index >= 0 ? steps[index].label : "");
+	const position = $derived(index >= 0 ? `${steps[index].label}, step ${index + 1} of ${steps.length}` : "progress");
 
 	let open = $state(false);
 	let el = $state<HTMLElement | null>(null);
@@ -127,7 +128,7 @@
 		type="button"
 		class="glyph"
 		aria-expanded={open}
-		aria-label="Setup, {label || 'progress'}. Show the steps"
+		aria-label="Setup, {position}. Show the steps"
 		onclick={() => (open = !open)}
 		disabled={closing}
 	>
@@ -144,7 +145,7 @@
 				/>
 			{/each}
 		</svg>
-		<span class="label">{label}</span>
+		<span class="label" aria-hidden="true">{label}</span>
 	</button>
 
 	{#if open}
@@ -208,23 +209,20 @@
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
-	/* The label is there when asked for: on hover, on focus, with the list. */
+	/* The step's name, always there under the mark: small capitals, quiet,
+	   darker on hover and with the list. */
 	.label {
-		font-size: 12px;
-		letter-spacing: 0.01em;
-		color: var(--color-foreground-subtle);
+		font-size: 11px;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--color-foreground-muted);
 		white-space: nowrap;
-		opacity: 0;
-		transform: translateY(-3px);
-		transition:
-			opacity var(--m-quick) ease,
-			transform var(--m-base) var(--m-ease);
+		transition: color var(--m-quick) ease;
 	}
 	.glyph:hover .label,
 	.glyph:focus-visible .label,
 	.glyph[aria-expanded="true"] .label {
-		opacity: 1;
-		transform: none;
+		color: var(--color-foreground);
 	}
 
 	.well {
@@ -254,10 +252,16 @@
 		}
 	}
 
-	/* The close: down to the middle, whole, and large. */
+	/* The close: down into the upper third, whole, and large, over the
+	   greeting (Arrival, in the route). */
 	.mark.closing {
-		top: 50%;
-		transform: translate(-50%, -50%) scale(4.5);
+		top: clamp(96px, 24vh, 220px);
+		transform: translate(-50%, -50%) scale(2.6);
+	}
+	@media (max-height: 520px) {
+		.mark.closing {
+			top: 64px;
+		}
 	}
 	.mark.closing .label {
 		opacity: 0 !important;

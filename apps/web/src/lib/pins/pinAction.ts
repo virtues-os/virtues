@@ -40,7 +40,7 @@ export interface PinTarget {
 	 * itself, whatever was passed here.
 	 */
 	label?: string | null;
-	/** Iconify id, e.g. `ri:file-text-line`. Same rule as `label`. */
+	/** Iconify id, e.g. `mynaui:file-text`. Same rule as `label`. */
 	icon?: string | null;
 }
 
@@ -120,7 +120,7 @@ export function pinIconMenuItem(
 	return {
 		id: 'pin-icon',
 		label: 'Change icon',
-		icon: 'ri:emotion-line',
+		icon: 'mynaui:smile',
 		action: () => {
 			const look = pinIdentity(pin);
 			iconPickerStore.show(
@@ -161,7 +161,7 @@ export function pinMenuItem(
 		// a name. Now the destination is the section labeled Pinned, at the top
 		// of the Home panel, and the plain verb is the one the label speaks.
 		label: pinned ? 'Unpin' : 'Pin',
-		icon: pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
+		icon: pinned ? 'mynaui:pin-solid' : 'mynaui:pin',
 		dividerBefore: opts.dividerBefore ?? true,
 		action: async () => {
 			try {

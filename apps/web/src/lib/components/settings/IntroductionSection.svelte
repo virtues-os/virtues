@@ -72,7 +72,7 @@
 	{#if !armed}
 		<button type="button" class="again" onclick={() => (armed = true)}>
 			Run the introduction again
-			<Icon icon="ri:arrow-right-line" width="14" />
+			<Icon icon="mynaui:arrow-right" width="14" />
 		</button>
 		<span class="field-hint">
 			Opens the letter, and reopens any step you set aside. This deletes nothing. Your

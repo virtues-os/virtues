@@ -1,7 +1,8 @@
 //! `virtues doctor` — the box examined.
 //!
-//! Four ledgers (Inference, Reach, Appliance, Diagnostics) and one verdict.
-//! Appliance is printed only on hardware we shipped. The editorial rules:
+//! Four ledgers (Inference, Reach, Data disk, Diagnostics) and one verdict.
+//! Data disk is printed only on a server whose Postgres cluster was moved to
+//! a data disk. The editorial rules:
 //!
 //! 1. **Say each fact once.** The old report printed the global IPv6 three
 //!    times (class line, headline, network line); here every fact has one row.
@@ -29,7 +30,7 @@ pub async fn run() -> i32 {
     print_inference(&crate::inference_report::resolution_report(), &mut issues);
     probe_inference(&mut issues).await;
     print_reach(&mut issues).await;
-    print_appliance(&mut issues);
+    print_data_disk(&mut issues);
     print_diagnostics();
     issues.verdict()
 }
@@ -44,8 +45,8 @@ pub async fn run() -> i32 {
 /// are going to post a journal tail off the box by default, the tool people
 /// are told to run when they are worried has to say so.
 ///
-/// Unlike Appliance, this prints on every box, DIY included — the beacon
-/// does not care what hardware it is running on.
+/// Unlike Data disk, this prints on every server: the beacon does not care
+/// what hardware it is running on.
 fn print_diagnostics() {
     ui::subsection("Diagnostics");
     if super::diag::enabled() {
@@ -70,97 +71,31 @@ fn print_diagnostics() {
     ui::kv("local record", "always — journalctl -u virtues -g box.crashed");
 }
 
-/// The Appliance ledger — the physical box, as opposed to the software on it.
+/// The data disk, on a server whose Postgres cluster was moved onto one.
 ///
-/// Doctor answered two questions (Inference, Reach) and none of the ones an
-/// appliance owner actually gets stuck on. When someone says "my box is
-/// broken", this is the tool they are told to run, and until now it could not
-/// say whether the data disk was mounted, whether the display was running,
-/// whether the button did anything, or where the database physically lived.
-///
-/// Prints NOTHING on a DIY box. Every row here describes hardware we shipped,
-/// and on somebody's own Linux server each one would be either meaningless or
-/// a false alarm — a state root that is a plain directory is correct there, and
-/// there is no panel and no button to report on.
-fn print_appliance(issues: &mut ui::Issues) {
-    // `install_manifest::appliance()`, not the raw field: a box installed before
-    // that field existed has `None`, which means "no opinion", not "DIY". See
-    // that function for why the difference matters after an upgrade.
-    if !crate::install_manifest::appliance() {
-        return;
-    }
-    let Some(m) = crate::install_manifest::get().as_ref() else {
+/// Prints nothing on an ordinary install, where the state root is a plain
+/// directory and the cluster sits on the distro's own path, both correctly.
+/// The disk is the one failure that looks like health: a server whose data
+/// disk never mounted runs, serves, and quietly writes to the boot disk.
+/// See `crate::data_disk`.
+fn print_data_disk(issues: &mut ui::Issues) {
+    let Some(cluster) = crate::data_disk::relocated_cluster_dir() else {
         return;
     };
-    ui::subsection("Appliance");
-    ui::kv("profile", &m.profile);
-
-    // THE DATA DISK. First row because it is the one failure that looks like
-    // health: a box whose NVMe never mounted runs, serves, and quietly writes
-    // the owner's record to the boot card. See `crate::data_disk`.
+    ui::subsection("Data disk");
     match crate::data_disk::status() {
         crate::data_disk::DataDisk::Mounted => ui::kv("data disk", "mounted"),
         crate::data_disk::DataDisk::OnRoot => ui::kv("data disk", "on the root filesystem"),
         crate::data_disk::DataDisk::Missing => {
             ui::kv("data disk", "MISSING");
             issues.error(
-                "the data disk is not mounted — the record belongs on it, and                  Postgres is configured to refuse to start without it",
-                Some("reseat or replace the NVMe, then: sudo systemctl reboot"),
+                "the data disk is not mounted, and your Postgres data is on it. \
+                 Nothing is lost, but the server can't read it",
+                Some("check that the disk is connected, then: sudo systemctl reboot"),
             );
         }
     }
-
-    // Where the database actually is. A relocated cluster is a symlink into the
-    // data disk; an appliance without one is writing every transaction to the
-    // boot card, which is the thing the layout exists to prevent and is
-    // invisible from every other surface.
-    match crate::cli::deprovision::relocated_cluster_dir() {
-        Some(d) => ui::kv("postgres", &format!("{} (on the data disk)", d.display())),
-        None => {
-            ui::kv("postgres", "on the boot medium");
-            issues.warn(
-                "the Postgres cluster was never moved to the data disk — every                  write lands on the boot card, which wears out under database load",
-                Some("re-run the installer to relocate it"),
-            );
-        }
-    }
-
-    // The panel and the button: the only two interfaces an owner has before a
-    // device is paired, and both fail silently by nature — a dead kiosk is a
-    // black screen, and a button nobody wired is indistinguishable from one
-    // nobody pressed.
-    ui::kv("display", unit_state("virtues-display"));
-    ui::kv(
-        "case button",
-        if std::path::Path::new("/etc/systemd/logind.conf.d/10-virtues-power-key.conf").exists() {
-            "armed (hold 3s to forget devices)"
-        } else {
-            "not armed — logind still owns the power key"
-        },
-    );
-
-    // Only interesting before imaging, but this is where someone looks.
-    let applets = crate::cli::deprovision::authored_applets_dir();
-    if let Ok(n) = std::fs::read_dir(&applets).map(|d| d.flatten().count()) {
-        if n > 0 {
-            ui::kv("authored applets", &format!("{n} (owner-written; not shippable)"));
-        }
-    }
-}
-
-/// `active` / `inactive` / `not installed`, for a unit that may legitimately be
-/// absent — a headless appliance has no display.
-fn unit_state(unit: &str) -> &'static str {
-    if !std::path::Path::new(&format!("/etc/systemd/system/{unit}.service")).exists() {
-        return "not installed";
-    }
-    match std::process::Command::new("systemctl")
-        .args(["is-active", "--quiet", unit])
-        .status()
-    {
-        Ok(s) if s.success() => "active",
-        _ => "installed but not running",
-    }
+    ui::kv("postgres", &format!("{} (on the data disk)", cluster.display()));
 }
 
 /// The Inference ledger. Shared with `virtues warm-models`, which prints it
@@ -291,6 +226,21 @@ async fn probe_inference(issues: &mut ui::Issues) {
         // The label stays inside `ui::kv`'s 12-column leader so the value lines
         // up with the rows above it.
         ui::kv("embed live", &format!("{base}  {mark}"));
+        // Not a warning: the owner chose this server. It is here so the
+        // command line shows what Settings → Search shows.
+        let host = crate::search::embedder::url_host(&base);
+        match crate::search::embedder::locality(&base).await {
+            crate::search::embedder::Locality::Local => {
+                ui::kv("embed host", &format!("{host}, on this machine or your network"))
+            }
+            crate::search::embedder::Locality::Public => ui::kv(
+                "embed host",
+                &format!("{host}, outside your network. It receives the text this server indexes"),
+            ),
+            crate::search::embedder::Locality::Unknown => {
+                ui::kv("embed host", &format!("{host}, couldn't be looked up"))
+            }
+        }
         if let Some(what) = finding {
             issues.error(
                 format!("{what} — semantic search is unavailable"),
@@ -376,7 +326,39 @@ fn endpoint(key: &str, from_process_env: String) -> String {
         .unwrap_or(from_process_env)
 }
 
-/// The Reach ledger: local network facts, then the iroh legs read from the DB.
+/// The relay as the running server resolved it, from its public health
+/// reading.
+async fn running_relay() -> Result<RunningRelay, Unread> {
+    #[derive(serde::Deserialize)]
+    struct Health {
+        reach: Option<RunningRelay>,
+    }
+    let client = crate::http_client::base_builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|_| Unread::NoAnswer)?;
+    let url = format!("http://127.0.0.1:{}/api/box/health", super::upgrade::service_port());
+    let res = client.get(&url).send().await.map_err(|_| Unread::NoAnswer)?;
+    let health: Health = res.json().await.map_err(|_| Unread::NoAnswer)?;
+    health.reach.ok_or(Unread::OlderServer)
+}
+
+/// Why doctor has no relay reading.
+enum Unread {
+    NoAnswer,
+    /// It answered without the `reach` field: a server binary older than this
+    /// command, still running after an install.
+    OlderServer,
+}
+
+#[derive(serde::Deserialize)]
+struct RunningRelay {
+    relay_url: Option<String>,
+    connected: bool,
+}
+
+/// The Reach ledger: local network facts, the relay the running server
+/// resolved, then the iroh legs read from the DB.
 async fn print_reach(issues: &mut ui::Issues) {
     let net = crate::net_check::compute_net_status();
     ui::subsection("Reach");
@@ -409,7 +391,6 @@ async fn print_reach(issues: &mut ui::Issues) {
         None => crate::relay::ReachReport {
             db_reachable: false,
             endpoint_id: None,
-            relay_url: None,
             allowlisted_devices: None,
         },
     };
@@ -444,13 +425,34 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    match &report.relay_url {
-        Some(u) => ui::kv("relay", u),
-        None => {
-            ui::kv("relay", "LAN-only");
+    // The relay comes from the running server, not the database: the stored
+    // config is empty on an unclaimed box, which still uses the built-in
+    // relay, so reading the database reported a working box as LAN-only.
+    let relay = running_relay().await;
+    match &relay {
+        Ok(r) => match (&r.relay_url, r.connected) {
+            (Some(u), true) => ui::kv("relay", &format!("{u}  {}", style("✓ connected").green())),
+            (Some(u), false) => {
+                ui::kv("relay", &format!("{u}  {}", style("⚠ not connected").yellow()));
+                issues.warn(
+                    "the server isn't connected to its relay, so devices away from this network can't reach it",
+                    Some("check the internet connection; journalctl -u virtues -g iroh"),
+                );
+            }
+            (None, _) => ui::kv("relay", "off — devices reach this server on its own network only"),
+        },
+        Err(Unread::NoAnswer) => {
+            ui::kv("relay", "unknown");
             issues.warn(
-                "no relay configured — the box is reachable on this network only (unclaimed, or atlas unreachable)",
-                Some("claim the box: virtues pair"),
+                "the server didn't answer on this machine, so its relay state is unknown",
+                Some("systemctl status virtues"),
+            );
+        }
+        Err(Unread::OlderServer) => {
+            ui::kv("relay", "unknown — the running server predates this reading");
+            issues.warn(
+                "the running server is older than this command",
+                Some("restart it: sudo systemctl restart virtues"),
             );
         }
     }
@@ -467,9 +469,9 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    // 0 devices while unclaimed shares a root cause with the relay warning
-    // above, so it only becomes its own finding once the relay leg is fine.
-    if report.allowlisted_devices == Some(0) && report.relay_url.is_some() {
+    // 0 devices while the relay is down shares a root cause with the relay
+    // warning above, so it only becomes its own finding once that leg is fine.
+    if report.allowlisted_devices == Some(0) && relay.as_ref().is_ok_and(|r| r.connected) {
         issues.warn(
             "no devices on the allowlist",
             Some("pair one: virtues device add"),

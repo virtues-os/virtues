@@ -17,9 +17,11 @@ export type TabType =
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
+	| 'thing' // Wiki things: /thing/thing_{id}
 	| 'project' // Projects (rooms a chat lives in): /projects, /project/{id}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
+	| 'passwords' // Saved logins, in Drive: /passwords
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity

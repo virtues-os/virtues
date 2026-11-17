@@ -3,7 +3,7 @@
 //! A "prepaid arcade card" model for AI API access:
 //! - Authenticate the device bearer, look up its entitlement in Postgres
 //! - Enforce per-call cap, daily ceiling, and wallet balance on each charge
-//! - Forward requests upstream (Vercel AI Gateway, Exa, Places, Unsplash)
+//! - Forward requests upstream (Vercel AI Gateway, Places, Unsplash)
 //!
 //! Budget state lives entirely in the `accounts` table (credited by atlas on
 //! subscription renewal + top-up), with the append-only `ledger` as the source
@@ -168,9 +168,12 @@ async fn main() -> Result<()> {
         // OAuth proxy (google/notion/strava/plaid) — folded in from the Node
         // oauth-proxy (WS-4). Mounted at root: /{provider}/start|callback|...
         .merge(routes::oauth::router())
+        // The return leg of a box's MCP connection sign-in: the service
+        // sends the browser here, and the box claims the code.
+        .merge(routes::connections::router())
         // Bearer-auth account endpoints (whoami + usage)
         .merge(routes::bearer_test::router())
-        // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.
+        // Bearer-auth + entitlement charge: Places, web search, Unsplash, AI.
         // AI (`/v1/ai/*`) covers both streaming and non-streaming chat; the
         // charge fires from a callback once the upstream usage is known.
         .merge(routes::places::router())
@@ -180,8 +183,18 @@ async fn main() -> Result<()> {
         // secret server-side; the box sends only per-user access_tokens.
         .merge(routes::plaid::router())
         .merge(routes::ai::router())
-        // Middleware
-        .layer(TraceLayer::new_for_http())
+        // Middleware. The span is at info so a failed request's log line
+        // names its route; production filters out debug, where the default
+        // span sits. It carries the route pattern and never the URI, whose
+        // query holds OAuth codes on `/callback`.
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+            let route = req
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .map(|p| p.as_str())
+                .unwrap_or("-");
+            tracing::info_span!("request", method = %req.method(), route)
+        }))
         // Map files, merged AFTER the trace layer so it never wraps them:
         // which squares a box downloads is location data, and these routes
         // log nothing (routes/maps.rs).

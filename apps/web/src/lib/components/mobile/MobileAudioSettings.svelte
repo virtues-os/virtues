@@ -294,10 +294,10 @@
 				aria-expanded={open}
 				onclick={() => (openPlace = open ? null : p.id)}
 			>
-				<div class="r-icon"><Icon icon="ri:map-pin-line" width={16} /></div>
+				<div class="r-icon"><Icon icon="mynaui:map-pin" width={16} /></div>
 				<span class="r-label r-name">{p.name || "Unnamed place"}</span>
 				<span class="r-value">{effectiveRadius(p)} m</span>
-				<Icon icon={open ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"} width={18} class="chev" />
+				<Icon icon={open ? "mynaui:chevron-up" : "mynaui:chevron-down"} width={18} class="chev" />
 			</button>
 			{#if open}
 				<div class="place-edit">
@@ -319,9 +319,9 @@
 			{/if}
 		{/each}
 		<button class="row" type="button" onclick={() => (pickerOpen = true)} disabled={placeBusy}>
-			<div class="r-icon"><Icon icon="ri:add-line" width={16} /></div>
+			<div class="r-icon"><Icon icon="mynaui:plus" width={16} /></div>
 			<span class="r-label">{places.length === 0 ? "Add a place" : "Add another place"}</span>
-			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+			<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 		</button>
 	</div>
 	<p class="fine outside">
@@ -341,9 +341,9 @@
 		<span class="switch" class:on={audio.notify} aria-hidden="true"></span>
 	</button>
 	<button class="row" type="button" onclick={() => (aboutOpen = true)}>
-		<div class="r-icon"><Icon icon="ri:information-line" width={16} /></div>
+		<div class="r-icon"><Icon icon="mynaui:info-circle" width={16} /></div>
 		<span class="r-label">How recording works</span>
-		<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+		<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 	</button>
 </div>
 
@@ -355,7 +355,7 @@
 	<div class="about-page">
 		<div class="about-head">
 			<button class="back" type="button" onclick={() => (aboutOpen = false)}>
-				<Icon icon="ri:arrow-left-s-line" width={22} />
+				<Icon icon="mynaui:chevron-left" width={22} />
 				<span>Audio</span>
 			</button>
 		</div>

@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help init hooks commit migration dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api deploy-rollback mac-app mac-dev web-test \
-        iroh-ffi-mac ios-release release-staging flash
+        iroh-ffi-mac ios-release release-staging
 
 
 # Mac dev is FULLY LOCAL by default and never touches prod: `make dev` runs a
@@ -557,23 +557,3 @@ deploy-rollback: ## Put SVC (virtues-api | virtues-atlas) back on the image befo
 	@test -n "$(SVC)" || { echo "error: make deploy-rollback SVC=virtues-api|virtues-atlas"; exit 2; }
 	@tools/deploy-service.sh "$(SVC)" --rollback
 
-# ── Appliance masters ────────────────────────────────────────────────────────
-# The golden-image lifecycle is two machines, three commands, in this order:
-#
-#   on the board:  sudo VIRTUES_VERSION=vX.Y.Z sh tools/build-dragon.sh
-#                    (installs, verifies, strips identity, powers off)
-#   on this Mac:   sudo sh tools/cut-image.sh /dev/diskN vX.Y.Z
-#                    (dd → drop the data partition → shrink → compress → record)
-#   per unit:      make flash
-#                    (newest master → the NVMe in the USB adapter, ~20s)
-#
-# `make flash` is the step that repeats once per shipped unit, which is why it
-# gets a target: it verifies the checksum before writing, auto-detects the ONE
-# external disk (or takes DEV=), and refuses media too small for the image.
-
-# Env vars, NOT positional args: with positionals, `make flash MASTER=x` and
-# an empty $(DEV) collapse so the image path arrives as the DEVICE argument —
-# and dd would overwrite the master artifact itself. The script reads DEV= and
-# MASTER= from the environment.
-flash: ## Flash the newest master onto the NVMe in the USB adapter (DEV=/dev/diskN MASTER=path to override)
-	@sudo DEV="$(DEV)" MASTER="$(MASTER)" sh tools/flash-master.sh

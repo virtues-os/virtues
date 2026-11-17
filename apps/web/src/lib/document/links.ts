@@ -49,6 +49,7 @@ import { insertBlockAt } from './place';
 import { kindOfLink } from './media-kind';
 import type { ContextHandler } from './gesture';
 import { anchorAt, anchorRange, resolveRange } from './anchor';
+import { shareableHref } from './share';
 
 const HOVER_SHOW_MS = 350;
 const HOVER_HIDE_MS = 160;
@@ -107,11 +108,6 @@ export function openLink(href: string, label: string): void {
 export function openLinkInNewTab(href: string, label: string): void {
 	if (isRef(href)) void windowShellStore.openInNewTab(href, label);
 	else if (linkAllowed(href)) void openWebLink(href);
-}
-
-/** The address to copy: a ref as a full link to this box. */
-export function shareableHref(href: string): string {
-	return href.startsWith('/') ? `${window.location.origin}${href}` : href;
 }
 
 const refLinksKey = new PluginKey<DecorationSet>('refLinks');
@@ -286,24 +282,24 @@ export function linkMenu(editor: Editor, link: LinkAt, at: { x: number; y: numbe
 		else linkChanged('menu');
 	};
 	const reading: ContextMenuItem[] = [
-		{ id: 'open', label: 'Open', icon: 'ri:arrow-right-up-line', action: () => openLink(link.href, label) },
+		{ id: 'open', label: 'Open', icon: 'mynaui:arrow-up-right', action: () => openLink(link.href, label) },
 		...(isRef(link.href) ? openMenuItems(link.href, label) : defaultBrowserItem(link.href)),
 		{
 			id: 'copy-link',
 			label: 'Copy link',
-			icon: 'ri:file-copy-line',
+			icon: 'mynaui:copy',
 			action: () => void navigator.clipboard?.writeText(shareableHref(link.href)),
 		},
 	];
 	if (!editor.isEditable) return reading;
 	return [
 		...reading,
-		{ id: 'edit', label: 'Edit', icon: 'ri:edit-line', dividerBefore: true, action: change((now) => editLink(editor, now, at)) },
-		{ id: 'embed', label: 'Turn into embed', icon: 'ri:image-line', action: change((now) => void turnIntoEmbed(editor, now)) },
+		{ id: 'edit', label: 'Edit', icon: 'mynaui:edit', dividerBefore: true, action: change((now) => editLink(editor, now, at)) },
+		{ id: 'embed', label: 'Turn into embed', icon: 'mynaui:image', action: change((now) => void turnIntoEmbed(editor, now)) },
 		{
 			id: 'remove',
 			label: 'Remove link',
-			icon: 'ri:link-unlink',
+			icon: 'mynaui:unlink',
 			variant: 'destructive',
 			action: change((now) => editor.view.dispatch(editor.state.tr.removeMark(now.from, now.to, now.mark.type))),
 		},

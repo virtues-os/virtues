@@ -73,12 +73,12 @@
 	}
 
 	const buttons: FormatButton[] = [
-		{ mark: 'strong', icon: 'ri:bold', label: 'Bold', shortcut: 'mod+b' },
-		{ mark: 'em', icon: 'ri:italic', label: 'Italic', shortcut: 'mod+i' },
-		{ mark: 'underline', icon: 'ri:underline', label: 'Underline', shortcut: 'mod+u' },
-		{ mark: 'code', icon: 'ri:code-line', label: 'Code', shortcut: 'mod+e' },
-		{ mark: 'strikethrough', icon: 'ri:strikethrough', label: 'Strikethrough', shortcut: 'mod+shift+s' },
-		{ mark: 'link', icon: 'ri:link', label: 'Link', shortcut: '' },
+		{ mark: 'strong', icon: 'mynaui:type-bold', label: 'Bold', shortcut: 'mod+b' },
+		{ mark: 'em', icon: 'mynaui:type-italic', label: 'Italic', shortcut: 'mod+i' },
+		{ mark: 'underline', icon: 'mynaui:type-underline', label: 'Underline', shortcut: 'mod+u' },
+		{ mark: 'code', icon: 'mynaui:code', label: 'Code', shortcut: 'mod+e' },
+		{ mark: 'strikethrough', icon: 'mynaui:minus', label: 'Strikethrough', shortcut: 'mod+shift+s' },
+		{ mark: 'link', icon: 'mynaui:link', label: 'Link', shortcut: '' },
 	];
 
 	function handleButtonClick(e: MouseEvent, mark: MarkType) {
@@ -109,7 +109,7 @@
 	>
 		{#if onAskAi}
 			<IconButton
-				icon="ri:sparkling-2-line"
+				icon="mynaui:sparkles"
 				label="Ask AI"
 				size={touch ? "touch" : "md"}
 				onclick={(e) => {

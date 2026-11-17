@@ -123,13 +123,13 @@
 			<div class="state">Loading the query…</div>
 		{:else if error}
 			<div class="state error">
-				<Icon icon="ri:error-warning-line" width="16" />
+				<Icon icon="mynaui:danger-circle" width="16" />
 				<span>{error}</span>
 			</div>
 		{:else if loaded}
 			<header class="head">
 				<div class="eyebrow">
-					<Icon icon="ri:table-line" width="12" />
+					<Icon icon="mynaui:table" width="12" />
 					<span>Query{loaded.ran ? ` · ${formatTime(loaded.ran, { withDate: true })}` : ""}</span>
 				</div>
 				<h1 class="title">{headline}</h1>

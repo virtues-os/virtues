@@ -7591,7 +7591,7 @@ mod tests {
 
     /// Every article shape the contract's corpus holds
     /// (`crates/virtues-document/tests/corpus/articles.json`: day pages with
-    /// sources, figures, veils and a table, year, entity, story and identity
+    /// sources, figures, veils and a table, year, entity, thing and identity
     /// articles, prose with escapes), first opened: each moves holding its
     /// export, its edition the export, and nobody's edit; a writer sending
     /// the same markdown again changes nothing on it, every block keeping its

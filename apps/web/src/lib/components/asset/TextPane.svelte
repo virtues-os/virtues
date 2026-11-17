@@ -80,7 +80,7 @@
 <div class="text-pane">
 	{#if truncated}
 		<div class="text-banner">
-			<Icon icon="ri:scissors-cut-line" width="13" />
+			<Icon icon="mynaui:scissors" width="13" />
 			Large file - showing the first 2 MB. Download for the full contents.
 		</div>
 	{/if}
@@ -97,10 +97,10 @@
 	{/if}
 
 	{#if loading}
-		<div class="text-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
+		<div class="text-status"><Icon icon="mynaui:spinner" width="22" class="spin" /></div>
 	{:else if error}
 		<div class="text-status error">
-			<Icon icon="ri:error-warning-line" width="22" />
+			<Icon icon="mynaui:danger-circle" width="22" />
 			<span>{error}</span>
 		</div>
 	{:else if flavor === "markdown" && !showRaw}

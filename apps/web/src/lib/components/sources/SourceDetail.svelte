@@ -87,7 +87,7 @@
 
 	{#if source?.repo}
 		<p class="repo">
-			<Icon icon="ri:code-line" width="14" />
+			<Icon icon="mynaui:code" width="14" />
 			<TextAction inline onclick={readCode}>Read the code</TextAction>
 			{#if source.repo_ref}<code>{source.repo_ref}</code>{/if}
 			<span class="aside">- shows where the code came from, not how the source updates</span>
@@ -125,7 +125,7 @@
 				</li>
 				{#if c.statusReason}
 					<li class="reason">
-						<Icon icon="ri:error-warning-line" width="14" />
+						<Icon icon="mynaui:danger-circle" width="14" />
 						<span>{c.statusReason}</span>
 					</li>
 				{/if}

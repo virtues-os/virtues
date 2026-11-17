@@ -14,6 +14,7 @@
 	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
+	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
 	  Network      /virtues/network        — which network the box is on
@@ -23,7 +24,6 @@
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
-	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
@@ -55,12 +55,12 @@
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
-	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
 	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
+	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
 	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
 	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
 
@@ -95,10 +95,9 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network, Display and Software stopped being top-level sections
-		// (2026-08-31). Network and Display are the machine's own connection and
-		// its own screen, so they live under System; Software described the
-		// release a DEVICE runs, so it became that device's page under Devices.
+		// Network lives under System, as the machine's own connection; Software
+		// described the release a DEVICE runs, so it is that device's page
+		// under Devices.
 		'/virtues/network': '/virtues/system',
 		'/virtues/software': '/virtues/devices/server',
 		// Box split into System · Network · Software (2026-08-17). Its own door
@@ -140,7 +139,6 @@
 	// only `navigate` re-resolves that through the registry.
 	const SOURCES_ALIASES = [
 		'/virtues/sources',
-		'/virtues/connections',
 		'/virtues/connections/sources',
 		'/virtues/connections/tools',
 		'/virtues/tools',
@@ -152,6 +150,11 @@
 	const LAKE_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
 
 	$effect(() => {
+		// Services the assistant can act in are rows in the Sources catalog.
+		if (tab.route === '/virtues/connections') {
+			windowShellStore.navigate('/sources/catalog', { label: 'Sources · Catalog' });
+			return;
+		}
 		if (SOURCES_ALIASES.includes(tab.route)) {
 			windowShellStore.navigate('/sources', { label: 'Sources' });
 			return;
@@ -175,23 +178,23 @@
 		| 'you'
 		| 'assistant'
 		| 'billing'
+		| 'keys'
 		| 'system'
 		| 'search'
 		| 'devices'
 		| 'shared'
 		| 'applets'
-		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
 		'assistant',
 		'billing',
+		'keys',
 		'system',
 		'search',
 		'devices',
 		'shared',
 		'applets',
-		'display',
 		'developer',
 	];
 
@@ -231,12 +234,12 @@
 			{/if}
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
+		{:else if section === 'keys'}
+			<KeysView />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
 			<SearchSettingsView />
-		{:else if section === 'display'}
-			<DisplayView />
 		{:else if section === 'shared'}
 			<SharedLinksView />
 		{:else if section === 'applets'}

@@ -18,7 +18,7 @@
 <Page maxWidth="wide">
 	{#snippet heading()}
 		<div class="back">
-			<Button variant="ghost" size="sm" icon="ri:arrow-left-line" onclick={backToAssistant}>
+			<Button variant="ghost" size="sm" icon="mynaui:arrow-left" onclick={backToAssistant}>
 				Back to Assistant
 			</Button>
 		</div>

@@ -1,13 +1,13 @@
 /**
  * Setup — the one flow, and the order of its steps.
  *
- * ONE PROCESS, ONE WORD (2026-09-24, agents/plan/setup-plan.md). Setup runs
- * full screen at `/setup`: nine steps with a dot each — Welcome (the cold
- * open, and light or dark), the founder's letter, then the seven that do
- * something — then the ∴ and the app. Everything through Subscription is required;
- * the last three can each be skipped, and "Finish later" opens the app with
- * the rest waiting on the rail's Setup tile. It replaced the Getting started room
- * (a stepper in the app's pane, 2026-09-23), which replaced a seeded chat.
+ * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
+ * full screen at `/setup`: Welcome (the cold open, and light or dark),
+ * Server (finding and pairing it), Names, this device's Connections,
+ * Subscription, then Arrival and the app. Connections can be skipped; its
+ * "Finish later" opens the app only once nothing required follows it.
+ * Everything else is required. The founder's letter waits at Arrival.
+ * Chapters and the interview are not part of setup.
  *
  * NOTHING HERE IS STORED PROGRESS. Every status is read off real rows — the
  * server's derived getting-started state, the profile, the paired devices,
@@ -17,11 +17,10 @@
  * only, how far through Welcome and the letter someone has read, which no
  * row can say (see `introStage`).
  *
- * Account, Server and Wi-Fi are the first half, before this device has a
- * server (`prepair.svelte.ts`). On the phone they run here, from the app's
- * own copy; anywhere Setup is reached through a server they are done by
- * construction, since nothing gets there without a paired device on a
- * connected server.
+ * Server is the first half, before this device has a server
+ * (`prepair.svelte.ts`). It runs here from the app's own copy; anywhere
+ * Setup is reached through a server it is done by design, since nothing gets
+ * there without a paired device on a connected server.
  */
 import {
 	getProfile,
@@ -39,14 +38,10 @@ import { prePair } from './prepair.svelte';
 export type SetupStepId =
 	| 'welcome'
 	| 'letter'
-	| 'account'
 	| 'server'
-	| 'wifi'
 	| 'subscription'
 	| 'names'
-	| 'connections'
-	| 'timeline'
-	| 'interview';
+	| 'connections';
 
 export type StepStatus = 'done' | 'open' | 'skipped';
 
@@ -70,48 +65,46 @@ export interface SetupStep {
 	reachable: boolean;
 }
 
+/** The stage's steps, in order. The letter is not one of them: the pair
+ *  code lasts about 15 minutes, so nothing stands between the person and
+ *  it. The letter waits at the close, as "A note from us", and stays
+ *  readable in the app (IN_APP) and at /founders-letter. */
 export const ORDER: SetupStepId[] = [
 	'welcome',
-	'letter',
-	'account',
 	'server',
-	'wifi',
-	// Names before Subscription: the person meets the assistant before being
-	// asked to pay for how it thinks, so that step can say its name.
+	// The names straight after the server: ten seconds, and from then on
+	// the assistant has a name and the person has been asked theirs.
 	'names',
-	'subscription',
+	// This device before the subscription: pairing and collecting need no
+	// account, and Messages and Safari history are the slowest sources to
+	// arrive, so they start while the person finishes the rest.
 	'connections',
-	'timeline',
-	'interview',
+	'subscription',
 ];
+// TODO(2026-11-15): steps/StepTimeline.svelte and steps/StepInterview.svelte
+// left setup and nothing imports them. Delete them, with ChapterExample and
+// nextChapter.ts, unless the home chapters get (onboarding-diy-plan.md,
+// decision 4) reuses them.
 
 const LABELS: Record<SetupStepId, string> = {
 	welcome: 'Welcome',
 	letter: 'Letter',
-	account: 'Account',
 	server: 'Server',
-	wifi: 'Wi-Fi',
 	subscription: 'Subscription',
 	names: 'Names',
 	connections: 'Connections',
-	timeline: 'Chapters',
-	interview: 'Interview',
 };
 
-const OPTIONAL = new Set<SetupStepId>(['connections', 'timeline', 'interview']);
+const OPTIONAL = new Set<SetupStepId>(['connections']);
 
 /** The server's step each flow step reads its status from, if any. */
 export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
 	welcome: null,
 	letter: null,
-	account: null,
 	server: null,
-	wifi: null,
 	subscription: 'connect_ai',
 	names: 'introductions',
 	connections: 'connect_world',
-	timeline: 'timeline',
-	interview: 'interview',
 };
 
 export function isSetupStep(s: string | null | undefined): s is SetupStepId {
@@ -125,20 +118,16 @@ export function labelOf(id: SetupStepId): string {
 /** The steps Setup offers inside the app (SetupView, the rail's panel), in
  *  order. The first half is finished for anyone in the app, and Welcome's
  *  opening only plays on the stage. The letter is here to read again. */
-export const IN_APP: SetupStepId[] = ['letter', 'names', 'subscription', 'connections', 'timeline', 'interview'];
+export const IN_APP: SetupStepId[] = ['letter', 'names', 'connections', 'subscription'];
 
 /** A button that leads INTO a step says what the person does there. */
 const INTO: Record<SetupStepId, string> = {
 	welcome: 'Begin',
 	letter: 'Read the letter',
-	account: 'Sign in',
 	server: 'Find your server',
-	wifi: 'Connect to Wi-Fi',
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
 	connections: 'Add your devices',
-	timeline: 'Draw your chapters',
-	interview: 'Tell your story',
 };
 
 /** The label for a button that moves on to `id`, or opens the app. */
@@ -200,7 +189,8 @@ class SetupStore {
 	}
 	private inflight: Promise<void> | null = null;
 
-	/** Record that Welcome (1) or the letter (2) has been passed. */
+	/** Record that Welcome (1) or the letter (2) has been passed. The stage
+	 *  passes only Welcome; the letter is read in the app. */
 	passIntro(stage: 1 | 2): void {
 		if (this.introStage >= stage) return;
 		this.introStage = stage;
@@ -269,29 +259,35 @@ class SetupStore {
 	}
 
 	/**
-	 * What a device has already sent, as one line: the payoff for turning it
-	 * on, read off the same stream counts that light the badges. Null until
-	 * something has arrived. Counts are this week's, and each noun names
-	 * exactly what the stream counts (a location update is not a place).
+	 * What a device has started sending, as one line: the payoff for turning
+	 * it on, read off the same streams that light the badges. Null until
+	 * something has arrived. It names what is arriving and never how much:
+	 * setup shows no counts, since someone in recovery sees every page.
 	 */
 	arrived(device: 'computer' | 'phone'): string | null {
-		const n = (name: string) => this.streams.find((s) => s.name === name)?.count_7d ?? 0;
-		const parts: [number, string, string][] =
+		const list = this.arriving(device);
+		return list ? `Your server is receiving ${list}.` : null;
+	}
+
+	/** What a device has started sending, as a list of nouns ("your messages
+	 *  and the pages you read"), or null. Never how much. */
+	arriving(device: 'computer' | 'phone'): string | null {
+		const has = (...names: string[]) => names.some((name) => arriving(this.streams, name));
+		const parts: [boolean, string][] =
 			device === 'computer'
 				? [
-						[n('communication_message'), 'message', 'messages'],
-						[n('activity_web_browsing'), 'page read', 'pages read'],
-						[n('activity_app_session'), 'app session', 'app sessions'],
+						[has('communication_message'), 'your messages'],
+						[has('activity_web_browsing'), 'the pages you read'],
+						[has('activity_app_session'), 'the apps you use'],
 					]
 				: [
-						[n('location_point'), 'location update', 'location updates'],
-						[n('communication_transcription'), 'recording', 'recordings'],
-						[n('health_steps') + n('health_heart_rate') + n('health_sleep'), 'Health reading', 'Health readings'],
+						[has('location_point'), 'where you go'],
+						[has('communication_transcription'), 'your recordings'],
+						[has('health_steps', 'health_heart_rate', 'health_sleep'), 'your Health data'],
 					];
-		const said = parts
-			.filter(([c]) => c > 0)
-			.map(([c, one, many]) => `${c.toLocaleString()} ${c === 1 ? one : many}`);
-		return said.length ? `Arrived this week: ${said.join(', ')}.` : null;
+		const said = parts.filter(([on]) => on).map(([, noun]) => noun);
+		if (!said.length) return null;
+		return said.length === 1 ? said[0] : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
 	}
 
 	/** The computer's collector and the phone, once paired. */
@@ -311,9 +307,7 @@ class SetupStore {
 			return this.introStage >= need || !this.fresh ? 'done' : 'open';
 		}
 		// The first half: settled here, on this device, before any server.
-		if (id === 'account') return !prePair.active || prePair.accountSettled ? 'done' : 'open';
-		if (id === 'server') return !prePair.active || prePair.serverOpen ? 'done' : 'open';
-		if (id === 'wifi') return prePair.active ? 'open' : 'done';
+		if (id === 'server') return prePair.active ? 'open' : 'done';
 		const key = SERVER[id];
 		if (!key) return 'done';
 		const own = gettingStarted.step(key)?.status;
@@ -322,17 +316,21 @@ class SetupStore {
 		// at its word walked people past a step Setup never offers to skip.
 		if (own === 'skipped' && !OPTIONAL.has(id)) return 'open';
 		if (own) return own;
-		// A server older than the timeline step: its interview status is the
-		// nearest truth (it once counted drawn chapters too).
-		if (id === 'timeline') return gettingStarted.step('interview')?.status ?? 'open';
 		// An older server with no getting-started state at all is treated as
 		// set up, the way the store treats it — never strand someone on it.
 		return gettingStarted.unsupported ? 'done' : 'open';
 	}
 
 	get steps(): SetupStep[] {
+		return this.stepsIn(ORDER);
+	}
+
+	/** `ids` as steps, in that order: the stage's (ORDER) or the app's
+	 *  (IN_APP, which also lists the letter to reread). A step is reachable
+	 *  while every one before it in `ids` is settled. */
+	stepsIn(ids: SetupStepId[]): SetupStep[] {
 		let open = true;
-		return ORDER.map((id) => {
+		return ids.map((id) => {
 			const status = this.status(id);
 			const reachable = open;
 			if (status === 'open') open = false;
@@ -359,7 +357,7 @@ class SetupStore {
 	/** In the app: the first step there still open, else the first set
 	 *  aside, else nothing. The letter is only ever reread, never owed. */
 	get resumeInApp(): SetupStepId | null {
-		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
 		return (
 			steps.find((s) => s.status === 'open')?.id ?? steps.find((s) => s.status === 'skipped')?.id ?? null
 		);
@@ -370,20 +368,20 @@ class SetupStore {
 	 *  choosing a step, not walking them; and the letter and Welcome, which
 	 *  count as read only on the device that read them, never lock anything. */
 	opensInApp(id: SetupStepId): boolean {
-		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
 		const at = steps.findIndex((s) => s.id === id);
 		return at < 0 || steps.slice(0, at).every((s) => s.optional || s.status === 'done');
 	}
 
 	/** Nothing the person does in Setup has happened yet: the flow opens
-	 *  with Hello and the letter. Anyone further along resumes at their step.
+	 *  with Hello. Anyone further along resumes at their step.
 	 *
 	 *  The subscription is NOT part of this. It can be settled before anyone
 	 *  reaches /setup — the pairing screen's "I already have an account"
 	 *  links the server before pairing, and a dev server marks it done — and
 	 *  keying on it sent those people past Hello straight into Names. */
 	get fresh(): boolean {
-		return (['names', 'connections', 'timeline', 'interview'] as SetupStepId[]).every(
+		return (['connections', 'names'] as SetupStepId[]).every(
 			(id) => this.status(id) === 'open',
 		);
 	}

@@ -751,7 +751,7 @@
 <div class="pdf-pane">
 	<div class="pdf-toolbar">
 		<IconButton
-			icon="ri:arrow-up-s-line"
+			icon="mynaui:chevron-up"
 			label="Previous page"
 			size="sm"
 			onclick={() => scrollToPage(currentPage - 1)}
@@ -764,30 +764,30 @@
 		/>
 		<span class="pdf-page-total">/ {numPages || "–"}</span>
 		<IconButton
-			icon="ri:arrow-down-s-line"
+			icon="mynaui:chevron-down"
 			label="Next page"
 			size="sm"
 			onclick={() => scrollToPage(currentPage + 1)}
 		/>
 		<div class="pdf-toolbar-spacer"></div>
-		<IconButton icon="ri:zoom-out-line" label="Zoom out" size="sm" onclick={() => zoomBy(-1)} />
+		<IconButton icon="mynaui:search-minus" label="Zoom out" size="sm" onclick={() => zoomBy(-1)} />
 		<span class="pdf-zoom-label">{Math.round(zoom * 100)}%</span>
-		<IconButton icon="ri:zoom-in-line" label="Zoom in" size="sm" onclick={() => zoomBy(1)} />
-		<IconButton icon="ri:search-line" label="Find in document (⌘F)" size="sm" onclick={openFind} />
+		<IconButton icon="mynaui:search-plus" label="Zoom in" size="sm" onclick={() => zoomBy(1)} />
+		<IconButton icon="mynaui:search" label="Find in document (⌘F)" size="sm" onclick={openFind} />
 		<button
 			class="pdf-btn"
 			class:active={railOpen}
 			onclick={() => (railOpen = !railOpen)}
 			title="Highlights ({annotations.length})"
 		>
-			<Icon icon="ri:markpen-line" width="14" />
+			<Icon icon="mynaui:pen" width="14" />
 			{#if annotations.length}<span class="pdf-btn-badge">{annotations.length}</span>{/if}
 		</button>
 	</div>
 
 	{#if findOpen}
 		<div class="pdf-find">
-			<Icon icon="ri:search-line" width="13" class="pdf-find-ic" />
+			<Icon icon="mynaui:search" width="13" class="pdf-find-ic" />
 			<input
 				class="pdf-find-input"
 				bind:this={findInput}
@@ -803,20 +803,20 @@
 				{findMatches.length ? `${findIndex + 1} / ${findMatches.length}` : findQuery.length >= 2 ? "0" : ""}
 			</span>
 			<IconButton
-				icon="ri:arrow-up-s-line"
+				icon="mynaui:chevron-up"
 				label="Previous match (⇧⏎)"
 				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex - 1)}
 			/>
 			<IconButton
-				icon="ri:arrow-down-s-line"
+				icon="mynaui:chevron-down"
 				label="Next match (⏎)"
 				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex + 1)}
 			/>
-			<IconButton icon="ri:close-line" label="Close find (Esc)" size="sm" onclick={closeFind} />
+			<IconButton icon="mynaui:x" label="Close find (Esc)" size="sm" onclick={closeFind} />
 		</div>
 	{/if}
 
@@ -829,10 +829,10 @@
 		onmouseup={handleMouseUp}
 	>
 		{#if loading}
-			<div class="pdf-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
+			<div class="pdf-status"><Icon icon="mynaui:spinner" width="22" class="spin" /></div>
 		{:else if error}
 			<div class="pdf-status error">
-				<Icon icon="ri:error-warning-line" width="22" />
+				<Icon icon="mynaui:danger-circle" width="22" />
 				<span>{error}</span>
 			</div>
 		{:else}
@@ -875,7 +875,7 @@
 				<div class="pdf-rail-spacer"></div>
 				{#if annotations.length}
 					<IconButton
-						icon="ri:download-line"
+						icon="mynaui:download"
 						label="Export highlights as markdown"
 						size="xs"
 						onclick={exportHighlights}
@@ -904,7 +904,7 @@
 								title="Send to a page"
 								onclick={(e) => openSendToPage(a, e)}
 							>
-								<Icon icon="ri:file-add-line" width="12" />
+								<Icon icon="mynaui:file-plus" width="12" />
 							</button>
 						</li>
 					{/each}
@@ -952,10 +952,10 @@
 				title="Send to a page"
 				onclick={(e) => activeAnno && openSendToPage(activeAnno, e)}
 			>
-				<Icon icon="ri:file-add-line" width="13" /> Send
+				<Icon icon="mynaui:file-plus" width="13" /> Send
 			</button>
 			<IconButton
-				icon="ri:delete-bin-line"
+				icon="mynaui:trash"
 				label="Delete highlight"
 				size="xs"
 				variant="danger"
@@ -985,7 +985,7 @@
 		onClose={() => (sendAnno = null)}
 		footerAction={{
 			label: "New page from this highlight",
-			icon: "ri:file-add-line",
+			icon: "mynaui:file-plus",
 			action: sendToNewPage,
 		}}
 	/>

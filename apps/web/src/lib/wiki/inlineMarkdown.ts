@@ -117,3 +117,13 @@ export function plainText(md: string): string {
 	const flat = (ts: Token[]): string => ts.map((t) => ("children" in t ? flat(t.children) : t.text)).join("");
 	return flat(tokenize(md));
 }
+
+/**
+ * The words of a markdown document: images dropped, each line's heading,
+ * list or quote marker cut, and the inline markup read by `plainText`.
+ */
+export function markdownWords(md: string): string {
+	const words = plainText(md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+[.)]|>)[ \t]+/gm, ""));
+	// Emphasis that runs across a line break is not inline markdown, and stays.
+	return words.replace(/\*\*|__/g, "");
+}

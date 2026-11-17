@@ -15,10 +15,11 @@
 //!   `Access-Control-Allow-Origin: *`, so fetches from the opaque-origin
 //!   iframe can read *these* responses and nothing else on the API.
 //! - Data access needs a **face token** (minted by the authenticated app
-//!   per iframe load, short-lived, bound to one applet) and executes as the
-//!   `virtues_face_reader` PG role — default-deny, SELECT granted only on
-//!   `data_*` / `wiki_*` tables and `applet_*` schemas — inside a READ ONLY
-//!   transaction with a statement timeout.
+//!   per iframe load, short-lived, bound to one applet) and executes logged
+//!   in as the `virtues_face_reader` PG role (`database::restricted`) —
+//!   default-deny, SELECT granted only on `data_*` / `wiki_*` tables and
+//!   `applet_*` schemas — inside a READ ONLY transaction with a statement
+//!   timeout.
 //! - Face documents get a strict CSP: no external hosts, ever.
 
 use axum::{
@@ -81,7 +82,7 @@ fn validate_token(token: &str) -> Option<String> {
 /// `GET /api/actions/:id/face-token` — minted by the authenticated app per
 /// iframe load. (Reaching this route at all required the proven transport.)
 pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response {
-    if face_dir_for(&applet_id).is_none() {
+    if face_for(&applet_id).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "applet has no face" })),
@@ -100,13 +101,40 @@ pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response 
 // Face file serving
 // ============================================================================
 
-/// Resolve the on-disk `face/` directory for an applet id, if it has one.
-/// Serving is rooted at `<applet folder>/face` — never the folder root, so
-/// the manifest/prompt are not exposed to the iframe.
-pub fn face_dir_for(applet_id: &str) -> Option<std::path::PathBuf> {
+/// Where an applet's face is: a `SKILL.md` folder's single `view.html`, or a
+/// `manifest.toml` folder's `face/` directory. Never the folder root, so the
+/// manifest, the prompt and the code are not exposed to the iframe.
+#[derive(Debug, Clone)]
+pub enum Face {
+    /// `<applet folder>/face/`, served whole, with `index.html` as its page.
+    Folder(std::path::PathBuf),
+    /// `<applet folder>/view.html`, the only file served.
+    View(std::path::PathBuf),
+}
+
+impl Face {
+    /// The page itself.
+    pub fn index(&self) -> std::path::PathBuf {
+        match self {
+            Face::Folder(dir) => dir.join("index.html"),
+            Face::View(file) => file.clone(),
+        }
+    }
+}
+
+/// The face of an applet id, if it has one. `view.html` wins when a folder
+/// has both, which only happens mid-conversion.
+// TODO(2026-10-27): drop `face/` once every manifest is a SKILL.md (slice 4
+// of agents/plan/applet-shape.md).
+pub fn face_for(applet_id: &str) -> Option<Face> {
     let dir = crate::applet_templates::dir_for_applet_id(applet_id)?;
-    let face = crate::applet_templates::resolve_applet_dir(&dir).join("face");
-    face.join("index.html").is_file().then_some(face)
+    let folder = crate::applet_templates::resolve_applet_dir(&dir);
+    let view = folder.join("view.html");
+    if view.is_file() {
+        return Some(Face::View(view));
+    }
+    let face = folder.join("face");
+    face.join("index.html").is_file().then_some(Face::Folder(face))
 }
 
 fn cors_headers(headers: &mut HeaderMap) {
@@ -187,8 +215,19 @@ async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMa
         return static_lib(VIRTUES_CSS, "text/css; charset=utf-8");
     }
 
-    let Some(face_dir) = face_dir_for(applet_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let face_dir = match face_for(applet_id) {
+        Some(Face::Folder(dir)) => dir,
+        // A view is one file: its page, and nothing beside it.
+        Some(Face::View(file)) => {
+            if rel != "index.html" {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            let Ok(bytes) = tokio::fs::read(&file).await else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            return (face_file_headers("text/html; charset=utf-8", req_headers), bytes).into_response();
+        }
+        None => return StatusCode::NOT_FOUND.into_response(),
     };
 
     // Path-traversal guard: reject any segment that isn't a plain name.
@@ -296,7 +335,8 @@ pub async fn face_query_handler(
     };
 
     let pool = state.db.pool();
-    match run_face_query(pool, &body.sql).await {
+    let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
+    match run_face_query(pool, &body.sql, schema.as_deref()).await {
         Ok(rows) => {
             note_query(&applet_id, &body.sql);
             with_cors((StatusCode::OK, Json(rows)))
@@ -353,30 +393,71 @@ pub(crate) fn seen_queries(applet_id: &str) -> Vec<String> {
     seen_store().lock().expect("face query store poisoned").get(applet_id).cloned().unwrap_or_default()
 }
 
-pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
-    if sql.len() > 20_000 {
-        return Err("query too long".into());
-    }
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+/// A read-only transaction on the reader login, with a statement timeout and
+/// the owner's timezone, and the zone it was set to. View SQL and an applet's
+/// `run` SQL both run in one.
+/// A read-only transaction on the reader login, on the owner's clock.
+/// `schema` is the applet the SQL belongs to: its schema goes first on the
+/// search path, so the applet's own tables need no schema in its SQL.
+pub(crate) async fn reader_transaction(
+    pool: &sqlx::PgPool,
+    timeout: &str,
+    schema: Option<&str>,
+) -> std::result::Result<(sqlx::Transaction<'static, sqlx::Postgres>, String), String> {
+    // The zone comes from the profile, an app_* table the reader cannot see,
+    // so it is read on the main pool before the reader's transaction.
+    let zone = crate::timezone::resolve_timezone(pool, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut tx = crate::database::restricted::begin(pool, crate::database::restricted::Login::Reader)
+        .await
+        .map_err(|e| e.to_string())?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
+    sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout}'"))
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    // Set the timezone BEFORE dropping to face_reader — the profile table is
-    // app_*, which face_reader can't read. Reading it after the role switch
-    // would error and poison the whole transaction ("current transaction is
-    // aborted"), failing every face query. The pool role can read it here.
-    crate::timezone::set_local_timezone(&mut *tx, None)
+    crate::timezone::apply_timezone(&mut tx, &zone)
         .await
         .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL ROLE virtues_face_reader")
-        .execute(&mut *tx)
+    set_applet_search_path(&mut tx, schema, true).await?;
+    Ok((tx, zone))
+}
+
+/// Put an applet's own schema on a transaction's search path, with `public`
+/// after it when `public` is true. The name comes from
+/// `scheduler::applets::applet_schema_name`, which only makes `applet_`
+/// and lowercase letters, digits and underscores; anything else is refused
+/// rather than written into SQL.
+pub(crate) async fn set_applet_search_path(
+    tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    schema: Option<&str>,
+    public: bool,
+) -> std::result::Result<(), String> {
+    let Some(schema) = schema else { return Ok(()) };
+    let safe = schema.starts_with("applet_")
+        && schema.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !safe {
+        return Err(format!("`{schema}` is not an applet's schema"));
+    }
+    let path = if public { format!("{schema}, public") } else { schema.to_string() };
+    sqlx::query(&format!("SET LOCAL search_path = {path}"))
+        .execute(&mut **tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Run a view's SQL. `schema` is its applet's, whose tables the SQL may name
+/// without one.
+pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str, schema: Option<&str>) -> std::result::Result<serde_json::Value, String> {
+    if sql.len() > 20_000 {
+        return Err("query too long".into());
+    }
+    let (mut tx, _) = reader_transaction(pool, "5s", schema).await?;
 
     let wrapped = format!(
         "SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM \
@@ -395,7 +476,11 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
 ///
 /// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
 ///   `applet_*` schema (the faces' read-only bridge), except the ontologies
-///   marked `ModelAccess::OwnerOptIn`, which it revokes.
+///   marked `ModelAccess::OwnerOptIn`, which it revokes; and on the columns of
+///   `app_applet_runs` that say when each applet ran, which an applet's
+///   `run: sql` reads to wait between runs; and on the columns of
+///   `app_chats` and `app_chat_messages` that say who wrote what, in which
+///   chat and when.
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
@@ -494,6 +579,30 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
             .execute(&mut *tx)
             .await
             .map_err(|e| crate::error::Error::Database(format!("revoke on {table} failed: {e}")))?;
+    }
+    // A run's `run: sql` runs as the reader, and the cooldown that
+    // applets/AGENTS.md recommends asks when this applet last succeeded. Only
+    // those columns: a run's error and summary text stay the server's.
+    sqlx::query(
+        "GRANT SELECT (id, applet_id, status, trigger, started_at, completed_at) \
+         ON public.app_applet_runs TO virtues_face_reader",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::Error::Database(format!("grant on app_applet_runs failed: {e}")))?;
+    // Chats with Virtues, readable as chats with other AI apps already are in
+    // `data_content_conversation`, so an applet can read a day of both
+    // (`clarity-review`). Only who wrote what, in which chat and when: tool
+    // calls, their results and reasoning stay the server's.
+    for grant in [
+        "GRANT SELECT (id, title, created_at, updated_at, deleted_at) ON public.app_chats TO virtues_face_reader",
+        "GRANT SELECT (id, chat_id, role, content, subject, sequence_num, created_at) \
+         ON public.app_chat_messages TO virtues_face_reader",
+    ] {
+        sqlx::query(grant)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::error::Error::Database(format!("grant on chats failed: {e}")))?;
     }
     tx.commit()
         .await
@@ -627,5 +736,52 @@ mod tests {
         assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
         // The task tools send the model to sql_query for the list.
         assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
+        let can_read_column = |table: &'static str, column: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT has_column_privilege('virtues_face_reader', $1, $2, 'SELECT')",
+                )
+                .bind(format!("public.{table}"))
+                .bind(column)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        assert!(can_read_column("app_applet_runs", "started_at").await, "a run's SQL cannot see when the applet last ran");
+        assert!(!can_read_column("app_applet_runs", "error").await, "a run's error text is readable");
+        assert!(can_read_column("app_chat_messages", "content").await, "an applet cannot read a chat");
+        assert!(!can_read_column("app_chat_messages", "tool_calls").await, "a chat's tool results are readable");
+        assert!(!can_read_column("app_chat_messages", "reasoning").await, "a chat's reasoning is readable");
+    }
+
+    /// A view's SQL cannot return to the server's role. Under a `SET ROLE`
+    /// drop, `set_config('role', session_user, true)` inside the query
+    /// switched back, and the rest of the query read `app_*` tables.
+    #[sqlx::test]
+    async fn view_sql_cannot_return_to_the_server_role(pool: sqlx::PgPool) {
+        ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        crate::database::restricted::ensure_logins(&pool).await;
+        let escape = "SELECT set_config('role', session_user, true) AS r, \
+                      query_to_xml('select count(*) as n from app_applets', true, false, '') AS x";
+        let err = run_face_query(&pool, escape, None).await.expect_err("the escape must be refused");
+        assert!(err.contains("permission denied"), "{err}");
+    }
+
+    /// A view names its own applet's tables without the schema, and still
+    /// reads the record's tables, which are in `public`.
+    #[sqlx::test]
+    async fn a_view_names_its_own_tables_without_the_schema(pool: sqlx::PgPool) {
+        sqlx::query("CREATE SCHEMA applet_water_log").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE applet_water_log.drinks (ml integer)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO applet_water_log.drinks VALUES (250), (500)").execute(&pool).await.unwrap();
+        ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        crate::database::restricted::ensure_logins(&pool).await;
+        let sql = "SELECT sum(ml)::int AS ml, (SELECT count(*) FROM data_calendar_event)::int AS events FROM drinks";
+        let rows = run_face_query(&pool, sql, Some("applet_water_log")).await.unwrap();
+        assert_eq!(rows, serde_json::json!([{ "ml": 750, "events": 0 }]));
+        assert!(run_face_query(&pool, sql, None).await.is_err(), "without its schema `drinks` is unknown");
+        assert!(run_face_query(&pool, sql, Some("public; drop table x")).await.is_err());
     }
 }

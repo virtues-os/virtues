@@ -33,7 +33,7 @@
 //!
 //! What makes that safe is not a second consent but four small gates, all in
 //! `wiki_editor`: `maintenance <> 'never'`, no human edit inside six hours,
-//! rested past its interval (30 days for an entity, 7 for a year or story),
+//! rested past its interval (30 days for an entity, 7 for a year or thing),
 //! and the evidence fingerprint actually moved — then one article per applet
 //! run, at most one run an hour. And it is disclosed where it is read rather
 //! than in a settings page: every article carries a colophon saying "The

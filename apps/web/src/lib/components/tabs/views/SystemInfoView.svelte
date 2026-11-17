@@ -287,7 +287,7 @@
 				onclick={toggleDetail}
 				aria-pressed={detail}
 			>
-				<Icon icon="ri:terminal-line" width="14" />
+				<Icon icon="mynaui:terminal" width="14" />
 				<span>Detail</span>
 			</button>
 		</div>
@@ -295,7 +295,7 @@
 
 	{#if loading}
 		<div class="flex items-center justify-center h-64">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else}
 		<!--
@@ -452,7 +452,7 @@
 
 			{#if detail}
 				<button class="raw-toggle mono" onclick={() => (rawOpen = !rawOpen)}>
-					<Icon icon={rawOpen ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"} width="14" />
+					<Icon icon={rawOpen ? "mynaui:chevron-down" : "mynaui:chevron-right"} width="14" />
 					raw telemetry
 				</button>
 				{#if rawOpen}

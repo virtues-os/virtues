@@ -98,7 +98,7 @@
 		background: none;
 		cursor: pointer;
 		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground-muted);
 	}
 

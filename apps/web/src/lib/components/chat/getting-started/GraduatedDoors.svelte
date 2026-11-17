@@ -78,7 +78,7 @@
 		<button type="button" class="door" onclick={door.go}>
 			<span class="line">
 				<span class="label">{door.label}</span>
-				<Icon icon="ri:arrow-right-up-line" width="14" />
+				<Icon icon="mynaui:arrow-up-right" width="14" />
 			</span>
 			<span class="note">{door.note}</span>
 		</button>

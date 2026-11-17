@@ -8,7 +8,9 @@
 //! `authorized_keys` is `restrict,command="virtues agent-exec --key <name>"`:
 //! whatever the agent asks to run, sshd runs `agent-exec`, which reads the
 //! request from `SSH_ORIGINAL_COMMAND`, allows only the data verbs, and sends
-//! each to the server's console door over loopback (`server/api/console.rs`).
+//! each to the server's console door on its console socket
+//! (`server/api/console.rs`, `console_socket.rs`), which admits this user to
+//! the data verbs' routes and nothing else.
 //! The server runs it through the executor and its restricted roles, so the
 //! roles are the boundary the agent meets. The plan is
 //! agents/plan/cli-data-verbs-plan.md.
@@ -32,7 +34,7 @@ const COMMENT_PREFIX: &str = "virtues-agent:";
 
 /// The verbs an agent key may run. Lifecycle verbs (`upgrade`, `reset`,
 /// `backup`) are the owner's, at the box.
-const AGENT_VERBS: &[&str] = &["query", "search", "schema", "write", "applet", "page"];
+const AGENT_VERBS: &[&str] = &["query", "search", "schema", "write", "applet", "page", "mcp"];
 
 const KEY_TYPES: &[&str] = &[
     "ssh-ed25519",
@@ -264,6 +266,7 @@ pub async fn exec(key: String) -> Result<(), String> {
             println!("{text}");
             Ok(())
         }
+        Request::Run(Commands::Mcp) => super::mcp::serve(Some(key)).await,
         Request::Run(command) => super::data::run(&super::data::Verbs::remote(key), command).await,
     }
 }
@@ -371,6 +374,7 @@ mod tests {
         assert!(matches!(run("virtues query 'select 1'"), Some(Commands::Query { .. })));
         assert!(matches!(run("schema"), Some(Commands::Schema { .. })));
         assert!(matches!(run("applet put -"), Some(Commands::Applet { .. })));
+        assert!(matches!(run("virtues mcp"), Some(Commands::Mcp)));
         assert!(matches!(parse_request("query --help"), Ok(Request::Help(_))));
         for refused in ["upgrade", "reset --yes", "sh -c id", "virtues agent-key ls", "", "query 'unclosed"] {
             assert!(parse_request(refused).is_err(), "{refused}");

@@ -17,7 +17,7 @@ The prompts live beside the code and are compiled in:
 | [`virtues-core/prompts/wiki/constitution.md`](../../virtues-core/prompts/wiki/constitution.md) | the rules that never vary, shared by every article |
 | [`virtues-core/prompts/wiki/year.md`](../../virtues-core/prompts/wiki/year.md) | the brief for a year |
 | [`virtues-core/prompts/wiki/chapter.md`](../../virtues-core/prompts/wiki/chapter.md) | the brief for a chapter — an era the person drew |
-| [`virtues-core/prompts/wiki/story.md`](../../virtues-core/prompts/wiki/story.md) | the brief for a story — a subject they named, with nothing beneath it |
+| [`virtues-core/prompts/wiki/thing.md`](../../virtues-core/prompts/wiki/thing.md) | the brief for a thing — a subject they named, which no record points at |
 | [`virtues-core/prompts/wiki/entity.md`](../../virtues-core/prompts/wiki/entity.md) | the brief for a person, place or organization |
 
 Two subject kinds have **no** brief, and in both cases that is intentional.
@@ -43,7 +43,7 @@ into a doc** — that is how the two prompts we already had drifted apart.
 Before this there were two editors, the day narrator and the entity article
 writer, with two prompts restating the same policy in different words. Each
 difference between them went unnoticed until the generated prose came out
-wrong. Adding years, stories and chapters the same way would have made five.
+wrong. Adding years, things and chapters the same way would have made five.
 
 So one constitution holds the shared policy, and one brief per subject kind
 describes what *that kind of page* is. A rule that belongs to every article goes in the

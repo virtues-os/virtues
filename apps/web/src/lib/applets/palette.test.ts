@@ -1,5 +1,14 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { appletDestination, appletGlyph, describeSchedule, errorHeadline, limitsOf, relativeTime, runFix } from './palette';
+import {
+	appletDestination,
+	appletGlyph,
+	describeSchedule,
+	describeTriggers,
+	errorHeadline,
+	limitsOf,
+	relativeTime,
+	runFix
+} from './palette';
 
 describe('describeSchedule', () => {
 	it('reads daily and interval schedules as before', () => {
@@ -21,6 +30,25 @@ describe('describeSchedule', () => {
 	it('returns the cron unchanged for syntax it does not read', () => {
 		expect(describeSchedule('0 0 8 * * 1#2')).toBe('0 0 8 * * 1#2');
 		expect(describeSchedule('0 0 8 1 * *')).toBe('0 0 8 1 * *');
+	});
+});
+
+describe('describeTriggers', () => {
+	const watch = (kind: 'new' | 'before' | 'after_end', minutes: number) => ({
+		table: 'data_calendar_event',
+		kind,
+		minutes,
+		label: 'calendar events'
+	});
+
+	it('says what data starts it, beside its schedule', () => {
+		expect(describeTriggers({ schedule: null, watch: watch('new', 0) })).toBe('On new calendar events');
+		expect(describeTriggers({ schedule: null, watch: watch('before', 30) })).toBe('30 min before calendar events');
+		expect(describeTriggers({ schedule: null, watch: watch('after_end', 60) })).toBe('1h after calendar events end');
+		expect(describeTriggers({ schedule: '0 0 7 * * *', watch: watch('new', 0) })).toBe(
+			'Daily at 7am · On new calendar events'
+		);
+		expect(describeTriggers({ schedule: null, watch: null })).toBe('On demand');
 	});
 });
 

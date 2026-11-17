@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
   "status",
   "request_location",
   "open_settings",
+  "sign_in",
 ];
 
 fn main() {

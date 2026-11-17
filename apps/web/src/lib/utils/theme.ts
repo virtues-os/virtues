@@ -475,67 +475,67 @@ export const themeMetadata: Record<
 	}
 > = {
 	pemberley: {
-		icon: 'ph:circle-bold',
+		icon: 'mynaui:circle',
 		description: 'White on white, hairlines & one blue'
 	},
 	caladan: {
-		icon: 'ph:waves-bold',
+		icon: 'mynaui:waves',
 		description: 'Atreides ocean world'
 	},
 	rivendell: {
-		icon: 'ph:leaf-bold',
+		icon: 'mynaui:leaf',
 		description: 'Elven refuge, warm light'
 	},
 	oxford: {
-		icon: 'ph:feather-bold',
+		icon: 'mynaui:pen',
 		description: 'Heritage, navy & claret'
 	},
 	netherfield: {
-		icon: 'ph:building-bold',
+		icon: 'mynaui:building',
 		description: 'Austen elegance, pristine'
 	},
 	lothlorien: {
-		icon: 'ph:tree-bold',
+		icon: 'mynaui:tree',
 		description: 'Golden wood twilight'
 	},
 	hogwarts: {
-		icon: 'ph:magic-wand-bold',
+		icon: 'mynaui:sparkles',
 		description: 'Warm parchment, candlelit'
 	},
 	tatooine: {
-		icon: 'ph:sun-bold',
+		icon: 'mynaui:sun',
 		description: 'Twin suns, desert warmth'
 	},
 	'baker-street': {
-		icon: 'ph:magnifying-glass-bold',
+		icon: 'mynaui:search',
 		description: 'Victorian gaslight'
 	},
 	narnia: {
-		icon: 'ph:compass-tool-bold',
+		icon: 'mynaui:ruler',
 		description: 'Blueprint under lamplight'
 	},
 	canterbury: {
-		icon: 'ph:path-bold',
+		icon: 'mynaui:path',
 		description: 'Pilgrim earth tones'
 	},
 	borghese: {
-		icon: 'ph:circle-half-bold',
+		icon: 'mynaui:circle-half',
 		description: 'Dramatic light and shadow'
 	},
 	lyceum: {
-		icon: 'ph:student-bold',
+		icon: 'mynaui:graduation-cap',
 		description: 'Aristotelian cool blues'
 	},
 	asgard: {
-		icon: 'ph:lightning-bold',
+		icon: 'mynaui:lightning',
 		description: 'Norse realm, cold majesty'
 	},
 	agora: {
-		icon: 'ph:columns-bold',
+		icon: 'mynaui:columns',
 		description: 'Greek marketplace purple'
 	},
 	shire: {
-		icon: 'ph:house-bold',
+		icon: 'mynaui:home',
 		description: 'Cozy hobbit pastels'
 	}
 };

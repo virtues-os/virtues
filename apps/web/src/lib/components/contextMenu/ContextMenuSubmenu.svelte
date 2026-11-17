@@ -112,7 +112,7 @@
 			{#if subItem.shortcut}
 				<span class="item-shortcut">{subItem.shortcut}</span>
 			{:else if subItem.checked}
-				<span class="item-check"><Icon icon="ri:check-line" width="14" /></span>
+				<span class="item-check"><Icon icon="mynaui:check" width="14" /></span>
 			{/if}
 		</button>
 
@@ -179,7 +179,7 @@
 		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		text-align: left;
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);

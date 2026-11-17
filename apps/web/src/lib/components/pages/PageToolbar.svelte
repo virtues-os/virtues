@@ -5,30 +5,18 @@
 	import { projectMenuItems } from "$lib/utils/projectActions";
 	import Button from "$lib/components/Button.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
-	import IconPicker from "$lib/components/IconPicker.svelte";
-	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
 	import type { PageFormat } from "$lib/api/client";
-	import { identityOf } from "$lib/refs/identity.svelte";
-	import { clothFor } from "$lib/sidebar/pin-colors";
 
 	interface Props {
-		icon: string | null;
-		/** `--cat-*` token key for the icon, or null. */
-		iconColor?: string | null;
-		coverUrl: string | null;
 		copied: boolean;
 		pageId: string;
 		/** How the page holds its text: only a block page puts a version back. */
 		format?: PageFormat;
-		showCoverPicker?: boolean;
 		isShared?: boolean;
 		referencesActive?: boolean;
-		onIconSelect: (value: string | null) => void;
-		onIconColorSelect?: (value: string | null) => void;
-		onCoverSelect: (url: string | null) => void;
 		onCopyMarkdown: () => void;
 		/** The page's counts, said at the foot of ⋯ (block pages). */
 		counts?: { words: number; characters: number; links: number } | null;
@@ -48,18 +36,11 @@
 	let {
 		finding = false,
 		contents = null,
-		icon,
-		iconColor = null,
-		coverUrl,
 		copied,
 		pageId,
 		format = "markdown",
-		showCoverPicker = $bindable(false),
 		isShared = false,
 		referencesActive = false,
-		onIconSelect,
-		onIconColorSelect,
-		onCoverSelect,
 		onCopyMarkdown,
 		counts = null,
 		onViewMarkdown,
@@ -69,77 +50,34 @@
 		onDelete,
 	}: Props = $props();
 
-	let showIconPicker = $state(false);
 	let showDisplaySettings = $state(false);
 	let showOverflow = $state(false);
 	let showVersionHistory = $state(false);
 	let showDeleteConfirm = $state(false);
+
+	// Version history opens from ⋯, so focus goes back to ⋯ when it closes,
+	// unless something else took it.
+	let moreAnchor = $state<HTMLElement | null>(null);
+	let historyWasOpen = false;
+	$effect(() => {
+		const open = showVersionHistory;
+		if (historyWasOpen && !open) {
+			const active = document.activeElement;
+			if (!active || active === document.body) moreAnchor?.querySelector("button")?.focus();
+		}
+		historyWasOpen = open;
+	});
 </script>
 
 <!--
   Page toolbar — a light overlay, not a bar. Faded at rest so the document
-  reads clean; rises to full opacity on hover/focus. Page-level actions only
-  (icon, cover, display, share); the long tail lives behind ••• overflow.
+  reads clean; rises to full opacity on hover/focus. Display and share sit
+  on the bar; the long tail lives behind ⋯. The icon and cover are added
+  from the page itself, over its title (PageContent), and the save state
+  shows in the tab's toolbar only when it is something other than saved.
 -->
 <div class="page-toolbar" class:finding inert={finding}>
 	<div class="toolbar-spacer"></div>
-
-	<!-- Identity -->
-	<div class="toolbar-group">
-		<Popover bind:open={showIconPicker} placement="bottom-start">
-			{#snippet trigger({ toggle })}
-				<button
-					onclick={toggle}
-					class="toolbar-action"
-					title={icon ? "Change icon" : "Add icon"}
-					aria-label={icon ? "Change icon" : "Add icon"}
-					aria-expanded={showIconPicker}
-					aria-haspopup="dialog"
-				>
-					{#if icon}
-						{#if icon.includes(":")}
-							<Icon
-								{icon}
-								width="16"
-								style={iconColor ? `color: var(--cat-${iconColor})` : undefined}
-							/>
-						{:else}
-							<span class="toolbar-emoji">{icon}</span>
-						{/if}
-					{:else}
-						<Icon icon="ri:emotion-line" width="16" />
-					{/if}
-				</button>
-			{/snippet}
-			{#snippet children({ close })}
-				<IconPicker
-					value={icon}
-					onSelect={onIconSelect}
-					{close}
-					color={iconColor}
-					onColorSelect={onIconColorSelect}
-					label={identityOf(`/page/${pageId}`).title}
-					autoColor={clothFor({ url: `/page/${pageId}` })}
-				/>
-			{/snippet}
-		</Popover>
-		<Popover bind:open={showCoverPicker} placement="bottom-start">
-			{#snippet trigger({ toggle })}
-				<IconButton
-					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
-					label={coverUrl ? "Change cover" : "Add cover"}
-					expanded={showCoverPicker}
-					haspopup="dialog"
-					onclick={toggle}
-				/>
-			{/snippet}
-			{#snippet children({ close })}
-				<CoverImagePicker value={coverUrl} onSelect={onCoverSelect} {close} />
-			{/snippet}
-		</Popover>
-	</div>
-
-	<div class="toolbar-gap"></div>
 
 	<!-- Display -->
 	<div class="toolbar-group">
@@ -174,22 +112,6 @@
 
 	<!-- Actions -->
 	<div class="toolbar-group">
-		{#if onToggleReferences}
-			<IconButton
-				icon="ri:links-line"
-				label="References"
-				pressed={referencesActive}
-				onclick={onToggleReferences}
-			/>
-		{/if}
-		<Popover bind:open={showVersionHistory} placement="bottom-end">
-			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:history-line" label="Version history" expanded={showVersionHistory} haspopup="dialog" onclick={toggle} />
-			{/snippet}
-			{#snippet children({ close })}
-				<VersionHistoryPanel {close} {pageId} {format} />
-			{/snippet}
-		</Popover>
 		{#if onShare}
 			<!-- No `pressed`. Sharing is not a toggle this button flips: clicking it
 			     copies the link and raises a toast, so `aria-pressed="false"` would
@@ -197,14 +119,25 @@
 			     IS carried — by the icon, which becomes a link once one exists, and
 			     by the label, which changes with it. -->
 			<IconButton
-				icon={isShared ? "ri:link" : "ri:share-line"}
+				icon={isShared ? "mynaui:link" : "mynaui:share"}
 				label={isShared ? "Manage share link" : "Share page"}
 				onclick={onShare}
 			/>
 		{/if}
+		<!-- Version history opens from ⋯, under it: this empty anchor holds its place. -->
+		<Popover bind:open={showVersionHistory} placement="bottom-end">
+			{#snippet trigger()}
+				<span class="history-anchor" aria-hidden="true"></span>
+			{/snippet}
+			{#snippet children({ close })}
+				<VersionHistoryPanel {close} {pageId} {format} />
+			{/snippet}
+		</Popover>
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:more-2-fill" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
+				<span class="more-anchor" bind:this={moreAnchor}>
+					<IconButton icon="mynaui:dots-vertical" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
+				</span>
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
@@ -212,7 +145,7 @@
 						<!-- As Add to project: the headings open as their own menu
 						     where this row was. -->
 						<MenuItem
-							icon="ri:list-unordered"
+							icon="mynaui:list"
 							label="Contents…"
 							onclick={(e: MouseEvent) => {
 								const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -226,8 +159,30 @@
 						/>
 						<div class="overflow-divider"></div>
 					{/if}
+					{#if onToggleReferences}
+						<MenuItem
+							icon="mynaui:link"
+							label="References"
+							role="menuitemcheckbox"
+							checked={referencesActive}
+							onclick={() => {
+								close();
+								onToggleReferences();
+							}}
+						/>
+					{/if}
 					<MenuItem
-						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
+						icon="mynaui:clock-circle"
+						label="Version history"
+						onclick={() => {
+							close();
+							// After this click, so the history's outside-click close doesn't take it.
+							requestAnimationFrame(() => (showVersionHistory = true));
+						}}
+					/>
+					<div class="overflow-divider"></div>
+					<MenuItem
+						icon={copied ? "mynaui:check" : "mynaui:copy"}
 						label={copied ? "Copied!" : "Copy as Markdown"}
 						onclick={() => {
 							onCopyMarkdown();
@@ -236,7 +191,7 @@
 					/>
 					{#if onPrint}
 						<MenuItem
-							icon="ri:printer-line"
+							icon="mynaui:printer"
 							label="Print"
 							onclick={() => {
 								close();
@@ -247,7 +202,7 @@
 					<!-- This popover has no submenus, so the choice opens as the
 					     shared project menu where this row was. -->
 					<MenuItem
-						icon="ri:folder-add-line"
+						icon="mynaui:folder-plus"
 						label="Add to project…"
 						onclick={(e: MouseEvent) => {
 							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -285,7 +240,7 @@
 						</div>
 					{:else}
 						<MenuItem
-							icon="ri:delete-bin-line"
+							icon="mynaui:trash"
 							label="Delete page"
 							destructive
 							onclick={() => (showDeleteConfirm = true)}
@@ -396,9 +351,14 @@
 		font-family: var(--font-serif-ui, Georgia, serif);
 	}
 
-	.toolbar-emoji {
-		font-size: 14px;
-		line-height: 1;
+	.more-anchor {
+		display: contents;
+	}
+
+	.history-anchor {
+		display: block;
+		width: 0;
+		height: 28px;
 	}
 
 	/* Overflow menu */

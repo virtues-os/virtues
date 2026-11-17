@@ -101,7 +101,7 @@
 
 	// Get icon for file type
 	function getFileIcon(file: DriveFile): string {
-		if (file.is_folder) return "ri:folder-fill";
+		if (file.is_folder) return "mynaui:folder-solid";
 
 		const ext = file.filename.split(".").pop()?.toLowerCase();
 		const mime = file.mime_type?.toLowerCase() || "";
@@ -110,24 +110,24 @@
 			mime.startsWith("image/") ||
 			["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext || "")
 		) {
-			return "ri:image-fill";
+			return "mynaui:image-solid";
 		}
 		if (
 			mime.startsWith("video/") ||
 			["mp4", "mov", "avi", "mkv", "webm"].includes(ext || "")
 		) {
-			return "ri:movie-fill";
+			return "mynaui:film-solid";
 		}
 		if (
 			mime.startsWith("audio/") ||
 			["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "")
 		) {
-			return "ri:music-fill";
+			return "mynaui:music-solid";
 		}
-		if (["pdf"].includes(ext || "")) return "ri:file-pdf-fill";
-		if (["doc", "docx"].includes(ext || "")) return "ri:file-word-fill";
-		if (["xls", "xlsx"].includes(ext || "")) return "ri:file-excel-fill";
-		if (["ppt", "pptx"].includes(ext || "")) return "ri:file-ppt-fill";
+		if (["pdf"].includes(ext || "")) return "mynaui:file-text-solid";
+		if (["doc", "docx"].includes(ext || "")) return "mynaui:file-text-solid";
+		if (["xls", "xlsx"].includes(ext || "")) return "mynaui:table";
+		if (["ppt", "pptx"].includes(ext || "")) return "mynaui:presentation";
 		if (
 			[
 				"js",
@@ -143,20 +143,20 @@
 				"h",
 			].includes(ext || "")
 		) {
-			return "ri:file-code-fill";
+			return "mynaui:code-square";
 		}
 		if (
 			["txt", "md", "json", "yaml", "yml", "toml", "xml", "csv"].includes(
 				ext || "",
 			)
 		) {
-			return "ri:file-text-fill";
+			return "mynaui:file-text-solid";
 		}
 		if (["zip", "tar", "gz", "rar", "7z"].includes(ext || "")) {
-			return "ri:file-zip-fill";
+			return "mynaui:archive";
 		}
 
-		return "ri:file-fill";
+		return "mynaui:file-solid";
 	}
 
 	function getFileIconColor(_file: DriveFile): string {
@@ -309,13 +309,13 @@
 					{
 						id: "open",
 						label: "Open",
-						icon: "ri:folder-open-line",
+						icon: "mynaui:folder-two",
 						action: () => navigateToFolder(file.path),
 					},
 					{
 						id: "rename",
 						label: "Rename",
-						icon: "ri:pencil-line",
+						icon: "mynaui:pencil",
 						dividerBefore: true,
 						action: () => {
 							renamingFile = file;
@@ -325,7 +325,7 @@
 					{
 						id: "delete",
 						label: "Delete",
-						icon: "ri:delete-bin-line",
+						icon: "mynaui:trash",
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
@@ -337,7 +337,7 @@
 					{
 						id: "download",
 						label: "Download",
-						icon: "ri:download-line",
+						icon: "mynaui:download",
 						action: () => handleDownload(file),
 					},
 					// Text-bearing files can re-queue extraction (retry a
@@ -347,7 +347,7 @@
 								{
 									id: "reextract",
 									label: "Re-extract text",
-									icon: "ri:refresh-line",
+									icon: "mynaui:refresh",
 									action: () => handleReextract(file),
 								},
 							]
@@ -355,7 +355,7 @@
 					{
 						id: "rename",
 						label: "Rename",
-						icon: "ri:pencil-line",
+						icon: "mynaui:pencil",
 						dividerBefore: true,
 						action: () => {
 							renamingFile = file;
@@ -365,7 +365,7 @@
 					{
 						id: "delete",
 						label: "Delete",
-						icon: "ri:delete-bin-line",
+						icon: "mynaui:trash",
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
@@ -418,14 +418,14 @@
 		{
 			key: "filename",
 			label: "Name",
-			icon: "ri:file-line",
+			icon: "mynaui:file",
 			width: "55%",
 			minWidth: "240px",
 		},
 		{
 			key: "size_bytes",
 			label: "Size",
-			icon: "ri:hard-drive-2-line",
+			icon: "mynaui:hard-drive",
 			width: "15%",
 			minWidth: "90px",
 			getValue: (file) =>
@@ -434,7 +434,7 @@
 		{
 			key: "extraction_status",
 			label: "Indexed",
-			icon: "ri:search-eye-line",
+			icon: "mynaui:search",
 			width: "12%",
 			minWidth: "90px",
 			hideOnMobile: true,
@@ -445,7 +445,7 @@
 		{
 			key: "updated_at",
 			label: "Modified",
-			icon: "ri:time-line",
+			icon: "mynaui:clock-circle",
 			width: "20%",
 			minWidth: "120px",
 			hideOnMobile: true,
@@ -555,7 +555,7 @@
 				{#each breadcrumbs() as crumb, i}
 					{#if i > 0}
 						<Icon
-							icon="ri:arrow-right-s-line"
+							icon="mynaui:chevron-right"
 							class="text-foreground-subtle"
 						/>
 					{/if}
@@ -580,20 +580,20 @@
 				<Button
 					variant="ghost"
 					size="sm"
-					icon="ri:delete-bin-line"
+					icon="mynaui:trash"
 					onclick={navigateToTrash}>Trash</Button
 				>
 				<Button
 					variant="ghost"
 					size="sm"
-					icon="ri:folder-add-line"
+					icon="mynaui:folder-plus"
 					onclick={() => (showNewFolderModal = true)}
 					>New folder</Button
 				>
 				<Button
 					variant="primary"
 					size="sm"
-					icon="ri:upload-2-line"
+					icon="mynaui:upload"
 					disabled={uploading}
 					onclick={() => fileInput?.click()}>Upload</Button
 				>
@@ -626,7 +626,7 @@
 			>
 				<div class="flex items-center gap-3">
 					<Icon
-						icon="ri:loader-4-line"
+						icon="mynaui:spinner"
 						class="animate-spin text-primary"
 					/>
 					<div class="flex-1">
@@ -664,7 +664,7 @@
 			{#if !loading && files.length === 0}
 				<div class="p-12 text-center">
 					<Icon
-						icon="ri:folder-open-line"
+						icon="mynaui:folder-two"
 						class="text-6xl text-foreground-subtle mb-4"
 					/>
 					<h3 class="text-lg font-medium text-foreground mb-2">
@@ -674,7 +674,7 @@
 						Drag and drop files here or click Upload to get started
 					</p>
 					<Button
-						icon="ri:upload-2-line"
+						icon="mynaui:upload"
 						onclick={() => fileInput?.click()}
 						>Upload files</Button
 					>
@@ -685,7 +685,7 @@
 					{columns}
 					entityType="drive"
 					{loading}
-					emptyIcon="ri:folder-open-line"
+					emptyIcon="mynaui:folder-two"
 					emptyMessage={currentPath
 						? "This folder is empty"
 						: "No files yet"}
@@ -756,7 +756,7 @@
 						</td>
 						<td class="px-3 py-2.5 text-right">
 							<IconButton
-								icon="ri:more-2-fill"
+								icon="mynaui:dots-vertical"
 								label="Actions for {file.filename}"
 								size="sm"
 								haspopup="menu"

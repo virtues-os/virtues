@@ -16,8 +16,8 @@ import Foundation
 /// input device is running or a call is still inside its end grace, so an idle
 /// Mac does no polling.
 ///
-/// Recordings are stereo `.m4a` chunks in `~/.virtues/call-audio/`, owner on
-/// the left channel and far side on the right, each with a JSON sidecar.
+/// Recordings are pairs of mono `.m4a` chunks in `~/.virtues/call-audio/`,
+/// one for the owner and one for the far side, with a JSON sidecar each.
 /// Uploading them is not built yet (`agents/plan/call-audio-plan.md`).
 @available(macOS 14.4, *)
 final class CallAudioMonitor {
@@ -212,7 +212,7 @@ final class CallAudioMonitor {
 
 /// One recording of one call: a process tap on the call app and the mic it
 /// uses, in a single private aggregate device so both arrive on one clock in
-/// one callback, written as rotating stereo chunks.
+/// one callback, written as rotating pairs of chunks (`ChunkWriter`).
 ///
 /// The mic is the aggregate's main device and the tap is drift-compensated to
 /// it. The output device is never added: screenpipe found that putting the real
@@ -292,14 +292,13 @@ final class CallRecorder {
         let metadata: [String: Any] = [
             "call_id": callId,
             "app": app.name,
-            "channel_layout": "owner_left_remote_right",
             "mic_device": CoreAudioProperty.string(mic, kAudioObjectPropertyName),
             "output_device": CoreAudioProperty.string(output, kAudioObjectPropertyName),
             "output_transport": CoreAudioProperty.transport(output),
         ]
         guard sampleRate > 0,
               let writer = ChunkWriter(directory: directory.appendingPathComponent(callId),
-                                       sampleRate: sampleRate, metadata: metadata)
+                                       inputRate: sampleRate, metadata: metadata)
         else {
             print("⚠️ call audio: could not open a chunk at \(sampleRate) Hz")
             AudioHardwareDestroyAggregateDevice(aggregate)
@@ -312,8 +311,7 @@ final class CallRecorder {
         recorder.aggregateID = aggregate
 
         // The aggregate's input buffers: the mic's channels first, then the
-        // tap's two. Owner = the mic's first channel; far side = the tap's
-        // channels averaged to one.
+        // tap's two.
         status = AudioDeviceCreateIOProcIDWithBlock(&recorder.ioProc, aggregate, nil) { _, input, _, _, _ in
             writer.append(UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input)),
                           micChannels: micChannels)
@@ -373,34 +371,63 @@ final class CallRecorder {
     }
 }
 
-/// Writes stereo frames from the realtime callback to rotating `.m4a` chunks.
+/// Writes the owner and the far side from the realtime callback to rotating
+/// pairs of mono `.m4a` chunks, `NNN-owner.m4a` and `NNN-remote.m4a`, with one
+/// `NNN.json` sidecar.
+///
+/// Each side is its own file because the box labels speakers by transcribing
+/// each side on its own: the transcription model ignores stereo placement
+/// (`agents/plan/call-audio-plan.md`). Both are resampled to 16 kHz mono AAC
+/// at 24 kbps, the phone's format, so the box's speech detector and
+/// transcription see the same input from both devices.
 ///
 /// The callback only copies samples and hands them to a serial queue; the
-/// encoder runs there, never on the audio thread.
+/// resampling and encoding run there, never on the audio thread.
 final class ChunkWriter {
     /// Chunk length, matching the phone's, so the box's audio pipeline sees
     /// the same unit from both.
     static let chunkSeconds: Double = 300
+    static let sampleRate: Double = 16_000
+    static let bitRate = 24_000
+
+    /// One side of the call: its resampler, its open file and its peak level.
+    private final class Track {
+        let role: String
+        let converter: AVAudioConverter
+        var file: AVAudioFile?
+        var url: URL?
+        var peak: Float = 0
+
+        init(role: String, converter: AVAudioConverter) {
+            self.role = role
+            self.converter = converter
+        }
+    }
 
     private let directory: URL
-    private let sampleRate: Double
+    private let inputRate: Double
     private let metadata: [String: Any]
     private let queue = DispatchQueue(label: "com.virtues.collector.call-audio.writer")
-    private let format: AVAudioFormat
-    private var file: AVAudioFile?
-    private var fileURL: URL?
+    private let inputFormat: AVAudioFormat
+    private let outputFormat: AVAudioFormat
+    private let owner: Track
+    private let remote: Track
     private var chunkIndex = 0
-    private var chunkStart = Date()
     private var chunkFrames: AVAudioFramePosition = 0
-    private var ownerPeak: Float = 0
-    private var remotePeak: Float = 0
 
-    init?(directory: URL, sampleRate: Double, metadata: [String: Any]) {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return nil }
+    init?(directory: URL, inputRate: Double, metadata: [String: Any]) {
+        guard let inputFormat = AVAudioFormat(standardFormatWithSampleRate: inputRate, channels: 1),
+              let outputFormat = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 1),
+              let ownerConverter = AVAudioConverter(from: inputFormat, to: outputFormat),
+              let remoteConverter = AVAudioConverter(from: inputFormat, to: outputFormat)
+        else { return nil }
         self.directory = directory
-        self.sampleRate = sampleRate
+        self.inputRate = inputRate
         self.metadata = metadata
-        self.format = format
+        self.inputFormat = inputFormat
+        self.outputFormat = outputFormat
+        owner = Track(role: "owner", converter: ownerConverter)
+        remote = Track(role: "remote", converter: remoteConverter)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
@@ -408,23 +435,31 @@ final class ChunkWriter {
             return nil
         }
         queue.sync { openChunk() }
-        if file == nil { return nil }
+        if owner.file == nil || remote.file == nil { return nil }
     }
 
     /// Called on the audio thread.
     func append(_ buffers: UnsafeMutableAudioBufferListPointer, micChannels: Int) {
         guard let first = buffers.first, first.mNumberChannels > 0 else { return }
         let frames = Int(first.mDataByteSize) / (MemoryLayout<Float>.size * Int(first.mNumberChannels))
-        guard frames > 0, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
-              let out = pcm.floatChannelData
+        guard frames > 0,
+              let ownerPCM = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(frames)),
+              let remotePCM = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(frames)),
+              let ownerOut = ownerPCM.floatChannelData?[0],
+              let remoteOut = remotePCM.floatChannelData?[0]
         else { return }
-        pcm.frameLength = AVAudioFrameCount(frames)
+        ownerPCM.frameLength = AVAudioFrameCount(frames)
+        remotePCM.frameLength = AVAudioFrameCount(frames)
 
         // Walk the buffers channel by channel: channels [0, micChannels) are
-        // the mic, the rest are the tap.
+        // the mic, the rest are the tap. Owner = the mic's first channel; far
+        // side = the tap's channels averaged to one.
         var channel = 0
         var remoteChannels = 0
-        for i in 0..<frames { out[1][i] = 0 }
+        for i in 0..<frames {
+            ownerOut[i] = 0
+            remoteOut[i] = 0
+        }
         for buffer in buffers {
             let count = Int(buffer.mNumberChannels)
             guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else {
@@ -433,9 +468,9 @@ final class ChunkWriter {
             }
             for c in 0..<count {
                 if channel == 0 {
-                    for i in 0..<frames { out[0][i] = data[i * count + c] }
+                    for i in 0..<frames { ownerOut[i] = data[i * count + c] }
                 } else if channel >= micChannels {
-                    for i in 0..<frames { out[1][i] += data[i * count + c] }
+                    for i in 0..<frames { remoteOut[i] += data[i * count + c] }
                     remoteChannels += 1
                 }
                 channel += 1
@@ -443,9 +478,9 @@ final class ChunkWriter {
         }
         if remoteChannels > 1 {
             let scale = 1 / Float(remoteChannels)
-            for i in 0..<frames { out[1][i] *= scale }
+            for i in 0..<frames { remoteOut[i] *= scale }
         }
-        queue.async { [self] in write(pcm) }
+        queue.async { [self] in write(owner: ownerPCM, remote: remotePCM) }
     }
 
     func close() {
@@ -454,67 +489,91 @@ final class ChunkWriter {
 
     // MARK: - On `queue`
 
-    private func write(_ pcm: AVAudioPCMBuffer) {
-        guard let file else { return }
-        for ch in 0..<2 {
-            let samples = pcm.floatChannelData![ch]
-            var peak: Float = 0
-            for i in 0..<Int(pcm.frameLength) { peak = max(peak, abs(samples[i])) }
-            if ch == 0 { ownerPeak = max(ownerPeak, peak) } else { remotePeak = max(remotePeak, peak) }
-        }
-        do {
-            try file.write(from: pcm)
-        } catch {
-            print("⚠️ call audio: write failed: \(error.localizedDescription)")
-            return
-        }
-        chunkFrames += AVAudioFramePosition(pcm.frameLength)
-        if Double(chunkFrames) >= Self.chunkSeconds * sampleRate {
+    private func write(owner ownerPCM: AVAudioPCMBuffer, remote remotePCM: AVAudioPCMBuffer) {
+        guard owner.file != nil, remote.file != nil else { return }
+        write(ownerPCM, to: owner)
+        write(remotePCM, to: remote)
+        chunkFrames += AVAudioFramePosition(ownerPCM.frameLength)
+        if Double(chunkFrames) >= Self.chunkSeconds * inputRate {
             closeChunk()
             openChunk()
         }
     }
 
-    private func openChunk() {
-        chunkStart = Date()
-        chunkFrames = 0
-        ownerPeak = 0
-        remotePeak = 0
-        let url = directory.appendingPathComponent(String(format: "%03d.m4a", chunkIndex))
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderBitRateKey: 64_000,
-        ]
+    /// Resample one buffer to 16 kHz and append it to the track's file. The
+    /// converter keeps its filter state between calls, so consecutive buffers
+    /// join without a click.
+    private func write(_ input: AVAudioPCMBuffer, to track: Track) {
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * Self.sampleRate / inputRate) + 32
+        guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var error: NSError?
+        track.converter.convert(to: out, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return input
+        }
+        if let error {
+            print("⚠️ call audio: resampling the \(track.role) side failed: \(error.localizedDescription)")
+            return
+        }
+        guard out.frameLength > 0, let samples = out.floatChannelData?[0] else { return }
+        for i in 0..<Int(out.frameLength) { track.peak = max(track.peak, abs(samples[i])) }
         do {
-            file = try AVAudioFile(forWriting: url, settings: settings,
-                                   commonFormat: .pcmFormatFloat32, interleaved: false)
-            fileURL = url
+            try track.file?.write(from: out)
         } catch {
-            print("⚠️ call audio: could not open \(url.path): \(error.localizedDescription)")
-            file = nil
-            fileURL = nil
+            print("⚠️ call audio: writing the \(track.role) side failed: \(error.localizedDescription)")
         }
     }
 
-    /// Finish the current chunk and write its sidecar. Dropping the
-    /// `AVAudioFile` is what finalizes the m4a.
+    private func openChunk() {
+        chunkFrames = 0
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: Self.sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: Self.bitRate,
+        ]
+        for track in [owner, remote] {
+            track.peak = 0
+            let url = directory.appendingPathComponent(String(format: "%03d-%@.m4a", chunkIndex, track.role))
+            do {
+                track.file = try AVAudioFile(forWriting: url, settings: settings,
+                                             commonFormat: .pcmFormatFloat32, interleaved: false)
+                track.url = url
+            } catch {
+                print("⚠️ call audio: could not open \(url.path): \(error.localizedDescription)")
+                track.file = nil
+                track.url = nil
+            }
+        }
+    }
+
+    /// Finish the current pair of chunks and write their sidecar. Dropping the
+    /// `AVAudioFile` is what finalizes an m4a.
     private func closeChunk() {
-        guard let url = fileURL else { return }
-        file = nil
-        fileURL = nil
+        let urls = [owner, remote].compactMap(\.url)
+        guard !urls.isEmpty else { return }
+        for track in [owner, remote] {
+            track.file = nil
+            track.url = nil
+        }
         let end = Date()
-        let duration = Double(chunkFrames) / sampleRate
+        let duration = Double(chunkFrames) / inputRate
+        let index = chunkIndex
         chunkIndex += 1
         guard chunkFrames > 0 else {
-            try? FileManager.default.removeItem(at: url)
+            for url in urls { try? FileManager.default.removeItem(at: url) }
             return
         }
         // A whole chunk of exact zeros on the far side is not a quiet call: it
         // is a denied grant or a tap that stopped delivering.
-        if remotePeak == 0 {
-            print("⚠️ call audio: the other side was silent for a whole chunk (\(url.lastPathComponent)); "
+        if remote.peak == 0 {
+            print("⚠️ call audio: the other side was silent for a whole chunk (\(index)); "
                   + "check System Audio Recording")
         }
         let iso = ISO8601DateFormatter()
@@ -522,16 +581,21 @@ final class ChunkWriter {
         sidecar["timestamp_start"] = iso.string(from: end.addingTimeInterval(-duration))
         sidecar["timestamp_end"] = iso.string(from: end)
         sidecar["duration_seconds"] = duration
-        sidecar["sample_rate"] = sampleRate
-        sidecar["owner_peak"] = Double(ownerPeak)
-        sidecar["remote_peak"] = Double(remotePeak)
+        sidecar["sample_rate"] = Self.sampleRate
+        sidecar["files"] = [
+            "owner": String(format: "%03d-owner.m4a", index),
+            "remote": String(format: "%03d-remote.m4a", index),
+        ]
+        sidecar["owner_peak"] = Double(owner.peak)
+        sidecar["remote_peak"] = Double(remote.peak)
+        let sidecarURL = directory.appendingPathComponent(String(format: "%03d.json", index))
         do {
             let data = try JSONSerialization.data(withJSONObject: sidecar, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: url.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
+            try data.write(to: sidecarURL, options: .atomic)
         } catch {
-            print("⚠️ call audio: could not write the sidecar for \(url.lastPathComponent): \(error.localizedDescription)")
+            print("⚠️ call audio: could not write \(sidecarURL.lastPathComponent): \(error.localizedDescription)")
         }
-        print("· call audio: wrote \(url.lastPathComponent), \(Int(duration)) s")
+        print("· call audio: wrote chunk \(index), \(Int(duration)) s")
     }
 }
 

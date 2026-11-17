@@ -270,7 +270,7 @@
 			<div class="actions">
 				<button type="button" class="setup-go" disabled={!trimmed || busy} onclick={go}>
 					{frozenLabel ?? goLabel}
-					<Icon icon="ri:arrow-right-line" width="16" />
+					<Icon icon="mynaui:arrow-right" width="16" />
 				</button>
 				{#if beat === 2}
 					<button type="button" class="setup-past" disabled={busy} onclick={back}>Back</button>

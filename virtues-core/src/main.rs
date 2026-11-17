@@ -6,6 +6,13 @@ use virtues::VirtuesBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Inside a sandboxed unit, before any startup: there is no box
+    // environment to read and no service user to become.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("sandbox-bridge") {
+        std::process::exit(virtues::sandbox::bridge::main(&args[2..]));
+    }
+
     // Trivial subcommands (--version, --help) skip the heavy startup path:
     // no tracing init, no observability, no .env loading, no rustls provider.
     // Without this, `virtues --version` prints two lines of OTel/observability
@@ -35,12 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Load env in this priority order:
         //   1. Existing process env (set by systemd's EnvironmentFile or the
         //      operator's `env VAR=… virtues …` invocation) — never override.
-        //   2. /var/lib/virtues/virtues.env — the canonical production env
-        //      file install.sh writes. Lets `sudo -u virtues virtues init`
-        //      work without `env $(cat /var/lib/virtues/virtues.env | xargs)`.
+        //   2. The box env file the installer wrote, wherever the install put
+        //      its data dir (`box_env::path_for_startup`). Lets
+        //      `sudo -u virtues virtues init` work without exporting it first.
         //   3. ./.env in CWD (Mac/dev convention).
         //   4. ../.env (for running from virtues-core/ during dev).
-        let _ = dotenv::from_path("/var/lib/virtues/virtues.env");
+        let _ = dotenv::from_path(virtues::box_env::path_for_startup());
         if dotenv::dotenv().is_err() {
             let _ = dotenv::from_path("../.env");
         }
@@ -77,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("reset")
                 | Some("configure-inference")
                 | Some("reindex")
-                | Some("sudo")
                 | Some("warm-models")
         );
         let data_verb = std::env::args()
@@ -209,93 +215,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ─── `virtues sudo` ─────────────────────────────────────────────────────
-    // Confirmation gate for high-sensitivity actions. Lists open sudo
-    // requests; on approval, the corresponding web action unlocks. The
-    // person running this command IS the second factor (proves physical
-    // access to the box).
-    if let Some(Commands::Sudo { id, deny }) = &cli.command {
-        let database_url = virtues::database::normalize_database_url()?;
-        let db = virtues::database::Database::new(&database_url)?;
-        let pool = db.pool();
-
-        // If a specific id was provided, fast-path it.
-        if let Some(id) = id {
-            let res = if *deny {
-                virtues::api::sudo::deny_from_cli(pool, id).await
-            } else {
-                virtues::api::sudo::approve_from_cli(pool, id).await
-            };
-            match res {
-                Ok(()) => {
-                    println!("✓ {}", if *deny { "denied" } else { "approved" });
-                    return Ok(());
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        // Interactive: list open requests, prompt for each.
-        let pending = virtues::api::sudo::list_pending(pool).await?;
-        if pending.is_empty() {
-            println!();
-            println!("  No pending sudo requests.");
-            println!();
-            return Ok(());
-        }
-        for req in pending {
-            let remaining = (req.expires_at - chrono::Utc::now()).num_seconds().max(0);
-            println!();
-            println!("─────────────────────────────────────────────────────────");
-            println!("  Pending action:  {}", req.action);
-            println!("  Requested by:    {}", req.requesting_device_label);
-            if let Some(ip) = req.requested_ip.as_deref() {
-                println!("  From IP:         {ip}");
-            }
-            println!("  Requested at:    {}", req.created_at.to_rfc3339());
-            println!("  Expires in:      {remaining}s");
-            println!("─────────────────────────────────────────────────────────");
-
-            let approve = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("Approve?")
-                .default(false)
-                .interact()
-                .unwrap_or(false);
-
-            if approve {
-                if let Err(e) = virtues::api::sudo::approve_from_cli(pool, &req.id).await {
-                    eprintln!("  ⚠  {e}");
-                } else {
-                    println!("  ✓ approved. Action will complete in the requesting browser.");
-                }
-            } else {
-                if let Err(e) = virtues::api::sudo::deny_from_cli(pool, &req.id).await {
-                    eprintln!("  ⚠  {e}");
-                } else {
-                    println!("  ✗ denied.");
-                }
-            }
-        }
-        return Ok(());
-    }
-
     // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
     // THE human verb for connecting a device to the box (agents/build/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
-    // command IS proof of physical access), prints the one-time URL + QR,
-    // then waits until the link is opened — the wait is also the
-    // client-isolation detector (a printed link nobody opens is the only
-    // box-side signal for a network that blocks device-to-device traffic).
-    // The URL puts the token in a `#t=` fragment, so it never hits server
-    // logs or referer headers.
+    // command IS proof of physical access), prints the six-digit code and
+    // the server's addresses, then waits until a device pairs. The wait is
+    // also the client-isolation detector: a code nobody manages to use is the
+    // only box-side signal for a network that blocks device-to-device traffic.
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        // On an UNCLAIMED box this shows the standing setup code (multi-use,
-        // what the panel and BLE flow use). On a CLAIMED box it mints a FRESH
+        // On an UNCLAIMED box this shows the standing setup code (it rotates,
+        // and is replaced after use). On a CLAIMED box it mints a FRESH
         // ONE-TIME code, consumed on use — the always-live standing code is
         // retired at claim. See `api::pair::cli_pair_code`.
         match virtues::api::pair::cli_pair_code(db.pool()).await {
@@ -377,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
                 Ok(true) => {
                     virtues::cli::ui::ok(&format!(
-                        "revoked {id} — its key is de-allowlisted; the next dial is refused"
+                        "revoked {id}. Your server refuses its requests from now on and drops its key at its next allowlist check."
                     ));
                     return Ok(());
                 }
@@ -523,28 +454,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
-    }
-
-    // ─── `virtues deprovision` ──────────────────────────────────────────────
-    // Prepares the box to be imaged. Wraps `reset` (for the DB + lake) and then
-    // strips the host-level identity, so like reset it runs against a bare pool
-    // before any app stack exists.
-    if let Some(Commands::Deprovision { yes, force }) = &cli.command {
-        match virtues::cli::deprovision::run(*yes, *force).await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                eprintln!("error: deprovision failed: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    // ─── `virtues image-check` ──────────────────────────────────────────────
-    // The gate between deprovision and `dd`. Read-only, and handled here with
-    // the other bare-pool commands because a deprovisioned box has no app
-    // stack left to build — which is the state it is meant to be run in.
-    if matches!(cli.command, Some(Commands::ImageCheck)) {
-        std::process::exit(virtues::cli::image_check::run().await);
     }
 
     // ─── `virtues configure-inference` ──────────────────────────────────────
@@ -734,13 +643,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ─── `virtues agent-key` / `agent-exec` ─────────────────────────────────
-    // Neither opens the database. An agent key's file is a file, and the
-    // agent user it serves has no database role: its verbs go to the server.
-    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. })) {
+    // ─── `virtues agent-key` / `agent-exec` / `mcp` ─────────────────────────
+    // None opens the database. An agent key's file is a file, and the agent
+    // user it serves has no database role: its verbs go to the server, and
+    // `mcp` only relays to it.
+    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. } | Commands::Mcp)) {
         let outcome = match cli.command {
             Some(Commands::AgentKey { cmd }) => virtues::cli::agent_key::manage(cmd).await,
             Some(Commands::AgentExec { key }) => virtues::cli::agent_key::exec(key).await,
+            Some(Commands::Mcp) => virtues::cli::mcp::serve(None).await,
             _ => unreachable!(),
         };
         if let Err(e) = outcome {
@@ -760,23 +671,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // resolver exists to prevent.
     let virtues = VirtuesBuilder::new().database(&database_url).build().await?;
 
-    // Default to server with auto-migrate if no command specified
+    // The server checks once that its key opens the secrets it sealed, in
+    // the background so a slow database never holds up the start. It only
+    // reads, so running beside the migrations is safe. A failure is logged
+    // and shown in attention, and never stops the server.
+    //
+    // Beside it, the server empties revoked sign-ins that an earlier release
+    // left holding their tokens. That pass waits for the migrations itself.
+    if matches!(cli.command, None | Some(Commands::Server { .. })) {
+        let pool = virtues.database.pool().clone();
+        tokio::spawn(async move { virtues::secrets::check_key_at_start(&pool).await });
+        let database = virtues.database.clone();
+        tokio::spawn(async move { virtues::credentials::empty_revoked_at_start(&database).await });
+    }
+
+    // Default to the server if no command specified. `Commands::Server` runs
+    // the migrations and the seed itself; doing them here as well ran both
+    // twice on every start.
     let cli = if cli.command.is_none() {
-        println!("🚀 Starting Virtues (auto-setup mode)...");
-        println!();
-
-        // Run migrations first
-        println!("📊 Running migrations...");
-        virtues.database.initialize().await?;
-        println!("✅ Migrations complete");
-        println!();
-
-        // Seed production defaults (models, agents, etc.)
-        println!("🌱 Seeding defaults...");
-        virtues::seeding::prod_seed::seed_production_data(&virtues.database).await?;
-        println!("✅ Seeding complete");
-        println!();
-
         // In production (Nomad), NOMAD_PORT_http is set to the dynamically allocated port.
         // Fall back to 8000 for local development.
         let port = env::var("NOMAD_PORT_http")
@@ -835,7 +747,7 @@ fn print_banner() {
 /// single most important glyph on screen: bright + bold on a TTY, plain when
 /// piped/captured. The box itself uses Unicode line-drawing (renders fine in
 /// terminals and logs); only the colour is TTY-gated to avoid garbling logs.
-fn print_pair_hero(display: &str) {
+fn print_pair_hero(display: &str, minutes_left: i64) {
     use console::style;
     const W: usize = 54; // inner width between the borders (fits the downloads URL line)
     let tty = console::Term::stdout().is_term();
@@ -853,7 +765,7 @@ fn print_pair_hero(display: &str) {
     println!("{blank}");
     println!("{}", line("   Your server is ready."));
     println!("{blank}");
-    println!("{}", line("   1.  Desktop app     https://virtues.com/downloads"));
+    println!("{}", line("   1.  Get the app     https://virtues.com/downloads"));
 
     // The code line: pad on the *visible* length (ANSI is zero-width), then
     // wrap just the code in colour so the right border still aligns.
@@ -867,7 +779,11 @@ fn print_pair_hero(display: &str) {
     println!("  │{prefix}{code}{}│", " ".repeat(pad));
 
     println!("{blank}");
-    println!("{}", line("   Rotates automatically · valid while shown"));
+    // The code expires on its own clock, and this text stays on screen after
+    // `init` exits, so say how long it lasts rather than "while shown".
+    let unit = if minutes_left == 1 { "minute" } else { "minutes" };
+    println!("{}", line(&format!("   Works for about {minutes_left} {unit}.")));
+    println!("{}", line("   For a new code, run:  virtues pair"));
     println!("{blank}");
     println!("{bot}");
 }
@@ -894,7 +810,24 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     if std::env::var_os("VIRTUES_NO_BANNER").is_none() {
         print_banner();
     }
-    print_pair_hero(&display);
+    // Round up, so a code minted a few seconds ago still reads as its full window.
+    let seconds_left = (minted.expires_at - chrono::Utc::now()).num_seconds().max(0);
+    let minutes_left = ((seconds_left + 59) / 60).max(1);
+    print_pair_hero(&display, minutes_left);
+
+    // A QR of one "address   code" line, the same line printed below for
+    // pasting, so the iPhone app pairs from it exactly as from a paste. The
+    // raw LAN address, because a phone camera can't be assumed to resolve
+    // `.local`. It holds the short-lived code and no key.
+    let qr_line = format!(
+        "http://{}:{}   {display}",
+        virtues::cli::link::forward_host(),
+        virtues::cli::link::INTERNAL_PORT
+    );
+    println!();
+    println!("  On an iPhone, scan this with the Virtues app:");
+    println!();
+    virtues::cli::commands::deploy::print_qr_block(&qr_line);
 
     // On SSH: the desktop app needs a route to the box. On isolated networks
     // (office/hotel) mDNS is blocked, so the existing SSH session is the
@@ -923,17 +856,19 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     println!("    Enter the code above in it. A browser cannot pair — pairing is");
     println!("    a held key, and a browser tab has none.");
 
-    // The box's addresses, for the app's "enter its address" field when mDNS
-    // does not carry — an isolated office LAN, or a box on another subnet.
+    // The server's addresses, for the app's "Enter address and code" form when
+    // its network search comes up empty: an isolated office LAN, a server on
+    // another subnet, a VM behind shared networking. Each line carries the
+    // code too, so copying one line fills both fields of that form.
     let urls = reachable_box_origins(is_dev, &web_port);
     if !urls.is_empty() {
         println!();
-        println!("  If the app can't find this box, give it an address:");
+        println!("  If the app can't find this server, paste one of these lines into it:");
         for url in &urls {
-            println!("    {}", url.url);
+            println!("    {}   {display}", url.url);
         }
         if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
-            println!("    http://[{v6}]:8000");
+            println!("    http://[{v6}]:8000   {display}");
         }
     }
 
@@ -951,7 +886,8 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 ///
 /// Guards (all must hold, so dev machines are never touched):
 ///   - argv[1] is one of the DB-touching interactive commands
-///   - `/var/lib/virtues/virtues.env` exists (the box-install marker)
+///   - the box env file exists where the installer put it
+///     (`box_env::installed_path`, the box-install marker)
 ///   - the current user isn't already `virtues`
 ///
 /// On exec failure (no sudo rights, etc.) we print the one-line manual hint
@@ -969,7 +905,7 @@ fn maybe_reexec_as_service_user() {
     if cmd == "configure-inference" && std::env::args().any(|a| a == "--recommended") {
         return;
     }
-    if !std::path::Path::new("/var/lib/virtues/virtues.env").exists() {
+    if !virtues::box_env::installed_path().exists() {
         return;
     }
     let user = std::process::Command::new("id")
@@ -1013,9 +949,15 @@ fn maybe_reexec_as_service_user() {
     {
         reexec.arg("env").arg(format!("VIRTUES_SSH_SERVER_IP={ip}"));
     }
-    let err = reexec.args(std::env::args()).exec();
+    // This binary by its full path, then the arguments after argv[0]: sudo
+    // searches only its `secure_path`, which leaves out /usr/local/bin on
+    // RHEL, Rocky and Alma, so a bare `virtues` would not be found.
+    let mut args = std::env::args();
+    let argv0 = args.next().unwrap_or_else(|| "virtues".to_string());
+    let program = std::env::current_exe().map_or_else(|_| std::path::PathBuf::from(argv0), |p| p);
+    let err = reexec.arg(program).args(args).exec();
     eprintln!("could not switch user: {err}");
-    eprintln!("hint: run it as the service user yourself: sudo -u virtues virtues {cmd}");
+    eprintln!("hint: run it as the service user yourself: sudo -u virtues /usr/local/bin/virtues {cmd}");
     std::process::exit(1);
 }
 

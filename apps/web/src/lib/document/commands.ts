@@ -26,6 +26,7 @@ import type { EditorView } from '@tiptap/pm/view';
 import type { MenuCommand } from '$lib/components/menuCommand';
 import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
+import { glowLanded } from './drop-line';
 import { kindOfMime, mediaNode } from './media';
 import { insertBlockAt } from './place';
 import { contract, isRoute, joinLists, joinListsAround } from './schema';
@@ -102,11 +103,22 @@ export function outdentItem(editor: Editor): boolean {
 	return item ? editor.commands.liftListItem(item) : false;
 }
 
+// Spelled out, not built from the level: scripts/myna-icons.mjs bundles the
+// icons it finds named in the source, and a built name is not one it can find.
+const HEADING_ICONS = [
+	'mynaui:heading-1',
+	'mynaui:heading-2',
+	'mynaui:heading-3',
+	'mynaui:heading-4',
+	'mynaui:heading-5',
+	'mynaui:heading-6',
+] as const;
+
 export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 	const heading = (level: 1 | 2 | 3 | 4 | 5 | 6, keywords: string[], searchOnly = false): TreeCommand => ({
 		label: `Heading ${level}`,
 		keywords,
-		icon: `ri:h-${level}`,
+		icon: HEADING_ICONS[level - 1],
 		searchOnly,
 		run: (editor, range) => chain(editor, range).setNode('heading', { level }).run(),
 	});
@@ -120,31 +132,31 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Text',
 			keywords: ['paragraph', 'plain', 'p'],
-			icon: 'ri:text',
+			icon: 'mynaui:type-text',
 			run: (editor, range) => chain(editor, range).setParagraph().run(),
 		},
 		{
 			label: 'Bulleted list',
 			keywords: ['ul', 'unordered', 'bullet'],
-			icon: 'ri:list-unordered',
+			icon: 'mynaui:list',
 			run: (editor, range) => chain(editor, range).toggleBulletList().run(),
 		},
 		{
 			label: 'Numbered list',
 			keywords: ['ol', 'ordered', 'number'],
-			icon: 'ri:list-ordered',
+			icon: 'mynaui:list-number',
 			run: (editor, range) => chain(editor, range).toggleOrderedList().run(),
 		},
 		{
 			label: 'To-do list',
 			keywords: ['todo', 'task', 'checkbox', 'check'],
-			icon: 'ri:checkbox-line',
+			icon: 'mynaui:check-square',
 			run: (editor, range) => chain(editor, range).toggleTaskList().run(),
 		},
 		{
 			label: 'Indent',
 			keywords: ['nest', 'tab', 'indent'],
-			icon: 'ri:indent-increase',
+			icon: 'mynaui:chevrons-right',
 			searchOnly: true,
 			run: (editor, range) => {
 				chain(editor, range).run();
@@ -154,7 +166,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Outdent',
 			keywords: ['unnest', 'dedent', 'outdent'],
-			icon: 'ri:indent-decrease',
+			icon: 'mynaui:chevrons-left',
 			searchOnly: true,
 			run: (editor, range) => {
 				chain(editor, range).run();
@@ -164,13 +176,13 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Quote',
 			keywords: ['blockquote'],
-			icon: 'ri:double-quotes-l',
+			icon: 'mynaui:message-reply',
 			run: (editor, range) => chain(editor, range).toggleBlockquote().run(),
 		},
 		{
 			label: 'Callout',
 			keywords: ['callout', 'note', 'tip', 'warning'],
-			icon: 'ri:lightbulb-line',
+			icon: 'mynaui:lamp',
 			run: (editor, range) => {
 				const tone = toneOf(queryOf(editor, range)) ?? 'note';
 				chain(editor, range).wrapIn('callout', { tone }).run();
@@ -179,25 +191,25 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Code block',
 			keywords: ['fence', 'pre', 'code'],
-			icon: 'ri:code-box-line',
+			icon: 'mynaui:code-square',
 			run: (editor, range) => chain(editor, range).setCodeBlock().run(),
 		},
 		{
 			label: 'Divider',
 			keywords: ['hr', 'rule', 'separator', 'horizontal'],
-			icon: 'ri:separator',
+			icon: 'mynaui:minus',
 			run: (editor, range) => chain(editor, range).setHorizontalRule().run(),
 		},
 		{
 			label: 'Table',
 			keywords: ['grid'],
-			icon: 'ri:table-line',
+			icon: 'mynaui:table',
 			run: (editor, range) => chain(editor, range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
 		},
 		{
 			label: 'Image',
 			keywords: ['photo', 'picture'],
-			icon: 'ri:image-line',
+			icon: 'mynaui:image',
 			run: (editor, range) => {
 				chain(editor, range).run();
 				host.pickFiles('image', range.from);
@@ -206,7 +218,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'File',
 			keywords: ['upload', 'attachment', 'pdf', 'document', 'audio', 'video'],
-			icon: 'ri:attachment-line',
+			icon: 'mynaui:paperclip',
 			run: (editor, range) => {
 				chain(editor, range).run();
 				host.pickFiles('file', range.from);
@@ -215,7 +227,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Applet',
 			keywords: ['widget', 'chart', 'embed'],
-			icon: 'ri:apps-2-line',
+			icon: 'mynaui:grid',
 			run: (editor, range) => {
 				chain(editor, range).run();
 				host.pickApplet(range.from);
@@ -224,7 +236,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Mention',
 			keywords: ['@', 'person', 'place', 'page', 'link', 'ref'],
-			icon: 'ri:at-line',
+			icon: 'mynaui:at',
 			run: (editor, range) => {
 				chain(editor, range).run();
 				host.mention(range.from);
@@ -233,7 +245,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 		{
 			label: 'Ask AI',
 			keywords: ['ai', 'write', 'continue', 'generate', 'virtues'],
-			icon: 'ri:sparkling-2-line',
+			icon: 'mynaui:sparkles',
 			run: (editor, range) => {
 				chain(editor, range).run();
 				host.askAi(range.from);
@@ -285,7 +297,7 @@ export function appletCommands(applets: Applet[], at: Anchor): TreeCommand[] {
 		.map((a) => ({
 			label: a.name,
 			keywords: [a.id, ...(a.description ? [a.description.toLowerCase()] : [])],
-			icon: 'ri:apps-2-line',
+			icon: 'mynaui:grid',
 			run: (editor: Editor) => {
 				const type = editor.schema.nodes.applet;
 				if (!type) return;
@@ -772,9 +784,11 @@ export function moveBlock(editor: Editor, by: -1 | 1): boolean {
 	if (other < 0 || other >= parent.childCount) return false;
 	const neighbour = parent.child(other);
 	editor.view.dispatch(state.tr.delete(start, end));
-	const tr = editor.state.tr.insert(by < 0 ? start - neighbour.nodeSize : start + neighbour.nodeSize, nodes);
+	const at = by < 0 ? start - neighbour.nodeSize : start + neighbour.nodeSize;
+	const tr = editor.state.tr.insert(at, nodes);
 	tr.setSelection(shifted(state, tr.doc, by < 0 ? -neighbour.nodeSize : neighbour.nodeSize));
 	editor.view.dispatch(tr.scrollIntoView());
+	glowLanded(editor.view, at, at + (end - start));
 	return true;
 }
 
@@ -869,9 +883,11 @@ export function copyBlock(editor: Editor, by: -1 | 1): boolean {
 	const { state } = editor;
 	const unit = unitAt(state);
 	if (!unit) return false;
-	const tr = state.tr.insert(by < 0 ? unit.start : unit.end, unit.nodes.map(withoutIds));
+	const at = by < 0 ? unit.start : unit.end;
+	const tr = state.tr.insert(at, unit.nodes.map(withoutIds));
 	if (by > 0) tr.setSelection(shifted(state, tr.doc, unit.end - unit.start));
 	editor.view.dispatch(tr.scrollIntoView());
+	glowLanded(editor.view, at, at + (unit.end - unit.start));
 	return true;
 }
 

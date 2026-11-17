@@ -14,6 +14,9 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
+	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
+	import { identityOf } from "$lib/refs/identity.svelte";
+	import { clothFor } from "$lib/sidebar/pin-colors";
 	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
 	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -53,6 +56,8 @@
 		type OpenedPage,
 	} from "./pageDocument";
 	import { onDestroy, onMount, tick, untrack } from "svelte";
+	import { usePageActions, usePageStatus, type StatusMark } from "$lib/stores/paneActions.svelte";
+	import { aiSession } from "$lib/ai/aiSession.svelte";
 
 	interface Props {
 		/** The page ID to display/edit */
@@ -74,6 +79,62 @@
 		onIconChange,
 		onNavigate,
 	}: Props = $props();
+
+	// On the desktop the top bar (the projects, the page's actions, and find
+	// when it docks there) is the end of the tab's action toolbar. The phone
+	// has no toolbar, so there it stays above the page.
+	const toolbar = usePageActions(() => (pageData ? topbar : null));
+
+	// A block page's state, as the action toolbar's status mark. The phone
+	// has no toolbar, and there PageStatusNote says it in the page's corner.
+	const statusMark = $derived.by((): StatusMark | null => {
+		if (!treeDoc) return null;
+		if (aiSession.active) {
+			return {
+				label: "Virtues is writing",
+				tip: "Virtues is writing in this page. Click to stop.",
+				run: () => treeAiDriver.abort(),
+			};
+		}
+		if (aiSession.status === "error") {
+			return {
+				label: "AI couldn't finish",
+				tip: aiSession.error ?? "The model stopped before it finished. Click to dismiss.",
+				icon: "mynaui:danger-circle",
+				tone: "error",
+				run: () => aiSession.reset(),
+			};
+		}
+		if (!isConnected && !connectionGracePeriod) {
+			return { label: "Offline", tip: "Your server can't be reached right now.", icon: "mynaui:wifi-off", tone: "error" };
+		}
+		if (saveError) {
+			return {
+				label: "Couldn't save",
+				tip: "Your server didn't save the page's title, icon or cover. Change it again to retry.",
+				icon: "mynaui:danger-circle",
+				tone: "error",
+			};
+		}
+		// Saved is the usual state and shows nothing. A save of the title,
+		// icon or cover shows Saving only once it has lasted 1.5 seconds, so
+		// a quick save doesn't flash in the bar. The page's text syncs through
+		// Yjs, which reports no pending edits here.
+		if (slowSave) return { label: "Saving", tip: "Your server hasn't confirmed the title, icon or cover yet." };
+		return null;
+	});
+
+	const SLOW_SAVE_MS = 1500;
+	let slowSave = $state(false);
+	$effect(() => {
+		if (!saving) {
+			slowSave = false;
+			return;
+		}
+		const timer = setTimeout(() => (slowSave = true), SLOW_SAVE_MS);
+		return () => clearTimeout(timer);
+	});
+	const status = usePageStatus(() => statusMark);
 
 	interface PageData {
 		id: string;
@@ -106,6 +167,7 @@
 	let iconColor = $state<string | null>(null);
 	let coverUrl = $state<string | null>(null);
 	let showCoverPicker = $state(false);
+	let showIconPicker = $state(false);
 	let loading = $state(false);
 	let saving = $state(false);
 	let saveError = $state(false);
@@ -183,6 +245,14 @@
 	 * menu (PageToolbar).
 	 */
 	const railShown = $derived(!!treeNav && outline.length > 1 && (frameWidth - columnWidth) / 2 >= 64);
+	/**
+	 * Flat headings hang their #s in the margin left of the text. A margin
+	 * too narrow for a mark and its gap (a phone, a pane beside the sidebar
+	 * and References) would clip them, so they lead the line instead
+	 * (`prose--marks-inline`, prose.css).
+	 */
+	const MARK_MARGIN = 64;
+	const marksInline = $derived(frameWidth > 0 && (frameWidth - columnWidth) / 2 < MARK_MARGIN);
 	/** View as markdown (block pages). */
 	let viewingMarkdown = $state(false);
 	/** The scroller holding the cover, title and text: what Print prints. */
@@ -652,10 +722,64 @@
 	});
 </script>
 
+{#snippet iconPicker(close: () => void)}
+	<IconPicker
+		value={icon}
+		onSelect={(value) => {
+			icon = value;
+			if (pageData) pagesStore.updatePageLocally(pageData.id, { icon: value });
+			onIconChange?.(value);
+			save();
+		}}
+		{close}
+		color={iconColor}
+		onColorSelect={(value) => {
+			// Saved on its own rather than through `save()`: that path sends
+			// title, icon and cover together, and picking a color shouldn't drag
+			// a half-typed title to the server with it.
+			iconColor = value;
+			if (pageData) void pagesStore.savePage(pageData.id, { icon_color: value });
+		}}
+		label={identityOf(`/page/${pageId}`).title}
+		autoColor={clothFor({ url: `/page/${pageId}` })}
+	/>
+{/snippet}
+
+{#snippet topbar()}
+	{#if pageData}
+	<!-- Top bar: the projects (left) and the page's actions (right), one row -->
+	<div class="page-topbar" class:scrolled={scrolled && !toolbar.inToolbar} class:in-toolbar={toolbar.inToolbar} data-print="hide" bind:this={topbarEl}>
+	<!-- The projects this page is in: the page's "where it lives", in
+	     the corner a chat says it. -->
+	{#if pageId}
+		<PageProjects url={`/page/${pageId}`} />
+	{/if}
+	<PageToolbar
+		{finding}
+		contents={!railShown && treeNav && outline.length > 1
+			? outline.map((h) => ({ label: h.text, go: () => treeNav?.scrollTo(h) }))
+			: null}
+		{copied}
+		{pageId}
+		{format}
+		{isShared}
+		referencesActive={showReferences}
+		onToggleReferences={toggleReferences}
+		onShare={() => (sharing = true)}
+		onCopyMarkdown={copyMarkdown}
+		counts={treeDoc ? { words: wordCount, characters: charCount, links: linkCount } : null}
+		onViewMarkdown={format === "tree" ? () => (viewingMarkdown = true) : undefined}
+		onPrint={format === "tree" && canPrint ? printPage : undefined}
+		onDelete={deletePage}
+	/>
+	</div>
+	{/if}
+{/snippet}
+
 <Page padding="none" scrollable={false}>
 	{#if loading}
 		<div class="flex items-center justify-center h-full">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
 		<div class="max-w-2xl mx-auto p-4">
@@ -670,53 +794,9 @@
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
-			<!-- Top bar: the projects (left) and the page's actions (right), one row -->
-			<div class="page-topbar" class:scrolled data-print="hide" bind:this={topbarEl}>
-			<!-- The projects this page is in: the page's "where it lives", in
-			     the corner a chat says it. -->
-			{#if pageId}
-				<PageProjects url={`/page/${pageId}`} />
+			{#if !toolbar.inToolbar}
+				{@render topbar()}
 			{/if}
-			<PageToolbar
-				{finding}
-				contents={!railShown && treeNav && outline.length > 1
-					? outline.map((h) => ({ label: h.text, go: () => treeNav?.scrollTo(h) }))
-					: null}
-				{icon}
-				{coverUrl}
-				{copied}
-				{pageId}
-				{format}
-				bind:showCoverPicker
-				{isShared}
-				referencesActive={showReferences}
-				onToggleReferences={toggleReferences}
-				onShare={() => (sharing = true)}
-				onIconColorSelect={(value) => {
-				iconColor = value;
-				if (pageData) {
-					void pagesStore.savePage(pageData.id, { icon_color: value });
-				}
-			}}
-			onIconSelect={(value) => {
-					icon = value;
-					if (pageData) {
-						pagesStore.updatePageLocally(pageData.id, { icon: value });
-					}
-					onIconChange?.(value);
-					save();
-				}}
-				onCoverSelect={(url) => {
-					coverUrl = url;
-					save();
-				}}
-				onCopyMarkdown={copyMarkdown}
-				counts={treeDoc ? { words: wordCount, characters: charCount, links: linkCount } : null}
-				onViewMarkdown={format === "tree" ? () => (viewingMarkdown = true) : undefined}
-				onPrint={format === "tree" && canPrint ? printPage : undefined}
-				onDelete={deletePage}
-			/>
-			</div>
 
 			<!-- Body: scrollable editor + optional References rail -->
 			<div class="page-body">
@@ -745,6 +825,9 @@
 							save();
 						}}
 					/>
+				{:else}
+					<!-- No cover: the home painting comes back as an ink print. -->
+					<div class="page-ink" aria-hidden="true"></div>
 				{/if}
 
 				<div
@@ -754,9 +837,60 @@
 					class:width-medium={pageDisplay.widthMode === "medium"}
 					class:width-full={pageDisplay.widthMode === "full"}
 					class:width-page={pageDisplay.widthMode === "page"}
+					class:prose--marks-inline={marksInline}
 				>
 					<!-- Header -->
 					<div class="page-header">
+						<!-- Add an icon or a cover, over the title as the pointer
+						     nears it. The cover's picker opens here for a change
+						     too (PageCoverImage), so its trigger always renders. -->
+						<div class="page-adders" data-print="hide">
+							{#if !icon}
+								<Popover bind:open={showIconPicker} placement="bottom-start">
+									{#snippet trigger({ toggle })}
+										<button
+											class="page-adder"
+											class:is-open={showIconPicker}
+											onclick={toggle}
+											aria-haspopup="dialog"
+											aria-expanded={showIconPicker}
+										>
+											<Icon icon="mynaui:smile" width="14" />
+											Add icon
+										</button>
+									{/snippet}
+									{#snippet children({ close })}
+										{@render iconPicker(close)}
+									{/snippet}
+								</Popover>
+							{/if}
+							<Popover bind:open={showCoverPicker} placement="bottom-start">
+								{#snippet trigger({ toggle })}
+									<button
+										class="page-adder"
+										class:hidden-adder={!!coverUrl}
+										class:is-open={showCoverPicker}
+										onclick={toggle}
+										aria-haspopup="dialog"
+										aria-expanded={showCoverPicker}
+										tabindex={coverUrl ? -1 : 0}
+									>
+										<Icon icon="mynaui:image" width="14" />
+										Add cover
+									</button>
+								{/snippet}
+								{#snippet children({ close })}
+									<CoverImagePicker
+										value={coverUrl}
+										onSelect={(url) => {
+											coverUrl = url;
+											save();
+										}}
+										{close}
+									/>
+								{/snippet}
+							</Popover>
+						</div>
 						{#if icon}
 							<Popover placement="bottom-start">
 								{#snippet trigger({ toggle })}
@@ -775,35 +909,7 @@
 									</button>
 								{/snippet}
 								{#snippet children({ close })}
-									<IconPicker
-										value={icon}
-										onSelect={(value) => {
-											icon = value;
-											if (pageData) {
-												pagesStore.updatePageLocally(
-													pageData.id,
-													{ icon: value },
-												);
-											}
-											onIconChange?.(value);
-											save();
-										}}
-										{close}
-										color={iconColor}
-										onColorSelect={(value) => {
-											// Saved on its own rather than through
-											// `save()`: that path sends title, icon
-											// and cover together, and picking a
-											// color shouldn't drag a half-typed
-											// title to the server with it.
-											iconColor = value;
-											if (pageData) {
-												void pagesStore.savePage(pageData.id, {
-													icon_color: value,
-												});
-											}
-										}}
-									/>
+									{@render iconPicker(close)}
 								{/snippet}
 							</Popover>
 						{/if}
@@ -830,7 +936,7 @@
 						{#if !opened || stillLoading(opened, isSynced, refusedReason) || (treeDoc && isSynced && !$converterSettled)}
 							<div class="editor-loading" data-print="hide">
 								<Icon
-									icon="ri:loader-4-line"
+									icon="mynaui:spinner"
 									width="16"
 									class="spin"
 								/>
@@ -888,7 +994,7 @@
 			</div>
 
 			<!-- Said only when there is something to act on: a block page's, which is edited here -->
-			{#if treeDoc}
+			{#if treeDoc && !status.inToolbar}
 			<PageStatusNote {isConnected} {saveError} {connectionGracePeriod} />
 			{/if}
 		</div>
@@ -932,6 +1038,12 @@
 		z-index: var(--z-sticky);
 		border-bottom: 1px solid transparent;
 		transition: border-color var(--motion-hover-out) var(--ease-premium);
+	}
+	/* In the action toolbar: one row at the toolbar's end. */
+	.page-topbar.in-toolbar {
+		display: flex;
+		gap: 8px;
+		border-bottom: none;
 	}
 	.page-topbar.scrolled {
 		border-bottom-color: var(--color-border-subtle, var(--color-border));
@@ -1028,10 +1140,86 @@
 	   above the page's own first heading (36px over --md-h1-size, 26px at
 	   medium text and 29px at large). */
 	.page-header {
+		position: relative;
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
 		margin-bottom: 1rem;
+	}
+
+	/* Add icon and Add cover: hung above the title, so the title never moves,
+	   and shown as the pointer comes over the title, a key reaches them, or
+	   their picker is open. The buttons fade, not the row, because each
+	   picker opens inside the row and would fade with it. Faded, they take
+	   no clicks. On a screen with no hover they stay, faint. */
+	.page-adders {
+		position: absolute;
+		bottom: 100%;
+		left: 0;
+		display: flex;
+		gap: 4px;
+		padding-bottom: 4px;
+		/* Over a cover, the row takes no clicks until it shows. Its padding
+		   then bridges the title to the buttons, so the hover holds. */
+		pointer-events: none;
+	}
+
+	.page-header:hover .page-adders,
+	.page-adders:has(.is-open) {
+		pointer-events: auto;
+	}
+
+	.page-adder {
+		opacity: 0;
+		pointer-events: none;
+		transition:
+			opacity var(--motion-hover-out) var(--ease-premium),
+			background var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.page-header:hover .page-adder,
+	.page-adder:focus-visible,
+	.page-adder.is-open {
+		opacity: 1;
+		pointer-events: auto;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (hover: none) {
+		.page-adder {
+			opacity: 0.7;
+			pointer-events: auto;
+		}
+	}
+
+	.page-adder {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 26px;
+		padding: 0 8px;
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		font-size: 13px;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+
+	.page-adder:hover {
+		background: var(--hover-bg);
+		color: var(--color-foreground-muted);
+	}
+
+	.page-adder:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 1px;
+	}
+
+	/* The page has a cover: the button stays only as the anchor its picker
+	   opens from when the cover asks for a change. */
+	.page-adder.hidden-adder {
+		visibility: hidden;
 	}
 
 	/* 400, and it must stay equal to the shared copy's title (normal weight,
@@ -1170,4 +1358,19 @@
 		}
 	}
 
+
+	.page-ink {
+		height: 150px;
+		margin-bottom: -40px;
+		background: url("/scenes/lake-ink.jpg") 60% 64% / cover no-repeat;
+		opacity: 0.75;
+		pointer-events: none;
+		-webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
+		mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
+	}
+
+	:global(:is([data-theme="lothlorien"], [data-theme="baker-street"], [data-theme="narnia"], [data-theme="canterbury"], [data-theme="borghese"], [data-theme="lyceum"], [data-theme="asgard"], [data-theme="agora"], [data-theme="shire"])) .page-ink {
+		filter: invert(1) brightness(0.85);
+		opacity: 0.45;
+	}
 </style>

@@ -13,11 +13,11 @@ pub mod auth;
 pub mod billing_state;
 pub mod box_status;
 pub mod devices;
-pub mod display;
 pub mod pair;
+pub mod passwords;
 pub mod settings_byo;
 pub mod setup;
-pub mod sudo;
+pub mod owner_proof;
 pub mod web_bundle;
 pub mod chat;
 pub mod chat_mode;
@@ -29,6 +29,7 @@ pub mod code;
 pub mod code_env;
 pub mod compaction;
 pub mod credentials;
+pub mod keys;
 pub mod image_gen;
 pub mod day_article;
 pub mod day_memory;
@@ -67,7 +68,7 @@ pub mod publications;
 pub mod publish_page;
 pub mod publish_chat;
 pub mod search_local;
-pub mod skills;
+pub mod chat_applets;
 pub mod sky;
 pub mod suggestions;
 pub mod place_review;
@@ -77,16 +78,13 @@ pub mod profile;
 pub mod census;
 pub mod getting_started;
 pub mod identity;
-pub mod setup_phrase;
 pub mod network;
-pub mod provision;
 pub mod projects;
 pub mod records;
 pub mod refs;
 pub mod source_auth;
 pub mod subscription;
 pub mod stream_health;
-pub mod system_display;
 pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
@@ -95,6 +93,7 @@ pub mod unsplash;
 pub mod wiki;
 pub mod me;
 pub mod stories;
+pub mod things;
 pub mod years;
 pub mod lifeline;
 pub mod subjects;
@@ -106,12 +105,10 @@ pub mod wiki_streams;
 pub mod wiki_editor;
 pub mod wiki_notes;
 
-// Flat names still used outside this module (lib.rs, tools/executor.rs,
-// extraction, bookmarks). Everything else is addressed by its module path.
+// Flat names still used outside this module (tools/executor.rs, extraction,
+// outbox, bookmarks, and the document_extraction and ios_ingest applets).
+// Everything else is addressed by its module path.
 pub use chats::get_chat;
-pub use credentials::{
-    check_pairing_status, list_pending_pairings, DeviceInfo, PairingStatus, PendingPairing,
-};
 pub use drive::DriveConfig;
 pub use pages::get_page;
 pub use wiki::{get_organization, get_person, get_wiki_place};

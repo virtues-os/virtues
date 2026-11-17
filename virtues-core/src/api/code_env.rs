@@ -1,4 +1,4 @@
-//! Where `code_interpreter`'s Python and its files live: the pinned package
+//! Where the `shell` tool's Python and its files live: the pinned package
 //! environment, and a workspace per chat.
 //!
 //! **The environment** is a venv built from `python/requirements.lock` — every
@@ -102,11 +102,11 @@ pub fn ensure_env() {
         match result {
             Ok(()) => {
                 state.failed_at = None;
-                tracing::info!(secs = started.elapsed().as_secs(), "code_interpreter packages installed");
+                tracing::info!(secs = started.elapsed().as_secs(), "shell packages installed");
             }
             Err(e) => {
                 state.failed_at = Some(Instant::now());
-                tracing::warn!("code_interpreter packages could not be installed: {e}");
+                tracing::warn!("shell packages could not be installed: {e}");
             }
         }
     });

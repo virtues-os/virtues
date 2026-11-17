@@ -19,15 +19,19 @@ async fn main() -> Result<()> {
     let input = read_input()?;
     let pool = virtues_helpers::connect_from_env("virtues-action-day_summary_eod").await?;
 
-    // If an explicit date is supplied in config, skip the maintenance-hour gate
-    // — manual / tool invocations with a date are always intentional.
+    // If an explicit date is supplied, skip the maintenance-hour gate: manual
+    // and tool invocations with a date are always intentional. The run tool
+    // sends it in the payload, which lasts one run; `config.date` is still
+    // read for a row an older server left it on.
     let explicit_date = input
-        .config
-        .get("date")
+        .payload
+        .as_ref()
+        .and_then(|p| p.get("date"))
+        .or_else(|| input.config.get("date"))
         .and_then(|v| v.as_str())
         .map(|s| {
             NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .with_context(|| format!("invalid config.date: {s}"))
+                .with_context(|| format!("invalid date override: {s}"))
         })
         .transpose()?;
 
@@ -283,12 +287,10 @@ async fn main() -> Result<()> {
         virtues::api::day_summary::NarrateOutcome::Written(_)
     );
 
-    // Stash the last processed date in config so subsequent cron runs can
-    // short-circuit in a condition or observe progress. Also strip any
-    // `date` override that the caller passed in — the runner persists the
-    // returned config back to app_applets.config, and a sticky `date` would
-    // trap subsequent scheduled runs on the override's date forever. Chat
-    // tools and manual-trigger with a date are always one-shot.
+    // Stash the last processed date so later cron runs can observe progress.
+    // The runner saves the returned config to the applet's `state`, which the
+    // next run reads back, so a `date` left in it would pin every scheduled
+    // run to that day. Strip it: a date override lasts one run.
     let mut config = input.config.clone();
     if let Some(obj) = config.as_object_mut() {
         obj.remove("date");

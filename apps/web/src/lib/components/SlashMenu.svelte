@@ -212,7 +212,7 @@
 	}
 
 	.command-label {
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		font-weight: 400;
 		color: var(--color-foreground);
 	}

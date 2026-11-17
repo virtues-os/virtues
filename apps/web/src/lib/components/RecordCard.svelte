@@ -74,7 +74,7 @@
 	import { portal } from "$lib/actions/portal";
 	import { parseRecordRef } from "$lib/utils/refRoutes";
 	import { contentWords, messageSender } from "$lib/wiki/recordWords";
-	import { plainText } from "$lib/wiki/inlineMarkdown";
+	import { markdownWords } from "$lib/wiki/inlineMarkdown";
 	import { veil } from "$lib/stores/veil.svelte";
 	import RecordCardBody, { KIND_LABEL, citedTurns, recordKind, type RecordKind } from "./RecordCardBody.svelte";
 
@@ -233,12 +233,7 @@
 	}
 
 	/** A web page's words. The search returns its text as markdown: headings, images and links. */
-	function pageWords(md: string | undefined): string | undefined {
-		if (!md) return undefined;
-		const words = plainText(md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+[.)]|>)[ \t]+/gm, ""));
-		// Emphasis that runs across a line break is not inline markdown, and stays.
-		return words.replace(/\*\*|__/g, "");
-	}
+	const pageWords = (md: string | undefined): string | undefined => (md ? markdownWords(md) : undefined);
 
 	/** A query's first three rows, in its first three columns. An id says nothing a reader can use here. */
 	const preview = (q: QueryResult) => ({ rows: q.rows.slice(0, 3), columns: q.columns.filter((c) => c !== "id").slice(0, 3) });

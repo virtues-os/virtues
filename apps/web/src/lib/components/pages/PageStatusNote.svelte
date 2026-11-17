@@ -1,11 +1,12 @@
 <!--
 	PageStatusNote.svelte
 
-	A page says nothing about itself while all is well: no counts, no
-	"Saved". This note appears in the page's lower corner only when there is
-	something to act on or know: the assistant writing (with Stop), the
-	assistant failing, the page offline, or a save that failed. The page's
-	counts are under the toolbar's ⋯.
+	On the phone, which has no action toolbar, a page says nothing about
+	itself while all is well. This note appears in the page's lower corner
+	only when there is something to act on or know: the assistant writing
+	(with Stop), the assistant failing, the page offline, or a save that
+	failed. On the desktop the same states, and "Saved", are the toolbar's
+	status mark (PageContent). The page's counts are under the toolbar's ⋯.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -25,24 +26,24 @@
 
 {#if aiSession.active}
 	<button class="page-status-note ai" onclick={() => treeAiDriver.abort()} title="Stop">
-		<Icon icon="ri:sparkling-2-line" width="13" class="ai-spark" />
+		<Icon icon="mynaui:sparkles" width="13" class="ai-spark" />
 		<span>Virtues is writing…</span>
-		<Icon icon="ri:stop-circle-line" width="14" />
+		<Icon icon="mynaui:stop-circle" width="14" />
 	</button>
 {:else if aiSession.status === "error"}
 	<button class="page-status-note error" onclick={() => aiSession.reset()} title={aiSession.error ?? "AI error"}>
-		<Icon icon="ri:error-warning-line" width="13" />
+		<Icon icon="mynaui:danger-circle" width="13" />
 		<span>AI couldn’t finish</span>
-		<Icon icon="ri:close-line" width="14" />
+		<Icon icon="mynaui:x" width="14" />
 	</button>
 {:else if offline}
 	<div class="page-status-note offline" role="status">
-		<Icon icon="ri:wifi-off-line" width="13" />
+		<Icon icon="mynaui:wifi-off" width="13" />
 		<span>Offline</span>
 	</div>
 {:else if saveError}
 	<div class="page-status-note error" role="status">
-		<Icon icon="ri:error-warning-line" width="13" />
+		<Icon icon="mynaui:danger-circle" width="13" />
 		<span>Couldn’t save</span>
 	</div>
 {/if}

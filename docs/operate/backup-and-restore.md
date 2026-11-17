@@ -1,7 +1,7 @@
 ---
 title: Backup & restore
 description: How to protect a Virtues server - creating the recovery key the server never stores, backing up to a drive, verifying archives, and restoring.
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 Your server stores data that exists nowhere else. This page explains how to
@@ -25,6 +25,16 @@ This prints the secret key **once**, in a banner, and doesn't write it
 anywhere. Neither someone who steals the server nor Virtues as a company can
 decrypt your archives. It also means that if you lose the key, nobody can
 recover it for you.
+
+In a terminal, the banner opens on a screen of its own and stays until you
+press Enter. Then it disappears, so the key isn't left in the terminal's
+history, where anyone who opens the server's Terminal later could scroll
+back to it. Copy the key before you press Enter. In the app's Terminal, hold
+Shift while you drag to select it. A plain drag there copies the key into a
+clipboard on your server instead of on your device. If nobody presses Enter,
+the banner closes after ten minutes. If you didn't save the key, the command
+tells you which file to remove so you can run it again. Do that before your
+first backup, because a new key can't open archives made with the old one.
 
 **Store the key somewhere that will survive losing the server, and make more
 than one copy.** Use a password manager, a printout in a drawer, or a note in
@@ -51,11 +61,12 @@ file.
 ### What's inside
 
 - The **database**, as a full dump. It also contains your server's identity:
-  the server's network key, the certificate authority and the list of paired
-  devices. So a restore brings back the server's identity along with its data.
+  the server's network key and the list of paired devices. So a restore brings
+  back the server's identity along with its data.
 - The **environment file**, which contains the encryption key for the
-  credentials stored in the database. A dump restored without it can't decrypt
-  those credentials, so a backup refuses to run when it can't find the file.
+  passwords, sign-ins and keys stored in the database. A dump restored without
+  it can't decrypt them, so a backup refuses to run when the file is missing
+  or has no key in it.
 - The **data lake**: recordings, uploads and files.
 - **Authored applets**, the ones written on the server rather than shipped with
   it.
@@ -63,8 +74,13 @@ file.
   of every file. Verification and restore use these hashes to detect a damaged
   archive.
 
-Because the archive includes the environment file, **it is as sensitive as the
-server itself.** Protect a backup file the way you protect the machine.
+**An archive holds every password, sign-in and key your server has saved,
+and the key that unlocks them.** Your server seals each one with the
+encryption key from the environment file, and that file is inside the same
+archive. So the only thing protecting them is the recovery key you created
+first. Anyone with an archive and the recovery key can read all of them. Keep
+the recovery key in a different place from your archives: never on the
+backup drive, and never in the same note or folder.
 
 Not included: the downloaded model files, which are large and can be
 downloaded again, and some machine-local settings such as the saved Wi-Fi
@@ -93,6 +109,15 @@ sudo virtues backup --volume all     # write to every attached drive
 every registered drive that is attached. Drives that aren't plugged in are
 skipped without an error. Registering a drive is all the setup you need.
 
+Only encrypted archives are written to the drive. The database dump that
+goes into an archive is written first to a private folder on the server's own
+disk, `staging` in the server's data directory (`/var/lib/virtues/staging`
+unless you installed elsewhere), and deleted once the archive is written. The
+database usually shares that disk, so a backup always leaves 2 GB of it free.
+If the server's disk has less than that, or falls to it while the dump is
+being written, the backup stops, deletes the dump and says how much space it
+found.
+
 On a drive, the backup is split into a full snapshot of the database,
 environment file and applets, plus separate incremental archives of the lake.
 Old full snapshots are deleted only when the drive starts filling up, and the
@@ -109,10 +134,12 @@ Check that an archive decrypts and is intact:
 virtues backup --verify /path/to/archive.tar.gz.age --key-file /path/to/key
 ```
 
-This decrypts the archive, extracts it, and re-hashes every file against the
-manifest. It writes nothing and doesn't need a working database, so you can
-run it against an old archive on a different machine. It is also how you
-confirm that your saved key works before you need it.
+This decrypts the archive and re-hashes every file in it against the
+manifest as it reads them. It writes nothing, on the drive or on the machine
+you run it on, so it needs no free space. It doesn't need a working database,
+so you can run it against an old archive on a different machine. It is also
+how you confirm that your saved recovery key works before you need it. It
+doesn't check the encryption key inside the archive; a restore does that.
 
 Run this by hand from time to time. Nothing verifies archives on a schedule
 yet, so corruption on an old drive would otherwise only show up during a
@@ -134,15 +161,56 @@ mount path, not the volume's name or id:
 sudo virtues restore --from-volume /path/to/mount --key-file /path/to/key
 ```
 
+Restore extracts the archive into the server's private `staging` folder,
+never beside the archive, so the server's disk needs room for everything in
+the archive. It refuses to start when the disk's free space, less the 2 GB it
+always leaves for the database, is smaller than the archives themselves.
+Your current data stays on the disk until the archive has been extracted and
+checked. So when you restore over a server that already holds about as much
+data as the archive, the disk needs room for both copies at once.
+
 Before changing anything, restore checks that the service is stopped, reads
 the manifest, refuses an archive written by a *newer* release than the binary
-you're running, verifies every checksum, and checks that it can reach the
-database. Then it gives you five seconds to press Ctrl-C. You can't skip the
-version check or the checksums. If an archive came from a newer release,
-[upgrade](/docs/operate/upgrading) first and then restore.
+you're running, verifies every checksum, checks that it can reach the
+database, and checks that the disk has room to load the database. Then it
+gives you five seconds to press Ctrl-C. Ctrl-C, or a dropped SSH session,
+deletes the extracted copy before the command stops, and nothing on the
+server changes. Once restore has started replacing data, Ctrl-C stops it at
+once and leaves the server partly restored, so run the restore again. You
+can't skip the version check or the checksums. If an archive came from a
+newer release, [upgrade](/docs/operate/upgrading) first and then restore.
 
-Restoring from a drive applies the newest full snapshot, then every lake
-increment in order. If an increment has been deleted from the drive, the
+After the database loads, restore resets the passwords of the two limited
+database logins that the assistant and applets use to query your data. Your
+server derives those passwords from the encryption key in its `virtues.env`
+(`/var/lib/virtues/virtues.env` unless you installed elsewhere), and a
+restore onto a fresh install brings back a different key from the one that
+install made. Then restore checks that the key opens the passwords, sign-ins
+and keys it restored. If none of them opens, restore says so and exits with
+an error instead of reporting success. Put the `virtues.env` from the server
+the backup came from in that place, run `sudo virtues migrate` so the
+database logins follow the key, then start the service. If the key is wrong
+when the service starts, the server also shows that in the app.
+
+If a backup or restore is cut off before it can clean up, for example by a
+power cut, it can leave a plain copy of your database in the `staging`
+folder, and after a restore your encryption key too. The next backup or
+restore deletes what a backup left. What a restore left belongs to root, so
+the next restore deletes it. A backup can't delete it until your
+next upgrade or `sudo virtues migrate` hands it back to the server's own
+user. Until then, a backup that finds it names the folder for you to delete
+with `sudo rm -r`.
+
+An earlier release extracted beside the archive instead, in a hidden folder
+named `.virtues-backup-stage-…` or `.virtues-restore-stage-…`. Such a folder
+can hold a plain copy of your database and your encryption key. The next
+backup, verify or restore that uses that folder deletes it when it can and
+names it when it can't, and you can delete it by hand.
+
+Restoring from a drive extracts and checks the newest full snapshot and every
+lake increment first, so a damaged archive stops the restore before anything
+is replaced. Then it loads the database and replaces the lake with the
+increments, in order. If an increment has been deleted from the drive, the
 restore continues with the ones it finds and doesn't warn you that part of
 the lake is missing. Check the drive's contents before relying on an
 important restore.

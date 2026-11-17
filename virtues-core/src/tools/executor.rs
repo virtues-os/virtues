@@ -94,10 +94,16 @@ pub struct ToolContext {
     pub temporary: bool,
     /// Where a ghost's grants live for as long as the ghost does.
     pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
-    /// The turn is in sudo mode: the owner chose it for this chat. Nothing
-    /// asks before it runs, and `shell` runs at all. Set only by the chat
+    /// The turn runs the admin applet: the owner picked it in this chat. Nothing
+    /// asks before it runs, and `sudo` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The applet whose prompt this turn or run follows: a `/name` turn or
+    /// an applet's run. `use_applet` then reads only that applet's files.
+    pub own_applet: Option<String>,
+    /// The applet run this call is part of, so what the run's `shell` reaches
+    /// is recorded on it. `None` outside an applet run.
+    pub applet_run_id: Option<String>,
     /// The IANA zone the owner's client is in, the one the prompt's clock is
     /// written in. SQL tools read dates in it. `None` (an applet run, a
     /// worker) falls back to `home_timezone`.
@@ -106,10 +112,29 @@ pub struct ToolContext {
     /// chat handler. A page's read base made in a turn serves only that
     /// turn (`page_reads::serves_turn`). `None` outside a chat turn.
     pub turn: Option<String>,
-    /// The call came through the console door (`server/api/console.rs`): the
-    /// owner at the box, running a CLI verb. Set only by that handler, never
-    /// from a tool's arguments, so the model cannot claim it.
+    /// The call came from an agent the owner runs, present in its session: a
+    /// CLI verb through the console door (`server/api/console.rs`), or a call
+    /// to `/api/mcp` (`server/api/mcp.rs`). Set only by those two handlers,
+    /// never from a tool's arguments, so the model cannot claim it.
     pub console: bool,
+    /// The owner agreed in chat to a change that deletes or overwrites
+    /// something in a connected service: the chat's `connection` call carried
+    /// `confirmed`, and this is its worker. A connection tool that declares
+    /// itself destructive runs only with it (`tools/connection.rs`).
+    pub owner_confirmed: bool,
+}
+
+impl ToolContext {
+    /// The schema of the applet whose run or `/name` turn this is. Its SQL
+    /// names the applet's own tables without it.
+    pub fn applet_schema(&self) -> Option<String> {
+        let id = match (&self.applet_id, &self.own_applet) {
+            (Some(id), _) => id.clone(),
+            (None, Some(name)) => crate::applet_templates::chat_applet_named(name)?.applet_id,
+            (None, None) => return None,
+        };
+        crate::scheduler::applets::applet_schema_name(&id)
+    }
 }
 
 impl Default for ToolContext {
@@ -128,9 +153,12 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            own_applet: None,
+            applet_run_id: None,
             timezone: None,
             turn: None,
             console: false,
+            owner_confirmed: false,
         }
     }
 }
@@ -238,7 +266,7 @@ pub struct ToolExecutor {
     yjs_state: Option<YjsState>,
 }
 
-/// Start the code_interpreter packages building on a box that lacks them, so
+/// Start the shell's Python packages building on a box that lacks them, so
 /// they are ready before the first chat reaches for them. Not in a debug
 /// build: a developer machine builds them on the first code run instead of
 /// fetching 400 MB whenever the server starts.
@@ -271,7 +299,7 @@ impl ToolExecutor {
         }
     }
 
-    /// For a one-shot CLI verb: the same tools, without the code_interpreter
+    /// For a one-shot CLI verb: the same tools, without the shell's
     /// package build `new` starts. A `virtues query` that began a 400 MB fetch
     /// on a box missing them would be a surprising side effect of a read.
     pub fn without_warmup(pool: PgPool) -> Self {
@@ -303,8 +331,6 @@ impl ToolExecutor {
         // asked, but could rewrite what the digest says and set it to fire
         // hourly, silently.
         "applet",
-        // Writes a prompt that later runs with tools, as an applet's does.
-        "save_skill",
         // Deletes rows, in the person's own record.
         "sql_write",
         // Real money, per call.
@@ -330,12 +356,8 @@ impl ToolExecutor {
         if tool_name == "applet" && super::applet_management::is_read(arguments) {
             return Ok(None);
         }
-        // Reading the authoring guide writes nothing; asking "I allow" for it
-        // would put a prompt in front of the step the definition requires.
-        // Nor does a dry run: `check_only` validates and creates nothing.
-        if applet_action == Some("setup")
-            && (super::applet_setup::wants_guide(arguments) || super::applet_setup::wants_check_only(arguments))
-        {
+        // A dry run writes nothing: `check_only` validates and creates nothing.
+        if applet_action == Some("setup") && super::applet_setup::wants_check_only(arguments) {
             return Ok(None);
         }
         // Sudo is the owner's bypass: these run, and a delete in SQL or the
@@ -369,7 +391,7 @@ impl ToolExecutor {
                     let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
                         .await
                         .map(|a| a.name)
-                        .unwrap_or_else(|_| "this action".to_string());
+                        .unwrap_or_else(|_| "this applet".to_string());
                     let verb = match applet_action {
                         Some("delete") => "delete",
                         Some("edit") => "change",
@@ -381,13 +403,16 @@ impl ToolExecutor {
                     let (title, verb) = match tool_name {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
-                        "applet" => ("a new action".to_string(), "create"),
-                        "save_skill" => (
+                        // Setup names the applet it writes, new or changed.
+                        "applet" => (
                             arguments
                                 .get("name")
                                 .and_then(|v| v.as_str())
-                                .map_or_else(|| "a skill".to_string(), |n| format!("the skill /{n}")),
-                            "save",
+                                .map(str::trim)
+                                .filter(|n| !n.is_empty())
+                                .unwrap_or("a new applet")
+                                .to_string(),
+                            "set up",
                         ),
                         other => (other.to_string(), "run"),
                     };
@@ -479,7 +504,6 @@ impl ToolExecutor {
                 }
             }
             "update_memory" => self.execute_update_memory(arguments).await,
-            "save_skill" => Self::execute_save_skill(arguments),
             // Getting started's tools: markers, never writes (the client's
             // cards write). `skip_step` is the one exception and it lands in
             // the same stored list the door uses.
@@ -488,7 +512,12 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.project_id.as_deref(), context.scope_mode)
+                    .execute(
+                        arguments,
+                        context.project_id.as_deref(),
+                        context.scope_mode,
+                        context.timezone.as_deref(),
+                    )
                     .await
             }
             // Sudo: the database tools run any statement on any table, as the
@@ -506,39 +535,71 @@ impl ToolExecutor {
                 super::sql_sudo::execute(&self._pool, &sql, context.timezone.as_deref()).await
             }
             "sql_query" => {
-                // A saved chat can keep a result as a file for code_interpreter.
+                // A saved chat can keep a result as a file for shell.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
-                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
+                let schema = context.applet_schema();
+                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref(), schema.as_deref()).await
             }
-            "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            "sql_write" => {
+                let schema = context.applet_schema();
+                super::sql_write::execute(
+                    &self._pool,
+                    arguments,
+                    context.timezone.as_deref(),
+                    context.applet_run_id.as_deref(),
+                    schema.as_deref(),
+                )
+                .await
+            }
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
-            "shell" if context.sudo && context.applet_id.is_none() => {
+            "sudo" if context.sudo && context.applet_id.is_none() => {
                 use super::sudo_gate;
                 let command =
                     arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "shell", &command).await {
-                    return Ok(sudo_gate::ask("shell", &command));
+                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "sudo", &command).await {
+                    return Ok(sudo_gate::ask("sudo", &command));
                 }
-                super::shell::execute(arguments).await
+                super::sudo_shell::execute(arguments).await
             }
-            "shell" => Err(ToolError::ExecutionFailed(
-                "shell runs only in sudo mode, which the owner turns on in the chat".into(),
+            "sudo" => Err(ToolError::ExecutionFailed(
+                "sudo runs only in the admin applet, which the owner picks with /admin in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
-            "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
+            "show" => {
+                let schema = context.applet_schema();
+                super::show::execute(&self.sql_query, arguments, context.timezone.as_deref(), schema.as_deref()).await
+            }
             // The chat's browsing task, run by its own loop, whose steps come
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
+            // A connected service, through a worker with only its tools; and
+            // those tools, which only that worker calls.
+            super::connection::TOOL => Ok(super::connection::run_tool(&self._pool, &arguments, context).await),
+            name if super::connection::split(name).is_some() => {
+                Ok(super::connection::call_tool(&self._pool, name, arguments, context).await)
+            }
             super::tasks::CREATE_TOOL => Ok(super::tasks::create(&self._pool, &arguments, context).await),
             super::tasks::UPDATE_TOOL => Ok(super::tasks::update(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }
-            "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
+            "shell" => self.execute_shell(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
+            // Only a shipped applet's own turn that lists it may, as with
+            // `sudo`: the turn loop refuses a tool it did not offer, and this
+            // holds even if a list offers it by mistake.
             "dispatch_subagents" => {
+                let allowed = context.applet_id.is_none()
+                    && context.own_applet.as_deref().and_then(crate::applet_templates::chat_applet_named).is_some_and(
+                        |a| a.shipped && a.tools.as_ref().is_some_and(|t| t.iter().any(|t| t == "dispatch_subagents")),
+                    );
+                if !allowed {
+                    return Err(ToolError::InvalidParameters(
+                        "dispatch_subagents runs only in a deep research turn".into(),
+                    ));
+                }
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
             }
             // Page editing tools - all routed to PageEditorTool
@@ -605,6 +666,7 @@ impl ToolExecutor {
             "applet" => {
                 super::applet_management::execute(&self._pool, self.yjs_state.as_ref(), arguments, context).await
             }
+            super::use_applet::TOOL => super::use_applet::execute(&arguments, context.own_applet.as_deref()),
             // Applet memory (persistent scratchpad for actions across runs)
             "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
             // Dayline event CRUD (used by hourly/EOD actions)
@@ -646,17 +708,19 @@ impl ToolExecutor {
         })))
     }
 
-    /// Run model-written Python in the sandbox (api/code.rs), in the chat's
-    /// workspace when it has one (api/code_env.rs).
-    async fn execute_code_interpreter(
+    /// Run a model-written command in the sandbox (api/code.rs), in the
+    /// chat's workspace when it has one (api/code_env.rs). From an applet's
+    /// run it also sees the applet's folder, and reaches the hosts its file
+    /// asks for that the owner allowed, with each request recorded on the run.
+    async fn execute_shell(
         &self,
         arguments: serde_json::Value,
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let code = arguments
-            .get("code")
+        let command = arguments
+            .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("code is required".into()))?;
+            .ok_or_else(|| ToolError::InvalidParameters("command is required".into()))?;
 
         let timeout = arguments
             .get("timeout")
@@ -672,11 +736,15 @@ impl ToolExecutor {
         }
         .map_err(ToolError::ExecutionFailed)?;
 
-        let request = crate::api::code::ExecuteCodeRequest {
-            code: code.to_string(),
-            timeout,
-        };
-        let response = crate::api::code::execute_code(request, &ws).await;
+        // The shell is offline wherever it runs, in chat and in an applet's
+        // run alike. An applet's own folder is mounted for its `scripts/`.
+        let mut request = crate::api::code::ShellRequest { command: command.to_string(), timeout, ..Default::default() };
+        if let Some(applet_id) = context.applet_id.as_deref() {
+            request.folder = crate::applet_templates::dir_for_applet_id(applet_id)
+                .map(|d| crate::applet_templates::resolve_applet_dir(&d))
+                .filter(|p| p.is_dir());
+        }
+        let response = crate::api::code::run_shell(request, &ws).await;
 
         // The chat shows a saved chat's images from its workspace; the model
         // gets their paths, never bytes.
@@ -712,7 +780,7 @@ impl ToolExecutor {
         }
 
         // A failed run is a failed tool call carrying the whole result, so the
-        // model gets the traceback to fix its code from and the chat can show it.
+        // model gets the traceback to fix its command from and the chat can show it.
         Ok(ToolResult {
             success: response.success,
             data,
@@ -1036,42 +1104,6 @@ impl ToolExecutor {
     /// Open one step's card. A done step has no card to open, and the
 
     /// Skip a step on the person's ask. `connect_ai` is the door's alone.
-    /// Save one of the person's skills (`api::skills`). Every check lives
-    /// there, so a refused name or tool comes back as the reason.
-    fn execute_save_skill(arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
-        let text = |key: &str| arguments.get(key).and_then(|v| v.as_str()).map(str::to_string);
-        let required = |key: &str| text(key).ok_or_else(|| ToolError::InvalidParameters(format!("{key} is required")));
-        let tools = arguments
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let slot = match text("model").as_deref() {
-            None | Some("standard") => virtues_registry::models::ModelSlot::Standard,
-            Some("deep") => virtues_registry::models::ModelSlot::Deep,
-            Some(other) => {
-                return Err(ToolError::InvalidParameters(format!("model {other:?} is not standard or deep")))
-            }
-        };
-        let (skill, replaced) = crate::api::skills::save(crate::api::skills::NewSkill {
-            name: required("name")?,
-            description: required("description")?,
-            icon: text("icon"),
-            tools,
-            body: required("body")?,
-            slot,
-        })
-        .map_err(|e| match e {
-            crate::error::Error::InvalidInput(why) => ToolError::InvalidParameters(why),
-            e => ToolError::ExecutionFailed(format!("save skill: {e}")),
-        })?;
-        Ok(ToolResult::success(serde_json::json!({
-            "saved": skill.name,
-            "replaced": replaced,
-            "run_it_with": format!("/{}", skill.name),
-        })))
-    }
-
     async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
         let step = arguments
             .get("step")

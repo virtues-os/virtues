@@ -25,7 +25,6 @@ import { parseRoute, tabRegistry } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
-import { DESK_GAP_PX } from '$lib/stores/sidebarState.svelte';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -74,11 +73,11 @@ const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
- * The desk between the two panes' cards in split view, the same gap as
- * between any two cards. SplitContainer lays the panes out with it and the
- * window header lines their tab strips up with it.
+ * The gap between the two panes in split view, where the painting shows
+ * between two cards (themes.css, --pane-gap). SplitContainer lays the panes
+ * out with it and the window header lines their tab strips up with it.
  */
-export const SPLIT_GUTTER_PX = DESK_GAP_PX;
+export const SPLIT_GUTTER_PX = 10;
 
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
@@ -484,7 +483,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'mynaui:chat' });
 	}
 
 	/**
@@ -975,10 +974,22 @@ class WindowShellStore {
 		return tab.id;
 	}
 
+	/**
+	 * Whether closing a tab changes anything. The window always holds a tab,
+	 * and closing its last one opens a new chat, so the last tab, when it is
+	 * already an empty new chat, has nothing to close to. It shows no ✕, and
+	 * ⌘W leaves it be, instead of closing it and opening the same thing.
+	 */
+	canClose(tabId: string): boolean {
+		const pane = this.findPaneForTab(tabId);
+		if (!pane || this.isSplit || pane.tabs.length !== 1) return true;
+		return !this.isNewChatRoute(pane.tabs[0].route);
+	}
+
 	/** Close a tab. `forget` leaves it out of ⌘⇧T, for a thing that was deleted. */
 	closeTab(tabId: string, options?: { forget?: boolean }): void {
 		const pane = this.findPaneForTab(tabId);
-		if (!pane) return;
+		if (!pane || !this.canClose(tabId)) return;
 
 		const tabIndex = pane.tabs.findIndex(t => t.id === tabId);
 		if (!options?.forget && tabIndex !== -1) this.rememberClosed(pane.tabs[tabIndex], pane.id, tabIndex);
@@ -1484,8 +1495,7 @@ class WindowShellStore {
 	/**
 	 * Open a tab in the opposite pane — auto-enables split, dedupes by route.
 	 *
-	 * Generic helper used by `openChatContext` and anywhere else that needs
-	 * the "click something, see its detail beside the list" pattern.
+	 * For the "click something, see its detail beside the list" pattern.
 	 * Returns the tab id (new or existing).
 	 */
 	openAside(input: TabInput): string {
@@ -1510,16 +1520,6 @@ class WindowShellStore {
 		}
 
 		return this.openTab(input, targetPaneId, { adjacent: true });
-	}
-
-	openChatContext(chatId: string, _currentPaneId: 'left' | 'right' | null): string {
-		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
-		return this.openAside({
-			type: 'chat',
-			label: 'Context',
-			route: `/chat/${entityId}?view=context`,
-			icon: 'ri:information-line'
-		});
 	}
 
 	// ============================================================================

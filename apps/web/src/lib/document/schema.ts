@@ -51,7 +51,7 @@ import {
 	findWrapping,
 	type Step,
 } from '@tiptap/pm/transform';
-import { ySyncPluginKey } from '@tiptap/y-tiptap';
+import { Y_SYNC_KEY } from './ykeys';
 import Blockquote from '@tiptap/extension-blockquote';
 import Bold from '@tiptap/extension-bold';
 import Code, { pasteRegexMatch as codePasteMatch } from '@tiptap/extension-code';
@@ -497,7 +497,7 @@ const TypedLink = Link.extend({
 			return new Plugin({
 				...plugin.spec,
 				appendTransaction: (transactions, oldState, newState) =>
-					transactions.some((tr) => tr.getMeta(ySyncPluginKey) !== undefined)
+					transactions.some((tr) => tr.getMeta(Y_SYNC_KEY) !== undefined)
 						? null
 						: append.call(plugin, transactions, oldState, newState),
 			});
@@ -895,7 +895,7 @@ const ContractGuard = Extension.create({
 			new Plugin({
 				key: new PluginKey('contractGuard'),
 				filterTransaction: (tr) => {
-					if (tr.getMeta(ySyncPluginKey) !== undefined) return true;
+					if (tr.getMeta(Y_SYNC_KEY) !== undefined) return true;
 					const refused = tr.steps.findIndex((step, i) => !stepFits(step, tr.docs[i]));
 					if (refused < 0) return true;
 					// A command wrote what the contract refuses: a bug to find, not a state to hide.

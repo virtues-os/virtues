@@ -5,8 +5,10 @@
 //! `From<CryptoError>` impl so existing callers can keep using
 //! `crate::error::Error`.
 //!
-//! CI lints reject `Hmac::<Sha256>` outside `crates/virtues-helpers/src/crypto/`,
-//! so all HMAC primitives flow through there.
+//! Encryption and HMAC go through `crates/virtues-helpers/src/crypto/`. The one
+//! HMAC in core outside it is the login-password derivation in
+//! `database/restricted.rs`; the helpers module's header says what moving it
+//! would take. No CI job checks for others.
 
 pub use virtues_helpers::crypto::{CryptoError, OauthStateClaims, TokenEncryptor};
 

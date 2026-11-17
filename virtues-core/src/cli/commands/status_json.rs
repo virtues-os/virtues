@@ -9,12 +9,12 @@
 //!   - Binary version + uptime
 //!   - Last applied schema migration ID
 //!   - Applet subprocess health (running / errored / stopped per action)
-//!   - Last 10 `app_auth_event` rows (paired / revoked / sudo events)
+//!   - Last 10 `app_auth_event` rows (paired / revoked / key events)
 //!   - Subscription link state (api_key present? account linked?)
 //!   - Wallet snapshot (read locally — full wallet balance lives in
 //!     virtues-api but we expose what we know from the last 402/200)
 //!   - BYO key status (provider + model — never the key itself)
-//!   - Pending sudo / pair token counts
+//!   - Pending pair token counts
 //!   - Diagnostic opt-in state
 //!
 //! Intentionally NOT in here:
@@ -36,7 +36,6 @@ struct StatusJson {
     diag_enabled: bool,
     box_id: String,
     auth: AuthSection,
-    sudo: SudoSection,
     pair: PairSection,
     billing: BillingSection,
     actions: AppletsSection,
@@ -47,12 +46,6 @@ struct StatusJson {
 #[derive(Debug, Serialize)]
 struct AuthSection {
     devices_paired: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct SudoSection {
-    pending: i64,
-    consumed_24h: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,7 +105,6 @@ async fn collect(pool: &PgPool) -> Result<StatusJson> {
         diag_enabled: super::super::diag::enabled(),
         box_id: super::super::diag::box_id(),
         auth: collect_auth(pool).await,
-        sudo: collect_sudo(pool).await,
         pair: collect_pair(pool).await,
         billing: collect_billing(pool).await,
         actions: collect_applets(pool).await,
@@ -154,29 +146,6 @@ async fn collect_auth(pool: &PgPool) -> AuthSection {
     .flatten();
     AuthSection {
         devices_paired: devices.map(|(n,)| n).unwrap_or(0),
-    }
-}
-
-async fn collect_sudo(pool: &PgPool) -> SudoSection {
-    let pending: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_sudo_request \
-         WHERE status = 'pending' AND expires_at > now()",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    let consumed: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_sudo_request \
-         WHERE status = 'consumed' AND consumed_at > now() - interval '24 hours'",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    SudoSection {
-        pending: pending.map(|(n,)| n).unwrap_or(0),
-        consumed_24h: consumed.map(|(n,)| n).unwrap_or(0),
     }
 }
 

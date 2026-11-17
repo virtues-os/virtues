@@ -158,7 +158,7 @@
 	</div>
 
 	<div class="search">
-		<Icon icon="ri:search-line" width={16} />
+		<Icon icon="mynaui:search" width={16} />
 		<input
 			bind:this={input}
 			class="search-input"
@@ -206,12 +206,12 @@
 		{#if q.length === 0}
 			<div class="card">
 				<button class="row" type="button" onclick={() => startNaming({ kind: "here" })} disabled={busy || !fix}>
-					<div class="r-icon"><Icon icon="ri:focus-3-line" width={17} /></div>
+					<div class="r-icon"><Icon icon="mynaui:center-focus" width={17} /></div>
 					<div class="r-body">
 						<div class="r-title">Use my current location</div>
 						<div class="r-sub">{fix ? "Name this spot and mute it" : "Waiting for a location fix"}</div>
 					</div>
-					<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+					<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 				</button>
 			</div>
 		{/if}
@@ -221,7 +221,7 @@
 			<div class="card">
 				{#each namedHits as p (p.id)}
 					<button class="row" type="button" onclick={() => muteNamed(p)} disabled={busy}>
-						<div class="r-icon"><Icon icon="ri:map-pin-line" width={17} /></div>
+						<div class="r-icon"><Icon icon="mynaui:map-pin" width={17} /></div>
 						<div class="r-body">
 							<div class="r-title">{p.name}</div>
 							{#if p.address}<div class="r-sub">{p.address}</div>{/if}
@@ -236,14 +236,14 @@
 			<div class="card">
 				{#each unnamedHits as p (p.id)}
 					<button class="row" type="button" onclick={() => startNaming({ kind: "unnamed", place: p })} disabled={busy}>
-						<div class="r-icon"><Icon icon="ri:map-pin-2-line" width={17} /></div>
+						<div class="r-icon"><Icon icon="mynaui:map-pin" width={17} /></div>
 						<div class="r-body">
 							<div class="r-title">Somewhere you've been {p.ref_count} times</div>
 							<div class="r-sub">
 								{(p.latitude as number).toFixed(3)}, {(p.longitude as number).toFixed(3)}
 							</div>
 						</div>
-						<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+						<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 					</button>
 				{/each}
 			</div>
@@ -254,7 +254,7 @@
 			<div class="card">
 				{#each suggestions as s (s.place_id)}
 					<button class="row" type="button" onclick={() => muteSuggestion(s)} disabled={busy}>
-						<div class="r-icon"><Icon icon="ri:global-line" width={17} /></div>
+						<div class="r-icon"><Icon icon="mynaui:globe" width={17} /></div>
 						<div class="r-body">
 							<div class="r-title">{s.main_text || s.description}</div>
 							{#if s.secondary_text}<div class="r-sub">{s.secondary_text}</div>{/if}

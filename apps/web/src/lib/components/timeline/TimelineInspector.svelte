@@ -491,7 +491,7 @@
 								     ⓘ on the row pointed at or selected, which opens the
 								     name field to correct it. -->
 								<button class="info" class:shown={i === curSection} type="button" aria-label="About this name" title="Matched by Virtues" onclick={() => startNaming(placeId)}>
-									<Icon icon="ri:information-line" width="18" />
+									<Icon icon="mynaui:info-circle" width="18" />
 								</button>
 							{:else}
 								<span class="name-door" class:shown={i === curSection}>

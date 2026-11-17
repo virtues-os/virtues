@@ -36,6 +36,7 @@ impl SemanticSearchTool {
         arguments: serde_json::Value,
         project_id: Option<&str>,
         scope_mode: crate::search::ScopeMode,
+        timezone: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         // Prefer `queries` (multi-facet recall); fall back to the single `query`
         // for back-compat. Blank phrasings are dropped; cap at 4.
@@ -163,10 +164,21 @@ impl SemanticSearchTool {
             .await
             .unwrap_or_default();
 
+        // Each hit's time on the owner's clock, and spelled out with its
+        // weekday, so the reply quotes a time instead of converting one.
+        let zone = crate::timezone::resolve_timezone(&*self.pool, timezone)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
+
         let result_json: Vec<serde_json::Value> = results
             .iter()
             .enumerate()
             .map(|(i, r)| {
+                let at = r
+                    .timestamp
+                    .as_deref()
+                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                    .map(|t| t.to_utc());
                 let ref_route = if let Some((file_id, _filename, page, quote)) =
                     doc_refs.get(&r.record_id)
                 {
@@ -207,7 +219,8 @@ impl SemanticSearchTool {
                     // rows; flatten them as every other narrator read does.
                     "preview": r.preview.as_deref().map(crate::transcript::flatten_speaker_tags),
                     "author": r.author,
-                    "timestamp": r.timestamp,
+                    "timestamp": at.map(|t| crate::timezone::owner_rfc3339(t, Some(&zone))),
+                    "local": at.map(|t| crate::timezone::owner_label(t, Some(&zone))),
                     // Viewable route for this exact source — document chunks
                     // open the file viewer at their page; everything else opens
                     // the raw record in the data viewer. Cite it inline (see

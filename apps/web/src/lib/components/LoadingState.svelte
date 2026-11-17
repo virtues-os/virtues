@@ -11,4 +11,4 @@
 	} = $props();
 </script>
 
-<StateBlock icon="ri:loader-4-line" iconSize={24} spin {message} class={className} />
+<StateBlock icon="mynaui:spinner" iconSize={24} spin {message} class={className} />

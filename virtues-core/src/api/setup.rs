@@ -4,7 +4,7 @@
 //! The wizard runs in a phone/laptop browser after the pair-token claim, so
 //! every handler here takes `AuthUser` (session cookie). The underlying
 //! device-link machinery (`virtues_api::link`) was built for exactly this:
-//! `start` seals the secret `device_code` in `box_secrets`, so each poll can
+//! `start` seals the secret `device_code` as a box secret, so each poll can
 //! be an independent HTTP request — no server-side wizard session.
 //!
 //! Endpoints:

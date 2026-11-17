@@ -92,7 +92,7 @@
 										<span class="row-name">{c.title}</span>
 										<span class="row-meta">{plural(c.stop_count, 'visit')} · {duration(c.hours)}</span>
 									</span>
-									<Icon icon="ri:arrow-right-s-line" width="16" />
+									<Icon icon="mynaui:chevron-right" width="16" />
 								</button>
 							</li>
 						{/each}

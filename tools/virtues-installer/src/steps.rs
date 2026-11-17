@@ -23,6 +23,13 @@ pub struct Target {
     pub pkg_mgr: PkgMgr,
     pub distro: String,
     pub distro_version: String,
+    /// The release codename apt repositories are keyed by. A derivative names
+    /// the release it is built on (`UBUNTU_CODENAME` on Mint and Pop!_OS,
+    /// `DEBIAN_CODENAME` on LMDE), since its own codename has no PGDG packages.
+    pub codename: Option<String>,
+    /// The PGDG codename to add, when the distro's own archive has no
+    /// PostgreSQL 18. Pre-flight sets it (`preflight::postgres_source`).
+    pub pgdg: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +73,11 @@ pub fn detect() -> Result<Target> {
         pkg_mgr,
         distro: id,
         distro_version: version,
+        codename: field(&release, "UBUNTU_CODENAME")
+            .or_else(|| field(&release, "DEBIAN_CODENAME"))
+            .or_else(|| field(&release, "VERSION_CODENAME"))
+            .filter(|c| !c.is_empty()),
+        pgdg: None,
     })
 }
 

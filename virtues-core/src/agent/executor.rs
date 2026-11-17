@@ -87,7 +87,7 @@ impl ToolExecutionResult {
     /// read the reason.
     ///
     /// A failure's `data` rides along, capped. A tool that fails WITH output
-    /// — `code_interpreter` puts the traceback in stderr and only its last
+    /// — `shell` puts the traceback in stderr and only its last
     /// line in `error` — was handing the model the sentence and
     /// keeping the evidence, so it could not fix the code and the
     /// repeated-failure guard then refused the identical retry. The data is
@@ -317,18 +317,18 @@ async fn execute_single(
         // Waits on the owner to finish a step (a sign-in, a code), up to
         // `browser::HANDOFF_WAIT`. Sit past it so the tool reports its own.
         crate::browser::HANDOFF_WAIT + Duration::from_secs(10)
-    } else if tool_call.name == "code_interpreter" {
+    } else if tool_call.name == "shell" {
         // Its schema offers the model a timeout of up to 120s and defaults to
         // 60. Under the 30s default the DEFAULT was already unreachable: any
         // code that ran longer died no matter what the model asked for, and
         // the sandbox subprocess was left running. The ceiling matches what
         // the tool advertises, plus room for the sandbox to start.
         Duration::from_secs(150)
-    } else if tool_call.name == "shell" {
+    } else if tool_call.name == "sudo" {
         // Carries its own timeout, up to ten minutes, and kills its process
         // group on it. Sit just past that so the tool reports its own kill
         // rather than being cut off here with no result.
-        Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS + 15)
+        Duration::from_secs(crate::tools::sudo_shell::MAX_TIMEOUT_SECS + 15)
     } else {
         config.tool_timeout
     };
@@ -543,7 +543,7 @@ mod query_ref_tests {
     fn a_failure_is_one_envelope_with_its_data() {
         let r = ToolExecutionResult {
             tool_call_id: "c".into(),
-            tool_name: "code_interpreter".into(),
+            tool_name: "shell".into(),
             result: Ok(ToolResult {
                 success: false,
                 data: serde_json::json!({"stderr": "Traceback…\nNameError: x"}),
@@ -552,7 +552,7 @@ mod query_ref_tests {
             }),
         };
         let text = r.to_llm_content();
-        assert!(text.starts_with("Tool failed (code_interpreter, execution): Code execution failed: NameError: x\n"), "{text}");
+        assert!(text.starts_with("Tool failed (shell, execution): Code execution failed: NameError: x\n"), "{text}");
         assert!(text.contains("Traceback"), "the data rides along: {text}");
         // And to the chat: the event keeps the data beside the reason, which
         // is what lets a reload still show the traceback.

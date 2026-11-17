@@ -139,6 +139,8 @@ pub(crate) const SECTIONS: &[&str] = &[
     "sleep",
     "recent_days",
     "sources",
+    "keys",
+    "connections",
 ];
 
 /// Build the block. `now_quantized` is the quarter-hour-floored instant the
@@ -505,6 +507,39 @@ async fn build_section(
             let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 32)).collect();
             Ok((!names.is_empty())
                 .then(|| format!("Connected sources: {}.", names.join(", "))))
+        }
+        "keys" => {
+            // Which named keys they have set, so you can say one exists or
+            // ask them to add one. Names only: no tool can read a value.
+            let rows = sqlx::query_as::<_, (String,)>(
+                "SELECT key FROM credentials WHERE kind = 'env' ORDER BY key LIMIT 20",
+            )
+            .fetch_all(pool)
+            .await?;
+            let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 64)).collect();
+            Ok((!names.is_empty()).then(|| {
+                format!(
+                    "Keys they have set in Settings (names only, you cannot read values): {}.",
+                    names.join(", ")
+                )
+            }))
+        }
+        "connections" => {
+            // Which services' tools the `connection` tool can use, by the
+            // short name it takes, and which wait for the owner to sign in
+            // again.
+            let names: Vec<String> = crate::tools::connection::connected(pool)
+                .await?
+                .iter()
+                .take(20)
+                .map(|c| {
+                    let waiting = if c.needs_sign_in { ", needs the owner to sign in again" } else { "" };
+                    format!("{} ({}{waiting})", clip(&c.id, 24), clip(&c.name, 40))
+                })
+                .collect();
+            Ok((!names.is_empty()).then(|| {
+                format!("Services connected for the connection tool: {}.", names.join(", "))
+            }))
         }
         other => {
             tracing::warn!("[chat] unknown circumstances section: {other}");

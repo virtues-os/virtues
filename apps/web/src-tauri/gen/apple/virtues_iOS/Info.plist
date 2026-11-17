@@ -86,8 +86,6 @@
 	<string>AppIcon</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Virtues uses Bluetooth to find your box and set up its Wi-Fi during onboarding.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Virtues does not write anything to Health. It only reads your health data to build your personal timeline, stored on your own box.</string>
 	<key>NSCameraUsageDescription</key>

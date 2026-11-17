@@ -327,7 +327,7 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 | Role | Face | Size | Weight |
 |---|---|---|---|
 | Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
-| Row (every panel) | Avenir | 13px | 400 |
+| Row, menu item, picker row and field, project chip (`--chrome-label-font-size`) | Avenir | 14px | 400 |
 | Writing in the sidebar (a page, a project, a pin of either) | EB Garamond | 14px | 400 |
 | Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |

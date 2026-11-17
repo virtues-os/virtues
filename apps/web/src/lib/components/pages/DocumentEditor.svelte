@@ -25,6 +25,7 @@
 	import { isChangeOrigin } from "@tiptap/extension-collaboration";
 	import { TextSelection } from "@tiptap/pm/state";
 	import type { EditorView } from "@tiptap/pm/view";
+	import { contract } from "$lib/document/schema";
 	import { toast } from "svelte-sonner";
 	import "$lib/document/document.css";
 	import { codeAt, createPageEditor, setPageEditorState, type EditorBinding, type TreeAiDriver } from "$lib/document/editor";
@@ -477,10 +478,58 @@
 		const p = proposalAt(view.state, at.pos);
 		if (!p) return false;
 		contextMenu.show({ x: at.x, y: at.y }, [
-			{ id: "accept", label: "Accept", icon: "ri:check-line", action: () => void acceptProposal(e, p.id) },
-			{ id: "reject", label: "Reject", icon: "ri:close-line", action: () => void rejectProposal(e, p.id) },
+			{ id: "accept", label: "Accept", icon: "mynaui:check", action: () => void acceptProposal(e, p.id) },
+			{ id: "reject", label: "Reject", icon: "mynaui:x", action: () => void rejectProposal(e, p.id) },
 		]);
 		return true;
+	};
+
+	// A heading's level mark (Flat headings) opens this: the levels the
+	// contract allows up to 3, any deeper one the heading already has, and Text.
+	const headingMenu = (view: EditorView, pos: number, at: { x: number; y: number }) => {
+		const node = view.state.doc.nodeAt(pos);
+		if (!node || node.type.name !== "heading") return;
+		const current = Number(node.attrs.level);
+		const levels = [1, 2, 3];
+		if (current > 3) levels.push(current);
+		const id = node.attrs[contract.id.attr];
+		// Where the heading is when a level is picked: another device or the
+		// writer may have edited the page while the menu was open.
+		const headingNow = (): { at: number; heading: typeof node } | null => {
+			const { doc } = view.state;
+			const same = doc.nodeAt(pos);
+			if (same === node) return { at: pos, heading: same };
+			if (!id) return null;
+			let found: { at: number; heading: typeof node } | null = null;
+			doc.descendants((n, p) => {
+				if (found) return false;
+				if (n.type.name === "heading" && n.attrs[contract.id.attr] === id) found = { at: p, heading: n };
+				return !n.isTextblock;
+			});
+			return found;
+		};
+		const setLevel = (level: number) => {
+			const now = headingNow();
+			if (now) view.dispatch(view.state.tr.setNodeMarkup(now.at, undefined, { ...now.heading.attrs, level }));
+		};
+		const toText = () => {
+			const now = headingNow();
+			if (!now) return;
+			const paragraph = view.state.schema.nodes.paragraph;
+			view.dispatch(view.state.tr.setNodeMarkup(now.at, paragraph, id ? { [contract.id.attr]: id } : null));
+		};
+		contextMenu.show(at, [
+			...levels.map((level) => ({
+				id: `heading-${level}`,
+				label: `Heading ${level}`,
+				shortcut: "#".repeat(level),
+				checked: level === current,
+				role: "menuitemradio" as const,
+				action: () => setLevel(level),
+			})),
+			{ id: "heading-text", label: "Text", dividerBefore: true, action: toText },
+		]);
+		view.focus();
 	};
 
 	const tableContext: ContextHandler = (view, at) => {
@@ -568,6 +617,7 @@
 			placeholder,
 			label: pageTitle,
 			spellcheck: pageDisplay.spellcheck,
+			headingMenu,
 			plugins: [
 				triggers([
 					{
@@ -714,6 +764,7 @@
 	bind:this={frame}
 	class="document-editor"
 	class:prose--article={pageDisplay.article}
+	class:prose--flat-headings={pageDisplay.headingMode === "flat"}
 	class:doc-page-view={pageDisplay.widthMode === "page"}
 	class:doc-veiled={veil.hiding}
 	style:--prose-family={pageDisplay.fontFamily}

@@ -94,6 +94,9 @@ class TasksStore {
 		try {
 			const saved = await updateTask(id, patch);
 			this.place(saved);
+			// Finishing a recurring task opens the next one on the server, and
+			// reopening it takes that one back, so the list is read again.
+			if (patch.status && saved.recur_every) await this.refresh();
 			return saved;
 		} catch (e) {
 			if (before) this.place(before);

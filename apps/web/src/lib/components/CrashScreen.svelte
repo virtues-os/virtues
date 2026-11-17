@@ -68,7 +68,7 @@
 		</p>
 
 		<div class="actions">
-			<Button icon="ri:refresh-line" onclick={reload} loading={reloading}>Reload</Button>
+			<Button icon="mynaui:refresh" onclick={reload} loading={reloading}>Reload</Button>
 			<button class="link" type="button" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}>
 				{showDetails ? "Hide details" : "Show details"}
 			</button>

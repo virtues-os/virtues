@@ -12,6 +12,7 @@ Default permissions for the location-probe plugin
 - `allow-status`
 - `allow-request-location`
 - `allow-open-settings`
+- `allow-sign-in`
 
 ## Permission Table
 
@@ -174,6 +175,32 @@ Enables the resume_probe command without any pre-configured scope.
 <td>
 
 Denies the resume_probe command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:allow-sign-in`
+
+</td>
+<td>
+
+Enables the sign_in command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:deny-sign-in`
+
+</td>
+<td>
+
+Denies the sign_in command without any pre-configured scope.
 
 </td>
 </tr>

@@ -9,6 +9,10 @@
 	 * once for 1.5s, so running along a toolbar reads each button without
 	 * waiting again, as macOS does. Keyboard focus shows it too, at once.
 	 *
+	 * A tip that repeats a label already on screen is noise, so an element
+	 * whose words are visible marks itself `data-tip-clipped`: its tip shows
+	 * only while the label inside it (`data-tip-text`) is cut off.
+	 *
 	 * It sits below its element, or beside it with `data-tip-side="right"`,
 	 * and moves to stay on screen. The element keeps its own aria-label: the
 	 * tip repeats it for the eye, so screen readers are not told twice.
@@ -34,7 +38,17 @@
 	let lastHidden = 0;
 
 	function tipTarget(node: EventTarget | null): HTMLElement | null {
-		return node instanceof Element ? node.closest<HTMLElement>('[data-tip]') : null;
+		const target = node instanceof Element ? node.closest<HTMLElement>('[data-tip]') : null;
+		if (target && 'tipClipped' in target.dataset && !labelCut(target)) return null;
+		return target;
+	}
+
+	/** The element's label is wider than the room it has, or not shown at all
+	 *  (a tab compacted to its icon). */
+	function labelCut(target: HTMLElement): boolean {
+		const label = target.querySelector<HTMLElement>('[data-tip-text]') ?? target;
+		if (label.offsetWidth === 0) return true;
+		return label.scrollWidth > label.clientWidth + 1;
 	}
 
 	async function show(target: HTMLElement) {

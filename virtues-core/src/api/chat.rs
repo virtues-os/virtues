@@ -1420,15 +1420,15 @@ async fn build_system_prompt_blocks(
                 }
             }),
         },
-        // The skill this chat is running, if any — its file's body, in the
+        // The applet this turn runs, if `/name` started one: its body, in the
         // TAIL: PerTurn cadence puts it (and everything after) outside the
         // cached prefix, so the prefix is the same whatever the chat does
-        // and switching skills rewrites a few KB, not the cache.
+        // and switching applets rewrites a few KB, not the cache.
         Block {
-            meta: BlockMeta { tag: "skill", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
+            meta: BlockMeta { tag: "applet", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
             body: Box::pin(async move {
                 match mode {
-                    ChatMode::Skill(s) => Some(format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body)),
+                    ChatMode::Applet(a) => Some(format!("\n\n<applet name=\"{}\">\n{}\n</applet>", a.name, a.body)),
                     _ => None,
                 }
             }),
@@ -1718,6 +1718,7 @@ pub async fn chat_handler(
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     user: AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
     // One turn, one key. Nothing persists a turn id — a turn is a request, not
@@ -1738,6 +1739,7 @@ pub async fn chat_handler(
         State(live_turns),
         State(ghost_permissions),
         user,
+        headers,
         Json(request),
     )
     .instrument(span)
@@ -1750,7 +1752,8 @@ async fn chat_handler_inner(
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
-    _user: AuthUser,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
     // Where the time before the first model call goes, one log line per turn
@@ -1763,6 +1766,17 @@ async fn chat_handler_inner(
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
+
+    // An admin turn runs root commands, so it needs the app's owner proof
+    // (`api::owner_proof`), or any program on a paired Mac could start one
+    // through the app's loopback port.
+    if mode.is_sudo() {
+        match crate::api::owner_proof::proven(&pool, &user, "POST", "/api/chat", &headers).await {
+            Ok(true) => {}
+            Ok(false) => return admin_refused(&request.agent_mode),
+            Err(failed) => return failed,
+        }
+    }
 
     // A local turn has no cloud step, so it leaves before the first one: no
     // model choice and no readiness check for a gateway it never calls.
@@ -1927,6 +1941,22 @@ fn internal(error: &str) -> Response {
 
 /// The refusals that come before any work: no model to answer with, or a
 /// turn already running in this chat. Both are 409s the client keys on.
+/// The refusal for an admin turn without a valid owner proof, in the shape
+/// the chat view reads (`ChatError.svelte`). An app from before admin was an
+/// applet asks for `sudo`, and it cannot sign, so it is told to update.
+fn admin_refused(agent_mode: &str) -> Response {
+    let details = if agent_mode == "sudo" {
+        "Update the Virtues app to use admin. This version can't sign the check your server asks for."
+    } else {
+        crate::api::owner_proof::REFUSED
+    };
+    (
+        StatusCode::FORBIDDEN,
+        Json(ChatError { error: "owner_proof_required".to_string(), details: Some(details.to_string()) }),
+    )
+        .into_response()
+}
+
 async fn reject_if_unready(
     pool: &PgPool,
     request: &ChatRequest,
@@ -2412,9 +2442,12 @@ fn create_agent_stream(
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
+            own_applet: mode.applet_name().map(str::to_string),
+            applet_run_id: None,
             timezone: request.timezone.clone(),
             turn: Some(turn_key),
             console: false,
+            owner_confirmed: false,
         };
 
         let tools = mode.tools();
@@ -2902,27 +2935,27 @@ mod tests {
         assert!(preview.messages[1].text.contains(r#"→ sql_query({"sql":"SELECT 1"})"#), "{}", preview.messages[1].text);
     }
 
-    /// A skill's body is in the tail, never the cached prefix: the prefix
-    /// must be the same whatever the chat is doing, or switching skills
-    /// rewrites the cache. And ordinary chat carries no skill block at all.
+    /// An applet's body is in the tail, never the cached prefix: the prefix
+    /// must be the same whatever the chat is doing, or switching applets
+    /// rewrites the cache. And ordinary chat carries no applet block at all.
     #[sqlx::test]
-    async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
+    async fn an_applet_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_skill(), None, "Ari", "Adam",
+            &pool, None, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_applet(), None, "Ari", "Adam",
         )
         .await;
-        assert!(rendered.iter().any(|r| r.tag == "skill"), "a skill renders its skill block");
-        assert!(!stable.contains("<skill name=\"fixture\">"), "the skill body must not be in the cached prefix");
-        assert!(volatile.contains("<skill name=\"fixture\">"), "the skill body is in the tail");
+        assert!(rendered.iter().any(|r| r.tag == "applet"), "an applet renders its applet block");
+        assert!(!stable.contains("<applet name=\"fixture\">"), "the applet body must not be in the cached prefix");
+        assert!(volatile.contains("<applet name=\"fixture\">"), "the applet body is in the tail");
         assert!(volatile.contains("<fixture>"), "the body is the file's body");
-        assert!(!stable.contains("<page_tools>"), "a skill without page tools gets no page guidance");
+        assert!(!stable.contains("<page_tools>"), "an applet without page tools gets no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
             &pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
         )
         .await;
-        assert!(!rendered.iter().any(|r| r.tag == "skill"));
-        assert!(!format!("{stable}{volatile}").contains("<skill"));
+        assert!(!rendered.iter().any(|r| r.tag == "applet"));
+        assert!(!format!("{stable}{volatile}").contains("<applet"));
         assert!(stable.contains("<mode>chat</mode>"));
     }
 
@@ -2945,7 +2978,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "skill", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");

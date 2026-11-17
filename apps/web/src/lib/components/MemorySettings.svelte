@@ -257,13 +257,13 @@
 						<p class="note-text">{displayNote(m.body)}{#if m.author === 'human'}<span class="note-yours">&nbsp;· yours</span>{/if}</p>
 						<div class="note-actions">
 							<IconButton
-								icon="ri:edit-line"
+								icon="mynaui:edit"
 								label="Edit note"
 								size="sm"
 								onclick={() => startEdit(m)}
 							/>
 							<IconButton
-								icon="ri:close-line"
+								icon="mynaui:x"
 								label="Remove note"
 								size="sm"
 								onclick={() => remove(m)}

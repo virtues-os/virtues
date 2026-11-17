@@ -30,7 +30,7 @@
 	 *
 	 * `checked` is the state, not a picture: it renders the tick and, except
 	 * on a `menuitemcheckbox`, paints the row's ground, so a caller stops
-	 * hand-drawing `ri:check-line` beside a `class:on`. Pass `role="menuitemcheckbox"` or `"menuitemradio"` when
+	 * hand-drawing `mynaui:check` beside a `class:on`. Pass `role="menuitemcheckbox"` or `"menuitemradio"` when
 	 * the menu is a set of choices rather than a list of commands — `checked`
 	 * then reports `aria-checked` instead of `aria-current`, which is the
 	 * difference between "this is selected" and "you are here".
@@ -116,7 +116,7 @@
 	{#if leading}
 		<span class="mi-lead">{@render leading()}</span>
 	{:else if loading}
-		<span class="mi-lead mi-spin"><Icon icon="ri:loader-4-line" width="16" /></span>
+		<span class="mi-lead mi-spin"><Icon icon="mynaui:spinner" width="16" /></span>
 	{:else if icon}
 		<span class="mi-lead"><Icon {icon} width="16" /></span>
 	{/if}
@@ -133,11 +133,11 @@
 	{:else if shortcut}
 		<span class="mi-trail mi-shortcut">{shortcut}</span>
 	{:else if checked}
-		<span class="mi-trail"><Icon icon="ri:check-line" width="14" /></span>
+		<span class="mi-trail"><Icon icon="mynaui:check" width="14" /></span>
 	{/if}
 
 	{#if submenu}
-		<span class="mi-trail mi-chevron"><Icon icon="ri:arrow-right-s-line" width="16" /></span>
+		<span class="mi-trail mi-chevron"><Icon icon="mynaui:chevron-right" width="16" /></span>
 	{/if}
 </button>
 
@@ -153,7 +153,7 @@
 		background: transparent;
 		color: var(--color-foreground);
 		font-family: var(--font-sans);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		text-align: left;
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);

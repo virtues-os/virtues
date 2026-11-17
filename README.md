@@ -173,6 +173,16 @@ server, so you don't have to rely on our promises:
 - The relay forwards encrypted traffic and has no key to decrypt it.
 - Our devices are not on your server's allowlist.
 
+**The Rule of Two.** An AI agent becomes dangerous when one run has all three
+of these: it reads your private data, it reads text someone else wrote, and it
+can send something out. A hostile email can tell the model to mail your
+records to a stranger, and with all three the model can do it. Removing any one
+of the three breaks that attack. We design the assistant and applets so a run
+has at most two. On Virtues, your messages and email are your data but were
+written by other people, so anything that reads your records already has two.
+An applet that reads your records gets no way out unless you add one yourself
+on its page.
+
 Essays are in [the Library](https://virtues.com/library). Engineering notes
 are in [`agents/`](agents/).
 
@@ -368,7 +378,6 @@ more than the server. The tag tells you which product a release is for:
 | `virtues pair` | Prints a code for connecting a device |
 | `virtues device ls` / `add` / `rm <id>` | Lists, adds, or removes the devices that can reach this server. A removed device is refused on its next connection attempt |
 | `virtues subscribe` | Connects the server to a subscription so the assistant can use a language model |
-| `virtues sudo` | Approves a pending sensitive action. Running it proves you have physical access to the server |
 | `virtues upgrade` / `rollback` | Moves between releases on this server's channel. The server never updates itself |
 | `virtues channel` | Shows or sets the release channel this server follows |
 | `virtues backup` / `restore` | Takes and restores snapshots of the server's data |
@@ -426,12 +435,14 @@ why we describe it as end-to-end encrypted, and don't claim it sees nothing
 
 Pairing happens **in person**, with no passwords, email, or magic links. You go
 to the machine, run `virtues pair`, and enter the code on the new device, which
-adds its key to the allowlist. Access is checked at two layers: iroh rejects
-an unpaired key before any HTTP request is processed, and the app then checks
-a bearer token on every request. To remove a device, run
-`virtues device rm <id>`; its next connection attempt is refused. In daily use
-you don't type any of this. The apps store the key and handle the connection,
-and on your home network they connect directly on port `8000`.
+adds its key to the allowlist. iroh rejects an unpaired key before any HTTP
+request is processed, and the server then maps the proven key to a paired
+device. Showing a saved password or key, adding a device and changing the AI
+key also need a fresh signature from the app. To
+remove a device, run `virtues device rm <id>`; its next connection attempt is
+refused. In daily use you don't type any of this. The apps store the key and
+handle the connection, and on your home network they reach the server
+directly over iroh, without the relay.
 
 <a id="build-on-it"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-build-on-it-dark.svg"><img alt="Build on it" src=".github/images/headings/h2-build-on-it-light.svg" height="28"></picture>

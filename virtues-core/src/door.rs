@@ -8,7 +8,7 @@
 //!
 //! On a box the door is a transient `systemd-run` unit, created through
 //! `sudo` as `api::code` creates its sandbox: a throwaway uid
-//! (`DynamicUser`), its key in a systemd-managed state directory, the bundle
+//! (`DynamicUser`), its key handed to it by systemd as a credential, the bundle
 //! directory bound read-only at `/pub`, and the box's data, the database
 //! socket and loopback all out of reach. It reaches the internet, because it
 //! homes on the relay, and nothing on the box but its own files.
@@ -17,12 +17,13 @@
 //! rather than run it unsandboxed. A debug build (a dev machine, macOS) runs
 //! it as a plain child with an empty environment.
 //!
-//! The door's key belongs to the core: it lives in `box_secrets`, so it
-//! travels with database backups (`api::publications::door_key`). Before
-//! each start the supervisor writes it to a file only the server's user can
-//! read, which systemd hands to the door as a credential, and rebuilds the
-//! bundle directory from the database (`api::publications::materialize`). A
-//! restore therefore brings every live link back as it was.
+//! The door's key belongs to the core: it is a box secret
+//! (`crate::secrets`), so it travels with database backups
+//! (`api::publications::door_key`). Before each start the supervisor writes
+//! it to a file only the server's user can read, which systemd hands to the
+//! door as a credential, and rebuilds the bundle directory from the database
+//! (`api::publications::materialize`). A restore therefore brings every live
+//! link back as it was.
 //!
 //! The core listens on a Unix socket for the door's two requests (a live
 //! page's approved query, and "a page was opened"), answered by
@@ -195,20 +196,38 @@ fn key_file() -> std::path::PathBuf {
     publications::door_dir().join("door.key")
 }
 
-/// Write the door key where only this user can read it.
-fn write_key_file(seed: &[u8; 32]) -> std::io::Result<()> {
-    let path = key_file();
+/// Write the door key to `path` where only this user can read it. The copy is
+/// created 0600, so no other user can open it even for a moment, and is
+/// renamed into place. A copy a crash left behind is removed first, because
+/// the mode applies only to a file this call creates.
+fn write_key_file(path: &Path, seed: &[u8; 32]) -> std::io::Result<()> {
+    use std::io::Write;
+
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("key.tmp");
-    std::fs::write(&tmp, seed)?;
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    std::fs::rename(&tmp, &path)
+    let written = (|| {
+        let mut file = options.open(&tmp)?;
+        file.write_all(seed)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Launch the door, with its key in place and the bundle directory matching
@@ -230,7 +249,7 @@ async fn start(pool: &PgPool) -> Option<Child> {
             return None;
         }
     };
-    if let Err(e) = write_key_file(&seed) {
+    if let Err(e) = write_key_file(&key_file(), &seed) {
         tracing::error!(error = %e, "door: could not write its key file");
         return None;
     }
@@ -283,7 +302,7 @@ fn sandbox_properties(bundles: &Path) -> Vec<String> {
         // A throwaway uid: the unit is created through sudo, and a system
         // unit with no user runs as root.
         "DynamicUser=yes",
-        // The key is the core's (box_secrets). systemd reads the file the
+        // The key is the core's (a box secret). systemd reads the file the
         // core writes and hands it to this unit alone, under
         // $CREDENTIALS_DIRECTORY, so the throwaway uid never needs access to
         // the server's files.
@@ -385,12 +404,33 @@ mod tests {
         assert!(!props.iter().any(|p| p.starts_with("User=")), "a named user replaces the throwaway uid");
         assert!(
             props.iter().any(|p| p.starts_with("LoadCredential=door.key:")),
-            "the key arrives as a credential from the core's box_secrets copy"
+            "the key arrives as a credential from the core's stored copy"
         );
         assert!(!props.iter().any(|p| p.starts_with("StateDirectory=")), "the door keeps no key of its own");
         let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();
         assert_eq!(writable.len(), 1, "only the core's socket: {writable:?}");
         assert!(writable[0].ends_with(":/run/virtues-core.sock"));
+    }
+
+    /// The key file is 0600 from creation, and a world-readable copy a crash
+    /// left behind is replaced rather than reused with its old mode.
+    #[cfg(unix)]
+    #[test]
+    fn the_key_file_is_never_readable_by_others() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("door").join("door.key");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = path.with_extension("key.tmp");
+        std::fs::write(&stale, b"stale").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_key_file(&path, &[7u8; 32]).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), [7u8; 32]);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode {mode:o}");
+        assert!(!stale.exists());
     }
 
     #[test]

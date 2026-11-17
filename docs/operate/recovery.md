@@ -1,7 +1,7 @@
 ---
 title: When something breaks
 description: Diagnosing a Virtues server that won't start, won't answer, or is behaving strangely - services, logs, health commands, and where everything lives.
-updated: 2026-10-20
+updated: 2026-11-15
 ---
 
 Start here when the server isn't working properly. This guide is on the web
@@ -86,7 +86,6 @@ with an NPU, a single daemon replaces it:
 | `virtues-embed` | embedding model, on local port 18181 |
 | `virtues-embed-next` | only while search moves to a new model, on local port 18183 |
 | `virtues-qnnd` | on NPU hardware, replaces the sidecar and serves ports 18181 and 18182 |
-| `virtues-display` | the on-server screen, if your server has one |
 
 If search returns nothing or feels broken while the server is otherwise healthy,
 suspect a sidecar:
@@ -94,13 +93,6 @@ suspect a sidecar:
 ```bash
 systemctl status virtues-embed
 journalctl -u virtues-embed -n 50
-```
-
-**If the on-server screen shows an old version of the interface after an
-upgrade**, the kiosk is showing a cached copy. Restart it:
-
-```bash
-sudo systemctl restart virtues-display
 ```
 
 ## Where things live

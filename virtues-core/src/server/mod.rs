@@ -26,6 +26,10 @@ use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
 pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
+    // Before anything can answer a request: the Host check accepts the box's
+    // own name on this port.
+    crate::middleware::security::set_listen_port(port);
+
     // Awaited before anything is spawned: the scheduler resolves cron
     // timezones from home_timezone and schedules the templates reconciled here.
     preflight(&client).await;
@@ -50,6 +54,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
 
+    // The console: the owner's way in from this machine, on a Unix socket
+    // that knows who is calling. See `crate::console_socket`.
+    crate::console_socket::spawn(app.clone());
+
     // The door serves shared links, as its own process with its own key, and
     // only while something is shared. See `crate::door`.
     crate::door::maybe_spawn(client.database.pool().clone());
@@ -59,21 +67,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     tracing::info!("Server listening on {}", transport.describe());
 
-    // DIY discovery aid: the operator ran `compose up` and knows their host, so
-    // just point them at the web UI + the CLI dashboard. `0.0.0.0` means "all
-    // interfaces" — they reach it at this box's LAN IP.
-    let shown = if host == "0.0.0.0" || host == "::" {
+    // A pointer for whoever installed the server. An unspecified bind address
+    // (`0.0.0.0`, `::` or `[::]`) means every interface, so they reach it at
+    // this machine's LAN address.
+    let unspecified = host
+        .trim_matches(|c| c == '[' || c == ']')
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_unspecified());
+    let shown = if unspecified {
         format!("http://<this-box-ip>:{port}")
     } else {
         format!("http://{host}:{port}")
     };
     tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
 
-    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
-    // paired daemons reach the box over iroh (which provides encryption
-    // + authentication), and the box's own browser hits localhost (Secure
-    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
-    // MEMORY.md for the architectural commitment.
+    // Plain HTTP on :8000, beside the console socket spawned above. The box
+    // has no TLS surface: paired devices reach it over iroh, which provides
+    // encryption and authentication, and the owner's own machine reaches it
+    // on the console socket.
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -145,10 +156,12 @@ async fn preflight(client: &Virtues) {
     if let Err(e) = faces::ensure_applet_db_grants(pool).await {
         tracing::warn!("face reader grants failed: {e}");
     }
+    // Their logins, where this process may set them (dev, CI). On a box the
+    // root repair `db-logins` does it on upgrade.
+    crate::database::restricted::ensure_logins(pool).await;
 
-    // Eager identity bringup: ensure the loopback console device exists so the
-    // box's own browser is authenticated. (The box's TLS identity is its own
-    // cert, obtained at relay spawn; no keypair to mint here.)
+    // Eager identity bringup: ensure the console device row exists, so the
+    // console socket's callers have a device to be (`crate::console_socket`).
     if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
         tracing::warn!("identity bringup: ensure_console_device failed: {e}");
     }
@@ -159,6 +172,15 @@ async fn preflight(client: &Virtues) {
     let search_engine = crate::search::SemanticSearchEngine::new(Arc::new(pool.clone()));
     if let Err(e) = search_engine.ensure_vec_table().await {
         tracing::warn!("Failed to probe search_vectors table: {}", e);
+    }
+
+    // Skills saved before skills were applets become applets, before the
+    // catalog reads the state root.
+    // And any applet still written as a manifest.toml becomes a SKILL.md,
+    // which is the only form the catalog loads.
+    let converted = crate::applet_templates::convert_state_root(pool).await;
+    if crate::api::chat_applets::move_saved_skills() + converted > 0 {
+        crate::applet_templates::reload_catalog();
     }
 
     // Reconcile action templates from per-folder manifests — creates/updates
@@ -191,8 +213,8 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // one at a time. See `crate::task_runner`.
     crate::task_runner::spawn(pool.clone(), yjs_state.clone());
 
-    // Auth-table sweeper: deletes expired pair tokens + sudo requests every
-    // 10 minutes, archives `app_auth_event` rows older than 90 days. See
+    // Auth-table sweeper: deletes expired pair tokens every 10 minutes and
+    // `app_auth_event` rows older than 90 days. See
     // `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(pool.clone());
 
@@ -218,27 +240,6 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
         crate::api::drive::DriveConfig::new(client.storage.clone()),
     );
 
-    // Setup access point. An appliance arrives with no network and a display
-    // its owner cannot type on, so the box raises its own wifi and the phone
-    // does the typing. Up while unclaimed, down once a device pairs — NOT down
-    // when the box gets wifi, which would drop the network the phone is still
-    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
-    crate::maintenance::setup_ap::spawn(pool.clone());
-
-    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
-    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
-    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
-    // maintenance::ble_provision for the week of hardware findings that led
-    // here.
-    crate::maintenance::ble_provision::spawn(pool.clone());
-
-    // The button behind the case. Held for three seconds, it forgets every
-    // paired device — and nothing else: not the network, not the account, not
-    // the data, and not the phrase. Anyone who can open the case can make that
-    // nuisance; only someone holding the four words can then claim the box.
-    // No-op off an appliance. See maintenance::reset_button.
-    crate::maintenance::reset_button::spawn(pool.clone());
-
     spawn_review_pair_code(pool.clone());
 
     // Entity resolver: periodically turns raw lake primitives (location points,
@@ -251,10 +252,6 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // window or its scheduled time, then goes through the Mac app.
     crate::outbox::spawn(pool.clone());
 
-    // Hours — the screen's sleep schedule, enforced server-side because sleep
-    // is a precedence state (a held button must wake dark glass). No-op off
-    // an appliance. See api::system_display::sleep_engine.
-    crate::api::system_display::sleep_engine::spawn(pool.clone());
 }
 
 fn spawn_scheduler(pool: sqlx::PgPool, yjs_state: yjs::YjsState) {
@@ -358,7 +355,8 @@ fn build_app(state: AppState) -> Router {
         .merge(protected_routes(&state))
         .with_state(state)
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)) // 260MB (slightly above 250MB file limit for multipart overhead)
+        .layer(api_compression());
 
     // API namespaces must NEVER fall through to the SPA fallback below: an
     // unknown /api path answered with a cacheable 200 index.html poisons
@@ -383,6 +381,39 @@ fn build_app(state: AppState) -> Router {
     // Outside even that: the request span has to be open before any other
     // layer logs, or the first lines of a request are the ones without a key.
     app.layer(axum::middleware::from_fn(request_id))
+}
+
+/// Gzip or brotli for API responses, as the client asks. Transcripts, lists
+/// and wiki pages are JSON that compresses several times over, and every byte
+/// of it crosses the relay to a phone. Only the routes get this: the static
+/// build is precompressed on disk (`static_service`).
+///
+/// JSON and text only. `DefaultPredicate` already skips small bodies, images
+/// and `text/event-stream`, so the chat stream is never buffered. A ranged
+/// reply (206, or any `Content-Range`) is also skipped: its byte offsets refer
+/// to the uncompressed file.
+fn api_compression() -> tower_http::compression::CompressionLayer<
+    impl tower_http::compression::Predicate + Clone,
+> {
+    use tower_http::compression::predicate::{DefaultPredicate, Predicate};
+    let worth_it = |status: axum::http::StatusCode,
+                    _: axum::http::Version,
+                    headers: &axum::http::HeaderMap,
+                    _: &axum::http::Extensions| {
+        if status == axum::http::StatusCode::PARTIAL_CONTENT
+            || headers.contains_key(axum::http::header::CONTENT_RANGE)
+        {
+            return false;
+        }
+        headers
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/json") || ct.starts_with("text/"))
+    };
+    tower_http::compression::CompressionLayer::new()
+        .no_deflate()
+        .no_zstd()
+        .compress_when(DefaultPredicate::new().and(worth_it))
 }
 
 /// The SvelteKit static build, falling back to 200.html for SPA routing, or
@@ -472,6 +503,11 @@ fn static_service() -> Option<
 /// A remote page's origin is `https://whatever.example`, which matches none
 /// of the arms below, so the browser refuses to hand it the response. The
 /// app, the box's own web UI, and local development all still match.
+///
+/// CORS covers only a cross-origin page. A page whose name a DNS rebinding
+/// points at 127.0.0.1:7117 is same-origin with itself, so the browser reads
+/// the reply without asking this layer. The Host check in
+/// `middleware::security` refuses that request instead.
 ///
 /// `server/faces.rs` keeps its own `*` header deliberately: faces are served
 /// into an opaque-origin iframe under a strict CSP and carry no ambient
@@ -599,51 +635,6 @@ fn public_routes() -> Router<AppState> {
             "/api/getting-started/interview",
             post(crate::api::getting_started::start_interview_handler),
         )
-        // What the attached 7" display renders. Registered here because the
-        // kiosk draws before any device is paired, but UNLIKE its neighbours
-        // above it carries the live pair code — so the handler itself refuses
-        // anything that isn't loopback. Proximity is the authority: a stranger
-        // on the wifi who cannot see the screen must not be able to claim the
-        // box. See api/display.rs.
-        .route(
-            "/api/display/state",
-            get(crate::api::display::display_state_handler),
-        )
-        // Lets the panel latch "an upgrade is running" while this server is
-        // still up to say so — after it stops, the kiosk's page is gone with
-        // it. See api/display.rs.
-        .route(
-            "/api/display/updating",
-            get(crate::api::display::display_updating_handler),
-        )
-        // The case button at 1s cadence — the 30s ambient poll cannot see a
-        // 3s hold. See api/display.rs.
-        .route(
-            "/api/display/button",
-            get(crate::api::display::display_button_handler),
-        )
-        // Wifi provisioning over the setup AP. The one unauthenticated WRITE
-        // surface on the box, and unauthenticated by necessity: the phone that
-        // just joined the AP has no credential yet, because obtaining one is
-        // what the rest of onboarding is for. Each handler re-checks both gates
-        // itself — caller is on the AP subnet (or loopback), and the box is
-        // still unclaimed — rather than trusting placement in this router.
-        // See api/provision.rs.
-        .route(
-            "/api/provision/networks",
-            get(crate::api::provision::networks_handler),
-        )
-        .route(
-            "/api/provision/join",
-            post(crate::api::provision::join_handler),
-        )
-        .route(
-            "/api/provision/status",
-            get(crate::api::provision::status_handler),
-        )
-        // No browser provisioning (`/portal`, `/provision`), on purpose: pairing
-        // needs a held iroh key a browser cannot have, and iOS captive sheets
-        // misbehave. BLE (`maintenance::ble_provision`) and `/api/network/*` do it.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -687,19 +678,24 @@ fn public_routes() -> Router<AppState> {
 }
 
 /// Everything that requires a resolved `AuthUser` (proven iroh key /
-/// loopback console / dev fallback): each area's `routes()`, plus the
-/// devices, pairing, sudo, audit, maps and terminal routes that belong to no
-/// area.
+/// console socket / dev fallback): each area's `routes()`, plus the
+/// devices, pairing, owner proof, audit, maps and terminal routes that belong
+/// to no area.
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
+        .merge(api::connections::routes())
         .merge(api::console::routes())
+        // The box as an MCP server, for the owner's own agents.
+        // agents/plan/mcp-plan.md
+        .merge(api::mcp::routes(state))
         .merge(api::settings::routes())
         .merge(api::wiki::routes())
         .merge(api::chat::routes())
         .merge(api::drive::routes())
         .merge(api::pages::routes())
         .merge(api::tasks::routes())
+        .merge(api::things::routes())
         .merge(api::library::routes())
         // The box's own maps: tiles out of local .pmtiles archives, never a
         // tile provider. agents/plan/offline-maps-plan.md
@@ -724,9 +720,9 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
         .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
         .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
-        // ─── Sudo: gate for high-sensitivity actions ──────────────────
-        .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
-        .route("/api/sudo/status/:id",    get(crate::api::sudo::status_handler))
+        // ─── Owner proof: the app's signature for the routes that take
+        //     one (api/owner_proof.rs) ─────────────────────────────────
+        .route("/api/owner-proof/nonce",  post(crate::api::owner_proof::nonce_handler))
         // ─── Audit log ────────────────────────────────────────────────
         // No UI calls this; it is the one way to read app_auth_event, which
         // agents/record/auth-model.md relies on. Not dead code.
@@ -759,7 +755,7 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
         )
         // Blanket auth: all routes in this group require a resolved AuthUser
-        // (proven iroh key / loopback console / dev fallback). `route_layer`
+        // (proven iroh key / console socket / dev fallback). `route_layer`
         // covers only the routes present when it is called, so every merge
         // and route above must stay above it.
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()))
@@ -841,6 +837,64 @@ fn static_cache_control(path: &str) -> Option<&'static str> {
         Some("public, max-age=604800")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod api_compression_tests {
+    use super::*;
+    use axum::{http::header, response::IntoResponse, routing::get, Router};
+    use tower::Service;
+
+    /// A body well over `DefaultPredicate`'s 32-byte floor.
+    fn big() -> String {
+        "the quick brown fox jumps over the lazy dog ".repeat(40)
+    }
+
+    async fn encoding(path: &str) -> Option<String> {
+        let mut app = Router::new()
+            .route("/json", get(|| async { axum::Json(serde_json::json!({ "text": big() })) }))
+            .route(
+                "/sse",
+                get(|| async { ([(header::CONTENT_TYPE, "text/event-stream")], big()).into_response() }),
+            )
+            .route(
+                "/range",
+                get(|| async {
+                    (
+                        axum::http::StatusCode::PARTIAL_CONTENT,
+                        [(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_RANGE, "bytes 0-9/100")],
+                        big(),
+                    )
+                        .into_response()
+                }),
+            )
+            .route(
+                "/audio",
+                get(|| async { ([(header::CONTENT_TYPE, "audio/mpeg")], big()).into_response() }),
+            )
+            .layer(api_compression());
+        let req = axum::http::Request::builder()
+            .uri(path)
+            .header(header::ACCEPT_ENCODING, "br, gzip")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.call(req).await.unwrap();
+        res.headers()
+            .get(header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn compresses_json() {
+        assert_eq!(encoding("/json").await.as_deref(), Some("br"));
+    }
+
+    #[tokio::test]
+    async fn leaves_the_chat_stream_ranges_and_media_alone() {
+        assert_eq!(encoding("/sse").await, None, "an event stream must not be buffered");
+        assert_eq!(encoding("/range").await, None, "a 206's offsets refer to the raw bytes");
+        assert_eq!(encoding("/audio").await, None);
     }
 }
 
@@ -1150,7 +1204,7 @@ fn is_face_path(path: &str) -> bool {
 /// an origin the operator serves the UI from (`listed`, [`public_origins`]),
 /// and the opaque origin `null` only on the face routes. `request_host` is
 /// the request's `Host` header — a loopback origin must be that authority.
-fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>, listed: &[String]) -> bool {
+pub(crate) fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>, listed: &[String]) -> bool {
     origin_is_ours(origin, request_host)
         || origin_is_listed(origin, listed)
         || (origin == "null" && is_face_path(path))
@@ -1238,9 +1292,16 @@ pub(crate) fn refuse_foreign_socket(
 /// because it is the thing standing between a random web page and the owner's
 /// record, and a subtle parsing slip here is invisible in review.
 ///
-/// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
-/// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
-/// name. A page served from a remote host has none of these origins.
+/// Allowed: the app's own `tauri://`, `virtues://` and
+/// `https://tauri.localhost` origins, and a loopback page served by the
+/// authority it dials (the desktop proxy on 7117, the box's own UI on
+/// `localhost:8000`). A loopback origin passes only when it equals the
+/// request's `Host`. Every other origin is refused here.
+///
+/// A page the box serves under another name is allowed by
+/// [`origin_is_listed`] instead (`VIRTUES_PUBLIC_ORIGINS`). The `make dev`
+/// page on 5173 is one: vite rewrites `Host` to `localhost:8000`, so that
+/// page's origin never equals `Host`.
 pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
     // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
@@ -1293,7 +1354,7 @@ pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
         // dial, so a loopback origin must equal the request's Host, exactly.
         return request_host == Some(rest);
     }
-    host == "virtues" || host.ends_with(".virtues")
+    false
 }
 
 #[cfg(test)]
@@ -1320,6 +1381,12 @@ mod cors_tests {
             "https://virtues.evil.example",
             "http://evil.example/virtues://",
             "http://evil.example/localhost",
+            // `.virtues` is not a reserved name, so whoever controls the
+            // Mac's DNS (a café network, a captive portal) can serve a page
+            // from one, and no box serves it.
+            "http://box.virtues:8000",
+            "http://x.virtues",
+            "http://virtues:8000",
             // Non-http schemes and the opaque origin.
             "null",
             "file://",
@@ -1345,10 +1412,18 @@ mod cors_tests {
             ("http://127.0.0.1:7117", Some("127.0.0.1:7117")),
             ("http://[::1]:8000", Some("[::1]:8000")),
             ("http://localhost", Some("localhost")),
-            ("http://box.virtues:8000", None),
-            ("http://virtues:8000", None),
         ] {
             assert!(origin_is_ours(o, host), "must allow {o} for host {host:?}");
+        }
+    }
+
+    /// A name other than loopback is not ours even when the page is served by
+    /// the authority it dials. A name the box answers to goes in
+    /// `VIRTUES_PUBLIC_ORIGINS`.
+    #[test]
+    fn a_named_origin_is_refused_even_when_it_matches_host() {
+        for o in ["box.virtues:8000", "virtues:8000", "x.virtues", "evil.example:7117"] {
+            assert!(!origin_is_ours(&format!("http://{o}"), Some(o)), "must refuse {o}");
         }
     }
 
@@ -1556,5 +1631,326 @@ mod route_syntax_tests {
              registers a literal route and 404s every real id:\n  {}",
             offenders.join("\n  ")
         );
+    }
+}
+
+/// The routes that take the owner proof (`api::owner_proof`), through the
+/// whole app the box serves. A handler that took `AuthUser` in place of
+/// `OwnerProven` would pass every test in that module, so this one sends each
+/// gated request as a paired Mac with no proof and expects the refusal.
+#[cfg(test)]
+mod owner_proof_route_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::Service;
+
+    const GATED: &[(&str, &str)] = &[
+        ("GET", "/api/passwords/login_test/secret"),
+        ("GET", "/api/keys/TEST_KEY/value"),
+        ("POST", "/api/devices/enroll-peer"),
+        ("POST", "/api/pair/mint"),
+        ("POST", "/api/pair/mint-collector"),
+        ("POST", "/api/settings/byo-key"),
+        ("DELETE", "/api/settings/byo-key"),
+        ("POST", "/api/pair/reopen-onboarding"),
+    ];
+
+    fn mac_key() -> virtues_iroh::SecretKey {
+        virtues_iroh::SecretKey::from_bytes(&[41; 32])
+    }
+
+    fn app(pool: &sqlx::PgPool) -> Router {
+        let dir = std::env::temp_dir().join(format!("virtues-owner-proof-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Arc::new(crate::storage::Storage::file(dir.to_string_lossy().into_owned()).unwrap());
+        build_app(AppState {
+            db: Arc::new(crate::database::Database::from_pool(pool.clone())),
+            storage: storage.clone(),
+            drive_config: crate::api::drive::DriveConfig::new(storage),
+            tool_executor: None,
+            yjs_state: yjs::YjsState::new(pool.clone()),
+            chat_cancel_state: crate::api::chat::ChatCancellationState::new(),
+            ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
+            live_turns: crate::api::live_turn::LiveTurns::new(),
+            day_rewrites: crate::api::day_rewrites::DayRewrites::new(),
+        })
+    }
+
+    /// A request as the paired Mac sends it through its loopback splice.
+    fn from_mac(method: &str, path: &str, proof: Option<&str>) -> Request<Body> {
+        let method = Method::from_bytes(method.as_bytes()).unwrap();
+        let has_body = method == Method::POST;
+        let mut req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:7117");
+        if has_body {
+            req = req.header("content-type", "application/json");
+        }
+        if let Some(proof) = proof {
+            req = req.header(virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, proof);
+        }
+        let mut req = req.body(if has_body { Body::from("{}") } else { Body::empty() }).unwrap();
+        req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac_key().public()));
+        req
+    }
+
+    async fn code(res: axum::response::Response) -> (StatusCode, Option<String>) {
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let code = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(str::to_string));
+        (status, code)
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_gated_routes_need_the_proof_and_a_reveal_is_logged(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_route_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+
+        for (method, path) in GATED {
+            let res = app.call(from_mac(method, path, None)).await.unwrap();
+            let (status, code) = code(res).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
+            assert_eq!(code.as_deref(), Some("owner_proof_required"), "{method} {path}");
+        }
+
+        // With a nonce from the box's own route and the Mac's signature, the
+        // same request gets past the check: the path the app signs is the
+        // path the handler sees. The reveal is written to the auth log.
+        if std::env::var("VIRTUES_ENCRYPTION_KEY").is_err() {
+            use base64::Engine;
+            std::env::set_var(
+                "VIRTUES_ENCRYPTION_KEY",
+                base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
+            );
+        }
+        crate::api::keys::set_key(&pool, "TEST_KEY", "test-value").await.unwrap();
+        let res = app.call(from_mac("POST", "/api/owner-proof/nonce", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let nonce = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["nonce"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let path = "/api/keys/TEST_KEY/value";
+        let sig = mac_key().sign(&virtues_iroh::owner_proof::http_owner_proof_message("GET", path, &nonce));
+        let proof = virtues_iroh::owner_proof::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()));
+        let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let logged: Vec<(Option<String>, serde_json::Value)> = sqlx::query_as(
+            "SELECT device_id, detail FROM app_auth_event WHERE event_type = 'key_revealed'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(logged, [(Some("dev_route_mac".to_string()), serde_json::json!({ "name": "TEST_KEY" }))]);
+
+        // The same proof again is a replay.
+        let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string())));
+    }
+
+    /// A request from the paired Mac with `headers` and a `body`.
+    fn from_mac_with(
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: impl Into<Body>,
+    ) -> Request<Body> {
+        let mut req = Request::builder()
+            .method(Method::from_bytes(method.as_bytes()).unwrap())
+            .uri(uri)
+            .header("host", "127.0.0.1:7117");
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let mut req = req.body(body.into()).unwrap();
+        req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac_key().public()));
+        req
+    }
+
+    /// A fresh proof from the box's own nonce route, signed with the Mac's key.
+    async fn sign(app: &mut Router, method: &str, path: &str) -> String {
+        let res = app.call(from_mac("POST", "/api/owner-proof/nonce", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let nonce = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["nonce"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let sig = mac_key().sign(&virtues_iroh::owner_proof::http_owner_proof_message(method, path, &nonce));
+        virtues_iroh::owner_proof::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()))
+    }
+
+    /// The body text of a response, for the chat route's own refusal shape.
+    async fn text(res: axum::response::Response) -> (StatusCode, String) {
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The two ways to act as the box's admin, the terminal and an admin
+    /// chat turn, with the paste and the Allow beside them: each refuses the
+    /// Mac without a proof, gets past the check with one, and refuses the
+    /// same proof a second time.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_admin_routes_need_the_proof(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_admin_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+        let refused = (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string()));
+
+        // The terminal socket. Past the proof, the request reaches the
+        // upgrade, which a test request cannot make (426). The proof rides
+        // in the URL; a header works too.
+        let upgrade = [
+            ("connection", "upgrade"),
+            ("upgrade", "websocket"),
+            ("sec-websocket-version", "13"),
+            ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="),
+        ];
+        let ws = |q: &str| format!("/ws/terminal?cols=80&rows=24{q}");
+        let res = app.call(from_mac_with("GET", &ws(""), &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "GET", "/ws/terminal").await;
+        let uri = ws(&format!("&owner_proof={proof}"));
+        let res = app.call(from_mac_with("GET", &uri, &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UPGRADE_REQUIRED);
+        let res = app.call(from_mac_with("GET", &uri, &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed terminal proof");
+        // A proof signed for the terminal opens nothing else from the URL.
+        let proof = sign(&mut app, "GET", "/api/keys/TEST_KEY/value").await;
+        let res = app
+            .call(from_mac("GET", &format!("/api/keys/TEST_KEY/value?owner_proof={proof}"), None))
+            .await
+            .unwrap();
+        assert_eq!(code(res).await, refused, "the query parameter is the terminal's alone");
+
+        // The paste. An empty one gets past the proof to the handler's own
+        // 400, which writes nothing under $HOME.
+        let paste = |proof: Option<&str>| {
+            let mut headers = vec![("content-type", "image/png")];
+            if let Some(p) = proof {
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            from_mac_with("POST", "/api/terminal/paste", &headers, Body::empty())
+        };
+        let res = app.call(paste(None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", "/api/terminal/paste").await;
+        let res = app.call(paste(Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let res = app.call(paste(Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed paste proof");
+
+        // An admin turn. Past the proof, a box with no AI answers 409.
+        let chat = |mode: &str, proof: Option<&str>| {
+            let mut headers = vec![("content-type", "application/json")];
+            if let Some(p) = proof {
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            let body = serde_json::json!({ "chatId": "chat_admin_test", "messages": [], "agentMode": mode });
+            from_mac_with("POST", "/api/chat", &headers, body.to_string())
+        };
+        let (status, body) = text(app.call(chat("admin", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("owner_proof_required"), "{body}");
+        let proof = sign(&mut app, "POST", "/api/chat").await;
+        let (status, body) = text(app.call(chat("admin", Some(&proof))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body.contains("AI is not connected"), "{body}");
+        let (status, _) = text(app.call(chat("admin", Some(&proof))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a replayed admin proof");
+        // An app from before admin was an applet asks for `sudo` and is told
+        // to update. Ordinary chat needs no proof.
+        let (status, body) = text(app.call(chat("sudo", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("Update the Virtues app"), "{body}");
+        let (status, _) = text(app.call(chat("chat", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // The Allow on an admin command. An ordinary grant needs no proof.
+        let path = "/api/chats/chat_admin_test/permissions";
+        let grant = |entity_id: &str, proof: Option<&str>| {
+            let mut headers = vec![("content-type", "application/json")];
+            if let Some(p) = proof {
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            let body = serde_json::json!({ "entity_id": entity_id, "entity_type": "command" });
+            from_mac_with("POST", path, &headers, body.to_string())
+        };
+        let admin = crate::tools::sudo_gate::grant_id("shell", "rm -rf /tmp/example");
+        let res = app.call(grant(&admin, None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", path).await;
+        let res = app.call(grant(&admin, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = app.call(grant(&admin, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed grant proof");
+        let res = app.call(grant("page_example", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // Start over revokes every device, the Mac included, so its replay
+        // is checked in `a_start_over_proof_works_once`.
+        let path = "/api/pair/reopen-onboarding";
+        let res = app.call(from_mac("POST", path, None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", path).await;
+        let res = app.call(from_mac("POST", path, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let revoked: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM app_device WHERE id = 'dev_admin_mac'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(revoked.is_some(), "start over revokes the device that asked");
+    }
+
+    /// A Start over proof works once. A replay after a real Start over would
+    /// be refused for the revoked device alone, so this spends the nonce on
+    /// a refused request first and then sends the same proof to Start over.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_start_over_proof_works_once(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_reopen_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+        let path = "/api/pair/reopen-onboarding";
+        let proof = sign(&mut app, "POST", path).await;
+        // Spent on a different route, where it is refused.
+        let res = app.call(from_mac("POST", "/api/pair/mint", Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let res = app.call(from_mac("POST", path, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string())));
+        let still: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM app_device WHERE id = 'dev_reopen_mac'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(still.is_none(), "a refused start over revokes nothing");
     }
 }

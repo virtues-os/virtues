@@ -51,6 +51,7 @@
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { sidebarDoors, type DoorId } from '$lib/stores/sidebarDoors.svelte';
+	import { sidebarState } from '$lib/stores/sidebarState.svelte';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
@@ -70,8 +71,6 @@
 	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { clothFor } from '$lib/sidebar/pin-colors';
-	import { isEmoji } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
 		fileIntoProject,
@@ -85,8 +84,8 @@
 		setMentionDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
+	import PinGlyph from '../PinGlyph.svelte';
 	import SetupRing from '../SetupRing.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
@@ -111,6 +110,7 @@
 
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
+
 	// The pinned project a dragged sidebar row is over. A dragged TAB is
 	// tracked by dndManager instead (it is not an HTML drag); either lights
 	// the row.
@@ -363,18 +363,6 @@
 	// the rows under it are not thrown down a group's height in one frame.
 	const zoneSlide = (node: Element) => slide(node, { duration: moving() ? MOVE_MS : 0, easing: easePremium });
 
-	/** The glyph a pin with no chosen mark wears, by what it opens. */
-	function pinKindGlyph(url: string): string {
-		if (/^https?:\/\//i.test(url)) return 'wiki';
-		if (url.startsWith('/chat/')) return 'chats';
-		if (url.startsWith('/project/') || url.startsWith('/notebook/')) return 'projects';
-		if (url.startsWith('/applet')) return 'applets';
-		if (url.startsWith('/tasks')) return 'tasks';
-		if (url.startsWith('/wiki')) return 'wiki';
-		if (url.startsWith('/day/')) return 'day';
-		return 'pages';
-	}
-
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
@@ -512,6 +500,12 @@
 	// ── arranging the doors ────────────────────────────────────────────────
 
 	const doors = $derived(sidebarDoors.visible);
+
+	// Closed, the sidebar narrows to its glyphs: the same rows, with the words
+	// faded and clipped (UnifiedSidebar). Rows with no glyph go out of reach,
+	// the doors name themselves in a tooltip as the pins already do, and a
+	// row's hover controls stay hidden: they would float over the glyph.
+	const railed = $derived(sidebarState.collapsed);
 	onMount(() => void sidebarDoors.load());
 	// A door being dragged, and the gap it would land in among the doors.
 	let draggingDoorId = $state<DoorId | null>(null);
@@ -543,7 +537,7 @@
 		return {
 			id: 'customize-sidebar',
 			label: 'Customize sidebar',
-			icon: 'ri:layout-left-line',
+			icon: 'mynaui:panel-left',
 			dividerBefore: divider,
 			submenu: [
 				...sidebarDoors.all.map((d): ContextMenuItem => {
@@ -573,15 +567,15 @@
 	function doorMenu(id: DoorId, index: number): ContextMenuItem[] {
 		const items: ContextMenuItem[] = [];
 		if (index > 0) {
-			items.push({ id: 'door-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => moveDoor(index, index - 1) });
+			items.push({ id: 'door-up', label: 'Move up', icon: 'mynaui:arrow-up', shortcut: '⌥↑', action: () => moveDoor(index, index - 1) });
 		}
 		if (index < doors.length - 1) {
-			items.push({ id: 'door-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => moveDoor(index, index + 1) });
+			items.push({ id: 'door-down', label: 'Move down', icon: 'mynaui:arrow-down', shortcut: '⌥↓', action: () => moveDoor(index, index + 1) });
 		}
 		items.push({
 			id: 'door-hide',
 			label: 'Hide',
-			icon: 'ri:eye-off-line',
+			icon: 'mynaui:eye-off',
 			dividerBefore: items.length > 0,
 			disabled: doors.length === 1,
 			action: () => setDoorHidden(id, true),
@@ -771,13 +765,13 @@
 		const label = titleOf(s);
 		return [
 			...openMenuItems(url, label),
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameChat(s) },
+			{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renameChat(s) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: s.icon }),
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => removeChat(s),
@@ -790,13 +784,13 @@
 		const label = pageTitle(p);
 		return [
 			...openMenuItems(url, label),
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renamePage(p) },
+			{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renamePage(p) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: p.icon }),
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => removePage(p),
@@ -817,10 +811,10 @@
 		const index = pins.findIndex((p) => p.id === pin.id);
 		const moves: ContextMenuItem[] = [];
 		if (index > 0) {
-			moves.push({ id: 'pin-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => movePin(index, index - 1) });
+			moves.push({ id: 'pin-up', label: 'Move up', icon: 'mynaui:arrow-up', shortcut: '⌥↑', action: () => movePin(index, index - 1) });
 		}
 		if (index >= 0 && index < pins.length - 1) {
-			moves.push({ id: 'pin-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => movePin(index, index + 1) });
+			moves.push({ id: 'pin-down', label: 'Move down', icon: 'mynaui:arrow-down', shortcut: '⌥↓', action: () => movePin(index, index + 1) });
 		}
 		if (moves.length) moves[0] = { ...moves[0], dividerBefore: true };
 		return [...items, ...moves];
@@ -872,7 +866,7 @@
 				base.push({
 					id: 'unpin',
 					label: 'Unpin',
-					icon: 'ri:unpin-line',
+					icon: 'mynaui:pin',
 					dividerBefore: true,
 					action: () => void pinsStore.remove(pin.id),
 				});
@@ -888,7 +882,7 @@
 			items.push({
 				id: 'rename',
 				label: 'Rename',
-				icon: 'ri:edit-line',
+				icon: 'mynaui:edit',
 				action: () => startRename(pin.url, look.title),
 			});
 		}
@@ -897,7 +891,7 @@
 		items.push({
 			id: 'unpin',
 			label: 'Unpin',
-			icon: 'ri:unpin-line',
+			icon: 'mynaui:pin',
 			dividerBefore: items.length > 0,
 			action: () => {
 				void pinsStore.remove(pin.id);
@@ -967,7 +961,7 @@
 	}}
 >
 	{#if setupOpen}
-		<button type="button" class="panel-row panel-door" onclick={openSetup}>
+		<button type="button" class="panel-row panel-door" onclick={openSetup} data-tip={railed ? 'Setup' : undefined} data-tip-side="right">
 			<SetupRing size={16} />
 			<span class="panel-row-text">Setup</span>
 			<span class="door-meta">{setupCount}</span>
@@ -975,17 +969,21 @@
 	{/if}
 	{#each doors as door, index (door.id)}
 		{@const act = doorActions[door.id]}
+		<!-- The slot moves as one when doors are reordered, so the Projects
+		     door carries its tree with it. -->
+		<div class="door-slot" animate:rowFlip>
 		<!-- A div, not a button, so a door's + can be a real button inside it. -->
 		<div
-			animate:rowFlip
 			class="panel-row panel-door drop-slot"
-			class:panel-row-has-actions={!!act.add}
+			class:panel-row-has-actions={!!act.add && !railed}
 			class:drop-before={doorLine === index}
 			class:drop-after={doorLine === doors.length && index === doors.length - 1}
 			class:dragging={draggingDoorId === door.id}
 			class:stale-hover={staleHover}
 			role="link"
 			tabindex="0"
+			data-tip={railed ? door.label : undefined}
+			data-tip-side="right"
 			aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 			draggable="true"
 			ondragstart={(e) => {
@@ -1031,7 +1029,7 @@
 			}}
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
-			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare />
+			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare fillable />
 			<span class="panel-row-text">{door.label}</span>
 			{#if act.add}
 				{@const add = act.add}
@@ -1041,6 +1039,7 @@
 					</button>
 				</span>
 			{/if}
+		</div>
 		</div>
 	{/each}
 </div>
@@ -1058,7 +1057,6 @@
 			type="button"
 			class="group-label group-toggle"
 			aria-expanded={!folded(id)}
-			data-tip={folded(id) ? `Show ${label}` : `Hide ${label}`}
 			onclick={(e) => toggleGroup(id, e.currentTarget.parentElement as HTMLElement)}
 		>
 			<span>{label}</span>
@@ -1089,7 +1087,8 @@
 
 <!-- One row for every kind. No glyph: Recent is a list of titles, and they
      start under the group's label. Ten repeated marks would make it a second
-     block of doors. The tooltip says what kind of thing it is. -->
+     block of doors. When a title is cut off, its tooltip gives it in full
+     and says what kind of thing it is. -->
 {#snippet recentRow(row: RecentRow)}
 	{@const pinned = isPinned(row.url)}
 	{@const chatId = row.kind === 'chat' ? row.session.conversation_id : null}
@@ -1102,6 +1101,7 @@
 		role="link"
 		tabindex="0"
 		data-tip={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
+		data-tip-clipped
 		data-tip-side="right"
 		draggable={renaming?.url !== row.url}
 		ondragstart={(e) => {
@@ -1182,7 +1182,7 @@
 			onblur={() => void commitRename()}
 		/>
 	{:else}
-		<span class="panel-row-text" class:untitled={untitledTitle}>{title}</span>
+		<span class="panel-row-text" class:untitled={untitledTitle} data-tip-text>{title}</span>
 	{/if}
 {/snippet}
 
@@ -1232,7 +1232,8 @@
 					in:rowIn={pin.url}
 					out:rowOut={pin.url}
 					animate:rowFlip
-					class="panel-row panel-row-has-actions drop-slot"
+					class="panel-row drop-slot"
+					class:panel-row-has-actions={!railed}
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
@@ -1245,6 +1246,7 @@
 					role="link"
 					tabindex="0"
 					data-tip={look.title}
+					data-tip-clipped={railed ? undefined : ''}
 					data-tip-side="right"
 					aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 					draggable={renaming?.url !== pin.url}
@@ -1297,32 +1299,7 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The mark the user picked, else the glyph of what it opens, in
-					     the pin's cloth. A solid dot read as a status light: red and
-					     amber said error and warning about a page that had neither. -->
-					<span class="row-glyph" aria-hidden="true">
-						{#if pinChat && chatActivity.running(pinChat)}
-							<ThinkingMark depth={3} size={14} />
-						{:else if look.icon && isEmoji(look.icon)}
-							<span class="row-emoji">{look.icon}</span>
-						{:else if look.icon}
-							<!-- Drawn at the nav rows' size. An Atlas pick goes through
-							     AtlasIcon so it keeps the same 1.25px line as the glyphs
-							     above it; through iconify at a smaller box it thinned and
-							     shrank. -->
-							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								{#if look.icon.startsWith('atlas:')}
-									<AtlasIcon name={look.icon.slice('atlas:'.length)} size={SHELL_GLYPH_PX} bare />
-								{:else}
-									<Icon icon={look.icon} width={SHELL_GLYPH_PX} />
-								{/if}
-							</span>
-						{:else}
-							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKindGlyph(pin.url)} size={SHELL_GLYPH_PX} bare />
-							</span>
-						{/if}
-					</span>
+					<PinGlyph {pin} />
 					{@render rowTitle(pin.url, look.title, isUntitled(look.title, look.kind))}
 					{@render unreadDot(pinChat)}
 					<span class="row-actions">
@@ -1354,6 +1331,7 @@
 {/if}
 
 {#if recents.length > 0}
+<div class="recent-zone" inert={railed}>
 	{@render groupHead('recent', recentLabel, Math.max(1, recentsShown.length), recentHeadActions, recentFilter !== 'all')}
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
@@ -1367,21 +1345,21 @@
 			{/each}
 		</div>
 	</div>
-{/if}
-
-<!-- Hidden while Recent is folded: "See all" under a closed heading would
-     point at nothing on screen. -->
-{#if recentsMore && !folded('recent')}
-	<button type="button" class="panel-row panel-more" onclick={() => filterDef.seeAll()}>See all</button>
+	<!-- Hidden while Recent is folded: "See all" under a closed heading would
+	     point at nothing on screen. -->
+	{#if recentsMore && !folded('recent')}
+		<button type="button" class="panel-row panel-more" onclick={() => filterDef.seeAll()}>See all</button>
+	{/if}
+</div>
 {/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
 
 <style>
-	/* Sentence case, no tracking, no rule — design.md forbids uppercase with
-	   wide tracking as something that "signals considered while doing no work",
-	   and there are no hairline separators in the sidebar. A group is told
-	   from its rows by being SMALLER and quieter, and by the air above it. */
+	/* Sentence case, no tracking — design.md forbids uppercase with wide
+	   tracking as something that "signals considered while doing no work". A
+	   group is told from its rows by being SMALLER and quieter, by the air
+	   above it, and by the hand-drawn rule that runs on from its label. */
 	.group-head {
 		display: flex;
 		align-items: center;
@@ -1389,7 +1367,7 @@
 		   the rows under it and not the tail of the ones above. */
 		height: 22px;
 		margin-top: 16px;
-		padding-right: 6px;
+		padding-right: var(--row-action-inset);
 		user-select: none;
 	}
 
@@ -1398,7 +1376,7 @@
 		align-items: center;
 		gap: 6px;
 		height: 100%;
-		padding: 0 0 0 12px;
+		padding: 0 0 0 10px;
 		border: none;
 		background: none;
 		cursor: pointer;
@@ -1430,42 +1408,59 @@
 		--fold-ease: cubic-bezier(0.3, 0.1, 0.2, 1);
 	}
 
-	.chev {
+	/* At rest the chevron takes no room, so the rule starts right after the
+	   label. Pointing at the head opens its slot, and the rule shortens to
+	   make way for it. The negative margin cancels the label's gap. */
+	.group-head .chev {
+		width: 0;
+		margin-left: -6px;
 		opacity: 0;
 		transform: rotate(0deg);
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-open) var(--fold-ease);
 	}
 
 	.group-head.folded .chev {
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-close) var(--fold-ease);
 	}
 
 	.group-head:hover .chev,
-	.group-toggle:focus-visible .chev {
+	.group-toggle:focus-visible .chev,
+	.group-head.folded .chev {
+		width: 9px;
+		margin-left: 0;
 		opacity: 0.8;
 	}
 
 	/* Shut: the chevron stays put, pointing at the group it would reopen. */
 	.group-head.folded .chev {
-		opacity: 0.8;
 		transform: rotate(-90deg);
 	}
 
+	/* The head's actions sit at its right end and open their slot from there. */
 	.group-actions {
 		margin-left: auto;
 		display: flex;
 		align-items: center;
+		max-width: 0;
+		overflow: hidden;
 		opacity: 0;
-		transition: opacity 150ms ease;
+		transition:
+			max-width 180ms var(--fold-ease),
+			opacity 150ms ease;
 	}
 
 	.group-head:hover .group-actions,
 	.group-actions:focus-within,
 	.group-actions.shown {
+		max-width: var(--row-action-size);
 		opacity: 1;
 	}
 
@@ -1521,7 +1516,7 @@
 	}
 
 	.panel-door {
-		gap: 8px;
+		gap: var(--sidebar-interactive-gap);
 		color: var(--color-foreground);
 	}
 
@@ -1541,17 +1536,20 @@
 		position: relative;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sidebar-interactive-gap);
 		width: 100%;
 		height: var(--sidebar-interactive-height);
-		padding: 0 12px;
+		/* 10px, as in the rail, so a glyph keeps its place when the sidebar
+		   opens or closes (UnifiedSidebar). */
+		padding: 0 10px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: none;
 		cursor: pointer;
 		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
-		color: var(--color-foreground);
+		font-size: var(--chrome-label-font-size);
+		/* A shade under full ink at rest, so the pointer can bring it up. */
+		color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
 		/* A drag starts from a row, so a press-and-move must not select its
 		   text instead, which WebKit tries first. */
 		user-select: none;
@@ -1564,17 +1562,29 @@
 			opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
+	/* Under the pointer a row's ink comes up to full and its icon fills in
+	   (AtlasIcon's `fillable`); the row you are on keeps it filled. There is
+	   no fill on the row itself: a box appearing on each row looked boxy,
+	   most of all in the narrow rail, where the icon is all there is. */
 	.panel-row:not(.stale-hover):hover {
-		background: var(--hover-bg);
+		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in);
 	}
 
-	/* Where you are: the page's own white, edged by a hairline, so the row
-	   is made of the same stuff as the card it opened. Hover stays a wash. */
+	.panel-row:is(:not(.stale-hover):hover, .active) :global(.glyph-solid) {
+		opacity: 1;
+	}
+
+	.panel-row:is(:not(.stale-hover):hover, .active) :global(.glyph-outline) {
+		opacity: 0;
+	}
+
+	/* Where you are: a flat tint inside the glass. A second pane of glass
+	   with its own rim and shadow would stack one surface on another. */
 	.panel-row.active,
 	.panel-row.active:hover {
-		background: var(--color-page);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		background: var(--lq-row-selected);
+		color: var(--color-foreground);
 	}
 
 	/* A pinned project with something held over it: the row takes the drop
@@ -1711,23 +1721,8 @@
 		flex-direction: column;
 	}
 
-	.row-glyph {
-		width: 16px;
-		height: 16px;
-		flex: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
 
-	.row-emoji {
-		font-size: 14px;
-		line-height: 1;
-	}
 
-	.row-kind {
-		display: flex;
-	}
 
 
 	.row-running {
@@ -1775,10 +1770,10 @@
 	.row-actions {
 		position: absolute;
 		top: 50%;
-		right: 6px;
+		right: var(--row-action-inset);
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 2px;
 		transform: translateY(-50%);
 		opacity: 0;
 		pointer-events: none;
@@ -1791,21 +1786,31 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
-	/* The last 48px of the row hold the controls: the title is clear up to
-	   20px before them and gone under them. */
+	/* Two controls take the last 57px of the row. The title fades out over
+	   20px and is gone 50px from the row's end, under the controls. */
 	.panel-row-has-actions:not(.stale-hover):is(:hover, :focus-within) .panel-row-text {
-		mask-image: linear-gradient(to left, transparent 42px, #000 62px);
+		mask-image: linear-gradient(to left, transparent 50px, #000 70px);
+	}
+
+	/* A control is as tall as the row allows: it sits 3px inside the row's
+	   edge and its corner runs parallel to the row's, so the hover fill reads
+	   as part of the row's outline and the target is as large as it can be. */
+	.panel-row,
+	.group-head {
+		--row-action-inset: 3px;
+		--row-action-size: calc(var(--sidebar-interactive-height) - 2 * var(--row-action-inset));
+		--row-action-radius: calc(var(--sidebar-interactive-radius) - var(--row-action-inset));
 	}
 
 	.row-action {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		width: var(--row-action-size);
+		height: var(--row-action-size);
 		padding: 0;
 		border: none;
-		border-radius: var(--radius-md);
+		border-radius: var(--row-action-radius);
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
@@ -1844,7 +1849,7 @@
 		background: none;
 	}
 
-	/* Avenir's regular is thin at 13px on a 1x display; its medium holds up. */
+	/* Avenir's regular is thin at row size on a 1x display; its medium holds up. */
 	@media (max-resolution: 1.5dppx) {
 		.panel-row {
 			font-weight: 500;

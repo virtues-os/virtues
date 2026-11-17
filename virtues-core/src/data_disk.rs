@@ -1,64 +1,30 @@
-//! Is the box's data disk actually there?
+//! Is the server's data disk actually there?
 //!
-//! On an appliance the state root is its own filesystem — a blank NVMe claimed
-//! at first boot (`virtues-firstboot.sh`) — while the OS lives on the boot
-//! medium (a microSD card on the Q6A; see agents/build/appliance-image.md). That split
-//! is deliberate: the card is the weakest storage on the board and wears out
-//! under database load, so the database, the lake and the journal — everything
-//! that writes continuously — belong on the NVMe, and the card carries only a
-//! rootfs that changes once per release.
+//! Servers Virtues shipped as hardware keep the state root on its own disk
+//! (an NVMe), with the Postgres cluster moved onto it and the OS on the boot
+//! card. `fstab` carries `nofail`, so a missing disk never blocks boot. The
+//! risk is the other way: the server comes up, Postgres can start a fresh
+//! empty cluster on the card, and everything looks healthy while the
+//! owner's record sits on a disk nobody mounted. `virtues doctor` reports
+//! that state (`cli/doctor.rs`).
 //!
-//! The split's other half is the reason this module exists. Keeping a bootable
-//! OS on the card means a box whose NVMe is dead, unseated, or was never
-//! fitted still comes up — and a box that comes up can SAY SO. `fstab` carries
-//! `nofail` for exactly that, so a missing disk must never block boot.
-//!
-//! But "must not block boot" and "may be ignored" are different claims, and
-//! conflating them is how you get the worst outcome available here: Postgres
-//! cheerfully `initdb`s a fresh empty cluster onto the card, every service
-//! reports healthy, and the owner's box looks perfectly fine while being
-//! empty. Their record is not lost — it is sitting on a disk nobody mounted —
-//! but nothing on any screen would tell them that, and the longer it runs the
-//! more a "restore from backup" would destroy.
-//!
-//! So: boot anyway, refuse to serve, and put it on the glass.
+//! Only a server whose cluster was moved into its state root
+//! ([`relocated_cluster_dir`]) expects a separate disk. An ordinary install
+//! keeps everything on one disk, which is correct.
 
 use std::path::{Path, PathBuf};
 
 /// What we can say about the data disk right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataDisk {
-    /// The state root is a mount point of its own — the expected appliance
-    /// shape, and the only one where writes are landing where they should.
+    /// The state root is a mount point of its own.
     Mounted,
     /// The state root is a directory on the root filesystem. Correct and
-    /// unremarkable on a DIY box, where there is one disk by definition.
+    /// unremarkable on an ordinary install, where there is one disk.
     OnRoot,
     /// This box is configured to have a separate data disk and does not have
     /// one right now. The state a human needs told about.
     Missing,
-}
-
-impl DataDisk {
-    /// Should the box refuse to serve?
-    ///
-    /// Only [`DataDisk::Missing`]. `OnRoot` is a perfectly good DIY install.
-    pub fn is_fault(self) -> bool {
-        matches!(self, DataDisk::Missing)
-    }
-
-    /// One line, written for someone standing in front of the box rather than
-    /// reading a log. Names the part, says the record is intact, and gives the
-    /// single next action.
-    pub fn message(self) -> Option<&'static str> {
-        match self {
-            DataDisk::Missing => Some(
-                "I can't find my storage disk. Your record is on it, not lost — \
-                 the disk needs reseating or replacing.",
-            ),
-            _ => None,
-        }
-    }
 }
 
 /// The state root this box is configured with.
@@ -87,24 +53,49 @@ pub(crate) fn data_dir() -> PathBuf {
     PathBuf::from("/var/lib/virtues")
 }
 
+/// `/var/lib/postgresql`, which on a server with a moved cluster is a symlink
+/// into the data dir.
+pub const PG_LINK: &str = "/var/lib/postgresql";
+
+/// The moved cluster directory, if this server has one.
+///
+/// Only a link that points into the state root counts: that is the layout
+/// the hardware installer made (`<data dir>/postgresql`). `None` on an
+/// ordinary install, where `/var/lib/postgresql` is the distro's own
+/// directory, and `None` when someone linked it to a disk of their own,
+/// which is theirs to look after and not a data disk this server expects.
+pub fn relocated_cluster_dir() -> Option<PathBuf> {
+    let md = std::fs::symlink_metadata(PG_LINK).ok()?;
+    if !md.file_type().is_symlink() {
+        return None;
+    }
+    let target = std::fs::read_link(PG_LINK).ok()?;
+    moved_into(&target, &data_dir()).then_some(target)
+}
+
+/// Whether a `/var/lib/postgresql` link to `target` is the cluster moved
+/// into the state root `data_dir`. A relative target is not: the installer
+/// always wrote an absolute one.
+fn moved_into(target: &Path, data_dir: &Path) -> bool {
+    target.is_absolute() && target.starts_with(data_dir)
+}
+
 /// Assess the data disk.
 ///
-/// The appliance/DIY distinction is what makes `Missing` sayable at all: on a
-/// DIY box the state root is *supposed* to be a directory on the root
-/// filesystem, and reporting that as a fault would condemn every correct
-/// self-hosted install. Only a box that declared itself an appliance — which
-/// means `virtues-firstboot` was going to claim a disk for it — can be missing
-/// one.
+/// Only a server whose Postgres cluster was moved to a data disk can be
+/// missing one. On an ordinary install the state root is *supposed* to be a
+/// directory on the root filesystem, and reporting that as a fault would
+/// condemn every correct install.
 pub fn status() -> DataDisk {
-    status_of(&data_dir(), crate::install_manifest::appliance())
+    status_of(&data_dir(), relocated_cluster_dir().is_some())
 }
 
 /// The decision, with its inputs passed in so it is testable without a mount.
-pub fn status_of(dir: &Path, appliance: bool) -> DataDisk {
+pub fn status_of(dir: &Path, expects_disk: bool) -> DataDisk {
     if is_mount_point(dir) {
         return DataDisk::Mounted;
     }
-    if appliance {
+    if expects_disk {
         DataDisk::Missing
     } else {
         DataDisk::OnRoot
@@ -118,9 +109,9 @@ pub fn status_of(dir: &Path, appliance: bool) -> DataDisk {
 /// agreement about how the path is spelled, and it is right for bind mounts
 /// and symlinked roots too.
 ///
-/// A directory that does not exist is not a mount point, which lands a
-/// misconfigured appliance in `Missing` — the correct answer, and one that
-/// says something useful rather than panicking on an unwrap.
+/// A directory that does not exist is not a mount point, which lands a server
+/// expecting a disk in `Missing`: the correct answer, and one that says
+/// something useful rather than panicking on an unwrap.
 fn is_mount_point(dir: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -155,16 +146,22 @@ mod tests {
         // install: a DIY state root is a plain directory, by design.
         let s = status_of(Path::new("/nonexistent/virtues"), false);
         assert_eq!(s, DataDisk::OnRoot);
-        assert!(!s.is_fault());
-        assert!(s.message().is_none());
     }
 
     #[test]
-    fn an_appliance_without_its_disk_is_a_fault() {
+    fn a_server_expecting_a_disk_without_one_is_a_fault() {
         let s = status_of(Path::new("/nonexistent/virtues"), true);
         assert_eq!(s, DataDisk::Missing);
-        assert!(s.is_fault());
-        assert!(s.message().unwrap().contains("not lost"));
+    }
+
+    #[test]
+    fn only_a_cluster_moved_into_the_state_root_expects_a_disk() {
+        let data = Path::new("/var/lib/virtues");
+        assert!(moved_into(Path::new("/var/lib/virtues/postgresql"), data));
+        // Someone's own disk, or a relative link: not a disk we expect.
+        assert!(!moved_into(Path::new("/mnt/bigdisk/postgresql"), data));
+        assert!(!moved_into(Path::new("/var/lib/virtues-other/postgresql"), data));
+        assert!(!moved_into(Path::new("virtues/postgresql"), data));
     }
 
     #[test]
@@ -180,15 +177,5 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         assert!(!is_mount_point(&d));
         let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn the_message_leads_with_the_record_being_intact() {
-        // Copy rule, pinned because it is the whole point of the state: the
-        // owner is looking at a box that says it cannot find its storage, and
-        // the sentence they need first is that their life is still on it.
-        let m = DataDisk::Missing.message().unwrap();
-        assert!(m.contains("Your record is on it"));
-        assert!(!m.to_lowercase().contains("error"));
     }
 }

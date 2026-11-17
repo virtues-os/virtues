@@ -5,8 +5,20 @@
 //! env var (base64-encoded 32 bytes). Sub-purpose peppers are derived from
 //! the master key with a fixed domain separator — no second env var.
 //!
-//! This module is the **only** home for HMAC and AES primitives in the
-//! workspace. CI lints reject `Hmac::<Sha256>` outside this path.
+//! This module holds the workspace's AES primitives and all but one of its
+//! HMAC uses. The exception is `virtues-core/src/database/restricted.rs`,
+//! which derives the Postgres login passwords with its own HMAC-SHA256 keyed
+//! on the base64 text of `VIRTUES_ENCRYPTION_KEY`, or on the `DATABASE_URL`
+//! password in dev and CI, where there is no box key. [`TokenEncryptor`]'s
+//! peppers key on the decoded bytes instead. Moving that derivation here has
+//! to keep its output unchanged. Otherwise every box's restricted logins stop
+//! matching until the repair sets them again, and until then the SQL those
+//! logins confine (faces, `sql_query`, `sql_write`) runs without its own
+//! login. `restricted::begin` says what it falls back to.
+//!
+//! `tools/arch-lint.sh` (Lint 3) checks for HMAC outside this path, and it
+//! reports `restricted.rs`. No CI workflow, Makefile target or git hook runs
+//! that script, so nothing enforces the rule.
 
 use base64::Engine;
 use hmac::{Hmac, Mac};

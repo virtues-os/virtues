@@ -231,7 +231,7 @@ impl InstallConfig {
     /// Directory holding the Qualcomm QAIRT runtime libs (`libQnnHtp.so`,
     /// `libQnnSystem.so`, the v68 skel/stub) that `virtues-qnnd` dlopen's at
     /// runtime. These are Qualcomm proprietary — NOT shipped by us — so the
-    /// appliance image must provide them: either on the default loader path
+    /// Dragon's OS image must provide them: either on the default loader path
     /// (ldconfig, `None` here) or at a directory pinned via `VIRTUES_QNN_LIB_DIR`,
     /// which the daemon unit adds to `LD_LIBRARY_PATH`.
     pub fn qnn_lib_dir(&self) -> Option<String> {

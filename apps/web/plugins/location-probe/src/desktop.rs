@@ -49,6 +49,11 @@ impl<R: Runtime> LocationProbe<R> {
     Ok(OpenSettingsResponse { opened: false })
   }
 
+  /// Desktop hands sign-ins to the system browser instead.
+  pub async fn sign_in(&self, _payload: SignInRequest) -> crate::Result<SignInResponse> {
+    Ok(SignInResponse { outcome: "unavailable".into() })
+  }
+
   pub fn read_rows(&self, _payload: RowsRequest) -> crate::Result<RowsResponse> {
     Ok(RowsResponse { rows: vec![] })
   }

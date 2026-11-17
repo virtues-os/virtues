@@ -10,7 +10,8 @@
 //!
 //! So the CLI sends the tool here and the server runs it through the same
 //! executor chat uses. Only the local console may call it: a process on the
-//! box itself, over loopback, which is what `virtues` on the box is. Each call
+//! box itself, on the console socket (`crate::console_socket`), which is what
+//! `virtues` on the box is. Each call
 //! logs one audit line, which is the record of what an outside agent changed.
 //! The plan is agents/plan/cli-data-verbs-plan.md.
 
@@ -56,11 +57,7 @@ async fn console_tool_handler(
     }
     let key = headers.get(AGENT_KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
 
-    let args_sha = {
-        let mut h = Sha256::new();
-        h.update(arguments.to_string().as_bytes());
-        format!("{:x}", h.finalize())
-    };
+    let args_sha = args_sha(&arguments);
     let exec = ToolExecutor::new_with_yjs(state.db.pool().clone(), state.yjs_state.clone());
     let context = ToolContext { console: true, ..Default::default() };
     let outcome = exec.execute(&tool, arguments, &context).await;
@@ -144,6 +141,15 @@ async fn convert_pages(yjs: crate::server::yjs::YjsState, user: &AuthUser, ask: 
         Err(crate::Error::InvalidInput(why)) => refuse(StatusCode::UNPROCESSABLE_ENTITY, &why),
         Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
+}
+
+/// The audit line's stand-in for a call's arguments: their hash, so the
+/// journal shows two calls were the same without holding what they said.
+/// Shared with `/api/mcp` (`server/api/mcp.rs`).
+pub(crate) fn args_sha(arguments: &serde_json::Value) -> String {
+    let mut h = Sha256::new();
+    h.update(arguments.to_string().as_bytes());
+    format!("{:x}", h.finalize())
 }
 
 fn refuse(status: StatusCode, message: &str) -> Response {

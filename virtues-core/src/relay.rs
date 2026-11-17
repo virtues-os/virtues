@@ -7,14 +7,17 @@
 //! — with **no public inbound port**. The plain-HTTP `:8000` listener stays for
 //! LAN/loopback and the desktop `:7117` helper.
 //!
-//! Security is layered: iroh enforces an [`AllowPolicy`](virtues_iroh::AllowPolicy)
-//! over paired-device EndpointIds at the transport; the app-layer bearer/cookie
-//! remains the authorization keystone on top.
+//! The key is the credential. iroh enforces an
+//! [`AllowPolicy`](virtues_iroh::AllowPolicy) over paired-device EndpointIds at
+//! the transport, and [`reconcile`] keeps that allowlist equal to the endpoint
+//! ids of the devices that are not revoked. There is no bearer or cookie on
+//! top: `middleware::auth` maps the proven EndpointId to its `app_device` row,
+//! and refuses a revoked row, on every request.
 //!
-//! Config (env for now; atlas `/relay/config` → relay_url and DB-backed allowlist
-//! land in Steps 4/5):
-//! - `VIRTUES_RELAY_URL`   — our relay, e.g. `https://relay.virtues.ch`. Unset =
-//!   dev mode (n0 relays + discovery).
+//! The relay comes from the stored config (atlas `/relay/config`, or the off
+//! word Settings writes), then `VIRTUES_RELAY_URL`, then [`DEFAULT_RELAY_URL`]
+//! on an installed box (`resolve_relay_url`). With none of them, as in a dev
+//! checkout, the endpoint binds with its relay disabled.
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
@@ -27,7 +30,7 @@ use virtues_iroh::{
     StaticAllow, Watcher,
 };
 
-/// `box_secrets` key holding this box's persistent iroh secret key (hex of the
+/// Box secret holding this box's persistent iroh secret key (hex of the
 /// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
 const BOX_IROH_SECRET: &str = "iroh_secret_key";
 
@@ -177,7 +180,7 @@ fn refresh_direct_addrs(endpoint: &Endpoint) {
 /// binds, so it can't use the in-memory getters above. `None` before first boot
 /// provisions the secret.
 async fn endpoint_id_from_secret(db: &PgPool) -> Option<String> {
-    let (hex_seed, _) = crate::box_secrets::get(db, BOX_IROH_SECRET).await.ok()??;
+    let (hex_seed, _) = crate::secrets::get(db, crate::secrets::Kind::Box, BOX_IROH_SECRET).await.ok()??;
     let bytes = hex::decode(hex_seed.trim()).ok()?;
     let arr: [u8; 32] = bytes.as_slice().try_into().ok()?;
     Some(SecretKey::from_bytes(&arr).public().to_string())
@@ -195,8 +198,6 @@ pub struct ReachReport {
     pub db_reachable: bool,
     /// The box's EndpointId (from its stored secret), or `None` pre-provision.
     pub endpoint_id: Option<String>,
-    /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
-    pub relay_url: Option<String>,
     /// How many device keys are currently on the allowlist, or `None` when the
     /// query failed. Optional like every other leg: a bare `0` here reads as
     /// "no devices paired", which is a different and much more alarming
@@ -213,18 +214,12 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
         return ReachReport {
             db_reachable: false,
             endpoint_id: None,
-            relay_url: None,
             allowlisted_devices: None,
         };
     }
     ReachReport {
         db_reachable: true,
         endpoint_id: endpoint_id_from_secret(db).await,
-        relay_url: crate::virtues_api::relay::load(db)
-            .await
-            .ok()
-            .flatten()
-            .map(|rc| rc.relay_url),
         allowlisted_devices: allowed_ids(db).await.ok().map(|ids| ids.len()),
     }
 }
@@ -345,9 +340,10 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             // rebind (dropping it aborts the accept loop).
             let router = serve(endpoint, app.clone(), allow);
             // Periodic reconcile catches drift the event-driven path (after_pairing_change)
-            // can't: atlas restarting and losing our registration, a device that paired
-            // while atlas was unreachable, or relay config that only became available
-            // after we bound. Idempotent + best-effort.
+            // can't: a revoke from the `virtues device rm` CLI, which runs in another
+            // process and cannot reach this allowlist, an allowlist query that failed,
+            // or relay config that only became available after we bound.
+            // Idempotent + best-effort.
             let mut tick =
                 tokio::time::interval(std::time::Duration::from_secs(RECONCILE_INTERVAL_SECS));
             tick.tick().await; // consume the immediate first tick — startup already reconciled above
@@ -422,12 +418,12 @@ fn relay_disabled_by_env(raw: &str) -> bool {
 ///
 /// **Stored beats env, and that order is deliberate** — Settings writes the
 /// off word into the stored slot so the owner's choice survives an upgrade
-/// that rewrites `/etc/virtues/env`. The consequence to know before debugging
-/// it: on a box that has ever been linked (so a stored config exists),
-/// `VIRTUES_RELAY_URL` is never consulted, and setting it there — including
-/// setting it to `off` — does nothing at all, silently. The env var is the
-/// override for a box with no stored config; the switch for every other box is
-/// `PUT /api/network/relay`.
+/// that rewrites `/var/lib/virtues/virtues.env`. The consequence to know
+/// before debugging it: on a box that has ever been linked (so a stored config
+/// exists), `VIRTUES_RELAY_URL` is never consulted, and setting it there —
+/// including setting it to `off` — does nothing at all, silently. The env var
+/// is the override for a box with no stored config; the switch for every other
+/// box is `PUT /api/network/relay`.
 ///
 /// The default is gated on the box-install marker: a dev checkout on a
 /// laptop must not home on the production relay just because someone ran
@@ -522,10 +518,10 @@ async fn ensure_relay_config(db: &PgPool) {
     }
 }
 
-/// Load the box's persistent iroh secret key from `box_secrets`, generating and
+/// Load the box's persistent iroh secret key from its secrets, generating and
 /// persisting a fresh one on first boot so the `EndpointId` is stable.
 async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
-    if let Some((hex_seed, _meta)) = crate::box_secrets::get(db, BOX_IROH_SECRET).await? {
+    if let Some((hex_seed, _meta)) = crate::secrets::get(db, crate::secrets::Kind::Box, BOX_IROH_SECRET).await? {
         let bytes = hex::decode(hex_seed.trim()).context("decode stored iroh secret")?;
         let arr: [u8; 32] = bytes.as_slice().try_into().context("iroh secret is not 32 bytes")?;
         return Ok(SecretKey::from_bytes(&arr));
@@ -536,7 +532,7 @@ async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
         rand::rng().fill_bytes(&mut seed);
     }
     let secret = SecretKey::from_bytes(&seed);
-    crate::box_secrets::put(db, BOX_IROH_SECRET, &hex::encode(seed), &serde_json::json!({}))
+    crate::secrets::put(db, crate::secrets::Kind::Box, BOX_IROH_SECRET, &hex::encode(seed), &serde_json::json!({}))
         .await
         .context("persist iroh secret key")?;
     tracing::info!("iroh: generated + persisted new box secret key");
@@ -576,17 +572,6 @@ async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
     Ok(ids)
 }
 
-/// Is `id` one of this box's paired, non-revoked devices? The same set the
-/// transport admits, read fresh — for proofs that arrive outside iroh (the
-/// Bluetooth owner proof on an offline box), where there is no connection for
-/// the allowlist to guard. A query error is an `Err`, never a `false` or a
-/// `true`: the caller refuses on it.
-// Its one caller is the BlueZ half of `ble_provision`, which only builds on Linux.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) async fn is_paired_endpoint(db: &PgPool, id: &EndpointId) -> Result<bool, sqlx::Error> {
-    Ok(allowed_ids(db).await?.contains(id))
-}
-
 /// Build + install the live allowlist for `serve`.
 ///
 /// A failed query leaves the previous set in place: on a rebind that is the
@@ -608,7 +593,9 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
 }
 
 /// Fire-and-forget reconcile after a pairing or revocation. Non-blocking so the
-/// pairing handlers don't wait on the atlas round-trip.
+/// pairing handlers don't wait on it, since a box with no stored relay config
+/// fetches one from atlas first. It swaps the allowlist only in the server
+/// process, the one that set `ALLOW`.
 pub fn after_pairing_change(db: PgPool) {
     tokio::spawn(async move {
         reconcile(&db).await;

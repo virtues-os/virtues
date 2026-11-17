@@ -34,7 +34,7 @@ const SUBJECT_ROUTES: Record<string, string | null> = {
 	day: 'day',
 	year: 'year',
 	chapter: null,
-	story: null,
+	thing: 'thing',
 	nar: null
 };
 

@@ -28,17 +28,19 @@ const LOW_DISK_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 pub struct AttentionItem {
     /// Stable while the condition holds; a new key is a new problem.
     pub key: String,
-    /// `update` | `disk` | `backup` | `source` | `stream`, most urgent first.
+    /// `key` | `update` | `disk` | `backup` | `source` | `connection` |
+    /// `stream` | `applet` | `applet_new`, most urgent first.
     pub kind: &'static str,
     pub title: String,
     pub body: String,
     /// The in-app page that shows or fixes it.
-    pub route: &'static str,
+    pub route: String,
 }
 
 pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     let mut items = Vec::new();
 
+    key_items(&mut items, crate::secrets::key_at_start());
     update_items(&mut items);
     disk_items(&mut items, crate::storage::lake::free_bytes());
 
@@ -52,23 +54,182 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
         Err(e) => tracing::warn!("attention: credentials unreadable: {e}"),
     }
 
+    match signed_out_connections(db).await {
+        Ok(rows) => connection_items(&mut items, rows),
+        Err(e) => tracing::warn!("attention: connections unreadable: {e}"),
+    }
+
     match expiring_sources(db).await {
         Ok(rows) => expiring_items(&mut items, rows, chrono::Utc::now()),
         Err(e) => tracing::warn!("attention: credential expiry unreadable: {e}"),
     }
 
-    match crate::api::stream_health::stream_health(db).await {
-        Ok(streams) => {
-            stream_items(&mut items, &streams);
-            match crate::api::stream_health::stream_days(db, RHYTHM_WINDOW_DAYS).await {
-                Ok(days) => quiet_stream_items(&mut items, &streams, &days),
-                Err(e) => tracing::warn!("attention: stream arrivals unreadable: {e}"),
-            }
-        }
-        Err(e) => tracing::warn!("attention: stream health unreadable: {e}"),
+    match failed_applets(db).await {
+        Ok(rows) => failed_applet_items(&mut items, rows),
+        Err(e) => tracing::warn!("attention: applet runs unreadable: {e}"),
+    }
+
+    items.extend(stream_attention(db).await);
+
+    match new_from_applets(db).await {
+        Ok(rows) => new_applet_items(&mut items, rows),
+        Err(e) => tracing::warn!("attention: applet results unreadable: {e}"),
     }
 
     Ok(items)
+}
+
+/// How long the stream items are reused. Reading them scans every `data_*`
+/// table (counts and a 75-day histogram), and clients poll this list every
+/// minute. A stream counts as stopped after a day or more, so items a few
+/// minutes old say the same thing.
+const STREAM_ITEMS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The last stream items and when they were read. Process-local, as
+/// `subscription`'s cache is: a restart reads again, which costs one scan.
+static STREAM_ITEMS: std::sync::Mutex<Option<(std::time::Instant, Vec<AttentionItem>)>> =
+    std::sync::Mutex::new(None);
+
+/// Items for stopped and unusually quiet streams, from a read at most
+/// `STREAM_ITEMS_TTL` old. A read that fails is not kept, so the next poll
+/// tries again.
+async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
+    if let Ok(cache) = STREAM_ITEMS.lock() {
+        if let Some((at, items)) = cache.as_ref() {
+            if at.elapsed() < STREAM_ITEMS_TTL {
+                return items.clone();
+            }
+        }
+    }
+    let mut items = Vec::new();
+    let streams = match crate::api::stream_health::stream_health(db).await {
+        Ok(streams) => streams,
+        Err(e) => {
+            tracing::warn!("attention: stream health unreadable: {e}");
+            return items;
+        }
+    };
+    stream_items(&mut items, &streams);
+    match crate::api::stream_health::stream_days(db, RHYTHM_WINDOW_DAYS).await {
+        Ok(days) => quiet_stream_items(&mut items, &streams, &days),
+        Err(e) => {
+            // Return what there is, but don't keep it: the quiet items are missing.
+            tracing::warn!("attention: stream arrivals unreadable: {e}");
+            return items;
+        }
+    }
+    if let Ok(mut cache) = STREAM_ITEMS.lock() {
+        *cache = Some((std::time::Instant::now(), items.clone()));
+    }
+    items
+}
+
+/// `(applet id, name, run id, error)` for each applet that is on and whose
+/// latest finished run failed. It stays until a run succeeds, or the owner
+/// turns the applet off.
+async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Option<String>)>> {
+    Ok(sqlx::query_as(
+        "SELECT a.id, a.name, r.id, r.error FROM app_applets a \
+         JOIN LATERAL (SELECT id, status, error FROM app_applet_runs \
+                        WHERE applet_id = a.id AND status IN ('success', 'error', 'budget_exceeded') \
+                        ORDER BY started_at DESC LIMIT 1) r ON true \
+         WHERE a.enabled AND a.archived_at IS NULL AND r.status = 'error' \
+         ORDER BY a.name",
+    )
+    .fetch_all(db.pool())
+    .await?)
+}
+
+fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, String, Option<String>)>) {
+    for (id, name, run_id, error) in rows {
+        let why = error
+            .as_deref()
+            .map(|e| {
+                let line = e.lines().next().unwrap_or(e);
+                line.split(". ").next().unwrap_or(line).trim_end_matches('.').trim().chars().take(160).collect::<String>()
+            })
+            .filter(|e| !e.is_empty());
+        items.push(AttentionItem {
+            key: format!("applet:{run_id}"),
+            kind: "applet",
+            title: format!("{name} didn't finish its last run"),
+            body: match why {
+                Some(why) => format!("{why}. Open it to see what happened."),
+                None => "Open it to see what happened.".into(),
+            },
+            route: format!("/applet/{id}"),
+        });
+    }
+}
+
+/// `(applet id, name, run id, page title, what the run said)` for each applet
+/// with an unattended run since the owner last opened it that has something
+/// to read: a page it wrote, or what a prompt applet said. A sync's or a
+/// shipped applet's own report is left out, so a run that only keeps things
+/// current never lights the Inbox. One row per applet, its latest such run.
+async fn new_from_applets(db: &Database) -> Result<Vec<(String, String, String, Option<String>, Option<String>)>> {
+    Ok(sqlx::query_as(
+        "SELECT DISTINCT ON (a.id) a.id, a.name, r.id, p.title, r.result_summary \
+           FROM app_applets a \
+           JOIN app_applet_runs r ON r.applet_id = a.id \
+           LEFT JOIN app_applet_run_outputs o ON o.run_id = r.id AND o.kind = 'page' \
+           LEFT JOIN app_pages p ON p.id = o.ref_id AND p.deleted_at IS NULL \
+          WHERE a.enabled AND a.archived_at IS NULL \
+            AND r.status = 'success' AND r.trigger IN ('cron', 'webhook', 'data') \
+            AND r.started_at > coalesce(a.seen_at, '-infinity'::timestamptz) \
+            AND (p.id IS NOT NULL \
+                 OR (a.owner <> 'system' AND a.agent IS NOT NULL AND btrim(coalesce(r.result_summary, '')) <> '')) \
+          ORDER BY a.id, r.started_at DESC",
+    )
+    .fetch_all(db.pool())
+    .await?)
+}
+
+fn new_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, String, Option<String>, Option<String>)>) {
+    for (id, name, run_id, page, said) in rows {
+        let (title, body) = match page {
+            Some(page) => (format!("{name} wrote {page}"), "Open it to read the page.".to_string()),
+            None => {
+                let said = said.unwrap_or_default();
+                let line = said.lines().next().unwrap_or_default().trim();
+                let body = if line.chars().count() > 160 {
+                    format!("{}…", line.chars().take(159).collect::<String>())
+                } else {
+                    line.to_string()
+                };
+                (format!("{name} has something for you"), body)
+            }
+        };
+        items.push(AttentionItem {
+            key: format!("applet_new:{run_id}"),
+            kind: "applet_new",
+            title,
+            body,
+            route: format!("/applet/{id}"),
+        });
+    }
+}
+
+/// The server's key opens none of its saved secrets (`secrets::check_key_at_start`).
+/// First in the list, because every sign-in, password and key is unreadable
+/// until it is fixed, and anything saved meanwhile is sealed with the wrong
+/// key. The check runs once per start, so the item stays until a restart
+/// with the right key. Putting the key back also changes what the restricted
+/// database logins have to be, and only root can reset those, so the fix runs
+/// `sudo virtues migrate` before the restart.
+fn key_items(items: &mut Vec<AttentionItem>, check: Option<crate::secrets::KeyCheck>) {
+    if !check.is_some_and(|c| c.opens_nothing()) {
+        return;
+    }
+    items.push(AttentionItem {
+        key: "key:wrong".into(),
+        kind: "key",
+        title: "Your server can't open its saved sign-ins and keys".into(),
+        body: "The encryption key it started with isn't the one they were saved with. \
+               Put back the virtues.env from your backup, run sudo virtues migrate, then restart your server."
+            .into(),
+        route: "/virtues/system".into(),
+    });
 }
 
 fn update_items(items: &mut Vec<AttentionItem>) {
@@ -82,7 +243,7 @@ fn update_items(items: &mut Vec<AttentionItem>) {
             title: "An update didn't install".into(),
             body: "Your server went back to the version it had, so nothing changed. Open Software to see what happened."
                 .into(),
-            route: "/virtues/devices/server",
+            route: "/virtues/devices/server".into(),
         });
     }
 }
@@ -100,7 +261,7 @@ fn disk_items(items: &mut Vec<AttentionItem>, free: Option<u64>) {
         body: format!(
             "{gb:.1} GB left. When it runs out, new data stops arriving. Open System to see what's using it."
         ),
-        route: "/virtues/system",
+        route: "/virtues/system".into(),
     });
 }
 
@@ -133,7 +294,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
         kind: "backup",
         title,
         body,
-        route: "/virtues/system",
+        route: "/virtues/system".into(),
     });
 }
 
@@ -166,7 +327,31 @@ fn source_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Strin
             kind: "source",
             title,
             body,
-            route: "/sources",
+            route: "/sources".into(),
+        });
+    }
+}
+
+/// `(short name, name)` for every connected service that stopped accepting
+/// the owner's sign-in (`tools/connection.rs`).
+async fn signed_out_connections(db: &Database) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT key, name FROM credentials \
+         WHERE kind = 'connection' AND status = 'reauth_required' \
+         ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await?)
+}
+
+fn connection_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String)>) {
+    for (key, name) in rows {
+        items.push(AttentionItem {
+            key: format!("connection:{key}:reauth_required"),
+            kind: "connection",
+            title: format!("{name} needs you to sign in again"),
+            body: "The assistant can't use it until you do. Open Sources to sign in.".to_string(),
+            route: "/sources/catalog".into(),
         });
     }
 }
@@ -210,7 +395,7 @@ fn expiring_items(
             body: format!(
                 "Your server's sign-in to it {when}. Open Sources and reconnect to keep it syncing."
             ),
-            route: "/sources",
+            route: "/sources".into(),
         });
     }
 }
@@ -227,7 +412,7 @@ fn stream_items(items: &mut Vec<AttentionItem>, streams: &[crate::api::stream_he
             kind: "stream",
             title: format!("{} can't sync", s.display_name),
             body: "Your server's sync for it keeps failing. Open Sources to see why.".into(),
-            route: "/sources",
+            route: "/sources".into(),
         });
     }
 
@@ -268,7 +453,7 @@ fn stream_items(items: &mut Vec<AttentionItem>, streams: &[crate::api::stream_he
             body: format!(
                 "Your server hasn't received anything from it for {days} days. Open Sources to see why."
             ),
-            route: "/sources",
+            route: "/sources".into(),
         });
     }
 }
@@ -344,7 +529,7 @@ fn quiet_stream_items(
                  If you set aside the device that records it, there's nothing to fix. \
                  Otherwise, open Sources to check."
             ),
-            route: "/sources",
+            route: "/sources".into(),
         });
     }
 }
@@ -352,6 +537,23 @@ fn quiet_stream_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wrong_key_is_one_item_and_a_right_or_unchecked_one_says_nothing() {
+        use crate::secrets::KeyCheck;
+        let mut items = vec![];
+        key_items(&mut items, None);
+        key_items(&mut items, Some(KeyCheck { tried: 0, opened: 0 }));
+        key_items(&mut items, Some(KeyCheck { tried: 5, opened: 4 }));
+        assert!(items.is_empty(), "{items:?}");
+
+        key_items(&mut items, Some(KeyCheck { tried: 5, opened: 0 }));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "key:wrong");
+        assert_eq!(items[0].kind, "key");
+        // A restart alone leaves the database logins on the old key.
+        assert!(items[0].body.contains("sudo virtues migrate"), "{}", items[0].body);
+    }
 
     #[test]
     fn plenty_of_disk_says_nothing() {
@@ -391,6 +593,14 @@ mod tests {
         );
         assert_eq!(items[0].title, "Google Calendar needs you to sign in again");
         assert_eq!(items[0].key, "source:cred_1:reauth_required");
+    }
+
+    #[test]
+    fn a_connection_needing_sign_in_is_named() {
+        let mut items = vec![];
+        connection_items(&mut items, vec![("linear".into(), "Linear".into())]);
+        assert_eq!(items[0].title, "Linear needs you to sign in again");
+        assert_eq!((items[0].key.as_str(), items[0].route.as_str()), ("connection:linear:reauth_required", "/sources/catalog"));
     }
 
     fn stream(name: &str, source: &str, status: &str, days_ago: i64) -> crate::api::stream_health::StreamHealth {
@@ -541,5 +751,70 @@ mod tests {
         let db = Database::from_pool(pool);
         let ids: Vec<String> = expiring_sources(&db).await.unwrap().into_iter().map(|r| r.0).collect();
         assert_eq!(ids, ["cred_soon"]);
+    }
+
+    #[test]
+    fn an_applet_item_opens_its_applet_and_says_what_happened() {
+        let mut items = vec![];
+        failed_applet_items(&mut items, vec![("applet_user__tides".into(), "Tides".into(), "run_1".into(), Some("its SQL failed: relation does not exist\nmore".into()))]);
+        new_applet_items(&mut items, vec![
+            ("applet_morning_examen".into(), "Morning examen".into(), "run_2".into(), Some("Tuesday, 3 March".into()), None),
+            ("applet_user__garden".into(), "Garden".into(), "run_3".into(), None, Some("The tomatoes are ready.\nAnd more.".into())),
+        ]);
+        assert_eq!(items[0].route, "/applet/applet_user__tides");
+        assert_eq!(items[0].body, "its SQL failed: relation does not exist. Open it to see what happened.");
+        assert_eq!(items[1].title, "Morning examen wrote Tuesday, 3 March");
+        assert_eq!((items[2].title.as_str(), items[2].body.as_str()), ("Garden has something for you", "The tomatoes are ready."));
+        assert_ne!(items[1].key, items[2].key);
+    }
+
+    /// A scheduled run with something to read is in the Inbox until the
+    /// owner opens the applet; a failed sync is there until a run succeeds;
+    /// and the rows a run wrote add up on the run.
+    #[sqlx::test]
+    async fn applet_results_and_failures_reach_the_inbox(pool: sqlx::PgPool) {
+        let db = Database::from_pool(pool.clone());
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, enabled) VALUES \
+             ('applet_user__review', 'Week in review', 'ai', 'Write the review.', TRUE), \
+             ('applet_sync', 'Calendar sync', 'system', NULL, TRUE), \
+             ('applet_quiet', 'Quiet', 'system', 'Think.', TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let run = |id: &'static str, applet: &'static str, status: &'static str, trigger: &'static str, said: Option<&'static str>, secs: f64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO app_applet_runs (id, applet_id, status, trigger, result_summary, error, started_at) \
+                     VALUES ($1, $2, $3, $4, $5, CASE WHEN $3 = 'error' THEN 'token expired. sign in again' END, now() - make_interval(secs => $6))",
+                )
+                .bind(id).bind(applet).bind(status).bind(trigger).bind(said).bind(secs)
+                .execute(&pool).await.unwrap();
+            }
+        };
+        run("run_r1", "applet_user__review", "success", "cron", Some("Your week was mostly meetings."), 60.0).await;
+        run("run_r2", "applet_user__review", "success", "manual", Some("Started by hand."), 30.0).await;
+        run("run_q1", "applet_quiet", "success", "cron", Some("A shipped applet's own report."), 30.0).await;
+        run("run_s1", "applet_sync", "error", "cron", None, 30.0).await;
+
+        let new = new_from_applets(&db).await.unwrap();
+        assert_eq!(new.len(), 1, "one item, for the unattended run: {new:?}");
+        assert_eq!(new[0].2, "run_r1");
+        let failed = failed_applets(&db).await.unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, "applet_sync");
+
+        crate::scheduler::applets::mark_seen(&pool, "applet_user__review").await.unwrap();
+        assert!(new_from_applets(&db).await.unwrap().is_empty(), "opening the applet clears it");
+        run("run_s2", "applet_sync", "success", "cron", Some("Synced 4."), 10.0).await;
+        assert!(failed_applets(&db).await.unwrap().is_empty(), "a later success clears it");
+
+        crate::scheduler::applets::record_rows_output(&pool, "run_r1", "applet_water.drinks", 2).await.unwrap();
+        crate::scheduler::applets::record_rows_output(&pool, "run_r1", "applet_water.drinks", 3).await.unwrap();
+        let made = crate::scheduler::applets::made_by_runs(&pool, &["run_r1".to_string()]).await.unwrap();
+        assert_eq!(made["run_r1"][0].count, 5);
+        assert!(crate::scheduler::applets::run_made_rows(&pool, "run_r1").await.unwrap());
     }
 }

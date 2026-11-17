@@ -132,6 +132,30 @@ pub async fn mark_slot_handled(
     Ok(())
 }
 
+/// Mark `slot` handled only if no later or equal slot already is, and say
+/// whether this call did. A cron job claims its slot this way before it runs,
+/// so a slot fires once even when the job wakes for it twice: when the clocks
+/// go back, jobs re-register at the new offset and the crate fires the
+/// repeated hour's times again, which `croner` maps to slots already handled.
+pub async fn claim_slot(
+    db: &PgPool,
+    applet_id: &str,
+    slot: DateTime<Utc>,
+    next: Option<DateTime<Utc>>,
+) -> Result<bool> {
+    let claimed = sqlx::query(
+        "UPDATE app_applets SET last_slot_at = $2, next_due_at = $3 \
+         WHERE id = $1 AND (last_slot_at IS NULL OR last_slot_at < $2)",
+    )
+    .bind(applet_id)
+    .bind(slot)
+    .bind(next)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(claimed > 0)
+}
+
 /// Set the owed slot without claiming any slot was handled. Used when a
 /// schedule is first seen or has just been edited: there is no history to
 /// honour, so the applet starts owing its next future occurrence and nothing

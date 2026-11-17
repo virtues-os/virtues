@@ -1,10 +1,8 @@
-//! In-process reach for the mobile app.
+//! In-process reach for the app, on every desktop and on the phone.
 //!
-//! The desktop ships a `virtues-client` sidecar that pairs and runs a `:7117`
-//! loopback proxy over iroh. iOS can't spawn sidecars, so this plugin runs the
-//! same `virtues-reach-client` core in-process: it pairs the device, persists
-//! the record to the app container, and serves the box over iroh on a loopback
-//! port the webview loads.
+//! Runs the `virtues-reach-client` core inside the app: it pairs the device,
+//! persists the record (`store.rs`), and serves the box over iroh on a
+//! loopback port the webview loads.
 
 use std::net::TcpListener as StdTcpListener;
 use std::path::PathBuf;
@@ -24,11 +22,13 @@ mod error;
 mod ffi;
 mod models;
 mod stats;
+mod store;
 mod upload;
 mod widget;
 
 pub use error::{Error, Result};
 use models::ReachStatus;
+pub(crate) use store::FileStore;
 
 // ─── Dev profiles ────────────────────────────────────────────────────────────
 //
@@ -308,8 +308,9 @@ async fn recover_inner() -> i32 {
 
 // ─── Credential storage ──────────────────────────────────────────────────────
 //
-// The 32-byte device seed is the credential. On iOS it lives in the Keychain
-// (see `keychain` below); elsewhere it is a 0600 file in the app container.
+// The 32-byte device seed is the credential. Where it lives on each platform
+// is in `store.rs`: the Keychain on iOS and macOS, a file elsewhere (mode 0600
+// on Unix).
 
 /// Base dir injected from the plugin's `setup()` via Tauri's path API. Set on
 /// Android, where `dirs::data_dir()` is unreliable: with no XDG vars and no
@@ -353,138 +354,6 @@ fn init_outbox(store: &FileStore) {
     return;
   }
   let _ = outbox::reset_stale();
-}
-
-/// iOS Keychain bridge (Swift `@_cdecl` in location-probe's Keychain.swift). The
-/// pairing (seed + box info) lives in the Keychain so it SURVIVES app deletion —
-/// a reinstalled app stays paired — and is cleared only by `forget`.
-#[cfg(target_os = "ios")]
-mod keychain {
-  use std::ffi::{CStr, CString};
-  use std::os::raw::c_char;
-
-  extern "C" {
-    fn virtues_keychain_save(json: *const c_char) -> i32;
-    fn virtues_keychain_load() -> *mut c_char;
-    fn virtues_keychain_delete() -> i32;
-    fn virtues_keychain_free(ptr: *mut c_char);
-  }
-
-  pub fn save(json: &str) -> anyhow::Result<()> {
-    let c = CString::new(json)?;
-    let rc = unsafe { virtues_keychain_save(c.as_ptr()) };
-    if rc != 0 {
-      anyhow::bail!("keychain save failed (OSStatus {rc})");
-    }
-    Ok(())
-  }
-
-  pub fn load() -> anyhow::Result<Option<String>> {
-    let ptr = unsafe { virtues_keychain_load() };
-    if ptr.is_null() {
-      return Ok(None);
-    }
-    let s = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
-    unsafe { virtues_keychain_free(ptr) };
-    Ok(Some(s))
-  }
-
-  pub fn delete() -> anyhow::Result<()> {
-    let rc = unsafe { virtues_keychain_delete() };
-    if rc != 0 {
-      anyhow::bail!("keychain delete failed (OSStatus {rc})");
-    }
-    Ok(())
-  }
-}
-
-/// Persists the `PairedBox`. On iOS this is Keychain-backed (survives app
-/// deletion); elsewhere it's a `0600` JSON file. `path` is still used on iOS for
-/// the one-time migration of a pre-Keychain `box.json` and as the desktop sink.
-struct FileStore {
-  path: PathBuf,
-}
-
-impl FileStore {
-  fn new() -> Self {
-    FileStore {
-      path: virtues_dir().join("box.json"),
-    }
-  }
-}
-
-impl BoxStore for FileStore {
-  fn load(&self) -> anyhow::Result<Option<PairedBox>> {
-    #[cfg(target_os = "ios")]
-    {
-      if let Some(json) = keychain::load()? {
-        return Ok(Some(serde_json::from_str(&json)?));
-      }
-      // One-time migration: older builds wrote a plaintext box.json. Move it into
-      // the Keychain and delete the file so the seed no longer sits on disk.
-      match std::fs::read_to_string(&self.path) {
-        Ok(json) => {
-          keychain::save(&json)?;
-          let _ = std::fs::remove_file(&self.path);
-          Ok(Some(serde_json::from_str(&json)?))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-      }
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-      match std::fs::read_to_string(&self.path) {
-        Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-      }
-    }
-  }
-
-  fn save(&self, rec: &PairedBox) -> anyhow::Result<()> {
-    let json = serde_json::to_string(rec)?;
-    #[cfg(target_os = "ios")]
-    {
-      keychain::save(&json)?;
-      return Ok(());
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-      if let Some(dir) = self.path.parent() {
-        std::fs::create_dir_all(dir)?;
-      }
-      let tmp = self.path.with_extension("tmp");
-      {
-        use std::io::Write as _;
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-          use std::os::unix::fs::OpenOptionsExt;
-          opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(json.as_bytes())?;
-        f.sync_all().ok();
-      }
-      std::fs::rename(&tmp, &self.path)?;
-      Ok(())
-    }
-  }
-
-  fn delete(&self) -> anyhow::Result<()> {
-    #[cfg(target_os = "ios")]
-    {
-      keychain::delete()?;
-    }
-    // Also remove any on-disk copy (legacy iOS file, or the desktop sink).
-    match std::fs::remove_file(&self.path) {
-      Ok(()) => Ok(()),
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-      Err(e) => Err(e.into()),
-    }
-  }
 }
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
@@ -532,6 +401,12 @@ struct PairDoor {
   _shutdown: tokio::sync::oneshot::Sender<()>,
   attempts: Arc<std::sync::atomic::AtomicU32>,
   task: tauri::async_runtime::JoinHandle<()>,
+}
+
+/// A loopback port bound by `ReachState::bind_loopback`, not yet served.
+pub struct BoundLoopback {
+  listener: StdTcpListener,
+  rec: PairedBox,
 }
 
 pub struct ReachState {
@@ -640,8 +515,10 @@ impl ReachState {
     })
   }
 
+  /// Whether this device has a pairing record, usable or not. See
+  /// [`read_pairing`] for why a record that fails to load still counts.
   pub fn is_paired(&self) -> bool {
-    matches!(self.store.load(), Ok(Some(_)))
+    read_pairing(self.store.load()).0
   }
 
   pub fn loopback_url(&self) -> String {
@@ -658,38 +535,63 @@ impl ReachState {
   /// Binds the port synchronously *first* so a webview pointed at it queues
   /// rather than gets refused, then builds the warm client and serves.
   pub async fn ensure_serving(&self) -> Result<()> {
-    if self.serving.swap(true, Ordering::SeqCst) {
-      return Ok(());
+    match self.bind_loopback()? {
+      Some(bound) => self.serve_bound(bound).await,
+      None => Ok(()),
     }
-    // Everything up to the spawn below can fail, and every failure has to
-    // put the flag back. It used to stay set on a failed bind or a failed
-    // client build (a launch off the home network with no relay, a port
-    // someone else held), and every later call took the early return above:
-    // nothing listened on the loopback again until the app was killed.
-    let started: Result<(StdTcpListener, _)> = async {
+  }
+
+  /// The synchronous half of `ensure_serving`: claim the serving flag and bind
+  /// the loopback port. `None` when something is already serving.
+  ///
+  /// A launch calls this on the main thread and hands the result to
+  /// `serve_bound` on a task. `bind` also listens, so the webview's first
+  /// requests wait in the kernel's backlog until the client is up, and the
+  /// window never waits on the network (resolving `virtues.local` off the home
+  /// network can take seconds).
+  pub fn bind_loopback(&self) -> Result<Option<BoundLoopback>> {
+    if self.serving.swap(true, Ordering::SeqCst) {
+      return Ok(None);
+    }
+    let bound: Result<BoundLoopback> = (|| {
       let rec = self
         .store
         .load()?
         .ok_or_else(|| Error::Reach("not paired".into()))?;
 
       let port = loopback_port();
-      let std_listener = StdTcpListener::bind(("127.0.0.1", port))
+      let listener = StdTcpListener::bind(("127.0.0.1", port))
         .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
-      std_listener.set_nonblocking(true)?;
+      listener.set_nonblocking(true)?;
 
       // Refresh the outbox's device id now that we're definitely paired
       // (setup() may have run pre-pair with an empty id).
       init_outbox(&self.store);
-
-      let client = virtues_reach_client::build_client(&rec).await?;
-      Ok((std_listener, client))
-    }
-    .await;
-    let (std_listener, client) = match started {
-      Ok(v) => v,
+      Ok(BoundLoopback { listener, rec })
+    })();
+    match bound {
+      Ok(b) => Ok(Some(b)),
       Err(e) => {
         self.serving.store(false, Ordering::SeqCst);
-        return Err(e);
+        Err(e)
+      }
+    }
+  }
+
+  /// The network half of `ensure_serving`: build the warm client, then serve
+  /// the bound loopback and start the upload loop.
+  pub async fn serve_bound(&self, bound: BoundLoopback) -> Result<()> {
+    let BoundLoopback { listener: std_listener, rec } = bound;
+    // Every failure from here to the spawn below has to put the flag back. It
+    // used to stay set on a failed bind or a failed client build (a launch off
+    // the home network with no relay, a port someone else held), and every
+    // later call took the early return: nothing listened on the loopback again
+    // until the app was killed.
+    let client = match virtues_reach_client::build_client(&rec).await {
+      Ok(c) => c,
+      Err(e) => {
+        self.serving.store(false, Ordering::SeqCst);
+        return Err(e.into());
       }
     };
     // WARM_CLIENT is the single source of truth — the loopback, upload path, and
@@ -802,11 +704,12 @@ impl ReachState {
   }
 
   pub async fn status(&self) -> ReachStatus {
-    let paired = self.is_paired();
+    let (paired, unusable) = read_pairing(self.store.load());
     // A launch that couldn't bring the loopback up (no network yet, no relay)
     // has no warm client, so every probe below would say "unknown" forever.
     // `/reconnect` asks for status on a timer, which makes this the retry.
-    if paired && !self.serving.load(Ordering::SeqCst) {
+    // A record that cannot be used would fail the same way on every retry.
+    if paired && unusable.is_none() && !self.serving.load(Ordering::SeqCst) {
       if let Err(e) = self.ensure_serving().await {
         tracing::debug!(error = %e, "reach: loopback still can't start");
       }
@@ -838,12 +741,18 @@ impl ReachState {
     } else {
       "offline".into()
     };
+    let (problem, key_missing) = match unusable {
+      Some(u) => (Some(u.message), u.key_missing),
+      None => (None, false),
+    };
     ReachStatus {
       paired,
       session: session.into(),
       loopback_url: self.loopback_url(),
       reachable,
       path,
+      problem,
+      key_missing,
     }
   }
 
@@ -898,24 +807,12 @@ impl ReachState {
     Ok(self.status().await)
   }
 
-  /// Persist a pairing whose consume exchange rode the box's Bluetooth (RPC
-  /// 0x83 — for LANs that block peer-to-peer) and light up reach, exactly as
-  /// [`Self::pair`] does for the HTTP path.
-  pub async fn pair_finish_ble(
-    &self,
-    response_json: &str,
-    identity: virtues_reach_client::pair::MintedIdentity,
-  ) -> Result<ReachStatus> {
-    virtues_reach_client::pair::finish_consume(self.store.as_ref(), response_json, identity)?;
-    self.ensure_serving().await?;
-    Ok(self.status().await)
-  }
-
-  /// Sign an offline box's owner challenge with this device's paired key —
-  /// the moved-box path (Improv `0x88`/`0x89`). The key never leaves the
-  /// store; only the public id and the signature come back.
-  pub fn sign_owner_proof(&self, nonce: &[u8]) -> anyhow::Result<virtues_reach_client::owner::OwnerProof> {
-    virtues_reach_client::owner::sign_owner_proof(self.store.as_ref(), nonce)
+  /// Sign one HTTP request for the box with this device's paired key: the
+  /// owner proof the box asks for before revealing a secret, adding a device
+  /// or changing the AI key. Returns the header
+  /// value; the key never leaves the store.
+  pub fn sign_http_owner_proof(&self, method: &str, path: &str, nonce: &str) -> anyhow::Result<String> {
+    virtues_reach_client::owner::sign_http_owner_proof(self.store.as_ref(), method, path, nonce)
   }
 
   /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
@@ -929,11 +826,31 @@ impl ReachState {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
+    // The box enrolls a device only with a fresh owner proof from this app.
+    // A server too old to issue a nonce does not ask for one.
+    let nonce_resp = client
+      .request(&virtues_reach_client::owner::nonce_request())
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (nonce_status, nonce_body) =
+      virtues_reach_client::handoff::split_response(&nonce_resp).map_err(|e| Error::Reach(e.to_string()))?;
+    let proof = match virtues_reach_client::owner::parse_nonce_response(nonce_status, &nonce_body)
+      .map_err(|e| Error::Reach(format!("{e:#}")))?
+    {
+      Some(nonce) => Some(
+        self
+          .sign_http_owner_proof("POST", virtues_reach_client::handoff::ENROLL_PATH, &nonce)
+          .map_err(|e| Error::Reach(format!("{e:#}")))?,
+      ),
+      None => None,
+    };
+
     let identity = virtues_reach_client::pair::mint_identity();
     let raw = virtues_reach_client::handoff::enroll_request(
       &identity.node_id,
       "mobile_app",
       label.as_deref(),
+      proof.as_deref(),
     )
     .map_err(|e| Error::Reach(e.to_string()))?;
 
@@ -997,63 +914,12 @@ impl ReachState {
     Ok(self.status().await)
   }
 
-  /// The server moved: it joined a new network over its Bluetooth owner
-  /// session and reported the address it now answers on (`reported`, the
-  /// 0x01 join result). Point this pairing at it and swap in a connection
-  /// built from the updated record, so the loopback, uploads and the next
-  /// status probe all dial the new address.
-  ///
-  /// This is what makes a server WITHOUT a relay recoverable after a move.
-  /// Its pairing only knows LAN addresses from where it was set up, and
-  /// nothing else could learn the new one: `refresh_reach` asks the server
-  /// over the very LAN address that is now wrong. With a relay it is not
-  /// needed (iroh finds the server by its EndpointId), and it does no harm:
-  /// the relay path is kept and direct addresses only add routes.
-  ///
-  /// `box_url` is a hint, not an identity — [`build_client`] re-resolves its
-  /// host to the iroh port on every build, and every dial must still reach
-  /// the server's own EndpointId. The old direct addresses are kept on
-  /// purpose: they are where the server lives when it goes home again.
-  ///
-  /// An address that is not an http(s) origin (the server sends "" when it
-  /// has none yet) changes nothing and still returns the live status.
-  pub async fn rehome(&self, reported: &str) -> Result<ReachStatus> {
-    if let Some(origin) = virtues_reach_client::lan_origin(reported) {
-      let mut rec = self
-        .store
-        .load()?
-        .ok_or_else(|| Error::Reach("not paired".into()))?;
-      if rec.box_url != origin {
-        rec.box_url = origin;
-        self.store.save(&rec)?;
-      }
-      // Build BEFORE retiring the old client, so a failed build leaves the
-      // loopback with the connection it had rather than none.
-      match virtues_reach_client::build_client(&rec).await {
-        Ok(fresh) => {
-          let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.replace(fresh));
-          stats::bump(|s| s.dials += 1);
-          if let Some(c) = old {
-            // Bounded, and off the caller's path: a dead QUIC teardown must
-            // not hold up the status the screen is waiting for.
-            tauri::async_runtime::spawn(async move {
-              let _ = tokio::time::timeout(std::time::Duration::from_secs(3), c.shutdown()).await;
-            });
-          }
-          tracing::info!("reach: re-homed onto the server's new address");
-        }
-        Err(e) => tracing::warn!(error = %format!("{e:#}"), "reach: re-home build failed; keeping the old connection"),
-      }
-    }
-    Ok(self.status().await)
-  }
-
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
-    // clear the warm client, reset the serving flag, then delete the creds. The
-    // pairing lives in the Keychain (survives app deletion), so this is the only
-    // way to truly forget a box.
+    // clear the warm client, reset the serving flag, then delete the creds. On
+    // iOS the pairing lives in the Keychain and survives app deletion, and on
+    // the Mac the seed does, so this is the only way to truly forget a box.
     if let Ok(mut t) = self.tasks.lock() {
       for h in t.drain(..) {
         h.abort();
@@ -1066,6 +932,132 @@ impl ReachState {
     self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
     Ok(())
+  }
+}
+
+/// A pairing record this device has but cannot use.
+#[derive(Debug, PartialEq)]
+struct Unusable {
+  /// For the owner: the reconnect screen shows it as it is.
+  message: String,
+  /// The device key is gone, so pairing again is the only fix. See
+  /// `ReachStatus::key_missing`.
+  key_missing: bool,
+}
+
+/// What the owner reads when the record has no device key. On the Mac, the
+/// Keychain item that holds the key is gone. Elsewhere it is a pairing from
+/// before devices had their own keys.
+#[cfg(target_os = "macos")]
+const KEY_MISSING: &str = "This Mac's device key is missing. Pair this Mac again to reach your server.";
+#[cfg(not(target_os = "macos"))]
+const KEY_MISSING: &str = "This device's key is missing. Pair this device again to reach your server.";
+
+/// Whether one load of the pairing record is a pairing, and what keeps it
+/// from working when something does.
+///
+/// A record that exists but fails to load is still a pairing. Read as
+/// unpaired, it sends the owner to pair again when quitting and reopening
+/// Virtues may be enough, and pairing again adds a second device to the
+/// server's list while the first key still works.
+fn read_pairing(loaded: anyhow::Result<Option<PairedBox>>) -> (bool, Option<Unusable>) {
+  match loaded {
+    Ok(None) => (false, None),
+    Ok(Some(rec)) if rec.device_secret_hex.is_none() => (
+      true,
+      Some(Unusable { message: KEY_MISSING.into(), key_missing: true }),
+    ),
+    Ok(Some(_)) => (true, None),
+    Err(e) => (true, Some(Unusable { message: for_the_owner(&e), key_missing: false })),
+  }
+}
+
+/// A store load error as the sentence the reconnect screen shows.
+///
+/// On the Mac, an error that did not come from reading `box.json` is the
+/// Keychain's, and the store already words it for the owner: a read the owner
+/// denied, or a locked Keychain, says to quit and reopen Virtues. Reading or
+/// parsing `box.json`, and every iOS store error, give only the system's text,
+/// so it goes in parentheses inside a sentence that says what to do.
+fn for_the_owner(e: &anyhow::Error) -> String {
+  let from_the_file = e.downcast_ref::<std::io::Error>().is_some() || e.downcast_ref::<serde_json::Error>().is_some();
+  if cfg!(target_os = "macos") && !from_the_file {
+    return format!("{e:#}");
+  }
+  let device = if cfg!(target_os = "macos") { "this Mac" } else { "this device" };
+  format!(
+    "Virtues could not read {device}'s pairing ({e:#}). Quit and reopen Virtues to try again. \
+     If that does not help, forget this server on {device} and pair again."
+  )
+}
+
+#[cfg(test)]
+mod pairing_tests {
+  use super::{read_pairing, Unusable, KEY_MISSING};
+  use virtues_reach_client::PairedBox;
+
+  fn record(seed: Option<&str>) -> PairedBox {
+    PairedBox {
+      box_url: "http://192.168.1.20:8000".into(),
+      device_id: Some("dev_example".into()),
+      box_node_id: Some("ab".repeat(32)),
+      relay_url: Some("https://relay.example.com/".into()),
+      box_direct_addrs: vec!["192.168.1.20:7300".into()],
+      device_secret_hex: seed.map(str::to_string),
+      applet_ids: Default::default(),
+    }
+  }
+
+  #[test]
+  fn no_record_is_not_paired() {
+    assert_eq!(read_pairing(Ok(None)), (false, None));
+  }
+
+  #[test]
+  fn a_record_with_its_key_is_paired_and_usable() {
+    assert_eq!(read_pairing(Ok(Some(record(Some(&"01".repeat(32)))))), (true, None));
+  }
+
+  #[test]
+  fn a_record_that_fails_to_load_is_still_paired_and_says_why() {
+    let said = "Virtues could not read this Mac's device key from the Keychain (User interaction is not allowed.). \
+                Quit and reopen Virtues to try again.";
+    let (paired, unusable) = read_pairing(Err(anyhow::anyhow!("{said}")));
+    assert!(paired, "a Keychain read that failed is not an unpairing");
+    let unusable = unusable.expect("the reason it can't be used");
+    assert!(!unusable.key_missing);
+    if cfg!(target_os = "macos") {
+      // The Mac store already words a Keychain error for the owner.
+      assert_eq!(unusable.message, said);
+    } else {
+      assert!(unusable.message.contains(said), "{}", unusable.message);
+      assert!(unusable.message.starts_with("Virtues could not read this device's pairing ("));
+    }
+  }
+
+  #[test]
+  fn a_pairing_file_that_cannot_be_read_says_what_to_do() {
+    let unparsable = serde_json::from_str::<PairedBox>("{").unwrap_err();
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    for e in [anyhow::Error::from(unparsable), anyhow::Error::from(denied)] {
+      let raw = format!("{e:#}");
+      let (paired, unusable) = read_pairing(Err(e));
+      assert!(paired);
+      let unusable = unusable.expect("the reason it can't be used");
+      assert!(!unusable.key_missing);
+      let m = &unusable.message;
+      assert!(m.starts_with("Virtues could not read this "), "{m}");
+      assert!(m.contains(&format!("({raw})")), "{m}");
+      assert!(m.contains("Quit and reopen Virtues to try again."), "{m}");
+      assert!(m.ends_with("and pair again."), "{m}");
+    }
+  }
+
+  #[test]
+  fn a_record_without_its_key_is_paired_and_needs_pairing_again() {
+    let (paired, unusable) = read_pairing(Ok(Some(record(None))));
+    assert!(paired);
+    assert_eq!(unusable, Some(Unusable { message: KEY_MISSING.into(), key_missing: true }));
   }
 }
 
@@ -1155,17 +1147,10 @@ impl<R: Runtime, T: Manager<R>> ReachExt<R> for T {
   }
 }
 
-// The Swift half (`ios/Sources/ReachPlugin.swift`): the CoreBluetooth Improv
-// client, for claiming and provisioning an appliance over BLE from inside the
-// app. (Its previous job — NEHotspotConfiguration wifi joins for the SoftAP
-// flow — was deleted 2026-08-18; see `commands.rs`.)
+// The Swift half (`ios/Sources/ReachPlugin.swift`): load-time setup only
+// (backup exclusion, the widget's App Group path, the share inbox).
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_reach);
-
-/// Handle to the registered iOS plugin, for `run_mobile_plugin` calls.
-/// Managed state so commands can reach it; iOS-only by construction.
-#[cfg(target_os = "ios")]
-pub(crate) struct IosPluginHandle<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   // FIRST, synchronously, before anything spawns: the process-default rustls
@@ -1182,18 +1167,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::reach_status,
       commands::forget,
       commands::discover,
-      commands::provision_open,
-      commands::provision_networks,
-      commands::provision_join,
-      commands::improv_discover,
-      commands::improv_claim,
-      commands::improv_grant,
-      commands::improv_wifi_scan,
-      commands::improv_provision,
-      commands::improv_pair,
-      commands::improv_disconnect,
-      commands::improv_owner_claim,
-      commands::reach_rehome,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats,
@@ -1201,16 +1174,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::pair_door_close,
       commands::pair_door_status,
       commands::pair_handoff_create,
-      commands::pair_handoff_accept
+      commands::pair_handoff_accept,
+      commands::owner_proof_sign
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
       {
-        match _api.register_ios_plugin(init_plugin_reach) {
-          Ok(handle) => {
-            app.manage(IosPluginHandle(handle));
-          }
-          Err(e) => tracing::error!(error = %e, "reach: iOS plugin registration failed — wifi join unavailable"),
+        if let Err(e) = _api.register_ios_plugin(init_plugin_reach) {
+          tracing::error!(error = %e, "reach: iOS plugin registration failed");
         }
       }
       // Android: pin the storage base to the app-private sandbox BEFORE anything

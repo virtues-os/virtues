@@ -212,7 +212,7 @@
 	}
 
 	.relaunch-label {
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-info);
 	}
 

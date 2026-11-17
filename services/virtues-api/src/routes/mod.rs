@@ -16,6 +16,7 @@
 
 pub mod ai;
 pub mod bearer_test;
+pub mod connections;
 pub mod search;
 pub mod health;
 pub mod internal;

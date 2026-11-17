@@ -1,8 +1,8 @@
 //! Canonicalizing the address a request actually arrived from.
 //!
-//! Every "where is this caller standing" gate on the box — `middleware::auth`'s
-//! loopback console trust, `api::display`'s box-local rule, `api::provision`'s
-//! setup-AP rule — starts by looking at the peer address. On this box that
+//! Every "where is this caller standing" gate on the box (`middleware::auth`'s
+//! dev fallback, pairing's rate limits) starts by looking at the peer
+//! address. On this box that
 //! address is **not** what you would guess.
 //!
 //! The server binds `*:8000`, a dual-stack IPv6 socket. Linux accepts IPv4

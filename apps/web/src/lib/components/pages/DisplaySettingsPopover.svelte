@@ -3,6 +3,7 @@
 	import {
 		pageDisplay,
 		type FontMode,
+		type HeadingMode,
 		type TextSize,
 		type WidthMode,
 	} from "$lib/stores/pageDisplay.svelte";
@@ -26,11 +27,16 @@
 		{ value: "l", label: "L" },
 	];
 
+	const headingModes: { value: HeadingMode; label: string; title: string }[] = [
+		{ value: "sized", label: "Sized", title: "Headings step up in size" },
+		{ value: "flat", label: "Flat", title: "Headings at the text's size, marked with # in the margin" },
+	];
+
 	const widthModes: { value: WidthMode; icon: string; label: string }[] = [
-		{ value: "small", icon: "ri:contract-left-right-line", label: "Narrow" },
-		{ value: "medium", icon: "ri:pause-line", label: "Medium" },
-		{ value: "full", icon: "ri:expand-left-right-line", label: "Wide" },
-		{ value: "page", icon: "ri:file-paper-2-line", label: "Page (A4)" },
+		{ value: "small", icon: "mynaui:move-horizontal", label: "Narrow" },
+		{ value: "medium", icon: "mynaui:pause", label: "Medium" },
+		{ value: "full", icon: "mynaui:move-horizontal", label: "Wide" },
+		{ value: "page", icon: "mynaui:file-text", label: "Page (A4)" },
 	];
 </script>
 
@@ -86,13 +92,29 @@
 		</div>
 	</div>
 
+	<div class="row">
+		<span class="row-label">Headings</span>
+		<div class="segmented">
+			{#each headingModes as opt (opt.value)}
+				<button
+					class="seg"
+					class:active={pageDisplay.headingMode === opt.value}
+					title={opt.title}
+					onclick={() => pageDisplay.setHeadingMode(opt.value)}
+				>
+					{opt.label}
+				</button>
+			{/each}
+		</div>
+	</div>
+
 	<div class="divider"></div>
 
 	<button class="focus-toggle" aria-pressed={pageDisplay.focusMode} onclick={() => pageDisplay.toggleFocus()}>
 		<Icon
 			icon={pageDisplay.focusMode
-				? "ri:focus-2-fill"
-				: "ri:focus-2-line"}
+				? "mynaui:target-solid"
+				: "mynaui:target"}
 			width="16"
 		/>
 		<span class="focus-label">Focus mode</span>
@@ -103,7 +125,7 @@
 	</button>
 
 	<button class="focus-toggle" aria-pressed={pageDisplay.spellcheck} onclick={() => pageDisplay.toggleSpellcheck()}>
-		<Icon icon={pageDisplay.spellcheck ? "ri:check-double-fill" : "ri:check-double-line"} width="16" />
+		<Icon icon={pageDisplay.spellcheck ? "mynaui:check" : "mynaui:check"} width="16" />
 		<span class="focus-label">Spell check</span>
 		<span class="focus-state" class:on={pageDisplay.spellcheck}>
 			{pageDisplay.spellcheck ? "On" : "Off"}
@@ -112,7 +134,7 @@
 
 	{#if onViewMarkdown}
 		<button class="focus-toggle" onclick={onViewMarkdown}>
-			<Icon icon="ri:markdown-line" width="16" />
+			<Icon icon="mynaui:hash" width="16" />
 			<span class="focus-label">View as markdown</span>
 		</button>
 	{/if}

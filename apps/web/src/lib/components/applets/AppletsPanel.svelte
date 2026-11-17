@@ -22,13 +22,11 @@
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
-	import GitImportModal from './GitImportModal.svelte';
 	import NewAppletSheet from './NewAppletSheet.svelte';
 
 	let newSheetOpen = $state(false);
-	let gitImportOpen = $state(false);
 	let retrying = $state<string | null>(null);
 	let err = $state<string | null>(null);
 
@@ -69,7 +67,7 @@
 			return { text: `Was due ${relativeTime(a.next_due_at)} and hasn't run`, problem: true };
 		}
 		if (!a.enabled) return { text: 'Off', problem: false };
-		const runs = describeSchedule(a.schedule);
+		const runs = describeTriggers(a);
 		const last = a.last_run?.started_at;
 		return { text: last ? `${runs} · last ran ${relativeTime(last)}` : runs, problem: false };
 	}
@@ -122,10 +120,10 @@
 			{ id: 'home', label: 'Open applet', icon: 'atlas:applets', action: () => openHome(a) }
 		];
 		if (chatOf(a)) {
-			items.push({ id: 'chat', label: 'Open conversation', icon: 'ri:chat-3-line', action: () => openConversation(a) });
+			items.push({ id: 'chat', label: 'Open conversation', icon: 'mynaui:message', action: () => openConversation(a) });
 		}
 		if (canRetry(a)) {
-			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void retry(a) });
+			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
 		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
@@ -153,7 +151,7 @@
 		{/if}
 		{#if chatOf(a)}
 			<IconButton
-				icon="ri:chat-3-line"
+				icon="mynaui:message"
 				label={`Conversation with ${a.name}: ask it something or change it`}
 				class="chat-btn"
 				onclick={() => openConversation(a)}
@@ -174,7 +172,7 @@
 		</div>
 		<div class="header-actions">
 			<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
-			<Button variant="primary" size="sm" icon="ri:add-line" onclick={() => (newSheetOpen = true)}>
+			<Button variant="primary" size="sm" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>
 				New applet
 			</Button>
 		</div>
@@ -215,16 +213,7 @@
 	{/if}
 </section>
 
-<NewAppletSheet
-	open={newSheetOpen}
-	onClose={() => (newSheetOpen = false)}
-	onImport={() => {
-		newSheetOpen = false;
-		gitImportOpen = true;
-	}}
-/>
-
-<GitImportModal open={gitImportOpen} onClose={() => (gitImportOpen = false)} onImported={() => appletsStore.load()} />
+<NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
 	.applets-panel {

@@ -76,9 +76,9 @@
 
 	function sourceIcon(): string {
 		if (sourceMeta?.icon) return sourceMeta.icon;
-		if (credential?.provider === 'ios') return 'ri:smartphone-line';
-		if (credential?.provider === 'mac') return 'ri:macbook-line';
-		return 'ri:cloud-line';
+		if (credential?.provider === 'ios') return 'mynaui:mobile';
+		if (credential?.provider === 'mac') return 'mynaui:desktop';
+		return 'mynaui:cloud';
 	}
 
 	async function handleRevoke() {
@@ -134,18 +134,18 @@
 <section class="cred-detail">
 	{#if loading}
 		<div class="state">
-			<Icon icon="ri:loader-4-line" width="20" />
+			<Icon icon="mynaui:spinner" width="20" />
 			<span>Loading…</span>
 		</div>
 	{:else if error}
 		<div class="state error">
-			<Icon icon="ri:error-warning-line" width="20" />
+			<Icon icon="mynaui:danger-circle" width="20" />
 			<span>{error}</span>
 		</div>
 	{:else if credential}
 		<header class="header">
 			<button class="back" onclick={backToSources} type="button">
-				<Icon icon="ri:arrow-left-line" width="14" />
+				<Icon icon="mynaui:arrow-left" width="14" />
 				Sources
 			</button>
 
@@ -182,7 +182,7 @@
 				</div>
 				{#if credential.is_active}
 					<Button variant="ghost" onclick={handleRevoke}>
-						<Icon icon="ri:delete-bin-line" width="14" />
+						<Icon icon="mynaui:trash" width="14" />
 						Revoke
 					</Button>
 				{/if}

@@ -85,7 +85,7 @@
 >
 	<div bind:this={menuEl} class="ai-prompt" transition:fade={{ duration: 100 }}>
 		<div class="ai-prompt-input-row">
-			<Icon icon="ri:sparkling-2-line" width="15" class="ai-prompt-spark" />
+			<Icon icon="mynaui:sparkles" width="15" class="ai-prompt-spark" />
 			<input
 				bind:this={inputEl}
 				bind:value

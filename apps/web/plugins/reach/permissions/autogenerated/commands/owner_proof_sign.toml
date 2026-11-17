@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-owner-proof-sign"
+description = "Enables the owner_proof_sign command without any pre-configured scope."
+commands.allow = ["owner_proof_sign"]
+
+[[permission]]
+identifier = "deny-owner-proof-sign"
+description = "Denies the owner_proof_sign command without any pre-configured scope."
+commands.deny = ["owner_proof_sign"]

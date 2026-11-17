@@ -10,6 +10,10 @@ triggers build on the single change path it adds.
 
 ## Data triggers
 
+Built on wave on 2026-10-28 as slice 11 of
+[applet-shape.md](applet-shape.md), which records what it decided. The design
+below is what it started from.
+
 A wake on new rows: `trigger = data:<table>`, carrying the new rows as the
 payload, composed with a `condition` (`data:data_location` + `speed < 5`).
 The trigger decides when the applet wakes; the condition is checked after it

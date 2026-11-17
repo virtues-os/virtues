@@ -1,9 +1,15 @@
 //! Projects API — the "room" a chat lives in.
 //!
-//! A Project is a manual collection the user returns to: an undertaking, a pet,
-//! a hobby, a goal, or a topic. It gathers entities, chats, and pages as
-//! URL-native members (`app_project_items`) and carries an icon, a color and
-//! a brief (`instructions`).
+//! A project is something unresolved in the person's life that can be finished
+//! and takes more than one step. The person makes it; the server never makes
+//! one on its own. It ends when they finish it or drop it (`archived_at` with
+//! an `outcome`), and it can sit under a thing (`thing_id`,
+//! `crate::api::things`). What goes on and cannot be finished is a thing, and
+//! one step is a task.
+//!
+//! A project gathers entities, chats, and pages as URL-native members
+//! (`app_project_items`) and carries an icon, a color and a brief
+//! (`instructions`).
 //!
 //! No note or memo: `app_projects.current_status(_at)` stay in the table,
 //! unread, so notes written while projects had one are kept rather than
@@ -14,13 +20,9 @@
 //! Project's corpus. Membership is manual in v1 — there is no smart/query view.
 //! A project cannot be a member of a project — you cannot folder a folder.
 //!
-//! Lineage: this absorbs the old workspace-shell and the folder role that the
-//! retired "Things" feature used to play (pins + memo). Things are gone
-//! entirely as of migration 0060 — projects and hobbies became notebooks (now
-//! projects) and stories. Notebooks were renamed to projects in migration 0029
-//! because "project" is the clearer word for users; ids keep their `nb_`
-//! prefix (see `ids::PROJECT_PREFIX`) and `/notebook/{id}` stays an accepted
-//! legacy spelling of the ref URL (see `refs::split_ref`).
+//! Ids keep the `nb_` prefix from when a project was called a notebook (see
+//! `ids::PROJECT_PREFIX`), and `/notebook/{id}` stays an accepted spelling of
+//! the ref URL (see `refs::split_ref`).
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PROJECT_PREFIX};
@@ -56,12 +58,23 @@ pub struct Project {
     /// this project. Written by the owner, never by the model.
     pub instructions: Option<String>,
     pub sort_order: i32,
-    /// Finished, kept, out of the working view. Distinct from `deleted_at`
-    /// (the trash): an archived project is one the owner closed, a trashed one
-    /// is one they removed. Archived projects leave the Home panel, the
-    /// projects list and the "Add to project" submenu; their chats and pages
-    /// stay filed in them, and the project reopens from the Archived fold.
+    /// When the project ended: kept, out of the working view. Distinct from
+    /// `deleted_at` (the trash): an ended project is one the owner closed, a
+    /// trashed one is one they removed. Ended projects leave the Home panel,
+    /// the projects list and the "Add to project" submenu; their chats and
+    /// pages stay filed in them, and the project reopens from the projects
+    /// page.
     pub archived_at: Option<Timestamp>,
+    /// How it ended: `finished` or `dropped`. Set with `archived_at`, and
+    /// null while the project is open.
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// The thing it sits under, if any (`wiki_things.id`).
+    #[serde(default)]
+    pub thing_id: Option<String>,
+    /// That thing's name, resolved on read.
+    #[serde(default)]
+    pub thing_title: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -81,6 +94,12 @@ pub struct ProjectSummary {
     pub item_count: i64,
     pub chat_count: i64,
     pub archived_at: Option<Timestamp>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub thing_id: Option<String>,
+    #[serde(default)]
+    pub thing_title: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -140,11 +159,31 @@ pub struct CreateProjectRequest {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Option<String>,
+    /// The thing to start it under, when it is made from a thing's page.
+    #[serde(default)]
+    pub thing_id: Option<String>,
+}
+
+/// How a project ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    Finished,
+    Dropped,
+}
+
+impl Outcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Finished => "finished",
+            Outcome::Dropped => "dropped",
+        }
+    }
 }
 
 /// Update a Project. `Option<Option<T>>` fields are tri-state: absent = leave,
 /// `Some(None)` = clear, `Some(Some(v))` = set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateProjectRequest {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
@@ -154,6 +193,9 @@ pub struct UpdateProjectRequest {
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub instructions: Option<Option<String>>,
     pub sort_order: Option<i32>,
+    /// The thing this project sits under. `null` takes it out from under one.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub thing_id: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,9 +244,17 @@ pub struct ProjectGraph {
 // Project CRUD
 // ============================================================================
 
+/// A project row as [`Project`] reads it, from `app_projects` unaliased. The
+/// thing's name is resolved here so no reader needs a second query to say
+/// what a project sits under.
+const PROJECT_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
+     archived_at, outcome, thing_id, \
+     (SELECT t.title FROM wiki_things t WHERE t.id = app_projects.thing_id) AS thing_title, \
+     created_at, updated_at";
+
 /// List Projects, most-recently-active first, with member and chat counts.
-/// Live ones only unless `include_archived` — the projects page asks for both
-/// and folds the archived ones; every other reader (Home panel, ⌘K, the
+/// Open ones only unless `include_archived` — the projects page asks for both
+/// and folds the ended ones; every other reader (Home panel, ⌘K, the
 /// "Add to project" submenu) wants the working set.
 ///
 /// A trashed member keeps its membership row so a restore is whole (see
@@ -223,7 +273,8 @@ pub async fn list_projects(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
-            s.instructions, s.sort_order, s.archived_at,
+            s.instructions, s.sort_order, s.archived_at, s.outcome, s.thing_id,
+            (SELECT t.title FROM wiki_things t WHERE t.id = s.thing_id) AS thing_title,
             COALESCE((SELECT COUNT(*) FROM app_project_items
                       WHERE project_id = s.id
               AND url NOT LIKE '/chat/%'
@@ -250,13 +301,9 @@ pub async fn list_projects(
 
 /// Get a single Project with its ordered members.
 pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
-    let project = sqlx::query_as::<_, Project>(
-        r#"
-        SELECT id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
-        FROM app_projects
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
+    let project = sqlx::query_as::<_, Project>(&format!(
+        "SELECT {PROJECT_COLUMNS} FROM app_projects WHERE id = $1 AND deleted_at IS NULL"
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await
@@ -315,20 +362,23 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
         return Err(Error::InvalidInput("Project name cannot be empty".into()));
     }
 
+    if let Some(thing_id) = &req.thing_id {
+        crate::api::things::get_thing(pool, thing_id).await?;
+    }
+
     let timestamp = chrono::Utc::now().to_rfc3339();
     let id = generate_id(PROJECT_PREFIX, &[name, &timestamp]);
 
-    let project = sqlx::query_as::<_, Project>(
-        r#"
-        INSERT INTO app_projects (id, name, icon, accent_color)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
-        "#,
-    )
+    let project = sqlx::query_as::<_, Project>(&format!(
+        "INSERT INTO app_projects (id, name, icon, accent_color, thing_id) \
+         VALUES ($1, $2, $3, $4, $5) \
+         RETURNING {PROJECT_COLUMNS}"
+    ))
     .bind(&id)
     .bind(name)
     .bind(&req.icon)
     .bind(&req.accent_color)
+    .bind(&req.thing_id)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create project: {}", e)))?;
@@ -338,12 +388,9 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
 
 /// Update a Project. Only provided fields change.
 pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) -> Result<Project> {
-    let existing = sqlx::query_as::<_, Project>(
-        r#"
-        SELECT id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
-        FROM app_projects WHERE id = $1
-        "#,
-    )
+    let existing = sqlx::query_as::<_, Project>(&format!(
+        "SELECT {PROJECT_COLUMNS} FROM app_projects WHERE id = $1"
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await
@@ -368,25 +415,28 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
         Some(val) => val,
         None => existing.instructions,
     };
+    let thing_id = match req.thing_id {
+        Some(val) => val.filter(|t| !t.is_empty()),
+        None => existing.thing_id.clone(),
+    };
+    if let Some(thing_id) = thing_id.as_ref().filter(|t| existing.thing_id.as_ref() != Some(*t)) {
+        crate::api::things::get_thing(pool, thing_id).await?;
+    }
 
-    let project = sqlx::query_as::<_, Project>(
-        r#"
-        UPDATE app_projects
-        SET name = $2,
-            icon = $3,
-            accent_color = $4,
-            sort_order = $5,
-            instructions = $6
-        WHERE id = $1
-        RETURNING id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
-        "#,
-    )
+    let project = sqlx::query_as::<_, Project>(&format!(
+        "UPDATE app_projects \
+         SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
+             instructions = $6, thing_id = $7 \
+         WHERE id = $1 \
+         RETURNING {PROJECT_COLUMNS}"
+    ))
     .bind(id)
     .bind(&name)
     .bind(&icon)
     .bind(&accent_color)
     .bind(sort_order)
     .bind(&instructions)
+    .bind(&thing_id)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update project: {}", e)))?;
@@ -394,34 +444,34 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
     Ok(project)
 }
 
-/// Close a project: it leaves the working surfaces and keeps everything.
-/// Idempotent — archiving an archived project is not an error.
-pub async fn archive_project(pool: &PgPool, id: &str) -> Result<()> {
-    set_archived(pool, id, true).await
+/// End a project as finished or dropped: it leaves the working surfaces and
+/// keeps everything. Ending an ended project again changes only how it ended
+/// and keeps the day it ended, so "finished" can be corrected to "dropped"
+/// without reopening it.
+pub async fn archive_project(pool: &PgPool, id: &str, outcome: Outcome) -> Result<()> {
+    let hit: Option<String> = sqlx::query_scalar(
+        "UPDATE app_projects SET archived_at = COALESCE(archived_at, now()), outcome = $2 \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING id",
+    )
+    .bind(id)
+    .bind(outcome.as_str())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to end project {id}: {e}")))?;
+    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))
 }
 
-/// Reopen an archived project.
+/// Reopen an ended project.
 pub async fn unarchive_project(pool: &PgPool, id: &str) -> Result<()> {
-    set_archived(pool, id, false).await
-}
-
-async fn set_archived(pool: &PgPool, id: &str, archived: bool) -> Result<()> {
-    let sql = if archived {
-        "UPDATE app_projects SET archived_at = COALESCE(archived_at, now()) \
-         WHERE id = $1 AND deleted_at IS NULL RETURNING id"
-    } else {
-        "UPDATE app_projects SET archived_at = NULL \
-         WHERE id = $1 AND deleted_at IS NULL RETURNING id"
-    };
-    let hit: Option<String> = sqlx::query_scalar(sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to set archived on project {id}: {e}")))?;
-    if hit.is_none() {
-        return Err(Error::NotFound(format!("Project not found: {id}")));
-    }
-    Ok(())
+    let hit: Option<String> = sqlx::query_scalar(
+        "UPDATE app_projects SET archived_at = NULL, outcome = NULL \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING id",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to reopen project {id}: {e}")))?;
+    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))
 }
 
 /// Delete a Project — into the trash. Members and the chats' `project_id`
@@ -474,9 +524,9 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
     let Some(archived_at) = found else {
         return Err(Error::NotFound(format!("Project not found: {}", project_id)));
     };
-    // A closed project does not take new members; reopen it first.
+    // An ended project does not take new members; reopen it first.
     if archived_at.is_some() {
-        return Err(Error::InvalidInput("this project is archived".into()));
+        return Err(Error::InvalidInput("this project has ended".into()));
     }
 
     // A chat is filed by its own `project_id`, not by a member row: the
@@ -914,7 +964,7 @@ mod tests {
     }
 
     fn named(name: &str) -> CreateProjectRequest {
-        CreateProjectRequest { name: name.into(), icon: None, accent_color: None }
+        CreateProjectRequest { name: name.into(), icon: None, accent_color: None, thing_id: None }
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -1052,5 +1102,56 @@ mod tests {
         let nick = &graph.nodes[0];
         assert_eq!((nick.url.as_str(), nick.name.as_str()), ("/person/person_1", "Nick"));
         assert_eq!(nick.item_urls, [format!("/page/{}", page.id)]);
+    }
+
+    /// A project ends finished or dropped and leaves the working list.
+    /// Correcting how it ended keeps the day it ended, and reopening clears
+    /// both.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_project_ends_finished_or_dropped(pool: PgPool) {
+        let p = create_project(&pool, named("Repaint the hallway")).await.unwrap();
+        assert!(p.archived_at.is_none() && p.outcome.is_none());
+
+        archive_project(&pool, &p.id, Outcome::Finished).await.unwrap();
+        let ended = get_project(&pool, &p.id).await.unwrap().project;
+        assert_eq!(ended.outcome.as_deref(), Some("finished"));
+        let ended_at = ended.archived_at.expect("an ended project says when");
+        assert!(list_projects(&pool, false, None).await.unwrap().projects.is_empty());
+        assert_eq!(list_projects(&pool, true, None).await.unwrap().projects[0].outcome.as_deref(), Some("finished"));
+
+        archive_project(&pool, &p.id, Outcome::Dropped).await.unwrap();
+        let corrected = get_project(&pool, &p.id).await.unwrap().project;
+        assert_eq!(corrected.outcome.as_deref(), Some("dropped"));
+        assert_eq!(corrected.archived_at, Some(ended_at), "correcting how it ended keeps when");
+
+        unarchive_project(&pool, &p.id).await.unwrap();
+        let open = get_project(&pool, &p.id).await.unwrap().project;
+        assert!(open.archived_at.is_none() && open.outcome.is_none());
+        assert!(archive_project(&pool, "nb_missing", Outcome::Finished).await.is_err());
+    }
+
+    /// A project sits under a thing or alone, and reads back the thing's name.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_project_sits_under_a_thing(pool: PgPool) {
+        let house = crate::api::things::create_thing(&pool, "The house").await.unwrap();
+        let under = CreateProjectRequest { thing_id: Some(house.id.clone()), ..named("Repaint the hallway") };
+        let p = create_project(&pool, under).await.unwrap();
+        assert_eq!(p.thing_title.as_deref(), Some("The house"));
+        let listed = list_projects(&pool, false, None).await.unwrap().projects.remove(0);
+        assert_eq!(listed.thing_id.as_deref(), Some(house.id.as_str()));
+        assert_eq!(listed.thing_title.as_deref(), Some("The house"));
+
+        // An edit that says nothing about the thing leaves it where it is.
+        let renamed = UpdateProjectRequest { name: Some("Repaint the hall".into()), ..Default::default() };
+        assert_eq!(update_project(&pool, &p.id, renamed).await.unwrap().thing_id, Some(house.id.clone()));
+
+        let alone = UpdateProjectRequest { thing_id: Some(None), ..Default::default() };
+        let out = update_project(&pool, &p.id, alone).await.unwrap();
+        assert!(out.thing_id.is_none() && out.thing_title.is_none());
+
+        let nowhere = UpdateProjectRequest { thing_id: Some(Some("thing_missing".into())), ..Default::default() };
+        assert!(update_project(&pool, &p.id, nowhere).await.is_err());
+        let orphan = CreateProjectRequest { thing_id: Some("thing_missing".into()), ..named("Fix the gate") };
+        assert!(create_project(&pool, orphan).await.is_err());
     }
 }

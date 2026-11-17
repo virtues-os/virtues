@@ -1,18 +1,15 @@
 ---
-title: What Virtues is
+title: Overview
 description: Virtues is a server you run at home that stores the data of your life on your own disk, and the software that turns it into a readable record.
-updated: 2026-10-20
+updated: 2026-11-15
 ---
 
 Virtues is a server you run at home. It pulls in data you already generate,
 keeps it in one database on your own disk, and turns it into a record you can
-read. It runs on your own Linux machine today, or on a server we build.
+read. It runs on your own Linux machine, one that stays on.
 
-There are two ways to start. If we built your server, pair a device:
-[Reaching your server](/docs/operate/reach). If it is your own machine, read
-[what to run it on](/docs/setup/requirements), set up
+To start, read [what to run it on](/docs/setup/requirements), set up
 [inference](/docs/inference), then run the [installer](/docs/setup/install).
-Both paths reach pairing, and everything after pairing is the same.
 
 ## What it does
 

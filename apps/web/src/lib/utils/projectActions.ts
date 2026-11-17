@@ -5,12 +5,12 @@
  */
 
 import { openMenuItems } from '$lib/utils/openMenuItems';
-import { ApiError, type Project, type ProjectSummary } from '$lib/api/client';
+import { ApiError, type Project, type ProjectOutcome, type ProjectSummary } from '$lib/api/client';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
-import { parseRef } from '$lib/utils/refRoutes';
+import { isRecordRoute, parseRef } from '$lib/utils/refRoutes';
 import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
@@ -19,11 +19,15 @@ import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
 import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
-import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
+import { notifyEnded, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 
-/** Ask for a name, make the project, and open it (in the tab you are on, unless `open` says where). */
+/**
+ * Ask for a name, make the project, and open it (in the tab you are on,
+ * unless `open` says where). `under` starts it under a thing.
+ */
 export async function newProject(
 	open: (route: string, label: string) => void = (route, label) => windowShellStore.openTabFromRoute(route, { label }),
+	under?: { thing_id: string },
 ): Promise<void> {
 	const name = (
 		await promptText({
@@ -34,7 +38,7 @@ export async function newProject(
 	)?.trim();
 	if (!name) return;
 	try {
-		const project = await projectStore.create(name);
+		const project = await projectStore.create(name, under);
 		open(`/project/${project.id}`, project.name);
 	} catch (e) {
 		console.error('[projectActions] Failed to create project:', e);
@@ -123,8 +127,9 @@ function failure(e: unknown, title: string, fallback: string): [string, { descri
 		return ["Couldn't reach your server", { description: 'Check that it is on, then try again' }];
 	}
 	if (e instanceof ApiError && e.status === 400) {
-		if (/archived/i.test(e.message)) {
-			return [title, { description: 'You archived this project. Unarchive it to add more' }];
+		// "archived" is what a server from before finish and drop says.
+		if (/has ended|archived/i.test(e.message)) {
+			return [title, { description: 'This project has ended. Reopen it to add more' }];
 		}
 		if (e.message) return [title, { description: e.message }];
 	}
@@ -214,7 +219,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	submenu.push({
 		id: 'new-project-with-item',
 		label: 'New project…',
-		icon: 'ri:add-line',
+		icon: 'mynaui:plus',
 		dividerBefore: projects.length > 0,
 		action: async () => {
 			const name = (
@@ -241,7 +246,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 		submenu.push({
 			id: 'remove-from-project',
 			label: `Remove from ${home.name}`,
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			action: () => removeFromProject(home, target),
 		});
 	}
@@ -250,7 +255,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 		{
 			id: 'add-to-project',
 			label: home ? 'Move to project' : 'Add to project',
-			icon: 'ri:folder-add-line',
+			icon: 'mynaui:folder-plus',
 			dividerBefore: true,
 			submenu,
 		},
@@ -279,12 +284,13 @@ export function startRefDrag(e: DragEvent, url: string, label: string): void {
  */
 export const MENTION_DRAG_TYPE = 'application/x-virtues-mention';
 
-/** The url a row can be mentioned by: one thing, a project included, or a link out. */
+/** The url a row can be mentioned by: one thing, a project included, a
+ *  record (`/record/<ontology>/<id>`), or a link out. */
 export function mentionableUrl(route: string): string | null {
 	if (/^https?:\/\//.test(route)) return route;
 	const path = route.split(/[?#]/)[0];
 	if (path.startsWith('/chat/') && RESERVED_CHATS.has(path.slice('/chat/'.length))) return null;
-	return /^\/[a-z-]+\/[^/]+$/.test(path) ? path : null;
+	return /^\/[a-z-]+\/[^/]+$/.test(path) || isRecordRoute(path) ? path : null;
 }
 
 export function setMentionDrag(e: DragEvent, url: string, label: string): void {
@@ -348,7 +354,7 @@ export function projectChipMenuItems(
 		{
 			id: 'remove-from-this-project',
 			label: `Remove from ${project.name}`,
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			dividerBefore: true,
 			action: () => removeFromProject(project, target),
 		},
@@ -385,28 +391,55 @@ export async function renameProject(project: Pick<Project, 'id' | 'name'>): Prom
 	}
 }
 
-/** Reversible, so no confirm: the toast carries the Undo. */
-export async function archiveProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
+/**
+ * End a project as finished or dropped. Reversible, so no confirm: the toast
+ * carries the Undo.
+ */
+export async function endProject(
+	project: Pick<Project, 'id' | 'name'>,
+	outcome: ProjectOutcome,
+): Promise<void> {
 	try {
-		await projectStore.archive(project.id);
-		notifyArchived(project.id, project.name);
+		await projectStore.archive(project.id, outcome);
+		notifyEnded(project.id, project.name, outcome);
 	} catch (e) {
-		console.error('[projectActions] archive failed:', e);
-		toast.error(`Your server couldn't archive "${project.name}"`, {
+		console.error('[projectActions] ending failed:', e);
+		toast.error(`Your server couldn't ${outcome === 'finished' ? 'finish' : 'drop'} "${project.name}"`, {
 			description: 'Nothing changed. Try again',
 		});
 	}
 }
 
-export async function unarchiveProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
+/** Say an ended project ended the other way, without reopening it. */
+export async function changeOutcome(
+	project: Pick<Project, 'id' | 'name'>,
+	outcome: ProjectOutcome,
+): Promise<void> {
+	try {
+		await projectStore.archive(project.id, outcome);
+	} catch (e) {
+		console.error('[projectActions] changing the outcome failed:', e);
+		toast.error(`Your server couldn't change "${project.name}"`, {
+			description: 'Nothing changed. Try again',
+		});
+	}
+}
+
+export async function reopenProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
 	try {
 		await projectStore.unarchive(project.id);
 	} catch (e) {
-		console.error('[projectActions] unarchive failed:', e);
+		console.error('[projectActions] reopen failed:', e);
 		toast.error(`Your server couldn't reopen "${project.name}"`, {
 			description: 'Nothing changed. Try again',
 		});
 	}
+}
+
+/** "Finished" or "Dropped" for an ended project. A project a server from
+ *  before the outcome closed reads as finished, which is what closing meant. */
+export function outcomeLabel(project: Pick<Project, 'outcome'>): string {
+	return project.outcome === 'dropped' ? 'Dropped' : 'Finished';
 }
 
 /**
@@ -433,17 +466,24 @@ export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Prom
 
 /** The menu on a project itself, wherever it is listed. */
 export function projectRowMenuItems(
-	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at'>,
+	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at' | 'outcome'>,
 ): ContextMenuItem[] {
 	const url = `/project/${project.id}`;
 	if (project.archived_at) {
+		const other: ProjectOutcome = project.outcome === 'dropped' ? 'finished' : 'dropped';
 		return [
 			{ id: 'open', label: 'Open', icon: PROJECT_ICON, action: () => openProject(project) },
-			{ id: 'unarchive', label: 'Unarchive', icon: 'ri:inbox-unarchive-line', action: () => unarchiveProject(project) },
+			{ id: 'reopen', label: 'Reopen', icon: 'mynaui:undo', action: () => reopenProject(project) },
+			{
+				id: 'change-outcome',
+				label: other === 'dropped' ? 'Mark as dropped' : 'Mark as finished',
+				icon: other === 'dropped' ? 'mynaui:x-circle' : 'mynaui:check-circle',
+				action: () => changeOutcome(project, other),
+			},
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => void deleteProject(project),
@@ -452,15 +492,16 @@ export function projectRowMenuItems(
 	}
 	return [
 		...openMenuItems(url, project.name),
-		{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatInProject(project) },
-		{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(project) },
+		{ id: 'new-chat', label: 'New chat here', icon: 'mynaui:chat-plus', action: () => newChatInProject(project) },
+		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renameProject(project) },
 		// No "Add to project": you can't put a project in a project.
 		pinMenuItem({ url, label: project.name, icon: project.icon }),
-		{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(project) },
+		{ id: 'finish', label: 'Finish', icon: 'mynaui:check-circle', action: () => endProject(project, 'finished') },
+		{ id: 'drop', label: 'Drop', icon: 'mynaui:x-circle', action: () => endProject(project, 'dropped') },
 		{
 			id: 'delete',
 			label: 'Delete',
-			icon: 'ri:delete-bin-line',
+			icon: 'mynaui:trash',
 			variant: 'destructive',
 			dividerBefore: true,
 			action: () => void deleteProject(project),
@@ -475,7 +516,7 @@ export function projectRowMenuItems(
  * somewhere else".
  */
 export function memberIcon(url: string): string {
-	if (/^https?:\/\//.test(url)) return 'ri:external-link-line';
+	if (/^https?:\/\//.test(url)) return 'mynaui:external-link';
 	const map: Record<string, string> = {
 		page: 'atlas:pages',
 		person: 'atlas:people',
@@ -487,7 +528,7 @@ export function memberIcon(url: string): string {
 		chat: 'atlas:chats',
 		source: 'atlas:sources'
 	};
-	return map[parseRef(url)?.kind ?? ''] ?? 'ri:links-line';
+	return map[parseRef(url)?.kind ?? ''] ?? 'mynaui:link';
 }
 
 /**

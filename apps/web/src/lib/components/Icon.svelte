@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Icon, { iconLoaded } from '@iconify/svelte';
 	// Import icon registry to ensure icons are pre-loaded
-	import '$lib/icons';
+	import { resolveIcon } from '$lib/icons';
 	import { isEmoji } from '$lib/utils/iconHelpers';
 	import { loadLucide } from '$lib/lucide';
 
@@ -14,7 +14,9 @@
 		[key: string]: unknown;
 	}
 
-	let { icon, width, height, class: className = '', style, ...rest }: Props = $props();
+	let { icon: asked, width, height, class: className = '', style, ...rest }: Props = $props();
+
+	const icon = $derived(asked && resolveIcon(asked));
 
 	// A user-picked icon is an iconify name or an emoji, and both arrive in the
 	// same field. Drawing the emoji here, once, is what lets a menu, a tab or a

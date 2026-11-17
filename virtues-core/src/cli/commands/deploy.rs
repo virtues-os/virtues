@@ -352,16 +352,19 @@ pub fn print_qr_block(data: &str) {
         all_rows.push(blank.clone());
     }
 
-    // Two rows per terminal line, using upper/lower half blocks. Inverted
-    // colors so DARK QR pixels are spaces (light background) — this is the
-    // convention scanners expect on dark terminals; on light terminals it
-    // still works because we set foreground space. White ground + black fg
-    // (▀ U+2580) works in both light and dark terminals.
+    // Two rows per terminal line, using upper/lower half blocks: a dark module
+    // is drawn in the foreground color, a light one is left as background.
+    // On a terminal, paint black on bright white explicitly. Left to the
+    // terminal's own colors, a dark theme draws the modules light on dark, an
+    // inverted code that scanners set to read dark-on-light (the Virtues app's
+    // is) cannot decode.
+    let tty = console::Term::stdout().is_term();
+    let (on, off) = if tty { ("\x1b[30;107m", "\x1b[0m") } else { ("", "") };
     for chunk in all_rows.chunks(2) {
         let top = &chunk[0];
         let bot_default = blank.clone();
         let bot = chunk.get(1).unwrap_or(&bot_default);
-        print!("  "); // small indent
+        print!("  {on}"); // small indent
         for x in 0..top.len() {
             let ch = match (top[x], bot[x]) {
                 // ▀ upper half block = top dark, bottom light
@@ -375,6 +378,6 @@ pub fn print_qr_block(data: &str) {
             };
             print!("{ch}");
         }
-        println!();
+        println!("{off}");
     }
 }

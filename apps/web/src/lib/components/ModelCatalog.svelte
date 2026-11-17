@@ -81,7 +81,13 @@
 		open: "Not zero retention",
 		unknown: "Unknown",
 	};
-	/** The cell. Empty for zero retention, which is the norm. */
+	/** The table cell. Every row has one: a blank cell reads as missing data. */
+	const RETENTION_CELL: Record<Posture, string> = {
+		zero: "Zero",
+		open: "Not zero",
+		unknown: "Unknown",
+	};
+	/** The card line. Empty for zero retention, which is the norm. */
 	function retentionMark(v: string | null | undefined): string {
 		const p = retention(v);
 		return p === "zero" ? "" : RETENTION_LABEL[p];
@@ -106,11 +112,13 @@
 	function trainingKey(v: string | null | undefined): string {
 		return v === "all" || v === "some" || v === "none" ? v : "unknown";
 	}
-	/** The cell. Empty for no training, which is the norm. */
-	function trainingMark(v: string | null | undefined): string {
-		const k = trainingKey(v);
-		return k === "all" ? "" : TRAINING_LABEL[k];
-	}
+	/** The table cell, filled on every row like Retention. */
+	const TRAINING_CELL: Record<string, string> = {
+		all: "Never",
+		some: "Varies",
+		none: "Might train",
+		unknown: "Unknown",
+	};
 	function trainingSentence(v: string | null | undefined): string {
 		if (v === "some") return "Some of this model's providers might train on requests.";
 		if (v === "none") return "This model's providers might train on requests.";
@@ -137,10 +145,10 @@
 	}
 
 	const CAPS: { key: keyof CatalogModel; label: string; icon: string }[] = [
-		{ key: "supports_tools", label: "Tools", icon: "ri:tools-line" },
-		{ key: "supports_vision", label: "Images", icon: "ri:eye-line" },
-		{ key: "supports_pdf", label: "PDFs", icon: "ri:file-text-line" },
-		{ key: "supports_audio", label: "Audio", icon: "ri:mic-line" },
+		{ key: "supports_tools", label: "Tools", icon: "mynaui:tool" },
+		{ key: "supports_vision", label: "Images", icon: "mynaui:eye" },
+		{ key: "supports_pdf", label: "PDFs", icon: "mynaui:file-text" },
+		{ key: "supports_audio", label: "Audio", icon: "mynaui:microphone" },
 	];
 	function capList(m: ModelRow): typeof CAPS {
 		return CAPS.filter((c) => m[c.key]);
@@ -295,8 +303,10 @@
 			</td>
 			<td class="cell quiet">{m.provider}</td>
 			{#if showPosture}
-				<td class="cell quiet">{retentionMark(m.zdr)}</td>
-				<td class="cell quiet hide-mobile">{trainingMark(m.no_training)}</td>
+				{@const kept = retention(m.zdr)}
+				{@const trains = trainingKey(m.no_training)}
+				<td class="cell quiet" class:unknown={kept === "unknown"}>{RETENTION_CELL[kept]}</td>
+				<td class="cell quiet hide-mobile" class:unknown={trains === "unknown"}>{TRAINING_CELL[trains]}</td>
 			{/if}
 			<td class="cell quiet figure">{perM(m.input_cost_per_1k)}</td>
 			<td class="cell quiet figure hide-mobile">{perM(m.output_cost_per_1k)}</td>
@@ -410,6 +420,10 @@
 	}
 	.quiet {
 		color: var(--color-foreground-muted);
+	}
+	/* Fainter than a known answer, so "Unknown" isn't read as one. */
+	.quiet.unknown {
+		color: var(--color-foreground-subtle);
 	}
 	.figure {
 		font-variant-numeric: tabular-nums;

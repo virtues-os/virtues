@@ -23,10 +23,11 @@ class ConnectFlowStore {
 	/** Set when an OAuth dance was handed to the system browser (Tauri). */
 	awaitingExternal = $state(false);
 
-	/** `credentialId`: reconnecting that credential rather than adding one. */
+	/** `credentialId`: reconnecting that credential rather than adding one.
+	 *  Both the api_key form and the OAuth dance repair that row in place. */
 	async start(source: SourceCatalogItem, credentialId?: string): Promise<void> {
 		this.error = null;
-		const intent = await connectIntent(source);
+		const intent = await connectIntent(source, { credentialId });
 		switch (intent.kind) {
 			case 'pair':
 				this.pending = {

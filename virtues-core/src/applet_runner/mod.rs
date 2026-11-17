@@ -8,16 +8,16 @@
 //!
 //! 1. Fetch action. Not found / disabled → return `NotFound`.
 //! 2. Validate `trigger` is in `action.triggers`. Otherwise → `Forbidden`.
-//! 3. Evaluate `condition` SQL expression if set. Falsy → record `skipped` run.
-//! 4. Concurrency gate (skip if previous run still active, unless parallel).
-//! 5. Create `running` run row.
-//! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
+//! 3. Concurrency gate (skip if previous run still active, unless parallel).
+//! 4. Create `running` run row; `run_sql`, if set, runs next, and no rows
+//!    records the run as skipped.
+//! 5. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
-//! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
-//!    JSON, read stdout JSON, save returned config back to `app_applets.config`.
-//! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
+//! 6. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
+//!    JSON, read stdout JSON, save returned config to `app_applets.state`.
+//! 7. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
-//! 9. Complete run row with final status + result summary.
+//! 8. Complete run row with final status + result summary.
 //!
 //! ## Subprocess contract
 //!
@@ -41,9 +41,13 @@ use tokio::process::Command;
 use tracing::Instrument;
 
 pub mod limits;
+mod run_sql;
+mod sandboxed;
+
 
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
+use crate::scheduler::watch::Batch;
 use crate::server::yjs::YjsState;
 use limits::Limits;
 
@@ -109,7 +113,7 @@ impl AppletRunResult {
 /// needed) or a created run row that the caller should drive to completion.
 enum PrepareOutcome {
     Early(AppletRunResult),
-    Ready { action: Applet, run_id: String },
+    Ready { action: Applet, run_id: String, batch: Option<Batch> },
 }
 
 /// Run an action end-to-end. The single inline-await dispatch entry point.
@@ -125,9 +129,9 @@ pub async fn run_applet(
 ) -> Result<AppletRunResult> {
     match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
-        PrepareOutcome::Ready { action, run_id } => {
+        PrepareOutcome::Ready { action, run_id, batch } => {
             let payload = payload.cloned();
-            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload).await)
+            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload, batch).await)
         }
     }
 }
@@ -147,15 +151,14 @@ pub async fn run_applet_detached(
 ) -> Result<AppletRunResult> {
     match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
-        PrepareOutcome::Ready { action, run_id } => {
+        PrepareOutcome::Ready { action, run_id, batch } => {
             let payload = payload.cloned();
             let deps_owned = deps.clone();
             let run_id_for_task = run_id.clone();
             let trigger_owned = trigger.to_string();
             tokio::spawn(async move {
-                let _ =
-                    execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload)
-                        .await;
+                let _ = execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload, batch)
+                    .await;
             });
             Ok(AppletRunResult {
                 run_id: Some(run_id),
@@ -176,6 +179,8 @@ async fn prepare_run(
     applet_id: &str,
     trigger: &str,
 ) -> Result<PrepareOutcome> {
+    RunFile::sweep_once();
+
     // 1. Fetch action
     let action = match applets::get_applet(&deps.db, applet_id).await {
         Ok(a) if a.enabled => a,
@@ -208,7 +213,9 @@ async fn prepare_run(
     // invoked server-side. Skip silently so cron ticks don't churn the runs
     // table.
     let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
-    let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
+    let has_exec = has_agent
+        || action.command.as_ref().is_some_and(|c| !c.is_empty())
+        || action.run_sql.as_deref().is_some_and(|s| !s.trim().is_empty());
     if !has_exec {
         tracing::debug!(applet_id, "face-only applet — never invoked server-side");
         return Ok(PrepareOutcome::Early(AppletRunResult {
@@ -230,54 +237,6 @@ async fn prepare_run(
         return Ok(PrepareOutcome::Early(AppletRunResult::forbidden(
             "webhook trigger requires a device_id or credential_id".to_string(),
         )));
-    }
-
-    // 3. Condition (SQL gate). Evaluate before creating a run row.
-    //
-    // Only `message` is exempt, and the line is narrower than "a person did
-    // it deliberately" — `manual` is deliberate too and is still gated.
-    //
-    // The difference is what the condition is FOR. A condition guards whether
-    // the applet's scheduled work should happen, and AGENTS.md tells authors
-    // to write exactly that: `NOT EXISTS (a successful run today)` is the
-    // recommended cooldown idiom. "Run now" means "do your scheduled thing
-    // now", so bypassing that guard would let a button press double-write the
-    // day's entry — the condition is an idempotency check, not a preference.
-    //
-    // A message is not the scheduled work. It is new input that did not exist
-    // when the gate was written, there is nothing to duplicate, and a clock
-    // gate would silently swallow what someone typed (a falsy condition
-    // records no run at all). So the message goes through and `manual` does
-    // not.
-    let gated = trigger != "message";
-    if let Some(condition) = &action.condition {
-        if gated && !condition.trim().is_empty() {
-            match eval_condition(&deps.db, condition).await {
-                Ok(false) => {
-                    tracing::debug!(applet_id, "condition falsy, skipping silently");
-                    return Ok(PrepareOutcome::Early(AppletRunResult {
-                        run_id: None,
-                        status: AppletRunStatus::Skipped,
-                        summary: "condition evaluated false".to_string(),
-                        error: None,
-                    }));
-                }
-                Ok(true) => {}
-                Err(e) => {
-                    tracing::error!(applet_id, error = %e, "condition evaluation failed");
-                    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
-                    let msg = format!("condition evaluation error: {e}");
-                    applets::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
-                        .await?;
-                    return Ok(PrepareOutcome::Early(AppletRunResult {
-                        run_id: Some(run.id),
-                        status: AppletRunStatus::Failed,
-                        summary: String::new(),
-                        error: Some(msg),
-                    }));
-                }
-            }
-        }
     }
 
     // 4. Concurrency gate — every applet is a singleton. Unlike a falsy
@@ -347,12 +306,39 @@ async fn prepare_run(
         }
     }
 
+    // 4c. A data trigger's rows: any run of the applet takes the rows that
+    // have come since its last one (`scheduler::watch`). A poll that finds
+    // none, because another run took them, starts nothing.
+    let batch = crate::scheduler::watch::claim(&deps.db, &action).await?;
+    let nothing_new = match &batch {
+        Some(b) if trigger == "data" => b.is_empty(&deps.db).await?,
+        _ => trigger == "data",
+    };
+    if nothing_new {
+        return Ok(PrepareOutcome::Early(AppletRunResult {
+            run_id: None,
+            status: AppletRunStatus::Skipped,
+            summary: "nothing new".to_string(),
+            error: None,
+        }));
+    }
+
     // 5. Create run row.
     let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
         action,
         run_id: run.id,
+        batch,
     })
+}
+
+/// A data trigger's rows as the prompt reads them: `new_rows`, as a table.
+async fn new_rows_for_prompt(db: &PgPool, batch: &Batch, schema: Option<&str>) -> Result<String> {
+    if batch.range.is_none() {
+        return Ok(batch.nothing());
+    }
+    let result = run_sql::run(db, &batch.listing_sql()?, Some(&batch.cte()?), schema).await?;
+    Ok(if result.total > 0 { result.for_prompt_with(&batch.heading()) } else { batch.nothing() })
 }
 
 /// Steps 6–9 of the dispatch flow. Loads credentials, runs the subprocess
@@ -365,6 +351,7 @@ async fn execute_prepared(
     run_id: String,
     trigger: String,
     payload: Option<serde_json::Value>,
+    batch: Option<Batch>,
 ) -> AppletRunResult {
     // Everything below — the subprocess's own stderr, the agent phase, the AI
     // calls it bills, the failure that lands on the run row — happens inside
@@ -377,7 +364,7 @@ async fn execute_prepared(
     // future instead attaches the span to it, so it follows the work into the
     // spawned task, which is the behavior we actually want here.
     let span = crate::observe::run_span(&run_id, &action.id);
-    execute_prepared_inner(deps, action, run_id, trigger, payload)
+    execute_prepared_inner(deps, action, run_id, trigger, payload, batch)
         .instrument(span)
         .await
 }
@@ -388,6 +375,7 @@ async fn execute_prepared_inner(
     run_id: String,
     trigger: String,
     payload: Option<serde_json::Value>,
+    batch: Option<Batch>,
 ) -> AppletRunResult {
     let applet_id = action.id.clone();
 
@@ -445,6 +433,70 @@ async fn execute_prepared_inner(
         None
     };
 
+    // A data trigger's rows, as `new_rows` for the SQL below and the
+    // prompt, and as the payload code reads when nothing else sent one.
+    let new_rows = match batch.as_ref().map(Batch::cte).transpose() {
+        Ok(cte) => cte,
+        Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
+    };
+    let payload = payload.or_else(|| batch.as_ref().map(Batch::payload));
+
+    // 6b. SQL phase: `run: sql`, read-only, before the prompt. No rows means
+    // nothing to do, so a run with a prompt is skipped without a model call.
+    // A message is the exception, for the reason a condition does not gate
+    // one: what someone typed is the input, whatever the SQL found.
+    let has_prompt = action.agent.as_ref().is_some_and(|s| !s.trim().is_empty());
+    let schema = applets::applet_schema_name(&action.id);
+    let mut sql_context: Option<String> = None;
+    if let Some(sql) = action.run_sql.as_deref().filter(|s| !s.trim().is_empty()) {
+        match run_sql::run(&deps.db, sql, new_rows.as_deref(), schema.as_deref()).await {
+            Err(e) => {
+                let msg = e.to_string();
+                tracing::error!(applet_id, error = %msg, "run SQL failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
+            }
+            Ok(result) if result.total == 0 && trigger != "message" => {
+                let (status, summary, run_status) = if has_prompt {
+                    ("skipped", "Its SQL returned no rows, so there was nothing to do.", AppletRunStatus::Skipped)
+                } else {
+                    ("success", "No rows.", AppletRunStatus::Success)
+                };
+                if let Err(e) = applets::complete_run(&deps.db, &run_id, status, 0, None, Some(summary)).await {
+                    tracing::error!(applet_id, error = %e, "complete_run failed after empty run SQL");
+                }
+                return AppletRunResult {
+                    run_id: Some(run_id),
+                    status: run_status,
+                    summary: summary.to_string(),
+                    error: None,
+                };
+            }
+            Ok(result) if !has_prompt => {
+                let summary = format!("{} {}.", result.total, if result.total == 1 { "row" } else { "rows" });
+                if let Err(e) = applets::complete_run(&deps.db, &run_id, "success", result.total, None, Some(&summary)).await {
+                    tracing::error!(applet_id, error = %e, "complete_run failed after run SQL");
+                }
+                maybe_archive_on_until(&deps.db, &action).await;
+                return AppletRunResult { run_id: Some(run_id), status: AppletRunStatus::Success, summary, error: None };
+            }
+            Ok(result) => sql_context = (result.total > 0).then(|| result.for_prompt()),
+        }
+    }
+
+    // 6c. A data trigger hands its rows to the prompt as `new_rows`, before
+    // whatever `run` returned, so a prompt that reads them has them even
+    // when `run` only decided whether to wake it.
+    if let (Some(b), true) = (&batch, has_prompt) {
+        let rows = match new_rows_for_prompt(&deps.db, b, schema.as_deref()).await {
+            Ok(rows) => rows,
+            Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
+        };
+        sql_context = Some(match sql_context.take() {
+            Some(from_run) => format!("{rows}\n\n{from_run}"),
+            None => rows,
+        });
+    }
+
     // 7. Subprocess phase.
     let mut subprocess_summary: Option<String> = None;
     let mut subprocess_records: i64 = 0;
@@ -476,7 +528,11 @@ async fn execute_prepared_inner(
 
     // 8. Agent phase.
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
-        let ctx = subprocess_summary.as_deref();
+        let joined: Option<String> = match (subprocess_summary.as_deref(), sql_context.as_deref()) {
+            (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),
+            (a, b) => a.or(b).map(str::to_string),
+        };
+        let ctx = joined.as_deref();
         match crate::agent::applet_runner::run_agent_loop(
             &deps.db,
             &deps.yjs,
@@ -490,7 +546,25 @@ async fn execute_prepared_inner(
         {
             Ok(agent_result) => {
                 let steps = agent_result.steps as i64;
-                match agent_outcome(agent_result, subprocess_summary.clone()) {
+                let made_rows = match applets::run_made_rows(&deps.db, &run_id).await {
+                    Ok(made) => made,
+                    Err(e) => {
+                        tracing::warn!(applet_id, error = %e, "could not read what the run wrote; it counts as having written something");
+                        true
+                    }
+                };
+                match agent_outcome(agent_result, subprocess_summary.clone(), made_rows) {
+                    AgentOutcome::Quiet => {
+                        if let Err(e) = applets::complete_run(&deps.db, &run_id, "skipped", steps, None, Some("Nothing to say.")).await {
+                            tracing::error!(applet_id, error = %e, "complete_run failed after a quiet run");
+                        }
+                        return AppletRunResult {
+                            run_id: Some(run_id),
+                            status: AppletRunStatus::Skipped,
+                            summary: "Nothing to say.".to_string(),
+                            error: None,
+                        };
+                    }
                     AgentOutcome::Failed(msg) => {
                         if let Err(e) = applets::complete_run(
                             &deps.db,
@@ -584,6 +658,9 @@ enum AgentOutcome {
     Failed(String),
     BudgetExceeded(String),
     Success(String),
+    /// It ended with nothing to say and made nothing, so it is recorded as
+    /// skipped and adds no Inbox item.
+    Quiet,
 }
 
 /// Decide the run's status from what the agent loop reported. Only a clean
@@ -595,6 +672,7 @@ enum AgentOutcome {
 fn agent_outcome(
     result: crate::agent::applet_runner::AgentLoopResult,
     subprocess_summary: Option<String>,
+    made_rows: bool,
 ) -> AgentOutcome {
     if let Some(msg) = result.error {
         return AgentOutcome::Failed(msg);
@@ -602,9 +680,12 @@ fn agent_outcome(
     if let Some(reason) = result.budget_stopped {
         return AgentOutcome::BudgetExceeded(reason);
     }
-    // No reply and no subprocess output is a legitimate empty summary: the
-    // agent finished without saying anything.
-    AgentOutcome::Success(result.message.or(subprocess_summary).unwrap_or_default())
+    let said = result.message.filter(|m| !m.trim().is_empty()).or(subprocess_summary.filter(|s| !s.trim().is_empty()));
+    match said {
+        Some(summary) => AgentOutcome::Success(summary),
+        None if result.pages_written > 0 || made_rows => AgentOutcome::Success(String::new()),
+        None => AgentOutcome::Quiet,
+    }
 }
 
 // ============================================================================
@@ -614,7 +695,7 @@ fn agent_outcome(
 /// Post-success lifecycle check. `until` semantics: NULL/empty = forever;
 /// the literal `once` = archive after this (first) success; anything else =
 /// a SQL boolean, archive when it evaluates true. Evaluation reuses the
-/// hardened `eval_condition` path (read-only tx, timeout, local timezone).
+/// hardened `eval_until` path (read-only tx, timeout, local timezone).
 /// Failures are logged, never fatal — a broken `until` must not fail a run
 /// that already succeeded.
 async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
@@ -627,7 +708,7 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
     let done = if until.eq_ignore_ascii_case("once") {
         true
     } else {
-        match eval_condition(db, until).await {
+        match eval_until(db, until).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(applet_id = %action.id, error = %e, "until evaluation failed; not archiving");
@@ -647,8 +728,8 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
 // Condition evaluation
 // ============================================================================
 
-/// Evaluate a SQL condition expression. Returns true if the expression is
-/// truthy, false otherwise (NULL is false).
+/// Evaluate an `until` SQL expression (`every … until <date>` writes one).
+/// Returns true if the expression is truthy, false otherwise (NULL is false).
 ///
 /// The expression is LLM/user-authored, so it runs hardened: inside a
 /// READ ONLY transaction (rolled back regardless), under a short
@@ -657,7 +738,7 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
 /// `extract(hour from now()) < 6` mean the user's local time, not UTC.
 /// The result is cast to boolean, so both boolean and integer expressions
 /// evaluate correctly.
-async fn eval_condition(db: &PgPool, condition: &str) -> Result<bool> {
+async fn eval_until(db: &PgPool, condition: &str) -> Result<bool> {
     let mut tx = db
         .begin()
         .await
@@ -783,6 +864,13 @@ struct SubprocessOutcome {
 /// Environment every applet gets. Deliberately short: an applet receives its
 /// config, its payload and its already-decrypted credentials on **stdin**, so
 /// the environment is for reaching the box's own services, not for secrets.
+/// Whether the box sets `name` in an applet's environment itself, so an
+/// applet may not declare it as one of its `secrets`: the passthrough list,
+/// the box key, and anything under the `VIRTUES_` prefix.
+pub fn reserved_env_name(name: &str) -> bool {
+    ENV_PASSTHROUGH.contains(&name) || name.starts_with("VIRTUES_")
+}
+
 const ENV_PASSTHROUGH: &[&str] = &[
     // Process basics. Without PATH a bare `python3` argv0 cannot resolve.
     "PATH",
@@ -819,173 +907,128 @@ const ENV_PASSTHROUGH: &[&str] = &[
     "ENVIRONMENT",
 ];
 
-/// Memory ceiling for a jailed applet. Generous — some shipped syncs are
-/// memory-hungry — but bounded, so a runaway import cannot take the box out.
-const JAILED_MEMORY_MAX: &str = "1G";
-
-/// Build the spawn command, jailing it when the code did not ship with the box.
-///
-/// **What the jail is, and is not.** It limits blast radius: no route to root
-/// through the box user's passwordless sudo, a read-only filesystem outside
-/// the applet's own paths, memory and time ceilings. It is NOT an authority
-/// boundary. An applet reaches Postgres with the box's own pool role and can
-/// dial the API on loopback, which `middleware/auth.rs` treats as the owner —
-/// so a running applet can do what the owner can do. That is the position,
-/// not an oversight: the trust decision is made ONCE, at import, behind the
-/// sudo gate (`api/sudo.rs`), and a chat-authored applet is the owner's own
-/// instruction. Separating applets from the owner would take a second uid, a
-/// scoped database login, and Postgres over a unix socket, rolled out to
-/// fielded boxes that do not auto-update — machinery this appliance has
-/// chosen not to carry. If that position ever changes, this paragraph is the
-/// first thing to delete.
-///
-/// The routing, not a ban, is the policy: a package may run native code, it
-/// just does not get to run it as a user with passwordless sudo. `systemd-run`
-/// is the same mechanism `code_interpreter` already uses (api/code.rs), which
-/// is the strongest precedent in this codebase for containing code we did not
-/// write.
-///
-/// The properties are looser than `code_interpreter`'s in one deliberate way:
-/// **no `PrivateNetwork`**, because an applet's whole job is to reach Postgres
-/// and usually an upstream API. What it does buy:
-///
-/// - `NoNewPrivileges=yes` — the single most valuable line here. The box user
-///   has `NOPASSWD: ALL` (installer, by design), so without this any imported
-///   applet is one `sudo -n` from root.
-/// - `ProtectSystem=strict` + `ProtectHome=yes` — the filesystem is read-only
-///   apart from the paths an applet legitimately writes.
-/// - `PrivateTmp`, `PrivateDevices`, memory and runtime ceilings, and a
-///   syscall filter.
-///
-/// Not `DynamicUser`: an applet writes to the lake and its own state directory
-/// as the box user, and a dynamic uid cannot.
-///
-/// Off Linux, or in a debug build without systemd, we run direct — that is a
-/// developer machine. In a release build on Linux a missing `systemd-run` is a
-/// hard refusal rather than a silent downgrade, matching `code.rs`: the moment
-/// the sandbox quietly stops applying is the moment it stops being one.
-fn build_command(
-    program: &std::path::Path,
-    args: &[String],
-    shipped: bool,
-    timeout: std::time::Duration,
-    env: &[(String, String)],
-) -> Result<Command> {
-    // Direct spawn: env_clear plus exactly what we chose to pass.
-    let direct = || {
-        let mut cmd = Command::new(program);
-        cmd.args(args);
-        cmd.env_clear();
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        cmd
-    };
-
-    if shipped {
-        return Ok(direct());
-    }
-
-    if !cfg!(target_os = "linux") {
-        tracing::warn!(
-            "running an unshipped applet unjailed — no systemd on this platform (developer machine)"
-        );
-        return Ok(direct());
-    }
-
-    if which_systemd_run().is_none() {
-        if cfg!(debug_assertions) {
-            tracing::warn!("systemd-run unavailable; running unjailed (debug build only)");
-            return Ok(direct());
-        }
-        return Err(Error::Other(
-            "applet sandbox (systemd-run) is unavailable; refusing to run imported code unjailed"
-                .to_string(),
-        ));
-    }
-
-    let state = crate::applet_templates::state_root();
-
-    // `sudo -n`, matching api/updates.rs. The box runs as `User=virtues`
-    // (installer), and a non-root user creating a *system* transient unit goes
-    // through polkit, which on a headless box with no agent denies outright. A
-    // bare `systemd-run` therefore does not fail loudly — it exits non-zero and
-    // the run is recorded as a generic subprocess failure, so the sandbox
-    // reports itself present while every unshipped applet silently dies.
-    let mut cmd = Command::new("sudo");
-    cmd.args(["-n", "systemd-run"]);
-    // And drop back to the box user. A transient SYSTEM unit with no `User=`
-    // runs as ROOT — `code.rs` only avoids that because it sets
-    // `DynamicUser=yes`, which this cannot use (an applet writes to the lake as
-    // the box user). Without this line, adding the sudo above would have
-    // escalated every imported applet from `virtues` to uid 0, i.e. strictly
-    // worse than no jail at all. `NoNewPrivileges` does not help you if you
-    // start at root.
-    cmd.args(["-p", &format!("User={}", box_uid())]);
-    cmd.args([
-        "--pipe",
-        "--wait",
-        "--collect",
-        "--quiet",
-        "-p",
-        "NoNewPrivileges=yes",
-        "-p",
-        "ProtectSystem=strict",
-        "-p",
-        "ProtectHome=yes",
-        "-p",
-        "PrivateTmp=yes",
-        "-p",
-        "PrivateDevices=yes",
-        "-p",
-        "SystemCallFilter=@system-service",
-        "-p",
-        "SystemCallErrorNumber=EPERM",
-        "-p",
-        "MemorySwapMax=0",
-    ]);
-    cmd.args(["-p", &format!("MemoryMax={JAILED_MEMORY_MAX}")]);
-    cmd.args(["-p", &format!("RuntimeMaxSec={}", timeout.as_secs())]);
-    // The applet's own folder and the lake are the only writable paths it gets.
-    // The lake path comes from the resolver itself, not an env var: this used
-    // to read VIRTUES_LAKE_DIR — which nothing ever set — so the jail granted
-    // NO lake write path at all, and a jailed applet's `lake::archive` would
-    // have hit EPERM even after the env passthrough above was fixed.
-    cmd.args(["-p", &format!("ReadWritePaths={}", state.display())]);
-    cmd.args([
-        "-p",
-        &format!(
-            "ReadWritePaths={}",
-            crate::storage::lake::lake_root().display()
-        ),
-    ]);
-    // The unit does NOT inherit our environment, and `cmd.env()` would set
-    // systemd-run's own rather than the unit's — so every variable the applet
-    // needs has to be handed over explicitly, before the `--`.
-    for (k, v) in env {
-        // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME
-        // hands the applet a path that exists in its environment and not in its
-        // namespace — anything touching ~/.cache (python, pip, git, most HTTP
-        // clients) fails on it. Point it at the private tmp instead, as code.rs
-        // does.
-        if k == "HOME" {
-            continue;
-        }
-        cmd.args(["-E", &format!("{k}={v}")]);
-    }
-    cmd.args(["-E", "HOME=/tmp"]);
-    cmd.arg("--");
-    cmd.arg(program);
+/// Spawn shipped code, or unshipped code on a developer machine, directly:
+/// `env_clear` plus exactly what we chose to pass. Code that did not ship
+/// runs in the sandbox instead (`sandboxed`).
+fn direct_command(program: &std::path::Path, args: &[String], env: &[(String, String)]) -> Command {
+    let mut cmd = Command::new(program);
     cmd.args(args);
-    Ok(cmd)
+    cmd.env_clear();
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd
 }
 
-/// The uid the box itself runs as, so a jailed applet lands on the same user
-/// rather than root. Read from `/proc/self` to avoid a libc dependency; the
-/// jail is Linux-only, which is exactly where this path exists.
-fn box_uid() -> u32 {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+/// A file a sandboxed run needs until it ends, such as its environment or its
+/// credentials: mode 0600, in a folder only the box user can open and the
+/// unit itself is denied, and removed when dropped.
+///
+/// Drop does not run when the server dies without unwinding (SIGKILL, the
+/// OOM killer, power loss), so the first run in each server process also
+/// removes whatever an earlier process left in the folder ([`Self::sweep_once`]).
+pub(crate) struct RunFile {
+    path: std::path::PathBuf,
+}
+
+impl RunFile {
+    /// The folder every run file lives in. `crate::box_files` lists it, so
+    /// `reset` removes it.
+    pub(crate) fn dir() -> std::path::PathBuf {
+        crate::data_disk::data_dir().join("applet-env")
+    }
+
+    /// Remove the run files an earlier server process left behind, once per
+    /// process and before this process writes its first. Only the server runs
+    /// applets, and every jailed run is its child, so at that point no file in
+    /// the folder belongs to a run that is still starting.
+    fn sweep_once() {
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(|| {
+            let dir = Self::dir();
+            let removed = remove_run_files_in(&dir);
+            if removed > 0 {
+                tracing::info!(
+                    "removed {removed} applet run file(s) that an earlier server process left in {}",
+                    dir.display()
+                );
+            }
+        });
+    }
+
+    fn write(extension: &str, contents: &[u8]) -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+        Self::sweep_once();
+        let dir = Self::dir();
+        let fail = |what: &str, e: std::io::Error| {
+            Error::Other(format!("could not {what} a file for the applet's run in {}: {e}", dir.display()))
+        };
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| fail("create a folder for", e))?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| fail("restrict the folder of", e))?;
+        let path = dir.join(format!("{}.{extension}", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| fail("create", e))?;
+        // Owned from here, so a failed write still removes the file.
+        let run_file = Self { path };
+        file.write_all(contents).map_err(|e| fail("write", e))?;
+        Ok(run_file)
+    }
+}
+
+impl Drop for RunFile {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_file(&self.path) {
+            tracing::warn!("could not remove applet run file {}: {e}", self.path.display());
+        }
+    }
+}
+
+/// Remove everything in `dir` and return how many entries went. A missing
+/// folder means no run has written one yet, which is not an error.
+fn remove_run_files_in(dir: &std::path::Path) -> usize {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(e) => {
+            tracing::warn!("could not read {} to remove old applet run files: {e}", dir.display());
+            return 0;
+        }
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let gone = match entry.file_type() {
+            Ok(t) if t.is_dir() => std::fs::remove_dir_all(&path),
+            _ => std::fs::remove_file(&path),
+        };
+        match gone {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::warn!("could not remove old applet run file {}: {e}", path.display()),
+        }
+    }
+    removed
+}
+
+/// `KEY="value"` lines for `EnvironmentFile=`. Inside double quotes systemd
+/// takes `\\` and `\"` as escapes and everything else literally, newlines
+/// and `$` included (checked against systemd 255 on a box). HOME is left out:
+/// the sandbox sets its own.
+fn env_file_contents(env: &[(String, String)]) -> String {
+    env.iter()
+        .filter(|(k, _)| k != "HOME")
+        .map(|(k, v)| format!("{k}=\"{}\"\n", v.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect()
 }
 
 pub(crate) fn which_systemd_run() -> Option<std::path::PathBuf> {
@@ -1057,6 +1100,64 @@ fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
     out
 }
 
+/// The owner's `env` secrets this applet declares, as environment variables.
+/// A declared key that is not set fails the run before it starts, with the
+/// sentence the run's status shows: the applet would otherwise start and fail
+/// somewhere less clear.
+async fn declared_env_secrets(db: &PgPool, applet_id: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut missing = Vec::new();
+    for name in crate::applet_templates::declared_secrets(applet_id) {
+        match crate::secrets::get(db, crate::secrets::Kind::Env, &name)
+            .await
+            .map_err(|e| Error::Other(format!("reading {name}: {e:#}")))?
+        {
+            Some((value, _)) => out.push((name, value)),
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(Error::Other(missing_secrets_sentence(&missing)));
+    }
+    Ok(out)
+}
+
+/// "Add OPENAI_API_KEY in Settings, under Keys." Names joined
+/// as a person would list them.
+fn missing_secrets_sentence(missing: &[String]) -> String {
+    let names = match missing {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("Add {names} in Settings, under Keys.")
+}
+
+/// The `config` a subprocess receives: its saved state with the row's config
+/// laid over it, so a sync gets its cursor back and a manifest change (a new
+/// limit) still wins over a stale copy the code returned.
+async fn input_config(db: &PgPool, action: &Applet) -> Result<serde_json::Value> {
+    let state: serde_json::Value = sqlx::query_scalar("SELECT state FROM app_applets WHERE id = $1")
+        .bind(&action.id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Database(format!("failed to read applet state: {e}")))?;
+    Ok(merge_config(state, &action.config))
+}
+
+fn merge_config(state: serde_json::Value, config: &serde_json::Value) -> serde_json::Value {
+    let mut merged = match state {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    if let serde_json::Value::Object(cfg) = config {
+        for (k, v) in cfg {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+    serde_json::Value::Object(merged)
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
@@ -1079,27 +1180,50 @@ async fn run_subprocess(
         )));
     }
 
+    let shipped = is_shipped_applet(&action.id);
+    let sandbox = sandboxed::placement(shipped)? == sandboxed::Placement::Sandbox;
+    if sandbox {
+        if let Some(why) = sandboxed::over_lake_limit(&action.id).await? {
+            return Err(Error::Other(why));
+        }
+    }
+
+    // A sandboxed run reads its credentials from a file only it can open,
+    // so stdin carries none.
     let input = AppletInput {
-        config: action.config.clone(),
-        credentials,
+        config: input_config(db, action).await?,
+        credentials: if sandbox { None } else { credentials.clone() },
         payload: payload.cloned(),
         trigger: Some(trigger.to_string()),
     };
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    let shipped = is_shipped_applet(&action.id);
-    let mut env = env_pairs(&action.id, shipped);
-    // The run the subprocess's AI calls are recorded against, so this
-    // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
-    env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
-    let mut cmd = build_command(
-        &program,
-        &command[1..],
-        shipped,
-        subprocess_timeout(action),
-        &env,
-    )?;
+    let declared = declared_env_secrets(db, &action.id).await?;
+    // The run's way out: any public host, through the box's proxy, which
+    // records every request on the run. Dropping it stops the proxy and
+    // removes the socket.
+    let proxy = if sandbox { Some(sandboxed::start_proxy(run_id)?) } else { None };
+    // `_run_files` live until the run ends; dropping them removes the files.
+    let (mut cmd, _run_files) = if sandbox {
+        let env = sandboxed::env(run_id, declared);
+        sandboxed::command(
+            &action.id,
+            &program,
+            &command[1..],
+            subprocess_timeout(action),
+            &env,
+            credentials.as_ref(),
+            proxy.as_ref().map(|p| p.path()),
+        )?
+    } else {
+        let mut env = env_pairs(&action.id, shipped);
+        // The run the subprocess's AI calls are recorded against, so this
+        // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
+        env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
+        env.extend(declared);
+        (direct_command(&program, &command[1..], &env), Vec::new())
+    };
 
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1120,13 +1244,13 @@ async fn run_subprocess(
     // block every future webhook for this action) indefinitely. On timeout the
     // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
     // caller records the run as `error`, freeing the lock.
-    // When jailed, RuntimeMaxSec is the real enforcer and this is only a
+    // When sandboxed, RuntimeMaxSec is the real enforcer and this is only a
     // backstop — equal values mean the tokio clock (which starts before
     // systemd-run has finished setting the unit up) always wins, and dropping
     // the future SIGKILLs the systemd-run *client*, not the unit, which PID 1
     // owns. The applet would keep running with its pipes closed while the
     // per-applet lock was already released. Same grace `code.rs` uses.
-    let ceiling = if shipped {
+    let ceiling = if !sandbox {
         subprocess_timeout(action)
     } else {
         subprocess_timeout(action) + std::time::Duration::from_secs(10)
@@ -1145,6 +1269,20 @@ async fn run_subprocess(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // Whatever the run left in its lake folder, it is indexed, failed run or
+    // not. An index that fails is logged and does not fail the run.
+    if sandbox {
+        if let Err(e) = sandboxed::index_lake_folder(db, &action.id).await {
+            tracing::error!(applet_id = %action.id, error = %e, "could not index the applet's lake folder");
+        }
+    }
+    if let Some(proxy) = proxy {
+        let requests = proxy.finish(std::time::Duration::from_secs(2)).await;
+        if let Err(e) = sandboxed::record_requests(db, run_id, &requests).await {
+            tracing::error!(applet_id = %action.id, error = %e, "could not record the run's network requests");
+        }
+    }
 
     if !output.status.success() {
         // Emit before returning. The error string goes to the run row, which
@@ -1168,13 +1306,22 @@ async fn run_subprocess(
         ))
     })?;
 
-    // Persist returned config back to the action row (JSONB column)
-    sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
+    // What the code hands back is its state for the next run. It goes in
+    // `state`, never `config`: reconcile replaces a shipped applet's config
+    // with the manifest's, and a cursor kept there was wiped on every boot.
+    sqlx::query("UPDATE app_applets SET state = $1, updated_at = now() WHERE id = $2")
         .bind(&applet_output.config)
         .bind(&action.id)
         .execute(db)
         .await
-        .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
+        .map_err(|e| Error::Database(format!("failed to save applet state: {e}")))?;
+
+    // What it says it wrote, shown on the run as what it made.
+    for (table, rows) in &applet_output.wrote {
+        if let Err(e) = applets::record_rows_output(db, run_id, table, *rows).await {
+            tracing::warn!(applet_id = %action.id, table, error = %e, "could not record what the run says it wrote");
+        }
+    }
 
     // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
     // JSON) while warning on stderr — that channel used to be swallowed, which
@@ -1431,12 +1578,80 @@ pub(crate) fn resolve_program(argv0: &str) -> PathBuf {
 mod tests {
     use super::ENV_PASSTHROUGH;
     use super::*;
+
+    /// Quotes and backslashes are escaped, everything else is written as it
+    /// is, and HOME is left for the sandbox to set.
+    #[test]
+    fn env_file_escapes_quotes_and_backslashes() {
+        let env = vec![
+            ("HOME".to_string(), "/home/virtues".to_string()),
+            ("EXAMPLE_KEY".to_string(), r#"a "b" \c $d"#.to_string()),
+            ("MULTI".to_string(), "one\ntwo".to_string()),
+        ];
+        assert_eq!(
+            env_file_contents(&env),
+            "EXAMPLE_KEY=\"a \\\"b\\\" \\\\c $d\"\nMULTI=\"one\ntwo\"\n"
+        );
+    }
+
+    /// Files a killed server left behind are removed, folder and all, and a
+    /// folder that was never made is not an error.
+    #[test]
+    fn the_sweep_removes_every_leftover_run_file() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("applet-env");
+        assert_eq!(remove_run_files_in(&dir), 0);
+
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.env"), "EXAMPLE_KEY=\"sk-example\"\n").unwrap();
+        std::fs::write(dir.join("b.json"), r#"{"access_token":"example"}"#).unwrap();
+        std::fs::create_dir(dir.join("stray")).unwrap();
+        std::fs::write(dir.join("stray").join("c.env"), "").unwrap();
+
+        assert_eq!(remove_run_files_in(&dir), 3);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert!(dir.is_dir(), "the folder itself stays for the next run");
+    }
+
+    /// A sync gets its cursor back, and a manifest value beats a stale copy
+    /// the code returned last run.
+    #[test]
+    fn the_input_is_state_with_config_laid_over_it() {
+        let state = serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 60 } });
+        let config = serde_json::json!({ "limits": { "timeout_s": 600 } });
+        assert_eq!(
+            merge_config(state, &config),
+            serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 600 } })
+        );
+        assert_eq!(merge_config(serde_json::Value::Null, &config), config);
+    }
+
+    #[test]
+    fn a_missing_key_names_itself_and_where_to_add_it() {
+        let one = ["OPENAI_API_KEY".to_string()];
+        assert_eq!(missing_secrets_sentence(&one), "Add OPENAI_API_KEY in Settings, under Keys.");
+        let three = ["A_KEY".to_string(), "B_KEY".to_string(), "C_KEY".to_string()];
+        assert_eq!(
+            missing_secrets_sentence(&three),
+            "Add A_KEY, B_KEY and C_KEY in Settings, under Keys."
+        );
+    }
+
+    #[test]
+    fn the_box_names_are_reserved() {
+        for name in ["PATH", "DATABASE_URL", "VIRTUES_ENCRYPTION_KEY", "VIRTUES_API_KEY", "VIRTUES_APPLET_RUN_ID"] {
+            assert!(reserved_env_name(name), "{name} must be reserved");
+        }
+        assert!(!reserved_env_name("OPENAI_API_KEY"));
+    }
     use crate::server::yjs::YjsState;
 
-    async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {
+    /// An applet whose `run` SQL never finds a row, so every run but a
+    /// message is skipped.
+    async fn applet_that_finds_nothing(pool: &sqlx::PgPool, id: &str, triggers: &str) {
         sqlx::query(
-            "INSERT INTO app_applets (id, name, owner, command, condition, triggers, enabled) \
-             VALUES ($1, $1, 'user', '[\"echo\"]', 'FALSE', $2::jsonb, TRUE)",
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, enabled) \
+             VALUES ($1, $1, 'user', 'Say hello.', 'select 1 where false', $2::jsonb, TRUE)",
         )
         .bind(id)
         .bind(triggers)
@@ -1453,31 +1668,139 @@ mod tests {
             .unwrap()
     }
 
-    /// A condition gates POLLS. Someone who just pressed send is not a poll, and
-    /// a clock gate like `extract(hour from now()) < 8` would otherwise swallow
-    /// what they typed — silently, since a falsy condition records nothing.
-    /// Same shape as the catch-up × time-of-day trap, same answer as rate caps
-    /// exempting "Run now".
+    /// A `run` SQL that finds nothing records a skipped run and calls no
+    /// model; one with no prompt after it reports its rows as the run.
     #[sqlx::test]
-    async fn a_condition_does_not_swallow_a_message(pool: sqlx::PgPool) {
+    async fn run_sql_with_no_rows_skips_the_prompt(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, enabled) VALUES \
+             ('applet_quiet', 'Quiet', 'user', 'Say what happened.', 'select 1 where false', '[\"cron\",\"manual\"]', TRUE), \
+             ('applet_count', 'Count', 'user', NULL, 'select g from generate_series(1, 3) g', '[\"cron\",\"manual\"]', TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let quiet = run_applet(&deps, "applet_quiet", "cron", None).await.unwrap();
+        assert_eq!(quiet.status, AppletRunStatus::Skipped);
+        let (status, summary): (String, Option<String>) =
+            sqlx::query_as("SELECT status, result_summary FROM app_applet_runs WHERE applet_id = 'applet_quiet'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "skipped", "the skip is recorded, unlike a falsy condition");
+        assert!(summary.unwrap().contains("no rows"));
+        let calls: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_ai_calls c JOIN app_applet_runs r ON r.id = c.applet_run_id WHERE r.applet_id = 'applet_quiet'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(calls, 0, "no model call");
+
+        let count = run_applet(&deps, "applet_count", "manual", None).await.unwrap();
+        assert_eq!(count.status, AppletRunStatus::Success);
+        assert_eq!(count.summary, "3 rows.");
+    }
+
+    /// An applet with a data trigger, two of its rows waiting: `id` has
+    /// `run_sql` and `agent` as given.
+    async fn watching_applet(pool: &sqlx::PgPool, id: &str, agent: Option<&str>, run_sql: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, watch, watched_through) \
+             VALUES ($1, $1, 'user', $2, $3, '[\"manual\",\"data\"]', \
+                     '{\"table\":\"data_calendar_event\",\"kind\":\"new\",\"minutes\":0,\"label\":\"calendar events\"}', \
+                     now() - interval '10 minutes')",
+        )
+        .bind(id)
+        .bind(agent)
+        .bind(run_sql)
+        .execute(pool)
+        .await
+        .unwrap();
+        for (event, title) in [("ev_1", "Planning"), ("ev_2", "Review")] {
+            sqlx::query(
+                "INSERT INTO data_calendar_event (id, title, started_at, ended_at, source_stream_id, source_table, source_provider, created_at) \
+                 VALUES ($1 || $2, $3, now() + interval '1 day', now() + interval '1 day 1 hour', $1 || $2, 'stream_calendar', 'google', \
+                         now() - interval '5 minutes')",
+            )
+            .bind(id)
+            .bind(event)
+            .bind(title)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        crate::server::faces::ensure_applet_db_grants(pool).await.unwrap();
+    }
+
+    /// A data trigger's run reads the rows waiting for it as `new_rows`, and
+    /// takes them: the next poll-started run finds nothing and leaves no row.
+    #[sqlx::test]
+    async fn a_data_run_takes_the_rows_waiting_for_it_once(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        watching_applet(&pool, "applet_watch", None, Some("select title from new_rows where title <> 'Review'")).await;
+
+        let first = run_applet(&deps, "applet_watch", "data", None).await.unwrap();
+        assert_eq!((first.status, first.summary.as_str()), (AppletRunStatus::Success, "1 row."), "{:?}", first.error);
+        let again = run_applet(&deps, "applet_watch", "data", None).await.unwrap();
+        assert_eq!((again.status, again.run_id), (AppletRunStatus::Skipped, None));
+        assert_eq!(run_count(&pool, "applet_watch").await, 1);
+    }
+
+    /// The prompt is handed the rows that woke it as `new_rows`, whether or
+    /// not `run` returned them.
+    #[sqlx::test]
+    async fn the_prompt_reads_the_rows_that_woke_it(pool: sqlx::PgPool) {
+        watching_applet(&pool, "applet_said", Some("Say what is new."), Some("select 1")).await;
+        let applet = applets::get_applet(&pool, "applet_said").await.unwrap();
+        let batch = crate::scheduler::watch::claim(&pool, &applet).await.unwrap().unwrap();
+        let text = new_rows_for_prompt(&pool, &batch, None).await.unwrap();
+        assert!(text.starts_with("new_rows, the rows new in data_calendar_event"), "{text}");
+        assert!(text.contains("Planning") && text.contains("Review") && text.contains("2 rows."), "{text}");
+        let none = crate::scheduler::watch::Batch { range: None, ..batch };
+        assert!(new_rows_for_prompt(&pool, &none, None).await.unwrap().starts_with("new_rows is empty"));
+    }
+
+    /// When a poll's rows are gone by the time its run starts, the run
+    /// leaves no row and calls no model.
+    #[sqlx::test]
+    async fn a_data_run_whose_rows_are_gone_starts_nothing(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        watching_applet(&pool, "applet_gone", Some("Say what is new."), None).await;
+        sqlx::query("DELETE FROM data_calendar_event").execute(&pool).await.unwrap();
+
+        let r = run_applet(&deps, "applet_gone", "data", None).await.unwrap();
+        assert_eq!((r.status, r.run_id), (AppletRunStatus::Skipped, None));
+        assert_eq!(run_count(&pool, "applet_gone").await, 0);
+        let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM app_ai_calls").fetch_one(&pool).await.unwrap();
+        assert_eq!(calls, 0);
+    }
+
+    /// `run` SQL gates polls. Someone who just pressed send is not a poll, and
+    /// a clock gate like `extract(hour from now()) < 8` would otherwise skip
+    /// what they typed. Same shape as the catch-up × time-of-day trap, same
+    /// answer as rate caps exempting "Run now".
+    #[sqlx::test]
+    async fn run_sql_does_not_swallow_a_message(pool: sqlx::PgPool) {
         let deps = RunnerDeps {
             db: pool.clone(),
             yjs: YjsState::new(pool.clone()),
         };
-        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
+        applet_that_finds_nothing(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
 
-        // The cron wake is gated, and silently: no run row at all.
+        // The cron wake is skipped.
         let cron = run_applet(&deps, "applet_m", "cron", None).await.unwrap();
         assert_eq!(cron.status, AppletRunStatus::Skipped);
-        assert_eq!(run_count(&pool, "applet_m").await, 0, "a poll is gated silently");
 
-        // And so is "Run now". The condition guards whether the scheduled work
+        // And so is "Run now". The SQL guards whether the scheduled work
         // should happen — AGENTS.md's own cooldown idiom is
         // `NOT EXISTS (a successful run today)` — so a button press that
         // bypassed it would double-write the day's entry.
         let manual = run_applet(&deps, "applet_m", "manual", None).await.unwrap();
         assert_eq!(manual.status, AppletRunStatus::Skipped, "manual is not exempt");
-        assert_eq!(run_count(&pool, "applet_m").await, 0);
+        let before = run_count(&pool, "applet_m").await;
 
         // The message is not.
         let payload = serde_json::json!({ "message": "I had eggs" });
@@ -1485,14 +1808,80 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(msg.status, AppletRunStatus::Skipped, "the person was heard");
-        assert_eq!(run_count(&pool, "applet_m").await, 1);
+        assert_eq!(run_count(&pool, "applet_m").await, before + 1);
 
         let said: Option<String> =
-            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m'")
+            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m' AND trigger = 'message'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(said.as_deref(), Some("I had eggs"), "the words are on the run");
+    }
+
+    /// A shipped applet's code state survives reconcile. Reconcile replaces a
+    /// shipped applet's config with the manifest's, and while syncs kept
+    /// their cursors in config, every boot reset every cursor.
+    #[sqlx::test]
+    async fn a_shipped_applets_state_survives_a_reconcile(pool: sqlx::PgPool) {
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let set = sqlx::query(
+            "UPDATE app_applets SET state = '{\"cursor\": \"c-41\"}'::jsonb \
+             WHERE id = 'applet_embedding_index' AND owner = 'system'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(set.rows_affected(), 1, "the test needs a shipped code applet");
+
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let (state, config): (serde_json::Value, serde_json::Value) =
+            sqlx::query_as("SELECT state, config FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state, serde_json::json!({ "cursor": "c-41" }));
+        assert!(config.get("limits").is_some(), "config is still the manifest's: {config}");
+    }
+
+    /// The code's state comes back on the next run even after its config is
+    /// replaced, which is what reconcile does to a shipped applet on boot.
+    #[sqlx::test]
+    async fn a_cursor_survives_its_config_being_replaced(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        let script = "import json,sys; c=json.load(sys.stdin)['config']; \
+                      c['cursor']=c.get('cursor',0)+1; print(json.dumps({'result':'ok','config':c}))";
+        // A shipped row, so the command runs directly on every platform
+        // rather than in the Linux sandbox, which needs systemd.
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let id = "applet_embedding_index";
+        let set = sqlx::query(
+            "UPDATE app_applets SET command = $1::jsonb, triggers = '[\"manual\"]', enabled = TRUE WHERE id = $2",
+        )
+        .bind(serde_json::json!(["/usr/bin/python3", "-c", script]))
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("update");
+        assert_eq!(set.rows_affected(), 1);
+
+        for _ in 0..2 {
+            let run = run_applet(&deps, id, "manual", None).await.unwrap();
+            assert_eq!(run.status, AppletRunStatus::Success, "{run:?}");
+            sqlx::query("UPDATE app_applets SET config = '{\"limits\": {}}' WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let state: serde_json::Value =
+            sqlx::query_scalar("SELECT state FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state["cursor"], 2, "{state}");
     }
 
     /// `message` still has to be granted like any other trigger.
@@ -1502,7 +1891,7 @@ mod tests {
             db: pool.clone(),
             yjs: YjsState::new(pool.clone()),
         };
-        applet_with_falsy_condition(&pool, "applet_n", r#"["cron"]"#).await;
+        applet_that_finds_nothing(&pool, "applet_n", r#"["cron"]"#).await;
         let payload = serde_json::json!({ "message": "hello" });
         let r = run_applet(&deps, "applet_n", "message", Some(&payload))
             .await
@@ -1517,12 +1906,12 @@ mod tests {
     ) -> crate::agent::applet_runner::AgentLoopResult {
         crate::agent::applet_runner::AgentLoopResult {
             applet_id: "applet_x".into(),
-            chat_id: None,
             steps: 0,
             message: message.map(str::to_string),
             cost_micros: 0,
             budget_stopped: budget_stopped.map(str::to_string),
             error: error.map(str::to_string),
+            pages_written: 0,
         }
     }
 
@@ -1533,33 +1922,36 @@ mod tests {
     fn a_model_error_is_a_failed_run() {
         let r = loop_result(None, None, Some("no virtues_api key"));
         assert_eq!(
-            agent_outcome(r, Some("subprocess said hi".into())),
+            agent_outcome(r, Some("subprocess said hi".into()), false),
             AgentOutcome::Failed("no virtues_api key".into())
         );
 
         // Partial text before the error does not rescue it.
         let r = loop_result(Some("half a"), None, Some("stream reset"));
-        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("stream reset".into()));
+        assert_eq!(agent_outcome(r, None, false), AgentOutcome::Failed("stream reset".into()));
 
         // Nor does a ceiling stop: the error is why the work is missing.
         let r = loop_result(None, Some("ceiling"), Some("upstream 500"));
-        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("upstream 500".into()));
+        assert_eq!(agent_outcome(r, None, false), AgentOutcome::Failed("upstream 500".into()));
     }
 
     #[test]
     fn a_clean_finish_is_success_and_a_ceiling_is_neither() {
         assert_eq!(
-            agent_outcome(loop_result(Some("done"), None, None), Some("sub".into())),
+            agent_outcome(loop_result(Some("done"), None, None), Some("sub".into()), false),
             AgentOutcome::Success("done".into())
         );
         assert_eq!(
-            agent_outcome(loop_result(None, None, None), Some("sub".into())),
+            agent_outcome(loop_result(None, None, None), Some("sub".into()), false),
             AgentOutcome::Success("sub".into())
         );
         assert_eq!(
-            agent_outcome(loop_result(Some("x"), Some("ceiling"), None), None),
+            agent_outcome(loop_result(Some("x"), Some("ceiling"), None), None, false),
             AgentOutcome::BudgetExceeded("ceiling".into())
         );
+        // Nothing said and nothing made is quiet; rows written are something.
+        assert_eq!(agent_outcome(loop_result(Some("  "), None, None), None, false), AgentOutcome::Quiet);
+        assert_eq!(agent_outcome(loop_result(None, None, None), None, true), AgentOutcome::Success(String::new()));
     }
 
     /// The vault master key must never be granted by the blanket passthrough.

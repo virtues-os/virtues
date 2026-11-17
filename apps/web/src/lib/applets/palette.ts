@@ -9,7 +9,27 @@
  * repaired — the plan's card is the pulse, not a colour scheme.
  */
 
-import type { Applet } from '$lib/api/client';
+import type { Applet, AppletWatch } from '$lib/api/client';
+
+/** A data trigger in words: "On new workouts", "30 min before calendar events". */
+export function describeWatch(w: AppletWatch): string {
+	const offset = w.minutes % 60 === 0 ? `${w.minutes / 60}h` : `${w.minutes} min`;
+	switch (w.kind) {
+		case 'new':
+			return `On new ${w.label}`;
+		case 'before':
+			return `${offset} before ${w.label}`;
+		case 'after_end':
+			return `${offset} after ${w.label} end`;
+	}
+}
+
+/** When an applet starts on its own: its schedule, its data trigger, or both. */
+export function describeTriggers(a: Pick<Applet, 'schedule' | 'watch'>): string {
+	const parts = [a.schedule ? describeSchedule(a.schedule) : null, a.watch ? describeWatch(a.watch) : null];
+	const said = parts.filter((p): p is string => p !== null);
+	return said.length ? said.join(' · ') : 'On demand';
+}
 
 /**
  * Human-readable schedule label, e.g. "Daily at 7am" or "Every 15 min".

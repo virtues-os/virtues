@@ -71,12 +71,20 @@
 	// The CPU engine Virtues runs, on its usual port or (mid-move) the next one.
 	const isOwnEngine = (url: string) => /^http:\/\/127\.0\.0\.1:1818[13]$/.test(url);
 
+	// A server outside the owner's network isn't necessarily theirs, and it
+	// receives the text of everything the server indexes, so the page names it
+	// as what it is.
+	function otherServer(url: string): string {
+		if (status?.embed_locality === 'public') return `${host(url)}, outside your network`;
+		return `Your server at ${host(url)}`;
+	}
+
 	const runsOn = $derived.by(() => {
 		if (!status) return '';
 		// Going back to the recommended setup: search uses the owner's server
 		// until the new index is ready.
 		if (status.mode === 'bundled' && !isOwnEngine(status.embed_url)) {
-			return `Your server at ${host(status.embed_url)}`;
+			return otherServer(status.embed_url);
 		}
 		switch (status.mode) {
 			case 'dragon':
@@ -84,7 +92,7 @@
 			case 'bundled':
 				return "This server's CPU";
 			case 'manual':
-				return `Your server at ${host(status.embed_url)}`;
+				return otherServer(status.embed_url);
 			default:
 				return status.embed_url;
 		}
@@ -118,7 +126,20 @@
 
 		<dl class="ledger">
 			<dt>Runs on</dt>
-			<dd>{runsOn}</dd>
+			<dd>
+				{runsOn}
+				{#if status.embed_locality === 'public'}
+					<span class="note">
+						Your server sends this host the text of everything it indexes for search. Whoever runs
+						it can read that text.
+					</span>
+				{:else if status.embed_locality === 'unknown'}
+					<span class="note">
+						Your server couldn't look up {host(status.embed_url)}, so it can't tell whether this
+						host is on your network.
+					</span>
+				{/if}
+			</dd>
 
 			<dt>Model</dt>
 			<dd>

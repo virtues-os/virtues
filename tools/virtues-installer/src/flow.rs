@@ -28,7 +28,6 @@ pub struct Config {
     pub version: Option<String>,
     pub dry_run: bool,
     pub no_init: bool,
-    pub appliance: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
@@ -41,9 +40,9 @@ pub async fn run(cli: Config) -> Result<()> {
 
     // ─── Pre-flight ─────────────────────────────────────────────────────
     ui::section("Pre-flight");
-    let target = steps::detect()?;
+    let mut target = steps::detect()?;
     ui::ok(&format!("Linux {} · {} {}", target.arch, target.distro, target.distro_version));
-    preflight::run().await?;
+    preflight::run(&mut target).await?;
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
@@ -58,14 +57,16 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or your own server");
+        ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or an embedding server you run");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
+        ui::skip("  • Automatic security updates (apt systems)");
         ui::skip(&format!(
             "  • Inference sidecar (CPU only, llama-server): {}",
             cfg.embed_gguf
         ));
         ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
+        ui::skip("  • Firewall, when firewalld or ufw is on: 8000/tcp, mDNS, 51820/udp");
         ui::skip("  • System user 'virtues' + data dir + Postgres role/db/pgvector");
         ui::skip(&format!("  • Virtues binary → {}", cfg.binary_path().display()));
         ui::skip(&format!("  • Env file at {}", cfg.env_file_path().display()));
@@ -88,29 +89,13 @@ pub async fn run(cli: Config) -> Result<()> {
         ),
     };
 
-    // Decided before anything is written down or moved. Implied on our own
-    // board: a Dragon exists only to be Virtues, so there is nothing to ask.
-    // `--appliance` is for building an image on hardware the detector doesn't
-    // know yet.
-    let appliance = cli.appliance || matches!(inference, InferenceMode::Dragon);
-
     // ─── System packages ────────────────────────────────────────────────
     ui::section("System packages");
     install::ensure_utf8_locale().await?;
     install::install_deps(&target).await?;
+    install::enable_security_updates(&target).await?;
     install::configure_mdns().await?;
-
-    // Move the cluster onto the data disk BEFORE it holds anything.
-    //
-    // Ordering is the whole safety argument: right here the cluster is a fresh
-    // `initdb` with no Virtues database in it, so the copy is small and there
-    // is nothing to lose if it goes wrong. Run after `provision_db` and this
-    // would be relocating the owner's record. Everything downstream — the role,
-    // the database, `bringup`'s migrations — then lands on the data disk
-    // naturally, because it is simply where the cluster is by then.
-    if appliance {
-        install::relocate_postgres_to_data_dir(&cfg).await?;
-    }
+    let firewall = install::open_firewall().await?;
 
     install::create_user(&cfg).await?;
     install::provision_db().await?;
@@ -133,18 +118,10 @@ pub async fn run(cli: Config) -> Result<()> {
     // every path gets it, Dragon and DIY alike.
     install::install_pdfium(&cfg).await?;
 
-    // The manifest records the appliance decision and the box reads it back —
-    // `setup_ap::is_appliance()` used to re-derive it from whether a unit file
-    // happened to exist, which is a guess about a decision made up in `flow`.
-    install::write_install_manifest(&cfg, &inference, appliance)?;
+    install::write_install_manifest(&cfg, &inference, &firewall)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
-    install::install_systemd_unit(&cfg, appliance).await?;
-
-    if appliance {
-        ui::section("Appliance");
-        install::apply_appliance_profile(&cfg).await?;
-    }
+    install::install_systemd_unit(&cfg).await?;
 
     // Start the service so init's pair-token mint sees a running daemon.
     //
@@ -192,8 +169,13 @@ pub async fn run(cli: Config) -> Result<()> {
     // `init` to skip its banner and avoid showing it a second time. sudo resets
     // the environment (env_reset), so pass the var through an `env` prefix that
     // runs after the privilege drop rather than via Command::env (stripped).
+    // The binary goes by its full path: sudo searches only its `secure_path`,
+    // which leaves out /usr/local/bin on RHEL, Rocky and Alma.
+    let bin = cfg.binary_path();
     let err = StdCommand::new("sudo")
-        .args(["-u", "virtues", "env", "VIRTUES_NO_BANNER=1", "virtues", "init"])
+        .args(["-u", "virtues", "env", "VIRTUES_NO_BANNER=1"])
+        .arg(&bin)
+        .arg("init")
         .exec();
     // If we reach this line, exec failed.
     Err(anyhow::anyhow!("failed to exec `virtues init`: {err}"))

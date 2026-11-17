@@ -2,7 +2,6 @@
 members = [
     "virtues-core",
     "crates/virtues-helpers",
-    "crates/virtues-improv",
     "crates/virtues-iroh",
     "crates/virtues-door",
     "crates/virtues-iroh-ffi",
@@ -53,7 +52,7 @@ resolver = "2"
 # `v0.1.0-staging.N` tags sort BELOW `v0.1.0` exactly as semver intends, where
 # against 0.3.0 they read as ancient.
 #
-# Internal crates (reach-client, registry, improv, the Tauri plugins) keep their
+# Internal crates (reach-client, registry, the Tauri plugins) keep their
 # own 0.1.0 and are not part of this — they are unpublished libraries whose
 # numbers nobody reads. The Mac app is deliberately separate too: it is on its
 # own 1.0.x line under `mac-v*` tags, and an app version must never move
@@ -94,8 +93,17 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Debug info is half or more of every dev artifact (60% of iroh's rlib, a third
+# of plaid's), and the shared target keeps one copy per feature set, so full
+# debug info is most of its size. Line tables keep file:line in panics and
+# backtraces for our crates; dependencies keep only symbol names. `test`
+# inherits both.
 [profile.dev]
 opt-level = 0
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 [profile.test]
 opt-level = 0

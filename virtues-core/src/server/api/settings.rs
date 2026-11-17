@@ -1,5 +1,6 @@
 //! Owner and box settings: profile, assistant profile, models, streams,
-//! billing, updates, and the places and Unsplash proxies.
+//! billing, keys, saved passwords, updates, and the places and Unsplash
+//! proxies.
 
 use axum::{
     extract::{Path, Query, State},
@@ -20,11 +21,26 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // ─── Billing settings (BYO key) ───────────────────────────────
         // BYO routes inference around virtues-api entirely: box calls
-        // upstream directly. Save/delete are sudo-gated (change_byo_key);
-        // status is a non-secret read for the Billing page.
+        // upstream directly. Save and delete need the app's owner proof
+        // (api/owner_proof.rs); status is a non-secret read for the Billing
+        // page.
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Keys ─────────────────────────────────────────────────────
+        // Names only, except `value`, which Settings calls when the owner
+        // asks to see one, with the app's owner proof. No tool calls these
+        // (api/keys.rs).
+        .route("/api/keys", get(keys_overview_handler))
+        .route("/api/keys/:name", put(set_key_handler).delete(delete_key_handler))
+        .route("/api/keys/:name/value", get(reveal_key_handler))
+        // ─── Passwords (Drive) ────────────────────────────────────────
+        // Saved logins. The list carries no passwords; `secret` is what the
+        // page calls when the owner opens one, with the app's owner proof.
+        // No tool calls these (api/passwords.rs).
+        .route("/api/passwords", get(list_passwords_handler).post(create_password_handler))
+        .route("/api/passwords/:id", put(update_password_handler).delete(delete_password_handler))
+        .route("/api/passwords/:id/secret", get(reveal_password_handler))
         // ─── Web bundle (the box IS the update server) ────────────────
         // What UI build this box serves, and the build itself. A client can
         // be AHEAD of its box: an app update bakes newer UI, and the client
@@ -107,13 +123,6 @@ pub fn routes() -> Router<AppState> {
             "/api/system/history",
             get(crate::api::system_telemetry::history_handler),
         )
-        // Box network management (Settings → Box → Network) — the authed
-        // successors to the setup-phase /api/provision/* surface, which
-        // correctly evaporates at claim time, so a box on a captive guest
-        // network still has a way to leave. See api/network.rs.
-        .route("/api/network/status", get(crate::api::network::status_handler))
-        .route("/api/network/scan",   get(crate::api::network::scan_handler))
-        .route("/api/network/join",   post(crate::api::network::join_handler))
         // The rendezvous, named and switchable (agents/record/open-relay.md).
         .route(
             "/api/network/relay",
@@ -132,27 +141,6 @@ pub fn routes() -> Router<AppState> {
             "/api/system/update/apply",
             post(apply_update_handler),
         )
-        // The box's attached screen (Settings → Display). Deliberately NOT in
-        // the loopback-only /api/display/* family: that module's uniform
-        // box-local rule is its security argument, and these are the paired
-        // device's side of the glass — panel facts, the ambient face choice,
-        // and the restart verb. Nothing here carries the setup phrase.
-        .route(
-            "/api/system/display",
-            get(crate::api::system_display::get_display_settings_handler),
-        )
-        .route(
-            "/api/system/display/face",
-            put(crate::api::system_display::set_display_face_handler),
-        )
-        .route(
-            "/api/system/display/hours",
-            put(crate::api::system_display::set_display_hours_handler),
-        )
-        .route(
-            "/api/system/display/restart",
-            post(crate::api::system_display::restart_display_handler),
-        )
 }
 
 
@@ -163,6 +151,103 @@ pub fn routes() -> Router<AppState> {
 /// Get user profile
 pub async fn get_profile_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::profile::get_profile(state.db.pool()).await)
+}
+
+/// GET /api/keys — sign-ins and named keys, by name.
+pub async fn keys_overview_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::keys::overview(state.db.pool()).await)
+}
+
+#[derive(Deserialize)]
+pub struct SetKeyBody {
+    value: String,
+}
+
+/// PUT /api/keys/:name — add or replace a key's value.
+pub async fn set_key_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetKeyBody>,
+) -> Response {
+    match crate::api::keys::set_key(state.db.pool(), &name, &body.value).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/keys/:name
+pub async fn delete_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match crate::api::keys::delete_key(state.db.pool(), &name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/keys/:name/value — the value, when the owner asks to see it.
+/// Needs the app's owner proof, so a direct request from another process on
+/// the owner's Mac, through the app's loopback port, cannot read it. Each reveal is a `key_revealed` row in
+/// the auth log (`api::audit`).
+pub async fn reveal_key_handler(
+    State(state): State<AppState>,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
+    Path(name): Path<String>,
+) -> Response {
+    match crate::api::keys::reveal_key(state.db.pool(), &name).await {
+        Ok(value) => {
+            let detail = serde_json::json!({ "name": &name });
+            crate::api::audit::record(state.db.pool(), Some(&user.device_id), "key_revealed", detail, None, None)
+                .await;
+            Json(serde_json::json!({ "value": value })).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/passwords — saved logins, without passwords.
+pub async fn list_passwords_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::passwords::list(state.db.pool()).await)
+}
+
+/// POST /api/passwords — save a login.
+pub async fn create_password_handler(
+    State(state): State<AppState>,
+    Json(body): Json<crate::api::passwords::LoginInput>,
+) -> Response {
+    api_response(crate::api::passwords::create(state.db.pool(), body).await)
+}
+
+/// PUT /api/passwords/:id — edit a login.
+pub async fn update_password_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<crate::api::passwords::LoginInput>,
+) -> Response {
+    api_response(crate::api::passwords::update(state.db.pool(), &id, body).await)
+}
+
+/// DELETE /api/passwords/:id
+pub async fn delete_password_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match crate::api::passwords::delete(state.db.pool(), &id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/passwords/:id/secret — the password and notes, when the owner
+/// opens a login. Needs the app's owner proof and writes a
+/// `password_revealed` row, like a key's value.
+pub async fn reveal_password_handler(
+    State(state): State<AppState>,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
+    Path(id): Path<String>,
+) -> Response {
+    let revealed = crate::api::passwords::reveal(state.db.pool(), &id).await;
+    if revealed.is_ok() {
+        let detail = serde_json::json!({ "login_id": &id });
+        crate::api::audit::record(state.db.pool(), Some(&user.device_id), "password_revealed", detail, None, None)
+            .await;
+    }
+    api_response(revealed)
 }
 
 /// Update user profile

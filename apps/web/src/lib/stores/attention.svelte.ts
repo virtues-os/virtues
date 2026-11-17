@@ -1,11 +1,11 @@
 /**
- * What needs the owner, from `GET /api/attention`: the inbox behind the ∴
- * mark in the window header.
+ * What needs the owner, from `GET /api/attention`: the list home's notes
+ * line reads (HomeNotes).
  *
  * Every item is a condition the server observes (a stream stopped, the
  * backup is missing). It stays while the condition holds and goes when the
- * server sees it fixed, so nothing here is read or dismissed: the list is
- * simply re-read.
+ * server sees it fixed, so nothing here is dismissed: the list is simply
+ * re-read.
  */
 import { getAttention, type AttentionItem } from '$lib/api/client';
 

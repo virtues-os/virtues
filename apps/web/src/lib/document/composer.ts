@@ -14,8 +14,8 @@
  * (Ctrl+Enter) sends from anywhere. In a code block Enter and Shift+Enter
  * are new lines, Tab indents and Shift+Tab takes the indent back; Enter on a
  * line of three backticks opens one. Elsewhere Tab nests a list item and
- * otherwise moves focus, and Shift+Tab cycles the chat's mode (outdenting a
- * nested item first). `@` opens the ref picker, and `/` at the very start
+ * otherwise moves focus, and Shift+Tab outdents a nested item or moves focus
+ * back. `@` opens the ref picker, and `/` at the very start
  * of the message opens the skills menu.
  */
 
@@ -69,8 +69,6 @@ export interface ComposerOptions {
 	onAttach?: (files: File[]) => void;
 	/** Escape with nothing else to close. Return true if handled. */
 	onEscape?: () => boolean;
-	/** Shift+Tab outside a code block and a nested list item: cycle the chat's mode. */
-	onShiftTab?: () => void;
 	/** `@` typed at the start of a word: open the ref picker with what follows it. */
 	onMentionOpen?: (query: string) => void;
 	/** The text typed after the `@` changed. */
@@ -437,9 +435,7 @@ export function createComposer(o: ComposerOptions): Composer {
 					let lists = 0;
 					for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === 'listItem') lists++;
 					if (lists > 1) return editor.commands.liftListItem('listItem');
-					if (!o.onShiftTab) return false;
-					o.onShiftTab();
-					return true;
+					return false;
 				},
 				Escape: () => {
 					if (o.onEscape?.()) return true;

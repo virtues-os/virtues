@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
-	 * A project's header: its mark and color, its name, its brief, the way
-	 * into a new chat, and the project's own verbs. Always live, no edit mode.
+	 * A project's header: its mark and color, its name, its brief, the thing
+	 * it sits under, the way into a new chat, and the project's own verbs.
+	 * Always live, no edit mode.
 	 *
 	 * The subtitle is the *brief* (`instructions`): a standing direction the
 	 * assistant follows in every chat in this project. No auto-generated
@@ -14,18 +15,22 @@
 	import IconPicker from '$lib/components/IconPicker.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { Button, IconButton } from '$lib';
 	import { Popover } from '$lib/floating';
 	import { projectStore } from '$lib/stores/project.svelte';
+	import { thingsStore } from '$lib/stores/things.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import {
-		archiveProject,
+		changeOutcome,
 		deleteProject,
+		endProject,
 		newChatInProject,
 		openProjects,
-		unarchiveProject
+		reopenProject
 	} from '$lib/utils/projectActions';
+	import { toast } from 'svelte-sonner';
 
 	let { project }: { project: ProjectDetail } = $props();
 
@@ -72,10 +77,22 @@
 		await projectStore.update(project.id, { accent_color: color });
 	}
 
-	// Reversible, so no confirm. The project stays open in this tab, marked.
-	async function toggleArchive() {
-		if (project.archived_at) await unarchiveProject(project);
-		else await archiveProject(project);
+	// Finishing, dropping and reopening are reversible, so none of them asks
+	// first. The project stays open in this tab, marked.
+	const dropped = $derived(project.outcome === 'dropped');
+
+	let thingOpen = $state(false);
+
+	/** Put the project under a thing, or take it out from under one. */
+	async function setThing(thing_id: string | null) {
+		if (thing_id === (project.thing_id ?? null)) return;
+		try {
+			await projectStore.update(project.id, { thing_id });
+		} catch (e) {
+			toast.error("Your server couldn't move that project", {
+				description: e instanceof Error ? e.message : 'Nothing changed. Try again',
+			});
+		}
 	}
 
 	// No confirm: a trip to Recently deleted, with the Undo in the toast. The
@@ -146,16 +163,59 @@
 					}
 				}}
 			></textarea>
+			<div class="head-facts">
+				<Popover bind:open={thingOpen} placement="bottom-start">
+					{#snippet trigger({ toggle }: { toggle: () => void })}
+						<TextAction
+							quiet
+							title="A thing goes on and can't be finished, like a garden or a bike. A project can sit under one."
+							onclick={() => {
+								thingsStore.ensure();
+								toggle();
+							}}
+						>
+							{project.thing_title ? `Under ${project.thing_title}` : 'On its own'}
+						</TextAction>
+					{/snippet}
+					{#snippet children({ close }: { close: () => void })}
+						<div class="menu" role="menu" aria-label="The thing this project sits under">
+							<MenuItem
+								role="menuitemradio"
+								checked={!project.thing_id}
+								label="On its own"
+								onclick={() => {
+									close();
+									setThing(null);
+								}}
+							/>
+							{#each thingsStore.things as t (t.id)}
+								<MenuItem
+									role="menuitemradio"
+									checked={project.thing_id === t.id}
+									label={t.title}
+									onclick={() => {
+										close();
+										setThing(t.id);
+									}}
+								/>
+							{/each}
+							{#if thingsStore.loaded && thingsStore.things.length === 0}
+								<p class="menu-note">Name a thing in your wiki to put this project under it.</p>
+							{/if}
+						</div>
+					{/snippet}
+				</Popover>
+			</div>
 		</div>
 
 		<div class="head-actions">
-			<Button variant="secondary" size="sm" icon="ri:chat-new-line" onclick={() => newChatInProject(project)}
+			<Button variant="secondary" size="sm" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
 				>New chat</Button
 			>
 			<Popover bind:open={overflowOpen} placement="bottom-end">
 				{#snippet trigger({ toggle }: { toggle: () => void })}
 					<IconButton
-						icon="ri:more-line"
+						icon="mynaui:dots"
 						label="More project actions"
 						expanded={overflowOpen}
 						haspopup="menu"
@@ -164,16 +224,43 @@
 				{/snippet}
 				{#snippet children({ close }: { close: () => void })}
 					<div class="menu">
+						{#if project.archived_at}
+							<MenuItem
+								icon="mynaui:undo"
+								label="Reopen project"
+								onclick={() => {
+									close();
+									reopenProject(project);
+								}}
+							/>
+							<MenuItem
+								icon={dropped ? 'mynaui:check-circle' : 'mynaui:x-circle'}
+								label={dropped ? 'Mark as finished' : 'Mark as dropped'}
+								onclick={() => {
+									close();
+									changeOutcome(project, dropped ? 'finished' : 'dropped');
+								}}
+							/>
+						{:else}
+							<MenuItem
+								icon="mynaui:check-circle"
+								label="Finish project"
+								onclick={() => {
+									close();
+									endProject(project, 'finished');
+								}}
+							/>
+							<MenuItem
+								icon="mynaui:x-circle"
+								label="Drop project"
+								onclick={() => {
+									close();
+									endProject(project, 'dropped');
+								}}
+							/>
+						{/if}
 						<MenuItem
-							icon={project.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
-							label={project.archived_at ? 'Unarchive project' : 'Archive project'}
-							onclick={() => {
-								close();
-								toggleArchive();
-							}}
-						/>
-						<MenuItem
-							icon="ri:delete-bin-line"
+							icon="mynaui:trash"
 							label="Delete project"
 							destructive
 							onclick={() => {
@@ -189,15 +276,15 @@
 </header>
 
 {#if project.archived_at}
-	<!-- Archived is a state of the whole page, so it is said once, above
-	     the content, with the way back beside it. -->
-	<div class="archived-note">
-		<Icon icon="ri:archive-line" width="15" />
+	<!-- Ended is a state of the whole page, so it is said once, above the
+	     content, with the way back beside it. -->
+	<div class="ended-note">
+		<Icon icon={dropped ? 'mynaui:x-circle' : 'mynaui:check-circle'} width="15" />
 		<span>
-			You archived this project on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
-			Its chats and items are all here. Unarchive it to add more.
+			You {dropped ? 'dropped' : 'finished'} this project on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+			Its chats and items are all here. Reopen it to add more.
 		</span>
-		<Button variant="secondary" size="sm" onclick={toggleArchive}>Unarchive</Button>
+		<Button variant="secondary" size="sm" onclick={() => reopenProject(project)}>Reopen</Button>
 	</div>
 {/if}
 
@@ -240,16 +327,22 @@
 	.desc-input:focus { color: var(--color-foreground); }
 	.title-input::placeholder, .desc-input::placeholder { color: var(--color-foreground-subtle); }
 
-	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
+	.head-facts { margin-top: 0.5rem; }
 
-	.archived-note {
+	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
+	.menu-note {
+		margin: 0; padding: 8px; max-width: 220px;
+		font-size: 0.8125rem; line-height: 1.45; color: var(--color-foreground-muted);
+	}
+
+	.ended-note {
 		display: flex; align-items: center; gap: 10px;
 		padding: 10px 12px; border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.85rem; line-height: 1.45; color: var(--color-foreground-muted);
 	}
-	.archived-note > :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
-	.archived-note > span { flex: 1; min-width: 0; }
+	.ended-note > :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
+	.ended-note > span { flex: 1; min-width: 0; }
 
 	/* A phone's width can't hold the icon, the text and the actions in one
 	   row: the text column collapsed to a letter wide. The actions take their

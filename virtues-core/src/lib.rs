@@ -2,7 +2,6 @@
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
-pub mod applet_git_import;
 pub mod applet_runner;
 pub mod applet_templates;
 pub mod agent;
@@ -11,6 +10,7 @@ pub mod api_version;
 pub mod cli;
 pub mod client;
 pub mod codename;
+pub mod console_socket;
 mod version_shape;
 pub mod credentials;
 pub mod crypto;
@@ -18,6 +18,7 @@ pub mod data_disk;
 pub mod database;
 pub mod dayline;
 pub mod door;
+pub mod egress;
 pub mod entity_resolution;
 pub mod error;
 pub mod extraction;
@@ -36,14 +37,16 @@ pub mod bookmark_media;
 pub mod browse;
 pub mod browser;
 pub mod box_env;
-pub mod box_secrets;
+pub mod box_files;
 pub mod net_check;
 pub mod observe;
 pub mod outbox;
 pub mod peer_addr;
 pub mod relay;
+pub mod sandbox;
 pub mod scheduler;
 pub mod search;
+pub mod secrets;
 pub mod seeding;
 pub mod sessionize;
 pub mod server;
@@ -66,16 +69,6 @@ pub use scheduler::Scheduler;
 
 // Re-export tools
 pub use tools::{get_tool_definitions_for_llm, ToolContext, ToolError, ToolExecutor, ToolResult};
-
-// Re-export library API functions
-pub use api::{
-    // Credential management (post-Phase-6: pair flows live in source_auth.rs)
-    check_pairing_status,
-    list_pending_pairings,
-    DeviceInfo,
-    PairingStatus,
-    PendingPairing,
-};
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

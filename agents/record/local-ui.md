@@ -56,14 +56,16 @@ shell, and the offline document cache (y-indexeddb) rebuilds from the box.
 
 ### Updates
 
-Both apps pull the box's web build (`/api/web-bundle/version`, `/tarball`),
-forward only, and refuse a bundle that needs a newer shell. A staged bundle
+Both apps pull the box's web build (`/api/web-bundle/version`, `/tarball`)
+whenever it differs from the one running, and refuse a bundle that needs a
+newer shell. Versions are not compared; the box's bundle wins. A staged bundle
 applies by reloading the page while the window is hidden, on both platforms,
 because "next launch" never happens on a Mac. With in-process reloads the
 booted bundle can no longer be captured once per process (`capture_booted`
 was a `OnceLock`), so the resolver records which bundle served each top-level
-load and `bundle_boot_ok` confirms that one. A Mac release with a newer bake
-overtakes an older overlay (`drop_stale_overlay`).
+load and `bundle_boot_ok` confirms that one. A `dev`-stamped build takes no
+box bundle and stops serving any overlay at startup
+(`drop_overlay_for_dev_build`).
 
 ### Versions
 

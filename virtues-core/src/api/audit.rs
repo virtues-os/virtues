@@ -1,8 +1,9 @@
-//! Auth activity log — surfaced at `/settings/activity`.
+//! Auth activity log, served at `GET /api/audit/auth`.
 //!
-//! Append-only log of auth-shaped events: pairings, revocations, session
-//! starts/ends, sudo requests + approvals/denials. The web UI lists these so
-//! the user can spot anything that doesn't match their own actions.
+//! Append-only log of auth-shaped events: pairings, enrollments,
+//! revocations, pair codes, AI key changes, and each password or key a device
+//! revealed. [`record`] is the one way to write it. No page lists it today;
+//! the route is the one way to read it.
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use chrono::{DateTime, Utc};
@@ -11,6 +12,36 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::middleware::auth::AuthUser;
+use crate::middleware::OWNER_USER_ID;
+
+/// Append one event to `app_auth_event`. `device_id` is the device the
+/// event is about. The action has already happened when this runs, so a
+/// failed write is logged and never fails the caller's request.
+pub async fn record(
+    pool: &PgPool,
+    device_id: Option<&str>,
+    event_type: &str,
+    detail: Value,
+    ip: Option<String>,
+    user_agent: Option<String>,
+) {
+    if let Err(e) = sqlx::query(
+        "INSERT INTO app_auth_event \
+         (user_id, device_id, event_type, detail, ip, user_agent) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(OWNER_USER_ID)
+    .bind(device_id)
+    .bind(event_type)
+    .bind(&detail)
+    .bind(ip)
+    .bind(user_agent)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(event_type, error = %e, "auth event not written");
+    }
+}
 
 /// Hard cap on a single page. The UI can request fewer; more requires an
 /// older-than cursor (added later if/when needed).

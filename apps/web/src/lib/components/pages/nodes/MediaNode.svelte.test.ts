@@ -47,8 +47,8 @@ vi.mock('$lib/api/client', () => {
 		UploadError,
 	};
 });
-vi.mock('$lib/utils/refRoutes', () => ({ fileIcon: () => 'ri:file-line' }));
-vi.mock('$lib/document/links', () => ({ shareableHref: (src: string) => src }));
+vi.mock('$lib/utils/refRoutes', () => ({ fileIcon: () => 'mynaui:file' }));
+vi.mock('$lib/document/share', () => ({ shareableHref: (src: string) => src }));
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show() {} } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show() {} } }));
 vi.mock('$lib/components/contextMenu/gesture', () => ({ onContextGesture() {} }));

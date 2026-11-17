@@ -7,14 +7,15 @@
 import {
 	openFullDiskAccess,
 	openAccessibilitySettings,
-	type CollectorStatus
+	type CollectorStatus,
+	type PaneOpened
 } from '$lib/tauri/bridge';
 import { confirmAction } from '$lib/stores/dialog.svelte';
 import { isTauri } from '$lib/utils/platform';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { toast } from 'svelte-sonner';
 
-export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli';
+export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli' | 'agent';
 
 export type DevicePermissions = {
 	full_disk_access?: boolean;
@@ -86,19 +87,23 @@ export function kindLabel(k: DeviceKind): string {
 			return 'Sensor';
 		case 'cli':
 			return 'CLI';
+		case 'agent':
+			return 'Agent';
 	}
 }
 
 export function kindIcon(k: DeviceKind): string {
 	switch (k) {
 		case 'mobile_app':
-			return 'ri:smartphone-line';
+			return 'mynaui:mobile';
 		case 'desktop_app':
-			return 'ri:macbook-line';
+			return 'mynaui:desktop';
 		case 'sensor':
-			return 'ri:cpu-line';
+			return 'mynaui:chip';
 		case 'cli':
-			return 'ri:terminal-line';
+			return 'mynaui:terminal';
+		case 'agent':
+			return 'mynaui:chip';
 	}
 }
 
@@ -118,9 +123,11 @@ export type PermissionCopy = {
 	costs: string;
 	/** What to do once the pane is open, in System Settings' own words. */
 	fix?: string;
+	/** The same, for a shell that shows the drag tile on System Settings. */
+	dragFix?: string;
 	/** Which pane `open` goes to, for its button: "Open Full Disk Access". */
 	pane?: string;
-	open?: () => Promise<boolean>;
+	open?: () => Promise<PaneOpened>;
 };
 
 /**
@@ -133,12 +140,14 @@ export const COLLECTOR_LIST_NAME = 'virtues-collector';
 export const COLLECTOR_BINARY_PATH = '~/.virtues/bin/virtues-collector';
 
 const FULL_DISK_ACCESS_FIX = `Turn on ${COLLECTOR_LIST_NAME} in the list. Not listed? Click + and add ${COLLECTOR_BINARY_PATH}.`;
+const DRAG_FIX = `System Settings opens with ${COLLECTOR_LIST_NAME} ready to drag into the list. macOS asks for Touch ID or your password to add it.`;
 
 export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	full_disk_access: {
 		label: 'Full Disk Access',
 		costs: "your Mac can't read Messages or Safari history",
 		fix: FULL_DISK_ACCESS_FIX,
+		dragFix: DRAG_FIX,
 		pane: 'Full Disk Access',
 		open: openFullDiskAccess
 	},
@@ -149,6 +158,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		label: 'Safari history',
 		costs: "your Mac can't read Safari history or bookmarks",
 		fix: FULL_DISK_ACCESS_FIX,
+		dragFix: DRAG_FIX,
 		pane: 'Full Disk Access',
 		open: openFullDiskAccess
 	},
@@ -156,6 +166,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		label: 'Accessibility',
 		costs: 'your Mac records app events without window titles',
 		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
+		dragFix: DRAG_FIX,
 		pane: 'Accessibility',
 		open: openAccessibilitySettings
 	},
@@ -351,9 +362,9 @@ export function returnToPairing(): void {
  * both offer it and the 409 below is the part worth never getting wrong.
  *
  * 409 is the box refusing to strand you: revoking your last active device
- * leaves nothing that can reach it, and the only way back in is physical. It
- * needs `virtues sudo` ON the box, so the message names that rather than
- * pretending the click merely failed.
+ * leaves nothing that can reach it, and the only way back in is physical. The
+ * message says how to get past it rather than pretending the click merely
+ * failed.
  *
  * Returns true when a device other than the current one was revoked, so the
  * caller can refresh or navigate. Revoking the current device never returns —
@@ -373,9 +384,8 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 	try {
 		const resp = await fetch(`/api/devices/${device.id}`, { method: 'DELETE' });
 		if (resp.status === 409) {
-			toast.error('Cannot revoke the only active device', {
-				description:
-					'Run `virtues sudo` on your server to confirm before deleting your last paired device.'
+			toast.error("You can't revoke your only paired device", {
+				description: 'Pair another device first, then revoke this one.'
 			});
 			return false;
 		}

@@ -123,14 +123,14 @@
 		{
 			key: 'timestamp',
 			label: 'When',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '7.5rem',
 			getValue: (item) => formatWhen(item.timestamp),
 		},
 		{
 			key: 'source_type',
 			label: 'Ontology',
-			icon: 'ri:database-2-line',
+			icon: 'mynaui:database',
 			width: '10rem',
 			getValue: (item) => getOntologyName(item.source_type),
 			sortable: false,
@@ -138,7 +138,7 @@
 		{
 			key: 'role',
 			label: 'Role',
-			icon: 'ri:user-shared-line',
+			icon: 'mynaui:users',
 			width: '6.5rem',
 			hideOnMobile: true,
 			getValue: (item) => item.role ?? '—',
@@ -147,13 +147,13 @@
 		{
 			key: 'label',
 			label: 'Description',
-			icon: 'ri:file-text-line',
+			icon: 'mynaui:file-text',
 			sortable: false,
 		},
 		{
 			key: 'preview',
 			label: 'Detail',
-			icon: 'ri:information-line',
+			icon: 'mynaui:info-circle',
 			hideOnMobile: true,
 			sortable: false,
 		},
@@ -185,7 +185,7 @@
 			server={fetchPage}
 			{serverExtra}
 			pageSize={10}
-			emptyIcon="ri:database-2-line"
+			emptyIcon="mynaui:database"
 			emptyMessage="Nothing in your data mentions this yet"
 			loadingMessage="Reading the record..."
 			searchPlaceholder="Filter records..."

@@ -29,6 +29,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::bearer_auth::{key_hash, resolve_box_key, BearerError};
+use crate::blocklist::Blocklist;
+use crate::entitlement;
 use crate::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -132,8 +135,8 @@ fn exchange_secret() -> Result<String, String> {
 /// and no wider.
 ///
 /// Private IPv4/IPv6 is in the list because the box hands those out itself:
-/// `qr_pair_url` puts the raw LAN IP in the onboarding QR on purpose (phones
-/// fumble mDNS), and `virtues link` prints it as the `.local` fallback. Without
+/// the pair QR carries the raw LAN IP on purpose (phones fumble mDNS), and
+/// `virtues link` prints it as the `.local` fallback. Without
 /// this, every OAuth connect from a phone that scanned the QR fails with a 400
 /// raised on a host the box operator cannot see.
 ///
@@ -704,18 +707,29 @@ async fn consume_exchange(db: &sqlx::PgPool, sig: &str) -> Result<bool, sqlx::Er
     Ok(n == 1)
 }
 
-/// The caller's box key, if it sent one. Nothing is enforced on it yet: this
-/// header ships in the next box release, and boxes update only when their
-/// owner types `virtues upgrade`, so requiring it today would break every
-/// box that has not. The log line is how we learn when the fleet has moved —
-/// flip `/refresh` to required first (worst exposure, one known caller), then
-/// the rest.
+/// The caller's box key, if it sent one. Every box release since v0.1.1 sends
+/// it on `/exchange` and `/refresh`. `/refresh` requires it
+/// ([`check_caller_key`]); `/exchange` does not check it yet, and the browser
+/// routes (`/start`, `/callback`) cannot carry it.
 fn caller_api_key(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-virtues-api-key")
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+/// Whether the caller sent a box key we issued. Only the key matters, not
+/// the wallet: an owner who never paid, or whose subscription lapsed, keeps
+/// their sources syncing. The error names no account, so nothing downstream
+/// can log one.
+async fn check_caller_key(
+    db: &sqlx::PgPool,
+    blocklist: &Blocklist,
+    headers: &HeaderMap,
+) -> Result<(), BearerError> {
+    let key = caller_api_key(headers).ok_or(BearerError::MissingHeader)?;
+    resolve_box_key(db, blocklist, &key).await.map(|_| ())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1286,13 +1300,9 @@ fn plaid_session_lost_page() -> axum::response::Response {
 async fn exchange(
     State(state): State<Arc<AppState>>,
     Path((provider, token)): Path<(String, String)>,
-    headers: HeaderMap,
 ) -> axum::response::Response {
     if provider_cfg(&provider).is_none() {
         return err(StatusCode::NOT_FOUND, "unknown provider");
-    }
-    if caller_api_key(&headers).is_none() {
-        tracing::info!(provider = %provider, "oauth exchange without box key (pre-upgrade box)");
     }
     let secret = match exchange_secret() {
         Ok(s) => s,
@@ -1300,7 +1310,10 @@ async fn exchange(
     };
     let claims = match virtues_helpers::crypto::verify_exchange_token(&secret, &token, &provider) {
         Ok(c) => c,
-        Err(e) => return err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}")),
+        Err(e) => {
+            tracing::warn!(provider = %provider, code = "invalid_exchange_token", "oauth exchange refused");
+            return err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}"));
+        }
     };
     // Signature verified; now spend it. The HMAC alone made a token
     // *unforgeable*; this makes it *single-use* — the five-minute window was
@@ -1308,7 +1321,10 @@ async fn exchange(
     let sig = token.rsplit('.').next().unwrap_or_default();
     match consume_exchange(&state.db, sig).await {
         Ok(true) => {}
-        Ok(false) => return err(StatusCode::BAD_REQUEST, "exchange_token already used or unknown"),
+        Ok(false) => {
+            tracing::warn!(provider = %provider, code = "spent_exchange_token", "oauth exchange refused");
+            return err(StatusCode::BAD_REQUEST, "exchange_token already used or unknown");
+        }
         Err(e) => {
             tracing::error!(error = %e, "oauth exchange consume failed");
             return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
@@ -1339,18 +1355,31 @@ async fn refresh(
     Json(body): Json<RefreshBody>,
 ) -> axum::response::Response {
     let Some(cfg) = provider_cfg(&provider) else {
-        return err(StatusCode::NOT_FOUND, "unknown provider");
+        return refresh_err(StatusCode::NOT_FOUND, "unknown_provider", "unknown provider");
     };
-    // This is the door to flip to required FIRST. Unauthenticated, it performs
-    // the refresh grant with OUR client_secret for anyone holding a refresh
-    // token — the secret is exactly what is supposed to make a stolen refresh
-    // token useless to a third party. Its only legitimate caller is the box's
-    // credential-refresh cron, which sends the key from the next release on.
-    if caller_api_key(&headers).is_none() {
-        tracing::info!(provider = %provider, "oauth refresh without box key (pre-upgrade box)");
+    // This route runs the refresh grant with our client_secret, and the secret
+    // is what makes a stolen refresh token useless to anyone else. So it
+    // serves only a linked box. Every box release since v0.1.1 sends its key
+    // here. A released box reads any 4xx here as a refused grant and asks its
+    // owner to reconnect, which does not help an unlinked box; a box that
+    // reads `code` sees `missing_key` or `unknown_key` and does not ask.
+    // The refusal is logged without the account: failed authentication is
+    // logged, ordinary use is not.
+    match check_caller_key(&state.db, &state.blocklist, &headers).await {
+        Ok(()) => {}
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(provider = %provider, error = %e, "oauth refresh key lookup failed");
+            return refresh_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
+        Err(refused) => {
+            use virtues_helpers::error::StructuredError;
+            tracing::warn!(provider = %provider, code = refused.code(), "oauth refresh refused");
+            let status = StatusCode::from_u16(refused.status()).unwrap_or(StatusCode::UNAUTHORIZED);
+            return refresh_err(status, refused.code(), &refused.message());
+        }
     }
     let Some(refresh_token) = body.refresh_token.filter(|s| !s.is_empty()) else {
-        return err(StatusCode::BAD_REQUEST, "missing refresh_token");
+        return refresh_err(StatusCode::BAD_REQUEST, "missing_refresh_token", "missing refresh_token");
     };
 
     // Notion + Plaid tokens are permanent — echo back in the canonical shape so
@@ -1375,16 +1404,16 @@ async fn refresh(
     let v = match send_form(state.http_client.post(&cfg.token_url), &form).await {
         Ok(v) => v,
         Err(e) => {
-            let status = if e.contains("invalid_grant") {
-                StatusCode::UNAUTHORIZED
-            } else {
-                StatusCode::BAD_GATEWAY
-            };
-            return err(status, &format!("refresh failed: {e}"));
+            let (status, body) = refresh_failure(&e);
+            return (status, Json(body)).into_response();
         }
     };
     let Some(access) = v.get("access_token").and_then(|x| x.as_str()) else {
-        return err(StatusCode::BAD_GATEWAY, "no access_token in refresh response");
+        return refresh_err(
+            StatusCode::BAD_GATEWAY,
+            "upstream_error",
+            "no access_token in refresh response",
+        );
     };
     // Google may omit a new refresh_token — preserve the old one.
     let new_refresh = v
@@ -1422,29 +1451,122 @@ async fn refresh(
 async fn send_form(
     req: reqwest::RequestBuilder,
     form: &[(&str, &str)],
-) -> Result<Value, String> {
+) -> Result<Value, UpstreamError> {
     let resp = req.form(form).send().await;
     json_ok(resp).await
 }
 
-async fn json_ok(resp: reqwest::Result<reqwest::Response>) -> Result<Value, String> {
-    let resp = resp.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    if !status.is_success() {
-        // F5: discard the upstream body on error. OAuth/Plaid error responses
-        // can echo back caller-supplied secrets (notably Plaid `public_token`
-        // on exchange failures), and this error string flows into
-        // `tracing::warn!` at the call site. Status only; never the body.
-        let _ = resp.text().await;
-        return Err(format!("upstream status {}", status.as_u16()));
-    }
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    serde_json::from_str::<Value>(&body).map_err(|e| format!("bad json: {e}"))
+/// Why a call to a provider failed, kept to fields that cannot carry a secret.
+///
+/// F5: the upstream body never leaves `json_ok`. OAuth and Plaid error
+/// responses can echo back caller-supplied secrets (notably Plaid
+/// `public_token` on exchange failures), and these errors flow into
+/// `tracing::warn!` and into answers to the box. What survives is the status
+/// and an OAuth error code from [`OAUTH_ERROR_CODES`].
+#[derive(Debug)]
+enum UpstreamError {
+    /// No usable answer: the request failed, or a success body was not JSON.
+    NoAnswer(String),
+    /// The provider answered with an error status.
+    Refused { status: u16, code: Option<&'static str> },
 }
 
-// (`parse_field` lived here to pull `link_token` out of the old single-field
-// Plaid response; Hosted Link needs two fields at once, so plaid_start reads
-// the object directly and this had no callers left.)
+impl std::fmt::Display for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAnswer(msg) => f.write_str(msg),
+            Self::Refused { status, code: Some(code) } => write!(f, "upstream status {status} ({code})"),
+            Self::Refused { status, code: None } => write!(f, "upstream status {status}"),
+        }
+    }
+}
+
+impl From<UpstreamError> for String {
+    fn from(e: UpstreamError) -> Self {
+        e.to_string()
+    }
+}
+
+async fn json_ok(resp: reqwest::Result<reqwest::Response>) -> Result<Value, UpstreamError> {
+    let resp = resp.map_err(|e| UpstreamError::NoAnswer(e.to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        // An unreadable error body only means there is no code to report.
+        let body = resp.text().await.unwrap_or_default();
+        return Err(UpstreamError::Refused {
+            status: status.as_u16(),
+            code: oauth_error_code(&body),
+        });
+    }
+    let body = resp.text().await.map_err(|e| UpstreamError::NoAnswer(e.to_string()))?;
+    serde_json::from_str::<Value>(&body).map_err(|e| UpstreamError::NoAnswer(format!("bad json: {e}")))
+}
+
+/// The error codes an OAuth token endpoint answers with (RFC 6749, section 5.2).
+const OAUTH_ERROR_CODES: [&str; 6] = [
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+];
+
+/// The OAuth error code in a token endpoint's error body, when it is one of
+/// [`OAUTH_ERROR_CODES`]. The result is always one of this file's own strings,
+/// so nothing the provider or the caller wrote passes through it.
+///
+/// Strava answers with its own fault shape instead of `error`, for example
+/// `{"message": "Bad Request", "errors": [{"resource": "RefreshToken",
+/// "field": "refresh_token", "code": "invalid"}]}`. A fault on the refresh
+/// token or the authorization code is a refused grant; a fault on the
+/// application is a refused client. Other faults, such as a rate limit, have
+/// no OAuth code.
+fn oauth_error_code(body: &str) -> Option<&'static str> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    if let Some(code) = v.get("error").and_then(|e| e.as_str()) {
+        return OAUTH_ERROR_CODES.iter().copied().find(|known| *known == code);
+    }
+    v.get("errors")?.as_array()?.iter().find_map(|fault| {
+        let field = |k: &str| fault.get(k).and_then(|x| x.as_str());
+        match (field("resource")?, field("code")?) {
+            ("RefreshToken" | "AuthorizationCode", "invalid") => Some("invalid_grant"),
+            ("Application", "invalid") => Some("invalid_client"),
+            _ => None,
+        }
+    })
+}
+
+/// An error answer from `/refresh`. `error` is the message every box reads.
+/// `code` and `upstream_status` let a box tell a refused grant from every
+/// other failure (`virtues_helpers::auth::proxy::is_refused_grant`); a box
+/// released before them ignores both.
+fn refresh_error_body(code: &str, upstream_status: Option<u16>, msg: &str) -> Value {
+    json!({ "error": msg, "code": code, "upstream_status": upstream_status })
+}
+
+fn refresh_err(status: StatusCode, code: &str, msg: &str) -> axum::response::Response {
+    (status, Json(refresh_error_body(code, None, msg))).into_response()
+}
+
+/// The answer when the provider fails a refresh: always 502, with the reason
+/// in `code`. A box that reads `code` marks a refused grant (`invalid_grant`:
+/// the owner revoked access, or the grant expired) for reconnecting, whatever
+/// the status. A box released before `code` reads any 4xx from this route as
+/// a refused grant and has no lock across its processes, so a 4xx here would
+/// let one refresh mark a credential that another refresh had just renewed.
+/// To those boxes a 502 is a failure worth retrying, which keeps the proxy
+/// safe to deploy before or after any box release.
+fn refresh_failure(e: &UpstreamError) -> (StatusCode, Value) {
+    let (code, upstream_status) = match e {
+        UpstreamError::Refused { status, code } => (code.unwrap_or("upstream_error"), Some(*status)),
+        UpstreamError::NoAnswer(_) => ("upstream_error", None),
+    };
+    (
+        StatusCode::BAD_GATEWAY,
+        refresh_error_body(code, upstream_status, &format!("refresh failed: {e}")),
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -1452,7 +1574,7 @@ mod tests {
 
     #[test]
     fn accepts_the_addresses_the_box_hands_out() {
-        // `qr_pair_url` / `virtues link` print these; a connect started from one
+        // The pair QR and `virtues link` print these; a connect started from one
         // must not die on the proxy.
         for url in [
             "http://192.168.1.40:7117/oauth/callback",
@@ -1662,6 +1784,109 @@ mod tests {
         });
         assert_eq!(extract_public_token(&v).as_deref(), Some("p"));
         assert_eq!(extract_institution(&v), None);
+    }
+
+    #[test]
+    fn reads_the_oauth_error_code_and_nothing_else() {
+        let google = r#"{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}"#;
+        assert_eq!(oauth_error_code(google), Some("invalid_grant"));
+        assert_eq!(oauth_error_code(r#"{"error": "invalid_client"}"#), Some("invalid_client"));
+
+        // A code this file does not name is dropped, so a body that echoes
+        // what the caller sent cannot pass it through.
+        assert_eq!(oauth_error_code(r#"{"error": "1//refresh-token-echo"}"#), None);
+        // Plaid's error shape carries no OAuth code.
+        assert_eq!(
+            oauth_error_code(r#"{"error_code": "INVALID_PUBLIC_TOKEN", "error_type": "INVALID_INPUT"}"#),
+            None
+        );
+        assert_eq!(oauth_error_code("<html>Bad Gateway</html>"), None);
+        assert_eq!(oauth_error_code(""), None);
+    }
+
+    #[test]
+    fn reads_stravas_fault_shape() {
+        let refused = r#"{"message": "Bad Request", "errors": [{"resource": "RefreshToken", "field": "refresh_token", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(refused), Some("invalid_grant"));
+        let bad_code = r#"{"message": "Bad Request", "errors": [{"resource": "AuthorizationCode", "field": "code", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(bad_code), Some("invalid_grant"));
+        let bad_client = r#"{"message": "Bad Request", "errors": [{"resource": "Application", "field": "client_id", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(bad_client), Some("invalid_client"));
+        let limited = r#"{"message": "Rate Limit Exceeded", "errors": [{"resource": "Application", "field": "rate limit", "code": "exceeded"}]}"#;
+        assert_eq!(oauth_error_code(limited), None);
+        assert_eq!(oauth_error_code(r#"{"message": "Bad Request", "errors": []}"#), None);
+    }
+
+    #[test]
+    fn a_refused_grant_is_502_with_its_code() {
+        let (status, body) = refresh_failure(&UpstreamError::Refused {
+            status: 400,
+            code: Some("invalid_grant"),
+        });
+        // A box that reads `code` marks it for reconnecting; a box released
+        // before `code` retries it, as it did before the code existed.
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("invalid_grant"));
+        assert_eq!(body["upstream_status"], json!(400));
+        // The message released boxes log keeps its old form, plus the code.
+        assert_eq!(body["error"], json!("refresh failed: upstream status 400 (invalid_grant)"));
+        assert!(!body.to_string().contains("upstream 4"), "{body}");
+    }
+
+    #[test]
+    fn other_refresh_failures_are_502() {
+        let (status, body) = refresh_failure(&UpstreamError::Refused {
+            status: 401,
+            code: Some("invalid_client"),
+        });
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("invalid_client"));
+        // A released box marks a credential for reconnect on "upstream 4" in
+        // its error, which it builds from this answer's status and body. No
+        // provider failure may match it.
+        assert!(!body.to_string().contains("upstream 4"), "{body}");
+
+        let (status, body) = refresh_failure(&UpstreamError::Refused { status: 503, code: None });
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("upstream_error"));
+        assert_eq!(body["upstream_status"], json!(503));
+
+        let (status, body) = refresh_failure(&UpstreamError::NoAnswer("bad json: eof".into()));
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("upstream_error"));
+        assert_eq!(body["upstream_status"], Value::Null);
+    }
+
+    /// `/refresh` tells a missing key, an unknown key and a blocked key apart,
+    /// and serves a known key whether or not its account has a wallet: an
+    /// owner who never paid keeps their sources syncing.
+    #[sqlx::test]
+    async fn refresh_needs_a_known_key_and_no_wallet(pool: sqlx::PgPool) {
+        let blocklist = Blocklist::from_env();
+        let header = |key: &str| {
+            let mut h = HeaderMap::new();
+            h.insert("x-virtues-api-key", key.parse().unwrap());
+            h
+        };
+        entitlement::register_device(&pool, &key_hash("box-key-1"), "acct-refresh-1", None)
+            .await
+            .expect("register the box key");
+
+        let none = check_caller_key(&pool, &blocklist, &HeaderMap::new()).await;
+        assert!(matches!(none, Err(BearerError::MissingHeader)), "{none:?}");
+
+        let unknown = check_caller_key(&pool, &blocklist, &header("box-key-2")).await;
+        assert!(matches!(unknown, Err(BearerError::NotFound)), "{unknown:?}");
+
+        assert!(entitlement::get_wallet(&pool, "acct-refresh-1").await.unwrap().is_none());
+        let known = check_caller_key(&pool, &blocklist, &header("box-key-1")).await;
+        assert!(known.is_ok(), "{known:?}");
+
+        blocklist
+            .block(&pool, &key_hash("box-key-1"), crate::blocklist::REASON_RATE_ABUSE, None)
+            .await;
+        let blocked = check_caller_key(&pool, &blocklist, &header("box-key-1")).await;
+        assert!(matches!(blocked, Err(BearerError::Blocked)), "{blocked:?}");
     }
 
     /// A Plaid exchange_token is spendable exactly once — the property the

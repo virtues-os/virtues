@@ -14,6 +14,33 @@ async function getInvoke() {
 	return invoke;
 }
 
+// ─── Servers on this network ────────────────────────────────────────────────
+
+/** A Virtues server the network search found. `claimed` is null from a server
+ *  too old to say. */
+export interface NetworkServer {
+	name: string;
+	origin: string;
+	claimed: boolean | null;
+}
+
+/**
+ * Virtues servers on this device's network, found by a subnet scan rather
+ * than mDNS (`plugin:reach|discover`). Empty in a browser and when the scan
+ * fails. Empty never means there is no server: some networks keep devices
+ * apart, and a virtual machine's shared networking hides it from the scan.
+ */
+export async function serversOnNetwork(): Promise<NetworkServer[]> {
+	const invoke = await getInvoke();
+	if (!invoke) return [];
+	try {
+		const r = await invoke<{ servers?: NetworkServer[] }>('plugin:reach|discover');
+		return r.servers ?? [];
+	} catch {
+		return [];
+	}
+}
+
 // ─── Command-surface negotiation ────────────────────────────────────────────
 //
 // This file is served by the BOX but calls into the APP — two artifacts with
@@ -162,13 +189,12 @@ export type OtaCheck = { at?: number } & (
 	/** The box answered 404: it serves no bundle. */
 	| { state: 'no_bundle_on_box' }
 	| { state: 'box_unavailable'; status: number | null }
-	| { state: 'same_version'; version: string }
+	/** This app's own UI is a local `dev` build, so it takes no box bundle. */
+	| { state: 'dev_build' }
 	| { state: 'unusable'; contentHash: string }
 	| { state: 'refused_before'; contentHash: string }
 	| { state: 'check_failed'; error: string }
 	| { state: 'rolled_back'; contentHash: string }
-	| { state: 'box_behind'; boxVersion: string; have: string }
-	| { state: 'version_unreadable'; boxVersion: string; have: string | null }
 );
 
 /**
@@ -215,19 +241,13 @@ export function describeOtaCheck(s: ShellIdentity): string | null {
 			// The device is deliberately refusing the box's bundle after a
 			// failed boot, which otherwise looks like OTA silently not working.
 			return "A newer interface didn't start on this device, so the app set it aside. Your next server update clears it.";
-		case 'box_behind':
-			// The app updates on Apple's cadence, the box when its owner
-			// upgrades it. Silence here would read as OTA being broken.
-			return `This app already has a newer interface than your server (server ${c.boxVersion}, app ${c.have}). It keeps its own until you run \`sudo virtues upgrade\`.`;
-		case 'version_unreadable':
-			return "This app can't tell whether your server's interface is newer than its own, so it's staying on the one it shipped with.";
 		case 'box_unavailable':
 		case 'check_failed':
 			// A missed check is retried on the next foreground and launch; it
 			// is news only when it is the last word on why nothing changed.
 			return "This app couldn't check your server for a newer interface. It tries again the next time you open it.";
 		case 'up_to_date':
-		case 'same_version':
+		case 'dev_build':
 		case 'no_bundle_on_box':
 		default:
 			return null;
@@ -355,6 +375,36 @@ export async function openExternal(url: string): Promise<void> {
 		console.error('[tauri] openExternal failed; falling back to window.open', e);
 		window.open(url, '_blank', 'noopener');
 	}
+}
+
+/** The surface that added `location-probe|sign_in` (iOS). */
+export const SIGN_IN_SHEET_SURFACE = 14;
+
+/** Fired on `window` when the sign-in sheet closes, the way `focus` fires
+ *  when someone comes back from the system browser. */
+export const SIGN_IN_CLOSED = 'virtues:sign-in-closed';
+
+/**
+ * Whether this shell opens sign-ins in Apple's sign-in sheet. iOS only: in
+ * Safari the app went to the background, and Safari could not reach the
+ * app's listener a sign-in returns through.
+ */
+export async function canSignInSheet(): Promise<boolean> {
+	return isIOS && shellSupports(SIGN_IN_SHEET_SURFACE);
+}
+
+/**
+ * Open a service's sign-in: in the sign-in sheet where the shell has one,
+ * otherwise in the system browser. Returns once it is open, not when it
+ * ends; `SIGN_IN_CLOSED` fires when the sheet closes, and `reloadOnReturn`
+ * in `connectDispatch.ts` listens for it.
+ */
+export async function openSignIn(url: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await canSignInSheet())) return openExternal(url);
+	invoke('plugin:location-probe|sign_in', { payload: { url } })
+		.catch((e) => console.error('[tauri] sign-in sheet failed', e))
+		.finally(() => window.dispatchEvent(new Event(SIGN_IN_CLOSED)));
 }
 
 /** The surface that added `browser_login` (lib.rs `COMMAND_SURFACE_VERSION`). */
@@ -632,6 +682,30 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 	return probe.kind === 'ok' ? probe.status : null;
 }
 
+/** How an agent's MCP settings launch the bridge for one connected agent
+ *  (`connect_agent` in main.rs). `env` is set only for a dev profile. */
+export interface AgentConnection {
+	name: string;
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+}
+
+/** The command surface that has `connect_agent`. */
+export const CONNECT_AGENT_SURFACE = 13;
+
+/**
+ * Pair an AI agent's MCP bridge as a device of its own, with a token minted
+ * for kind `agent`, and return how to launch it. Mac only.
+ */
+export async function connectAgent(token: string, name: string): Promise<AgentConnection> {
+	const invoke = await getInvoke();
+	if (!invoke) {
+		throw new Error('Open this in the Virtues app on your Mac to connect an agent.');
+	}
+	return (await invoke('connect_agent', { token, name })) as AgentConnection;
+}
+
 /**
  * Install the collector daemon as a LaunchAgent
  * This copies the binary to ~/.virtues/bin and creates a LaunchAgent plist
@@ -739,34 +813,51 @@ export async function resumeCollector(): Promise<boolean> {
 // ============================================================================
 
 /**
- * Open System Preferences to Full Disk Access pane
+ * What opening a privacy pane did: `tile` when the shell also put the drag
+ * tile on System Settings, `pane` when it only opened the pane (an older
+ * shell, a dev profile, or no collector installed yet), `null` on failure.
  */
-export async function openFullDiskAccess(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
+export type PaneOpened = 'tile' | 'pane' | null;
 
+async function openPrivacyPane(command: string): Promise<PaneOpened> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
 	try {
-		await invoke('open_full_disk_access');
-		return true;
+		// Shells below PERMISSION_TILE_SURFACE return nothing here.
+		return (await invoke<boolean | null>(command)) === true ? 'tile' : 'pane';
 	} catch (e) {
-		console.error('[Tauri] Failed to open Full Disk Access settings:', e);
-		return false;
+		console.error(`[Tauri] ${command} failed:`, e);
+		return null;
 	}
 }
 
-/**
- * Open System Preferences to Accessibility pane
- */
-export async function openAccessibilitySettings(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
+/** Open System Settings on Full Disk Access. */
+export function openFullDiskAccess(): Promise<PaneOpened> {
+	return openPrivacyPane('open_full_disk_access');
+}
 
+/** Open System Settings on Accessibility. */
+export function openAccessibilitySettings(): Promise<PaneOpened> {
+	return openPrivacyPane('open_accessibility_settings');
+}
+
+/**
+ * The surface where opening Full Disk Access or Accessibility also shows a
+ * tile on System Settings with the collector ready to drag into the list.
+ */
+export const PERMISSION_TILE_SURFACE = 16;
+
+/**
+ * Close that tile. Call it once the collector reports the grant, with
+ * `returnToApp` so Virtues comes back to the front. Silent on older shells.
+ */
+export async function closePermissionTile(returnToApp: boolean): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await shellSupports(PERMISSION_TILE_SURFACE))) return;
 	try {
-		await invoke('open_accessibility_settings');
-		return true;
+		await invoke('close_permission_tile', { returnToApp });
 	} catch (e) {
-		console.error('[Tauri] Failed to open Accessibility settings:', e);
-		return false;
+		console.error('[Tauri] Failed to close the permission tile:', e);
 	}
 }
 

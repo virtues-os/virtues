@@ -6,16 +6,11 @@
  * languages/themes across the app.
  */
 
-import {
-	type BundledLanguage,
-	type BundledTheme,
-	createHighlighter,
-	type Highlighter,
-	type ThemedToken,
-} from 'shiki';
+import type { BundledLanguage, BundledTheme, Highlighter, ThemedToken } from 'shiki';
 
-let highlighter: Highlighter | null = null;
-let loading = false;
+// Shiki loads on the first code block, not with the chat: a static import put
+// its core and language map in the home screen's first load.
+let highlighter: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
 
 export function getThemeFromCSS(): BundledTheme {
@@ -26,18 +21,14 @@ export function getThemeFromCSS(): BundledTheme {
 	return (theme || 'github-light') as BundledTheme;
 }
 
-export async function ensureHighlighter(): Promise<Highlighter> {
-	if (highlighter) return highlighter;
-	if (loading) {
-		while (!highlighter) await new Promise((r) => setTimeout(r, 50));
-		return highlighter;
-	}
-	loading = true;
-	highlighter = await createHighlighter({
-		themes: [getThemeFromCSS()],
-		langs: [],
-	});
-	loading = false;
+export function ensureHighlighter(): Promise<Highlighter> {
+	highlighter ??= import('shiki')
+		.then(({ createHighlighter }) => createHighlighter({ themes: [getThemeFromCSS()], langs: [] }))
+		.catch((err) => {
+			// Let the next code block try again instead of every caller waiting forever.
+			highlighter = null;
+			throw err;
+		});
 	return highlighter;
 }
 

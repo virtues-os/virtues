@@ -69,14 +69,12 @@ impl Limits {
             max_llm_cost_micros: dollars_to_micros("max_llm_cost"),
             max_llm_cost_per_day_micros: dollars_to_micros("max_llm_cost_per_day"),
             max_runs_per_hour: count("max_runs_per_hour"),
-            // A bare `max_runs` is the spelling AGENTS.md advertises and the
-            // one a person reaches for. Read it as a daily cap — the window
-            // someone means when they write "at most 50 runs".
+            // A bare `max_runs` is the spelling older applets were written
+            // with and the one a person reaches for. Read it as a daily cap,
+            // the window someone means when they write "at most 50 runs".
             max_runs_per_day: count("max_runs_per_day").or_else(|| count("max_runs")),
-            // `timeout_s` is what the shipped manifests carry and what this
-            // has always read. `timeout` is what the tool schema has been
-            // telling the model to write — so anything chat-authored used the
-            // spelling nothing enforced. Both are accepted; `timeout_s` wins.
+            // `timeout_s` is what files carry; `timeout` is a spelling older
+            // chat-made applets have. Both are accepted; `timeout_s` wins.
             timeout: l
                 .get("timeout_s")
                 .or_else(|| l.get("timeout"))

@@ -49,7 +49,8 @@ struct ConsumeResponse {
 }
 
 /// A device identity minted for a pairing whose consume exchange rides another
-/// transport (the box's BLE RPC 0x83): the `node_id` travels to the box for
+/// transport (a paired laptop's QR handoff, `handoff.rs`): the `node_id`
+/// travels to the box for
 /// allowlisting; the secret stays here until [`finish_consume`] persists it
 /// alongside the box's response.
 pub struct MintedIdentity {
@@ -101,13 +102,12 @@ pub fn mint_identity() -> MintedIdentity {
     }
 }
 
-/// Complete a pairing whose consume exchange the box carried itself (BLE RPC
-/// 0x83 relays the code to the box's own consume endpoint and streams the
-/// response back). Parses that response and persists the same [`PairedBox`]
-/// the HTTP path stores.
+/// Complete a pairing whose consume exchange another device carried (a
+/// paired laptop's QR handoff, `handoff.rs`). Parses the box's response and
+/// persists the same [`PairedBox`] the HTTP path stores.
 ///
-/// `box_url` is derived rather than known: over BLE there is no origin the
-/// phone dialed. The box's first IPv4 direct address stands in (LAN HTTP is
+/// `box_url` is derived rather than known: there is no origin this device
+/// dialed. The box's first IPv4 direct address stands in (LAN HTTP is
 /// only the fallback path — iroh is the real reach), with the mDNS default
 /// when the box reported none.
 pub fn finish_consume(

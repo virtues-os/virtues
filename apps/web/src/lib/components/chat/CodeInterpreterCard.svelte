@@ -42,17 +42,17 @@
 	const statusConfig = $derived(
 		{
 			running: {
-				icon: "ri:loader-4-line",
+				icon: "mynaui:spinner",
 				label: "Running code",
 				spinning: true,
 			},
 			success: {
-				icon: "ri:check-line",
+				icon: "mynaui:check",
 				label: "Code executed",
 				spinning: false,
 			},
 			error: {
-				icon: "ri:error-warning-line",
+				icon: "mynaui:danger-circle",
 				label: "Execution failed",
 				spinning: false,
 			},
@@ -121,15 +121,15 @@
 			{#if outputText()}
 				<IconButton
 					icon={copySuccess
-						? "ri:check-line"
-						: "ri:file-copy-line"}
+						? "mynaui:check"
+						: "mynaui:copy"}
 					label={copySuccess ? "Copied" : "Copy output"}
 					size="sm"
 					onclick={handleCopy}
 				/>
 			{/if}
 			<Icon
-				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+				icon={expanded ? "mynaui:chevron-up" : "mynaui:chevron-down"}
 				width="18"
 			/>
 		</div>
@@ -141,7 +141,7 @@
 			<!-- Code input section -->
 			<div class="section">
 				<div class="section-label">
-					<Icon icon="ri:code-s-slash-line" width="14" />
+					<Icon icon="mynaui:code" width="14" />
 					<span>Code</span>
 				</div>
 				<div class="code-view">
@@ -158,8 +158,8 @@
 					>
 						<Icon
 							icon={status === "error"
-								? "ri:error-warning-line"
-								: "ri:terminal-line"}
+								? "mynaui:danger-circle"
+								: "mynaui:terminal"}
 							width="14"
 						/>
 						<span>{status === "error" ? "Error" : "Output"}</span>

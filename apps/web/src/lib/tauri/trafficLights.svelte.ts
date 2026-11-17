@@ -12,7 +12,7 @@ import { isMacOS } from '$lib/utils/platform';
  * Where the zoom button ends with the macOS 15 SDK's buttons, which release
  * builds link. Used when the shell does not say.
  */
-const DEFAULT_END_PX = 67;
+const DEFAULT_END_PX = 69;
 
 type Shell = { __VIRTUES_TRAFFIC_LIGHTS_END__?: number };
 

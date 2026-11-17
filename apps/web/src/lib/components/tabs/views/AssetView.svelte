@@ -14,8 +14,13 @@
 	import { refIcon } from "$lib/utils/refRoutes";
 	import { kindOfLink } from "$lib/document/media-kind";
 	import type { Tab } from "$lib/tabs/types";
+	import { usePageActions } from "$lib/stores/paneActions.svelte";
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
+
+	// On the desktop the file's name is in the tab's action toolbar, with its
+	// size and Download at the end; the header row is the phone's.
+	const toolbar = usePageActions(() => assetActions);
 
 	// /drive/file_xxx[?page=N] → file_xxx (+ optional page deep link)
 	const lastSegment = $derived(tab.route.split("/").filter(Boolean).pop() ?? "");
@@ -131,21 +136,27 @@
 	}
 </script>
 
+{#snippet assetActions()}
+	{#if file}
+		<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
+	{/if}
+	<Button variant="secondary" size="sm" icon="mynaui:download" loading={downloading} onclick={download}
+		>Download</Button
+	>
+{/snippet}
+
 <div class="asset-view">
-	<header class="asset-header">
-		<Icon
-			icon={refIcon("file", { mimeType: file?.mime_type, filename: file?.filename })}
-			width="16"
-		/>
-		<span class="asset-name">{file?.filename ?? tab.label}</span>
-		{#if file}
-			<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
-		{/if}
-		<div class="asset-spacer"></div>
-		<Button variant="secondary" size="sm" icon="ri:download-line" loading={downloading} onclick={download}
-			>Download</Button
-		>
-	</header>
+	{#if !toolbar.inToolbar}
+		<header class="asset-header">
+			<Icon
+				icon={refIcon("file", { mimeType: file?.mime_type, filename: file?.filename })}
+				width="16"
+			/>
+			<span class="asset-name">{file?.filename ?? tab.label}</span>
+			<div class="asset-spacer"></div>
+			{@render assetActions()}
+		</header>
+	{/if}
 
 	<div
 		class="asset-body"
@@ -153,17 +164,17 @@
 		class:flush={kind === "csv" || kind === "pdf" || isText}
 	>
 		{#if loading}
-			<div class="asset-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
+			<div class="asset-status"><Icon icon="mynaui:spinner" width="22" class="spin" /></div>
 		{:else if error}
 			<div class="asset-status error">
-				<Icon icon="ri:error-warning-line" width="22" />
+				<Icon icon="mynaui:danger-circle" width="22" />
 				<span>{error}</span>
 			</div>
 		{:else if kind === "image"}
 			<img class="asset-image" src={viewUrl} alt={file?.filename} />
 		{:else if kind === "audio"}
 			<div class="asset-audio">
-				<Icon icon="ri:music-2-line" width="40" />
+				<Icon icon="mynaui:music" width="40" />
 				<!-- Scrubber via native controls. Waveform + timestamped notes: deferred. -->
 				<audio controls src={viewUrl}></audio>
 			</div>
@@ -195,7 +206,7 @@
 				<Button
 					variant="secondary"
 					size="sm"
-					icon="ri:download-line"
+					icon="mynaui:download"
 					loading={downloading} onclick={download}>Download</Button
 				>
 			</div>

@@ -13,6 +13,8 @@ mod browser_host;
 #[cfg(target_os = "macos")]
 mod messages_send;
 #[cfg(target_os = "macos")]
+mod permission_tile;
+#[cfg(target_os = "macos")]
 mod traffic_lights;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
@@ -490,16 +492,23 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
+/// Where `install_collector` puts the collector binary, and where its
+/// LaunchAgent runs it from. macOS keys the collector's privacy grants to this
+/// path.
+fn collector_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector")
+}
+
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
     let shell = app.shell();
 
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     let output = if installed_path.exists() {
         shell
@@ -606,6 +615,58 @@ fn deny_collector_in_profile() -> Result<(), String> {
     }
 }
 
+/// How an agent's MCP settings launch the bridge for one connected agent.
+#[derive(serde::Serialize)]
+struct AgentConnection {
+    name: String,
+    command: String,
+    args: Vec<String>,
+    /// Set only for a dev profile, whose pairing lives in its own directory.
+    env: std::collections::BTreeMap<String, String>,
+}
+
+/// Pair a new agent with a token minted for kind `agent`, and say how to
+/// launch it. The bridge is this binary run as `mcp --name <name>` (see
+/// [`mcp_main`]); it is its own device on the box, with its own key, and can
+/// reach only the MCP endpoint. agents/plan/mcp-plan.md, tier 1.
+#[tauri::command]
+async fn connect_agent(token: String, name: String) -> Result<AgentConnection, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the agent a name, such as Claude Code.".into());
+    }
+    let origin = format!("http://localhost:{}", tauri_plugin_reach::loopback_port());
+    virtues_reach_client::mcp::pair(&tauri_plugin_reach::virtues_dir(), &origin, &token, &name)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let command = std::env::current_exe().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let mut env = std::collections::BTreeMap::new();
+    if let Some(profile) = tauri_plugin_reach::profile() {
+        env.insert("VIRTUES_PROFILE".to_string(), profile.to_string());
+    }
+    Ok(AgentConnection { args: vec!["mcp".into(), "--name".into(), name.clone()], name, command, env })
+}
+
+/// `virtues mcp [--name <name>]`: the MCP bridge an agent launches as a
+/// stdio server. It runs before any part of the app starts, so it opens no
+/// window and binds no port, and it writes nothing but JSON-RPC to stdout.
+fn mcp_main(args: &[String]) -> ! {
+    let name = args
+        .windows(2)
+        .find(|pair| pair[0] == "--name")
+        .map(|pair| pair[1].clone())
+        .unwrap_or_else(|| "agent".to_string());
+    virtues_reach_client::install_crypto_provider();
+    let store = virtues_reach_client::mcp::AgentStore::new(&tauri_plugin_reach::virtues_dir(), &name);
+    match tauri::async_runtime::block_on(virtues_reach_client::mcp::serve_stdio(&store)) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("virtues mcp: {e:#}");
+            std::process::exit(1)
+        }
+    }
+}
+
 /// Install the collector as a LaunchAgent
 #[tauri::command]
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
@@ -643,11 +704,7 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
 #[tauri::command]
 async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Ok(());
@@ -672,11 +729,7 @@ async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn pause_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -701,11 +754,7 @@ async fn pause_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn resume_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -730,11 +779,7 @@ async fn resume_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn stop_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -755,26 +800,48 @@ async fn stop_collector(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Open System Preferences to Full Disk Access pane
+/// Open System Settings on Full Disk Access, with the drag tile for the
+/// collector on top of it (permission_tile.rs). Returns whether the tile was
+/// shown, so the page knows which instructions to give.
 #[tauri::command]
-async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
-    app.shell()
-        .command("open")
-        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+async fn open_full_disk_access(app: AppHandle) -> Result<bool, String> {
+    open_privacy_pane(&app, "Privacy_AllFiles")
 }
 
-/// Open System Preferences to Accessibility pane
+/// Open System Settings on Accessibility, with the drag tile for the
+/// collector on top of it (permission_tile.rs). Returns whether the tile was
+/// shown.
 #[tauri::command]
-async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
+async fn open_accessibility_settings(app: AppHandle) -> Result<bool, String> {
+    open_privacy_pane(&app, "Privacy_Accessibility")
+}
+
+fn open_privacy_pane(app: &AppHandle, anchor: &str) -> Result<bool, String> {
     app.shell()
         .command("open")
-        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        .args([format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")])
         .spawn()
         .map_err(|e| e.to_string())?;
-    Ok(())
+    // A dev profile never touches the machine's real collector, so it offers
+    // nothing to drag. Neither does a Mac with no collector yet.
+    let collector = collector_path();
+    if cfg!(target_os = "macos") && deny_collector_in_profile().is_ok() && collector.exists() {
+        #[cfg(target_os = "macos")]
+        permission_tile::show(app, &collector);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Close the drag tile on System Settings, if one is up. The page calls this
+/// once the collector reports the grant, with `return_to_app` so Virtues comes
+/// back to the front.
+#[tauri::command]
+fn close_permission_tile(app: AppHandle, return_to_app: bool) {
+    #[cfg(target_os = "macos")]
+    permission_tile::close(&app, return_to_app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, return_to_app);
 }
 
 /// Start the Mac's own dictation in whatever has focus — the composer, when
@@ -1228,9 +1295,7 @@ fn check_app_update_cmd(app: AppHandle) {
 /// (all-false) struct both when stopped AND when never installed, so the tray
 /// needs this to tell "off because not set up" from "installed but paused".
 fn collector_installed() -> bool {
-    dirs::home_dir()
-        .map(|h| h.join(".virtues").join("bin").join("virtues-collector").exists())
-        .unwrap_or(false)
+    collector_path().exists()
 }
 
 /// Status-dot color, drawn as a colored `IconMenuItem` icon (not a template, so
@@ -1461,19 +1526,16 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 /// Only touches a collector that's ALREADY installed — first-run install stays
 /// with the "Turn on this Mac" opt-in flow. A no-op once in sync, so it's safe
 /// to run on every launch. Returns true if the collector was redeployed.
-fn reconcile_helpers() -> bool {
-    let mut changed = false;
+fn reconcile_helpers() {
     for (name, agent) in [("virtues-collector", "com.virtues.collector")] {
         match reconcile_one(name, agent) {
             Ok(true) => {
-                changed = true;
                 eprintln!("[reconcile] {name}: redeployed to match app bundle + restarted {agent}");
             }
             Ok(false) => {}
             Err(e) => eprintln!("[reconcile] {name}: {e}"),
         }
     }
-    changed
 }
 
 /// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
@@ -1576,12 +1638,27 @@ fn is_adhoc_signed(path: &std::path::Path) -> bool {
 
 /// Byte-equal? Cheap size check first, content compare only if sizes match (the
 /// up-to-date case). Any IO error → treat as "differ" so we err toward refresh.
+/// Compares in chunks and stops at the first difference: the collector is tens
+/// of megabytes, and reading both copies whole held two of it in memory.
 fn files_differ(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::io::Read;
     match (a.metadata(), b.metadata()) {
         (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
-            match (std::fs::read(a), std::fs::read(b)) {
-                (Ok(x), Ok(y)) => x != y,
-                _ => true,
+            let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+                return true;
+            };
+            let (mut ba, mut bb) = (vec![0u8; 1 << 16], vec![0u8; 1 << 16]);
+            loop {
+                let n = match fa.read(&mut ba) {
+                    Ok(n) => n,
+                    Err(_) => return true,
+                };
+                if n == 0 {
+                    return false;
+                }
+                if fb.read_exact(&mut bb[..n]).is_err() || ba[..n] != bb[..n] {
+                    return true;
+                }
             }
         }
         _ => true,
@@ -1663,6 +1740,11 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 "#;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp") {
+        mcp_main(&args);
+    }
+
     let builder = tauri::Builder::default();
 
     // The app's own copy of the UI, on the phone's scheme and through the
@@ -1730,12 +1812,14 @@ fn main() {
             get_collector_status,
             install_collector,
             uninstall_collector,
+            connect_agent,
             pause_collector,
             resume_collector,
             stop_collector,
             recheck_collector,
             open_full_disk_access,
             open_accessibility_settings,
+            close_permission_tile,
             start_dictation,
             set_summon_shortcut,
             browser_login,
@@ -1783,12 +1867,12 @@ fn main() {
             // ... and never from a dev profile: reconcile kickstarts the
             // machine's real collector, which is exactly the cross-profile
             // side effect profiles exist to prevent.
+            //
+            // On its own thread: nothing the window needs waits on it, and the
+            // byte compare reads two copies of a tens-of-megabytes binary.
             #[cfg(target_os = "macos")]
-            if tauri_plugin_reach::profile().is_none()
-                && app.reach().is_paired()
-                && reconcile_helpers()
-            {
-                std::thread::sleep(std::time::Duration::from_millis(300));
+            if tauri_plugin_reach::profile().is_none() && app.reach().is_paired() {
+                std::thread::spawn(reconcile_helpers);
             }
 
             // Bring reach up IN-PROCESS before the launch probe: when paired,
@@ -1797,9 +1881,24 @@ fn main() {
             // old durable virtues-client proxy sidecar — the app now serves its
             // own box reach for its session (the collector reaches the box over
             // its own embedded iroh, independent of this).
+            //
+            // Only the bind happens here. Building the client resolves the
+            // box's LAN name and dials, which off the home network can take
+            // seconds, so it runs on a task and the window opens now. The bound
+            // port already listens: the webview's first requests wait in its
+            // backlog until the client is up.
             if app.reach().is_paired() {
-                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
-                    eprintln!("[reach] ensure_serving failed: {e}");
+                match app.reach().bind_loopback() {
+                    Ok(Some(bound)) => {
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = handle.reach().serve_bound(bound).await {
+                                eprintln!("[reach] ensure_serving failed: {e}");
+                            }
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("[reach] ensure_serving failed: {e}"),
                 }
             }
 
@@ -1809,18 +1908,18 @@ fn main() {
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
             // The Mac's own copy of the UI (`virtues://`), kept current like
-            // the phone's: drop an overlay a newer app build has overtaken
-            // (pointers only, before any page exists), then look for a newer
-            // bundle on the box off the launch path. A staged bundle applies at
-            // the next page load. See agents/record/local-ui.md.
+            // the phone's: on a dev build, stop serving any overlay (pointers
+            // only, before any page exists), then fetch the box's bundle off
+            // the launch path. A staged bundle applies at the next page load.
+            // See agents/record/local-ui.md.
             #[cfg(target_os = "macos")]
             {
                 if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
                     let baked = virtues_lib::baked_bundle_version(app.handle());
                     if let Some(dropped) =
-                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                        virtues_lib::web_bundle::drop_overlay_for_dev_build(&dir, baked.as_deref())
                     {
-                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                        eprintln!("[ota] dev build: stopped serving overlay {dropped}");
                     }
                 }
                 if app.reach().is_paired() {

@@ -158,8 +158,8 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     }
 
     // ── Files the units point at ────────────────────────────────────────
-    // After the units, never before: removing the kiosk shim out from under a
-    // running `virtues-display` would leave cage restarting into a missing
+    // After the units, never before: removing a file out from under a running
+    // unit (an old box's `virtues-display` kiosk) would leave it restarting into a missing
     // script every 5s for as long as the rest of this takes.
     for f in &m.extra_files {
         report(std::fs::remove_file(f).is_ok(), &format!("removed {f}"));
@@ -205,6 +205,16 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         run_quiet("sh", &["-c", "systemctl reload avahi-daemon 2>/dev/null || true"]);
     }
 
+    // ── Firewall ports and the console socket's folder ─────────────────
+    close_firewall();
+    let tmpfiles = crate::cli::system_repairs::CONSOLE_TMPFILES;
+    if std::path::Path::new(tmpfiles).exists() {
+        report(std::fs::remove_file(tmpfiles).is_ok(), &format!("removed {tmpfiles}"));
+    }
+    if std::path::Path::new("/run/virtues").is_dir() {
+        report(std::fs::remove_dir_all("/run/virtues").is_ok(), "removed /run/virtues");
+    }
+
     // ── GGUF models (opt-in with --keep-data; full purge removes the whole
     //    data dir below anyway). They re-download on the next install. ────
     if m.models_dir {
@@ -215,21 +225,22 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     }
 
     // ── Undo the Postgres relocation ────────────────────────────────────
-    // On an appliance we symlinked /var/lib/postgresql into the data dir. Both
-    // tiers have to undo it, for different reasons:
+    // Hardware Virtues shipped symlinked /var/lib/postgresql into the data
+    // dir. A full purge undoes it: the data dir is about to be deleted, and
+    // a symlink into nothing would leave the machine's Postgres unable to
+    // start for anything else that ever wanted it ("shared infra is left
+    // alone" is one of this command's rules).
     //
-    //   full purge — the data dir is about to be deleted, and a symlink into
-    //   nothing would leave the machine's Postgres unable to start for anything
-    //   else that ever wanted it. "Shared infra is left alone" is one of this
-    //   command's four rules, and leaving it broken breaks that rule.
-    //
-    //   --keep-data — the cluster survives inside the kept data dir, which is
-    //   the point of the tier; but the symlink is ours, and a reinstall
-    //   recreates it.
+    // --keep-data leaves the link: the kept cluster lives behind it, and
+    // nothing recreates it any more (the installer no longer moves Postgres),
+    // so removing it would leave a reinstall with an empty database beside
+    // the kept one.
     //
     // Only ever removes a SYMLINK. A DIY box's /var/lib/postgresql is a real
     // directory holding somebody's databases and is not ours to touch.
-    if m.pg_symlink {
+    if m.pg_symlink && keep_data {
+        ui::skip(&format!("kept the {PG_LINK} link to the kept data dir"));
+    } else if m.pg_symlink {
         report(
             std::fs::remove_file(PG_LINK).is_ok(),
             &format!("removed the {PG_LINK} symlink (Postgres back on its own path)"),
@@ -263,6 +274,10 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         }
         if m.system_user {
             report(run_quiet("userdel", &["virtues"]), "removed system user 'virtues'");
+        }
+        let group = crate::console_socket::CONSOLE_GROUP;
+        if run_quiet("getent", &["group", group]) {
+            report(run_quiet("groupdel", &[group]), &format!("removed group '{group}'"));
         }
     }
 
@@ -392,13 +407,17 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     if m.web_dir {
         ui::kv_at(MANIFEST_COL, "web UI", WEB_DIR);
     }
+    let opened = crate::install_manifest::get().as_ref().map(|m| m.firewall.clone()).unwrap_or_default();
+    if !opened.is_empty() {
+        ui::kv_at(MANIFEST_COL, "firewall", &format!("{}  (the rules the installer opened)", opened.join(", ")));
+    }
     if m.avahi {
         ui::kv_at(MANIFEST_COL, "mDNS advertisement", AVAHI_SERVICE);
     }
     for f in &m.extra_files {
         ui::kv_at(MANIFEST_COL, "installed file", f);
     }
-    if m.pg_symlink {
+    if m.pg_symlink && !keep_data {
         ui::kv_at(MANIFEST_COL, "Postgres path", &format!("{PG_LINK} symlink  (cluster moves back to its own path)"));
     }
     if m.models_dir {
@@ -449,6 +468,32 @@ fn hostname() -> String {
                 .filter(|s| !s.is_empty())
         })
         .unwrap_or_else(|| "virtues".to_string())
+}
+
+/// Close the firewall rules the installer opened, as its manifest lists
+/// them (`InstallManifest::firewall`). A rule the owner had open before the
+/// install was never listed, so it stays open; an install from before the
+/// installer opened any lists none. Each rule is closed on its own, so one
+/// that fails leaves the others closed.
+fn close_firewall() {
+    let rules = crate::install_manifest::get()
+        .as_ref()
+        .map(|m| m.firewall.clone())
+        .unwrap_or_default();
+    for rule in rules {
+        let ok = match rule.split(':').collect::<Vec<_>>().as_slice() {
+            ["firewalld", kind @ ("port" | "service"), what] => {
+                let remove = format!("--remove-{kind}={what}");
+                // Both, so the rule is gone now and after the next reload.
+                let permanent = run_quiet("firewall-cmd", &["--permanent", &remove]);
+                let now = run_quiet("firewall-cmd", &[&remove]);
+                permanent && now
+            }
+            ["ufw", what] => run_quiet("ufw", &["delete", "allow", what]),
+            _ => false,
+        };
+        report(ok, &format!("closed the firewall rule {rule}"));
+    }
 }
 
 /// Run a command, swallowing output; true on exit 0.

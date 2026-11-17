@@ -31,14 +31,14 @@
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:map-pin-line',
+			icon: 'mynaui:map-pin',
 			width: '30%',
 			minWidth: '160px',
 		},
 		{
 			key: 'category',
 			label: 'Category',
-			icon: 'ri:price-tag-3-line',
+			icon: 'mynaui:tag',
 			width: '15%',
 			minWidth: '100px',
 			format: 'badge',
@@ -47,7 +47,7 @@
 		{
 			key: 'address',
 			label: 'Address',
-			icon: 'ri:map-2-line',
+			icon: 'mynaui:map',
 			width: '40%',
 			minWidth: '200px',
 			hideOnMobile: true,
@@ -55,7 +55,7 @@
 		{
 			key: 'ref_count',
 			label: 'Visits',
-			icon: 'ri:footprint-line',
+			icon: 'mynaui:activity',
 			width: '15%',
 			minWidth: '80px',
 			hideOnMobile: true,
@@ -96,7 +96,7 @@
 	entityType="place"
 	{loading}
 	{error}
-	emptyIcon="ri:map-pin-add-line"
+	emptyIcon="mynaui:map-pin-plus"
 	emptyMessage="No places yet"
 	loadingMessage="Loading places..."
 	searchPlaceholder="Search places..."
@@ -107,7 +107,7 @@
 	{#snippet card(place: WikiPlaceListItem)}
 		<div class="card-content">
 			<div class="place-icon">
-				<Icon icon="ri:map-pin-line" width="24" />
+				<Icon icon="mynaui:map-pin" width="24" />
 			</div>
 			<span class="card-name">{place.name}</span>
 			{#if place.category}

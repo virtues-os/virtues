@@ -10,7 +10,7 @@ const WIDTH_KEY = "virtues-sidebar-width";
  * The sidebar's width.
  *
  * The floor is the narrowest width at which the fixed rows still fit on one
- * line: Setup with its count, and the offline note above Settings. Chat
+ * line: Setup with its count, and Settings. Chat
  * titles are cut short well before it, so a narrower sidebar would only be a
  * sliver. Dragging on past the floor closes the sidebar on release instead,
  * which is what desktop chat apps have taught people to expect.
@@ -29,12 +29,25 @@ const OLD_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = SIDEBAR_MIN_WIDTH - 32;
 
 /**
- * The desk: the one gap between the window's edge and a card, and between
- * any two cards (the sidebar and a pane, or two panes). `--pane-inset` in
- * themes.css and the cards' `ml-2` / `mx-2` / `mb-2` are the same 8px.
+ * Air between the window's edge and what floats on it: the ∴, the sidebar
+ * and the panes all stand this far in (themes.css, --window-air).
  */
-export const DESK_GAP_PX = 8;
+export const DESK_GAP_PX = 12;
 export const SIDEBAR_INSET = DESK_GAP_PX;
+/** Air between the sidebar and the pane beside it (themes.css, --pane-gap). */
+export const PANE_GAP_PX = 10;
+
+/**
+ * The rail, the sidebar closed to its glyphs: a glass column 44px wide
+ * (themes.css, --rail-w), so each glyph has 10px of air on either side of
+ * it. It is wider than a tab is tall: the header stays low and the rail
+ * does not look pinched.
+ */
+export const RAIL_GLASS_PX = 44;
+/** A header control's height and a tab's (themes.css, --chrome-tab-h). */
+export const CHROME_TAB_PX = 34;
+/** The aside's width with the sidebar closed: the air, the rail, the gap. */
+export const RAIL_WIDTH = SIDEBAR_INSET + RAIL_GLASS_PX + PANE_GAP_PX;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
@@ -69,6 +82,12 @@ export const sidebarState = {
 		return collapsed;
 	},
 	set collapsed(val: boolean) {
+		// Opening and closing run on different clocks (themes.css). The
+		// root says which before the state changes, so every part of the
+		// shell that moves with the sidebar picks the same one.
+		if (typeof document !== "undefined" && val !== collapsed) {
+			document.documentElement.dataset.sidebarMotion = val ? "closing" : "opening";
+		}
 		collapsed = val;
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem(STORAGE_KEY, String(val));
@@ -100,12 +119,11 @@ export const sidebarState = {
 	},
 
 	/**
-	 * Where the pane card starts, in px from the window's left edge: past
-	 * the desk's 12px, and when the sidebar is open past its card and the
-	 * desk gap between the two cards. The window header aligns the left
-	 * pane's tabs to this.
+	 * Where the pane starts, in px from the window's left edge: one gap past
+	 * the rail with the sidebar closed, and one gap past the sidebar with it
+	 * open. The window header aligns the left pane's tabs to this.
 	 */
 	get cardLeft() {
-		return SIDEBAR_INSET + (collapsed ? 0 : width + SIDEBAR_INSET);
+		return collapsed ? RAIL_WIDTH : SIDEBAR_INSET + width + PANE_GAP_PX;
 	},
 };

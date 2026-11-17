@@ -102,14 +102,14 @@
 	}
 
 	const columns: Column<Publication>[] = [
-		{ key: 'title', label: 'Page', icon: 'ri:pages-line', width: '34%', minWidth: '180px' },
-		{ key: 'is_live', label: 'Data', icon: 'ri:pulse-line', width: '14%', minWidth: '90px', hideOnMobile: true, getValue: kind },
-		{ key: 'open_count', label: 'Opened', icon: 'ri:eye-line', width: '16%', minWidth: '100px', getValue: opens },
-		{ key: 'expires_at', label: 'Expires', icon: 'ri:timer-line', width: '16%', minWidth: '110px', hideOnMobile: true, getValue: expires },
+		{ key: 'title', label: 'Page', icon: 'mynaui:file-text', width: '34%', minWidth: '180px' },
+		{ key: 'is_live', label: 'Data', icon: 'mynaui:activity', width: '14%', minWidth: '90px', hideOnMobile: true, getValue: kind },
+		{ key: 'open_count', label: 'Opened', icon: 'mynaui:eye', width: '16%', minWidth: '100px', getValue: opens },
+		{ key: 'expires_at', label: 'Expires', icon: 'mynaui:alarm-clock', width: '16%', minWidth: '110px', hideOnMobile: true, getValue: expires },
 		{
 			key: 'created_at',
 			label: 'Shared',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '20%',
 			minWidth: '110px',
 			hideOnMobile: true,
@@ -121,7 +121,7 @@
 <Page title="Shared links" {description} maxWidth="wide">
 	{#if !loading && all.length === 0 && !error}
 		<div class="empty">
-			<span class="empty-glyph"><Icon icon="ri:share-forward-line" width="28" /></span>
+			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
 			<p class="empty-body">
 				Share a page, a chat, or an applet that shows a page. Every link you make appears
@@ -135,7 +135,7 @@
 			entityType="publication"
 			{loading}
 			{error}
-			emptyIcon="ri:share-forward-line"
+			emptyIcon="mynaui:share"
 			emptyMessage={live.length === 0 ? 'No links are working right now' : 'No links match'}
 			loadingMessage="Loading shared links…"
 			searchPlaceholder="Search shared links…"
@@ -155,7 +155,7 @@
 				<span class="actions">
 					{#if p.link}
 						<IconButton
-							icon={copied === p.id ? 'ri:check-line' : 'ri:file-copy-line'}
+							icon={copied === p.id ? 'mynaui:check' : 'mynaui:copy'}
 							label={copied === p.id ? 'Copied' : `Copy the link to ${p.title}`}
 							size="sm"
 							onclick={(e) => {
@@ -165,7 +165,7 @@
 						/>
 					{/if}
 					<IconButton
-						icon="ri:link-unlink"
+						icon="mynaui:unlink"
 						label={`Turn off the link to ${p.title}`}
 						size="sm"
 						onclick={(e) => {
@@ -186,7 +186,7 @@
 				aria-expanded={endedOpen}
 				onclick={() => (endedOpen = !endedOpen)}
 			>
-				<Icon icon={endedOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="14" />
+				<Icon icon={endedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
 				<span>Turned off or expired</span>
 				<span class="ended-count">{ended.length}</span>
 			</button>

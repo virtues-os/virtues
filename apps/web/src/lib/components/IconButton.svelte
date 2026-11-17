@@ -81,7 +81,7 @@
 		onclick,
 		class: className = "",
 	}: {
-		/** An iconify name, e.g. `ri:close-line`. */
+		/** An iconify name, e.g. `mynaui:x`. */
 		icon: string;
 		/**
 		 * The accessible name — what the button DOES, as a verb where there is

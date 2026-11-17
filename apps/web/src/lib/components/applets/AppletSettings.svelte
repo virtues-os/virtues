@@ -3,7 +3,11 @@
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
-	import { patchApplet, type Applet, type PatchAppletBody } from '$lib/api/client';
+	import {
+		patchApplet,
+		type Applet,
+		type PatchAppletBody
+	} from '$lib/api/client';
 	import { describeSchedule } from '$lib/applets/palette';
 
 	/**
@@ -23,19 +27,8 @@
 	let saving = $state(false);
 	let err = $state<string | null>(null);
 
-	/**
-	 * Their prompt differs from the one we ship.
-	 *
-	 * Either they edited it, or they are on a box that predates us recording
-	 * what we shipped. This deliberately does not guess which: both mean "what
-	 * you are running is not what we would give you now", and the honest
-	 * affordance for both is the same one.
-	 */
-	const customized = $derived(
-		Boolean(
-			action.agent_shipped && action.agent && action.agent.trim() !== action.agent_shipped.trim()
-		)
-	);
+	/** A shipped applet whose prompt or schedule you changed. */
+	const customized = $derived(Boolean(action.has_override));
 
 	function fields(a: Applet) {
 		return { name: a.name, agent: a.agent ?? '', schedule: a.schedule ?? '', memory: a.memory ?? '' };
@@ -43,8 +36,9 @@
 	let edit = $state(fields(action));
 	let isDirty = $state(false);
 
-	// Editability follows `owner`, because that is genuinely what the server
-	// enforces: reconcile owns those rows and would overwrite an edit anyway.
+	// A shipped applet's name and code are its file's. Its prompt and
+	// schedule can change: your server keeps those changes beside the shipped
+	// file, so a shipped fix still reaches the rest.
 	const isSystem = $derived(action.owner === 'system');
 	const isAgent = $derived(Boolean(action.agent && action.agent.trim().length > 0));
 
@@ -76,17 +70,20 @@
 		isDirty = true;
 	}
 
-	/**
-	 * Take the shipped prompt back.
-	 *
-	 * Loads it into the editor rather than saving it, so the change is visible
-	 * and reversible before it is committed — replacing prose someone wrote
-	 * should not happen on one click with nothing shown.
-	 */
-	function useShippedPrompt() {
-		if (!action.agent_shipped) return;
-		edit.agent = action.agent_shipped;
-		markDirty();
+	/** Drop your changes and run the shipped applet as it ships. */
+	async function useShipped() {
+		saving = true;
+		err = null;
+		try {
+			const updated = await patchApplet(action.id, { reset: true });
+			action = updated;
+			edit = fields(updated);
+			isDirty = false;
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
 	}
 
 	async function save() {
@@ -95,7 +92,7 @@
 		try {
 			const patch: PatchAppletBody = {};
 			if (!isSystem && edit.name !== action.name) patch.name = edit.name;
-			if (!isSystem && edit.agent !== (action.agent ?? '')) {
+			if ((isAgent || !isSystem) && edit.agent !== (action.agent ?? '')) {
 				patch.agent = edit.agent.trim() ? edit.agent : null;
 			}
 			if (edit.schedule !== (action.schedule ?? '')) {
@@ -127,7 +124,7 @@
 		<input type="text" bind:value={edit.name} disabled={isSystem} oninput={markDirty} />
 		{#if managedNote}
 			<span class="hint">
-				<Icon icon="ri:lock-line" width="12" />
+				<Icon icon="mynaui:lock" width="12" />
 				{managedNote}
 			</span>
 		{/if}
@@ -147,13 +144,12 @@
 				<textarea
 					rows="10"
 					bind:value={edit.agent}
-					disabled={isSystem}
 					oninput={markDirty}
 					placeholder="What should this applet do each run?"
 				></textarea>
 			{:else}
 				<div class="pipeline-note">
-					<Icon icon="ri:terminal-line" width="14" />
+					<Icon icon="mynaui:terminal" width="14" />
 					<span>
 						Compiled program, run fresh each time it fires - <code
 							>{action.command?.join(' ') ?? 'built in'}</code
@@ -161,21 +157,15 @@
 					</span>
 				</div>
 			{/if}
-			{#if isSystem && isAgent}
-				<span class="hint">
-					<Icon icon="ri:lock-line" width="12" /> Read-only. This prompt ships with the applet
-				</span>
-			{:else if customized}
-				<!-- The only channel an edited applet has. A prompt you
-				     wrote is never overwritten on upgrade, which is right
-				     and also means a fix we ship cannot reach you — so
-				     this line is how you find out one exists. -->
+			{#if customized}
+				<!-- Your prompt or schedule stays yours across upgrades, so a
+				     fix we ship to either does not reach you. This line is
+				     how you get back to what ships. -->
 				<div class="prompt-drift">
 					<span>
-						You've edited this. The version that ships with the applet has changed since -
-						improvements and fixes land there, not here.
+						You've changed this built-in applet. Fixes to what you changed don't reach you.
 					</span>
-					<TextAction inline onclick={useShippedPrompt}>Use the version that ships</TextAction>
+					<TextAction inline onclick={useShipped}>Use the version that ships</TextAction>
 				</div>
 			{/if}
 		</label>
@@ -192,6 +182,22 @@
 		<span class="hint">{describeSchedule(edit.schedule || null)}</span>
 	</label>
 
+	{#if action.secrets?.length}
+		<div class="field">
+			<span class="label">Keys it needs</span>
+			<ul class="keys">
+				{#each action.secrets as key (key.name)}
+					<li>
+						<code>{key.name}</code>
+						<span class="hint">
+							{key.is_set ? 'Set' : 'Not set. Add it in Settings, under Keys.'}
+						</span>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
 	<!-- Three facts the page never showed, and the reason a person
 	     could not tell why an applet had or hadn't run: what wakes
 	     it, what it checks once awake, and when it is done. -->
@@ -206,17 +212,6 @@
 			{/if}
 		</div>
 	</div>
-
-	{#if action.condition}
-		<div class="field">
-			<span class="label">Only when</span>
-			<code class="readonly-value mono">{action.condition}</code>
-			<span class="hint">
-				Checked before each run. When it's false your server skips the run rather than failing
-				it.
-			</span>
-		</div>
-	{/if}
 
 	<div class="field">
 		<span class="label">Lifecycle</span>
@@ -294,6 +289,19 @@
 	.field textarea:disabled {
 		opacity: 0.7;
 		cursor: not-allowed;
+	}
+	.keys {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.keys li {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
 	}
 	.hint {
 		font-size: 12px;

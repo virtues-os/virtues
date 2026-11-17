@@ -8,13 +8,13 @@
 		SIDEBAR_MIN_WIDTH,
 		SIDEBAR_MAX_WIDTH,
 		SIDEBAR_INSET,
+		PANE_GAP_PX,
+		RAIL_GLASS_PX,
+		RAIL_WIDTH,
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
+	import { trafficLights } from "$lib/tauri/trafficLights.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
-	import OfflinePill from "./OfflinePill.svelte";
-	import AtlasIcon from "./AtlasIcon.svelte";
-	import { SHELL_GLYPH_PX } from "$lib/components/sidebar/AtlasIcon.svelte";
-	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { newPage, newTask } from "$lib/utils/newActions";
@@ -156,7 +156,7 @@
 
 	function handleNewTemporaryChat() {
 		// Ghost chat — never saved to history
-		windowShellStore.openTabFromRoute("/?temporary=1", { label: "Temporary Chat" });
+		windowShellStore.openTabFromRoute("/?temporary=1", { label: "Temporary chat" });
 	}
 
 	function handleNewPage() {
@@ -171,39 +171,116 @@
 		sidebarState.toggle();
 	}
 
-	// The sidebar sits on the desk; the aside carries no inset of its own,
-	// and the column supplies its margin (the desk gap).
-	// NOT a springy curve: an overshoot grows the aside past its final width
-	// for a few frames, so the pane beside it jumps out and back and the
-	// whole window seems to rubber-band. The aside decelerates into its width
-	// and stops there.
+	// The sidebar floats on the painting as glass; the aside carries no inset
+	// of its own, and the column supplies its margin (the window's air).
+	// It eases in and out on --ease-sidebar, the curve the header's strips
+	// share, and never springs: an overshoot grows the aside past its final
+	// width for a few frames, so the pane beside it jumps out and back and
+	// the whole window seems to rubber-band.
 	const sidebarClass = $derived.by(() =>
 		[
 			"sidebar-container relative flex h-full bg-transparent",
-			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
-			// Clips like overflow-hidden (the panel must not spill while the
-			// width animates) but lets the seam reach across the 8px desk gap
-			// to the pane card's edge, so its grip can sit in that gap.
-			// min-w-0 keeps the flex sizing overflow-hidden used to imply; z-[1]
-			// keeps the pane's positioned content from painting over that
-			// overhang, since clip-path makes the aside its own stacking layer.
-			"z-[1] min-w-0 [clip-path:inset(0_-8px_0_0)]",
+			resizing ? "" : "transition-[width] duration-[var(--motion-sidebar)] ease-[var(--ease-sidebar)] motion-reduce:transition-none",
+			// The panel must not spill while the width animates. A clip-path
+			// would also cut the glass off from the painting behind the aside
+			// (it makes the aside a backdrop root), so this is a plain overflow
+			// clip; the seam sits inside the aside, in the gap before the pane.
+			"z-[1] min-w-0 overflow-hidden",
 		].join(" "),
 	);
 
 	// ── Resizing the seam ─────────────────────────────────────
-	// The aside is the desk gap plus the card. Closed, it is nothing: the
-	// header's sidebar button is the way back.
+	// The aside is the window's air, the glass and the gap to the pane.
+	// Closed, it is the rail; the ∴ (⌘B) opens the full sidebar again.
 	const panelWidth = $derived(sidebarState.width);
-	const asideWidth = $derived(isCollapsed ? 0 : SIDEBAR_INSET + panelWidth);
-	// Settings is a door: it opens the Settings page, which carries its own
-	// section list (SectionNav). Lit while the focused pane shows a Settings
-	// page, the way any row says where you are.
-	const inSettings = $derived.by(() => {
-		const pane = windowShellStore.activePane;
-		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
-		return !!rowForRoute(SETTINGS_MODE, route);
+
+	// Each word's place in the column, so they come back top to bottom.
+	// Set on every open and close: the rows change between them. Capped so a
+	// long Recent list does not drag the last words out.
+	let columnEl = $state<HTMLElement | null>(null);
+	const WORDS = ".panel-row-text, .sidebar-label, .door-meta, .group-head, .pin-head, .recent-zone";
+	const WORD_STAGGER_CAP = 16;
+	$effect(() => {
+		void isCollapsed;
+		columnEl?.querySelectorAll<HTMLElement>(WORDS).forEach((el, i) => {
+			el.style.setProperty("--i", String(Math.min(i, WORD_STAGGER_CAP)));
+		});
 	});
+	const asideWidth = $derived(isCollapsed ? RAIL_WIDTH : SIDEBAR_INSET + panelWidth + PANE_GAP_PX);
+
+	// ── The glass ─────────────────────────────────────────────
+	// One pane of glass behind the column, reaching up into the window
+	// header so the ∴ (HeaderMark) sits on it as the sidebar's first line.
+	// It is fixed to the window rather than to the aside, which starts below
+	// the header and clips. Open, it runs to the window's bottom air, as the
+	// panes do. Closed, it narrows to the rail and ends just under its last
+	// glyph (the doors, then the pins), so the rail rests on the painting as
+	// an object rather than a bar. Both sizes ease on the sidebar's clock,
+	// so the glass and the words move together.
+	//
+	// In the Mac app the window's buttons sit in the header row while the
+	// window is not full screen. The rail is too narrow to hold them, so
+	// with the sidebar closed the glass starts below the header and the ∴
+	// stands beside the buttons on its own glass (HeaderMark).
+	const reachesTop = $derived(!(isCollapsed && trafficLights.shown));
+	const glassTop = $derived(reachesTop ? "var(--chrome-control-top)" : "var(--chrome-row-h)");
+	/** Air below the rail's last glyph. */
+	const RAIL_END_PX = 4;
+	/** Where the rail ends, in px from the window's top. */
+	let railBottom = $state(0);
+	$effect(() => {
+		const column = columnEl;
+		if (!column) return;
+		const measure = () => {
+			const end = column.querySelector(".pinned-zone") ?? column.querySelector(".panel-doors");
+			if (!end) return;
+			// In the rail a group's label takes no room (.railed .group-head),
+			// and while the sidebar opens or closes it is partway there, so
+			// the pins below it are moving. Leaving out whatever height it
+			// has now gives the rail's end in its closed layout at every
+			// moment, so the glass's target holds still for the whole close
+			// instead of moving on every frame.
+			const head = end.querySelector(".group-head");
+			const label = head ? head.getBoundingClientRect().height : 0;
+			railBottom = Math.round(end.getBoundingClientRect().bottom - label + RAIL_END_PX);
+		};
+		// The doors and the pins change size as they fold, and the pins mount
+		// and unmount with the first and last pin.
+		const sizes = new ResizeObserver(measure);
+		const watch = () => {
+			sizes.disconnect();
+			column.querySelectorAll(".panel-doors, .pinned-zone").forEach((el) => sizes.observe(el));
+		};
+		const parts = new MutationObserver(() => {
+			watch();
+			measure();
+		});
+		watch();
+		measure();
+		parts.observe(column, { childList: true, subtree: true });
+		return () => {
+			sizes.disconnect();
+			parts.disconnect();
+		};
+	});
+	// The rows load after the window opens, and the pins after them, so
+	// the rail cannot know its height at first. Until it has measured its
+	// rows it is not shown, and until the window has settled it takes each
+	// new size at once, so it never opens full height and then shrinks.
+	const GLASS_SETTLE_MS = 800;
+	let glassSettled = $state(false);
+	onMount(() => {
+		const t = setTimeout(() => (glassSettled = true), GLASS_SETTLE_MS);
+		return () => clearTimeout(t);
+	});
+	const glassWidth = $derived(isCollapsed ? RAIL_GLASS_PX : panelWidth);
+	// Both heights are plain calc() lengths, so the glass eases straight
+	// from one to the other. The window's height caps the rail through
+	// max-height, which does not move.
+	const fullHeight = $derived(`calc(100% - ${glassTop} - var(--window-air))`);
+	const glassHeight = $derived(
+		isCollapsed && railBottom > 0 ? `calc(${railBottom}px - ${glassTop})` : fullHeight,
+	);
 
 	let resizing = $state(false);
 	$effect(() => {
@@ -343,8 +420,7 @@
 	// Up and Down step through the rows and group heads, Home and End go to
 	// the first and last. Tab still moves on to the next control as usual.
 	// Alt-arrows belong to Pinned (they move a pin), so only bare arrows count.
-	const NAV_ROWS =
-		'.panel-row:not(.panel-empty):not(.pin-drop-empty), .group-toggle, .panel-foot button';
+	const NAV_ROWS = ".panel-row:not(.panel-empty):not(.pin-drop-empty), .group-toggle";
 
 	function onColumnKey(e: KeyboardEvent) {
 		if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -352,7 +428,7 @@
 		const target = e.target as HTMLElement;
 		if (target.closest('input, textarea, [contenteditable="true"]')) return;
 		const column = e.currentTarget as HTMLElement;
-		const rows = [...column.querySelectorAll<HTMLElement>(NAV_ROWS)].filter((r) => r.offsetParent !== null);
+		const rows = [...column.querySelectorAll<HTMLElement>(NAV_ROWS)].filter((r) => r.offsetParent !== null && !r.closest('[inert]'));
 		if (rows.length === 0) return;
 		const at = rows.findIndex((r) => r === target || r.contains(target));
 		let next = 0;
@@ -368,9 +444,9 @@
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
-			// On the desk, not a card: only the work is raised. The sidebar
-			// is chrome, and chrome paints nothing of its own (design.md).
-			"mb-2 ml-2 overflow-hidden",
+			// Transparent: the glass behind it is its own element, so it can
+			// narrow and shorten to the rail while the rows stay put.
+			"mb-3 ml-3 overflow-hidden",
 			"sidebar-column",
 			// Dimmed while releasing the seam would close the sidebar.
 			"transition-opacity duration-150 ease-[var(--ease-premium)]",
@@ -380,15 +456,31 @@
 </script>
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
+	<div
+		class="sidebar-glass lq lq-regular"
+		class:railed={isCollapsed}
+		class:reaches-top={reachesTop}
+		class:unmeasured={isCollapsed && railBottom === 0}
+		class:resizing={resizing || !glassSettled}
+		aria-hidden="true"
+		style:left="{SIDEBAR_INSET}px"
+		style:top={glassTop}
+		style:width="{glassWidth}px"
+		style:height={glassHeight}
+		style:max-height={fullHeight}
+	></div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- Closed, the column is inert: still in the page while the width
 	     animates, but out of the Tab order, the pointer's reach and the
 	     accessibility tree. -->
-	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" inert={isCollapsed} onkeydown={onColumnKey}>
+	<!-- Closed, the column keeps its rows and the aside narrows to the
+	     glyphs: the words fade and clip, and nothing in the DOM is swapped,
+	     so the glyphs never move. -->
+	<div bind:this={columnEl} class={panelColumnClass} class:railed={isCollapsed} style="width: {panelWidth}px; min-width: {panelWidth}px" onkeydown={onColumnKey}>
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
-					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
+					<Icon icon="mynaui:spinner" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
 			{:else}
@@ -402,28 +494,17 @@
 			{/if}
 		</nav>
 
-		<!-- Settings stands at the foot: something you do to the server and
-		     leave, apart from the places above. -->
-		<div class="panel-foot">
-			<OfflinePill collapsed={isCollapsed} />
-			<button
-				type="button"
-				class="sidebar-interactive"
-				class:active={inSettings}
-				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
-			>
-				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} bare />
-				<span class="sidebar-label">Settings</span>
-			</button>
-		</div>
-
 		<SidebarFooter collapsed={isCollapsed} />
 	</div>
 
 	{#if !isCollapsed}
-		<!-- The seam is the handle: the desk gap between the sidebar and the
-		     pane card, with the grip in its middle, the way the gutter works
+		<!-- The seam is the handle: the gap between the sidebar and the
+		     page, with the grip centred in it, the way the gutter works
 		     between two panes in split. Click hides, drag resizes. -->
+		<!-- A focusable separator with a value is a widget (arrow keys resize),
+		     which Svelte's rule doesn't recognise; SplitContainer's gutters
+		     carry the same ignore. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div
 			class="sidebar-resizer"
 			class:dragging={resizing}
@@ -470,30 +551,26 @@
 
 	/* The hit area. It paints nothing.
 
-	   The desk gap between the sidebar and the pane card lies just past the
-	   aside's right edge. The hit area covers that gap plus 4px of the
-	   sidebar, so the seam is easy to find from that side. It stops at the
-	   card's edge, because reaching into the card would need a wider clip on
-	   the aside, and that would let the panel paint over the card while the
-	   width animates. Top and bottom match the column and the card: the
-	   aside's top, under the window header, and the desk gap (`mb-2`). */
+	   The page starts at the aside's right edge, and the 10px gap before it
+	   is the seam. The hit area is the whole gap and 1px of the glass, and
+	   runs the column's full height. */
 	.sidebar-resizer {
 		position: absolute;
 		top: 0;
-		bottom: 8px;
-		right: -8px;
-		width: 12px;
+		bottom: var(--window-air);
+		right: 0;
+		width: 11px;
 		z-index: 20;
 		cursor: col-resize;
 		touch-action: none;
 		background: transparent;
 	}
 
-	/* The grip: a pill centred in the desk gap, hidden until the pointer
-	   finds the seam, so at rest the gap is plain desk. It fades in and
-	   lengthens on approach and takes the accent only while held. The gap is
-	   the hit area's right 8px, so 2px in from the right edge centres the
-	   4px pill in it. Same object as the split gutter's grip.
+	/* The grip: a pill centred on the line, hidden until the pointer finds
+	   the seam, so at rest there is only the line. It fades in and lengthens
+	   on approach and takes the accent only while held. The line runs 5 to
+	   6px in from the hit area's right edge, so a 4px pill 3.5px in from
+	   that edge is centred on it. Same object as the split gutter's grip.
 
 	   The pill is drawn as two halves so it can bend into a chevron. Each
 	   half runs from one end to 2px past the middle, so their round ends
@@ -501,7 +578,7 @@
 	.sidebar-resizer-grip {
 		position: absolute;
 		top: 50%;
-		right: 2px;
+		right: 3.5px;
 		width: 4px;
 		height: 32px;
 		transform: translateY(-50%);
@@ -559,7 +636,7 @@
 
 	/* Armed: releasing now closes the sidebar. The grip shortens and bends
 	   into a chevron pointing the way the sidebar will go. It moves 4px left
-	   so the chevron's open ends stay inside the aside's 8px clip. */
+	   so the chevron's open ends stay inside the aside's clip. */
 	.sidebar-resizer.armed .sidebar-resizer-grip {
 		height: 24px;
 		transform: translate(-4px, -50%);
@@ -625,31 +702,140 @@
 		}
 	}
 
-	.panel-foot {
-		flex: none;
-		padding: 0 4px 8px;
+	/* Closed: the same rows, narrowed to their glyphs, and every word
+	   fades. Group heads keep their height, so the glyphs below them stay
+	   where they were.
+
+	   Opening, the words wait until the sidebar is about 40% open, then
+	   come into focus beside their glyphs: each fades in, slides 4px from
+	   the left and loses a 2px blur, a row 12ms after the one above it
+	   (--i, set in document order). Closing, they go in 100ms, before the
+	   sidebar's edge reaches them, so no word is seen clipped. */
+	.sidebar-column :global(:is(.panel-row-text, .sidebar-label, .door-meta, .group-head, .pin-head, .recent-zone)) {
+		--word-delay: calc(130ms + var(--i, 0) * 12ms);
+		transition:
+			opacity 240ms var(--ease-premium) var(--word-delay),
+			transform 280ms var(--ease-premium) var(--word-delay),
+			filter 240ms var(--ease-premium) var(--word-delay);
 	}
 
-	/* Settings is a door like the ones at the top of the panel, so it takes
-	   their glyph tone and their line height. */
-	.panel-foot :global(.atlas-icon) {
-		color: var(--color-foreground-muted);
-		transition: color var(--motion-hover-out) var(--ease-premium);
+	.railed :global(:is(.panel-row-text, .sidebar-label, .door-meta, .group-head, .pin-head, .recent-zone)) {
+		transform: translateX(-4px);
+		filter: blur(2px);
+		transition:
+			opacity 100ms ease-in,
+			transform 100ms ease-in,
+			filter 100ms ease-in;
 	}
 
-	.panel-foot button:is(:hover, .active) :global(.atlas-icon) {
-		color: var(--color-foreground);
+	.railed :global(:is(.panel-row-text, .sidebar-label, .door-meta, .row-actions, .row-unread, .group-head, .pin-head, .recent-zone)) {
+		opacity: 0;
+		pointer-events: none;
 	}
 
-	.panel-foot .sidebar-label {
-		line-height: normal;
+	/* A group's label takes no room in the rail, so the pins stand the
+	   same 16px below the doors as the doors stand below the ∴. Closing,
+	   the label goes first and its space closes after it; opening, the
+	   space opens at once, ready for the label. */
+	.sidebar-column :global(.group-head) {
+		transition:
+			opacity 240ms var(--ease-premium) var(--word-delay),
+			transform 280ms var(--ease-premium) var(--word-delay),
+			filter 240ms var(--ease-premium) var(--word-delay),
+			height var(--motion-sidebar) var(--ease-sidebar);
 	}
 
-	/* As the panel's rows: Avenir's medium on a 1x display. */
-	@media (max-resolution: 1.5dppx) {
-		.panel-foot .sidebar-label {
-			font-weight: 500;
+	.sidebar-column.railed :global(.group-head) {
+		height: 0;
+		transition:
+			opacity 100ms ease-in,
+			transform 100ms ease-in,
+			filter 100ms ease-in,
+			height var(--motion-sidebar) var(--ease-sidebar) 100ms;
+	}
+
+	/* The glass (`.lq-regular`, app.css) behind the column: the opened
+	   sidebar's panel, or the rail. It changes shape in two beats, so the
+	   rail reads as the same piece of glass growing into the panel.
+	   Opening, it runs down to full height first, quickly, and widens on a
+	   spring that carries it a few pixels into the gap before it settles
+	   (--ease-sidebar-glass). Closing, it narrows and draws up to the
+	   rail's last glyph together, on the sidebar's clock. It follows the
+	   pointer with no easing while the seam is dragged. */
+	.sidebar-glass {
+		position: fixed;
+		z-index: 0;
+		border-radius: var(--radius-xl);
+		pointer-events: none;
+		transition:
+			width 560ms var(--ease-sidebar-glass),
+			height 300ms var(--ease-sidebar);
+	}
+
+	.sidebar-glass.railed {
+		transition:
+			width var(--motion-sidebar) var(--ease-sidebar),
+			height var(--motion-sidebar) var(--ease-sidebar);
+	}
+
+	.sidebar-glass.resizing {
+		transition: none;
+	}
+
+	.sidebar-glass.unmeasured {
+		opacity: 0;
+	}
+
+	.sidebar-column {
+		position: relative;
+		z-index: 1;
+	}
+
+	/* Rows stand 2px apart, open or closed. */
+	.sidebar-column :global(:is(.panel-doors, .sidebar-expandable-inner)) {
+		gap: 2px;
+	}
+
+	/* Closed, each row stands 4px in from the rail's edges, as it does
+	   from the open panel's, with its glyph in the middle, so its hover
+	   tint sits inside the glass rather than filling it edge to edge. The
+	   glyph is where it was in the open row (10px into the row, both ways),
+	   so it does not move. The rows narrow only once the words are gone, so
+	   the words fade at full width instead of being cut off by the row.
+	   Opening, the rows widen at once, before the words come back. */
+	.sidebar-column :global(.panel-row) {
+		transition:
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.sidebar-column.railed :global(.panel-row) {
+		width: calc(var(--rail-w) - 8px);
+		padding-right: 0;
+		overflow: hidden;
+		transition:
+			width 0s 100ms,
+			padding-right 0s 100ms,
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.sidebar-glass,
+		.sidebar-glass.railed,
+		.panel-body,
+		.sidebar-column :global(:is(.panel-row-text, .sidebar-label, .door-meta, .group-head, .pin-head, .recent-zone)),
+		.sidebar-column :global(.group-head),
+		.sidebar-column.railed :global(.group-head),
+		.sidebar-column :global(.panel-row),
+		.sidebar-column.railed :global(.panel-row) {
+			transition: none;
 		}
+	}
+
+	.railed .panel-body {
+		overflow-y: hidden;
 	}
 
 	.workspace-nav {
@@ -661,14 +847,21 @@
 		padding: 0;
 	}
 
-	/* The rows' inset: 4px, then each row's 12px, so icons start 16px in.
-	   The first door starts 8px down. */
+	/* Inside the glass: the rows stand 4px in from its sides, then each
+	   row's 10px, so icons start 14px in, open as in the rail, and no
+	   glyph moves sideways as the sidebar opens or closes. The ∴ above
+	   them stands on the same column (HeaderMark), 9px under the glass's
+	   top. The first door stands 16px below the ∴'s row, the air above a
+	   group (HomePanel's group head). The ∴'s row ends a control's height
+	   below the header's top air, and this column starts below the
+	   header. */
 	.panel-body {
 		height: 100%;
 		min-height: 0;
 		overflow-y: auto;
 		overflow-x: hidden;
-		padding: 8px 4px 12px;
+		padding: calc(var(--chrome-control-top) + var(--chrome-tab-h) + 16px - var(--chrome-row-h)) 4px 12px;
+		transition: padding var(--motion-sidebar) var(--ease-sidebar);
 	}
 
 	@keyframes spin {

@@ -25,12 +25,21 @@
 //!      carries a repair;
 //!   2. upgrade.rs, after migrate succeeds — the orchestrator's own pass,
 //!      which keeps firing on future upgrades once this release is the old
-//!      half.
+//!      half;
+//!   3. restore.rs, after the backup's database loads and before its key
+//!      check, in both `run` and `run_from_volume`. Restore runs as root and
+//!      writes the backup's env file, whose key the database logins have to
+//!      follow (`db_logins`).
 //!
-//!   (The Migrate arm's call stays as a third site: inert today because of
+//!   (The Migrate arm's call stays as one more site: inert today because of
 //!   the demotion, live again if the re-exec ever stops covering `migrate`.
 //!   The server can't ever do this work: `virtues.service` runs as
 //!   `User=virtues`, which cannot chown a root-owned directory to itself.)
+//!
+//! Hook 1 runs for `virtues migrate --check` too, which applies no migration.
+//! The installer and first boot run that as root, so a new box gets the
+//! repairs before its server first starts, and so does an upgrade's
+//! preflight, which runs it under the staged binary.
 //!
 //! `virtues migrate` is also a documented power-user command that runs
 //! un-sudo'd, so everything here is gated on euid 0 and skips quietly without
@@ -65,6 +74,10 @@ pub fn run() {
                 // A warning, never an error: see the module doc. The boot-time
                 // lake probe (`storage::health_check`) is the surface that
                 // keeps shouting if this stays broken.
+                //
+                // First boot reads stdout for "`db-logins` could not finish"
+                // to decide whether to retry (`virtues-firstboot.sh` §3), and
+                // the installer forwards each "system repair `" line.
                 super::ui::warn(&format!("system repair `{name}` could not finish: {why}"));
             }
         }
@@ -72,8 +85,7 @@ pub fn run() {
 }
 
 /// Dev Macs (and anything else non-Linux) compile repairs out entirely; every
-/// invariant here is about an installed box's layout. Same shape as the
-/// `ble_provision` stub.
+/// invariant here is about an installed box's layout.
 #[cfg(not(target_os = "linux"))]
 pub fn run() {}
 
@@ -94,7 +106,347 @@ enum Outcome {
 const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("state-ownership", state_ownership),
     ("dragon-watchdog", dragon_watchdog),
+    ("db-logins", db_logins),
+    ("retired-hardware", retired_hardware),
+    ("console-socket", console_socket),
 ];
+
+/// The tmpfiles rule that makes the console socket's folder at every boot.
+/// The server runs as `virtues` and cannot create a folder under `/run`.
+pub const CONSOLE_TMPFILES: &str = "/etc/tmpfiles.d/virtues.conf";
+pub const CONSOLE_TMPFILES_RULE: &str = "d /run/virtues 0755 virtues virtues -\n";
+
+/// The console socket can be opened, and the owner can use it
+/// (`crate::console_socket`): the `virtues-console` group exists, the
+/// tmpfiles rule for `/run/virtues` is written and the folder is there, and
+/// the login that ran this through sudo is in the group.
+///
+/// That login is whoever ran the installer or `sudo virtues migrate` or
+/// `sudo virtues upgrade`. It already has root through sudo, so the group
+/// gives it nothing it could not take, and it is what lets that person reach
+/// the console without sudo, including from a browser over SSH. Membership
+/// applies at once: the console socket checks the caller's uid against the
+/// group as each connection arrives (`console_socket::classify`).
+#[cfg(target_os = "linux")]
+fn console_socket(_data_dir: &std::path::Path) -> Outcome {
+    use std::path::Path;
+    use std::process::Command;
+
+    let group = crate::console_socket::CONSOLE_GROUP;
+    let mut done: Vec<String> = Vec::new();
+    let ran = |cmd: &mut Command| cmd.output().map_or(false, |o| o.status.success());
+
+    if !ran(Command::new("getent").args(["group", group])) {
+        if !ran(Command::new("groupadd").args(["--system", group])) {
+            return Outcome::Failed(format!("could not create the {group} group"));
+        }
+        done.push(format!("created the {group} group"));
+    }
+
+    let rule_ok = std::fs::read_to_string(CONSOLE_TMPFILES).is_ok_and(|c| c == CONSOLE_TMPFILES_RULE);
+    if !rule_ok {
+        if let Err(e) = std::fs::write(CONSOLE_TMPFILES, CONSOLE_TMPFILES_RULE) {
+            return Outcome::Failed(format!("writing {CONSOLE_TMPFILES}: {e}"));
+        }
+        done.push(format!("wrote {CONSOLE_TMPFILES}"));
+    }
+    if !Path::new("/run/virtues").is_dir() || !rule_ok {
+        if !ran(Command::new("systemd-tmpfiles").args(["--create", CONSOLE_TMPFILES])) {
+            return Outcome::Failed("systemd-tmpfiles could not create /run/virtues".to_string());
+        }
+        done.push("created /run/virtues".to_string());
+    }
+
+    if let Some(login) = std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty() && u != "root") {
+        let in_group = Command::new("id")
+            .args(["-nG", &login])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().any(|g| g == group));
+        match in_group {
+            Some(true) => {}
+            Some(false) => {
+                if !ran(Command::new("usermod").args(["-aG", group, &login])) {
+                    return Outcome::Failed(format!("could not add {login} to the {group} group"));
+                }
+                done.push(format!("added {login} to the {group} group"));
+            }
+            // `id` cannot name the login: nothing to add.
+            None => {}
+        }
+    }
+
+    if done.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(done.join(", "))
+    }
+}
+
+/// Nothing is left of the hardware Virtues no longer ships: the display
+/// panel's kiosk unit and its shim (the page it loaded is gone), the polkit
+/// rule that let the server manage NetworkManager (it no longer manages the
+/// network), and the logind drop-in that handed the power key to the reset
+/// button (the key goes back to logind's default at the next boot). The
+/// first-boot unit stays: each of its sections is guarded, and it still
+/// repairs a cluster after a power cut.
+///
+/// A repair, not an upgrade step, because the upgrade orchestrator is the
+/// old binary: only the new binary's root instant (hook 1 above) runs on the
+/// upgrade that first carries this. Converged on a server that never had
+/// any of it.
+#[cfg(target_os = "linux")]
+fn retired_hardware(_data_dir: &std::path::Path) -> Outcome {
+    use std::path::Path;
+    use std::process::Command;
+    const UNIT: &str = "virtues-display.service";
+    const UNIT_FILE: &str = "/etc/systemd/system/virtues-display.service";
+    let mut removed = Vec::new();
+    if Path::new(UNIT_FILE).exists() {
+        // Best-effort stop: a unit that is already stopped or broken still
+        // has its file removed below.
+        let _ = Command::new("systemctl").args(["disable", "--now", UNIT]).status();
+        if let Err(e) = std::fs::remove_file(UNIT_FILE) {
+            return Outcome::Failed(format!("removing {UNIT_FILE}: {e}"));
+        }
+        let _ = std::fs::remove_file("/usr/local/lib/virtues/display.py");
+        let _ = Command::new("systemctl").arg("daemon-reload").status();
+        removed.push(UNIT);
+    }
+    for f in [
+        "/etc/polkit-1/rules.d/50-virtues-network.rules",
+        "/etc/systemd/logind.conf.d/10-virtues-power-key.conf",
+    ] {
+        if Path::new(f).exists() {
+            if let Err(e) = std::fs::remove_file(f) {
+                return Outcome::Failed(format!("removing {f}: {e}"));
+            }
+            removed.push(f);
+        }
+    }
+    if removed.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(format!("removed {}", removed.join(", ")))
+    }
+}
+
+/// The two low-privilege Postgres roles can log in, with the passwords the
+/// server derives from this box's encryption key (`database::restricted`).
+/// Model- and applet-written SQL runs on those logins, and a box refuses to
+/// run that SQL without them.
+///
+/// Root is needed because the server's role has no CREATEROLE and so cannot
+/// alter the roles itself. Checked by logging in over TCP the way the server
+/// will, so a `pg_hba.conf` that refuses the login reports as Failed instead
+/// of Converged. The installer and first boot run this after the key exists
+/// and before the server first starts (see the module doc), and every upgrade
+/// runs it again before the new server starts. Restore runs it after loading
+/// a backup, because the backup's env file can bring back a different key
+/// than the one the logins were set from, and loading a dump never changes a
+/// role.
+///
+/// Debian's `pg_hba.conf` takes a password on 127.0.0.1. Fedora's uses
+/// `ident` there, which these roles cannot pass because they have no OS user,
+/// so when the login still fails after its password is set, the repair adds
+/// [`LOGINS_TCP_LINE`] and checks again.
+///
+/// Sandboxed applet code has no network, so it logs in as the writer on the
+/// Postgres socket instead. A box's `pg_hba.conf` maps socket logins to OS
+/// users (`peer`), and the sandbox's throwaway user is no Postgres role, so
+/// the repair adds [`WRITER_SOCKET_LINE`] for that and checks the login works.
+#[cfg(target_os = "linux")]
+fn db_logins(data_dir: &std::path::Path) -> Outcome {
+    use crate::database::restricted::{alter_login_sql, password, Login};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let Some(key) = crate::box_env::read(&data_dir.join("virtues.env"))
+        .and_then(|mut env| env.remove("VIRTUES_ENCRYPTION_KEY"))
+        .filter(|k| !k.is_empty())
+    else {
+        return Outcome::Failed("virtues.env has no VIRTUES_ENCRYPTION_KEY to derive the logins from".into());
+    };
+    // The password goes through the environment, never argv, which any user
+    // can read in `ps`.
+    let can_log_in = |login: Login| {
+        Command::new("psql")
+            .args(["-h", "127.0.0.1", "-U", login.role(), "-d", "virtues", "-w", "-tAc", "SELECT 1"])
+            .env("PGPASSWORD", password(&key, login))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    let as_postgres = |sql: &str| {
+        Command::new("runuser")
+            .args(["-u", "postgres", "--", "psql", "-d", "postgres", "-tAc", sql])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    // Put `line` in pg_hba.conf and reload, unless it is there already.
+    // Returns the file, and whether this added the line.
+    let add_hba_line = |line: &str, why: &str| -> Result<(std::path::PathBuf, bool), String> {
+        let Some(hba) = as_postgres("SHOW hba_file").filter(|p| !p.is_empty()) else {
+            return Err("could not ask Postgres where pg_hba.conf is".into());
+        };
+        let hba = std::path::PathBuf::from(hba);
+        let text = std::fs::read_to_string(&hba).map_err(|e| format!("could not read {}: {e}", hba.display()))?;
+        let Some(updated) = with_hba_line(&text, line, why) else {
+            return Ok((hba, false));
+        };
+        replace_keeping_owner(&hba, &updated).map_err(|e| format!("could not write {}: {e}", hba.display()))?;
+        if as_postgres("SELECT pg_reload_conf()").is_none() {
+            return Err(format!("added `{line}` to {} but could not reload Postgres", hba.display()));
+        }
+        Ok((hba, true))
+    };
+
+    let mut done = Vec::new();
+    let missing: Vec<Login> = Login::ALL.into_iter().filter(|l| !can_log_in(*l)).collect();
+    for login in &missing {
+        // The SQL goes on stdin for the same reason.
+        let child = Command::new("runuser")
+            .args(["-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres", "-q"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => return Outcome::Failed(format!("could not run psql as postgres: {e}")),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(format!("{};\n", alter_login_sql(&key, *login)).as_bytes()) {
+                return Outcome::Failed(format!("could not write to psql: {e}"));
+            }
+        }
+        match child.wait_with_output() {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                return Outcome::Failed(format!(
+                    "ALTER ROLE {} failed: {}",
+                    login.role(),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => return Outcome::Failed(format!("psql as postgres did not finish: {e}")),
+        }
+    }
+    if !missing.is_empty() {
+        let roles = missing.iter().map(|l| l.role()).collect::<Vec<_>>().join(", ");
+        done.push(format!("set the login for {roles}"));
+        if !missing.iter().all(|l| can_log_in(*l)) {
+            let hba = match add_hba_line(LOGINS_TCP_LINE, "chat and applet SQL logs in with a password on 127.0.0.1.") {
+                Ok((hba, added)) => {
+                    if added {
+                        done.push(format!("let them log in with a password on 127.0.0.1 ({})", hba.display()));
+                    }
+                    hba
+                }
+                Err(why) => return Outcome::Failed(format!("set the login for {roles}, but {why}")),
+            };
+            if !missing.iter().all(|l| can_log_in(*l)) {
+                return Outcome::Failed(format!(
+                    "set the login for {roles}, but Postgres still refuses it on 127.0.0.1 (check {})",
+                    hba.display()
+                ));
+            }
+        }
+    }
+
+    let writer_on_socket = || {
+        Command::new("psql")
+            .arg(format!(
+                "host={} user={} dbname=virtues",
+                crate::database::restricted::SOCKET_DIR,
+                Login::Writer.role()
+            ))
+            .args(["-w", "-tAc", "SELECT 1"])
+            .env("PGPASSWORD", password(&key, Login::Writer))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if !writer_on_socket() {
+        let hba = match add_hba_line(WRITER_SOCKET_LINE, "sandboxed applet code logs in as the writer with its password.") {
+            Ok((hba, added)) => {
+                if added {
+                    done.push(format!("let the applet writer log in on the socket ({})", hba.display()));
+                }
+                hba
+            }
+            Err(why) => return Outcome::Failed(why),
+        };
+        if !writer_on_socket() {
+            return Outcome::Failed(format!(
+                "Postgres refuses the applet writer on the socket (check {})",
+                hba.display()
+            ));
+        }
+    }
+
+    if done.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(done.join("; "))
+    }
+}
+
+/// The `pg_hba.conf` line that lets sandboxed applet code log in as the
+/// writer on the socket with its password.
+#[cfg(any(target_os = "linux", test))]
+const WRITER_SOCKET_LINE: &str = "local virtues virtues_applet_writer scram-sha-256";
+
+/// The `pg_hba.conf` line that lets both restricted roles log in with their
+/// passwords on 127.0.0.1, where the server connects them.
+#[cfg(any(target_os = "linux", test))]
+const LOGINS_TCP_LINE: &str = "host virtues virtues_face_reader,virtues_applet_writer 127.0.0.1/32 scram-sha-256";
+
+/// `hba` with `line`, under a comment that says `why`, ahead of its first
+/// rule, or `None` when it already has the line. Postgres takes the first
+/// rule that matches, so the line has to come before the `peer` and `ident`
+/// rules a box ships with.
+#[cfg(any(target_os = "linux", test))]
+fn with_hba_line(hba: &str, line: &str, why: &str) -> Option<String> {
+    let has = hba.lines().any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == line);
+    if has {
+        return None;
+    }
+    let block = format!("# Virtues: {why}\n{line}\n");
+    let mut out = String::with_capacity(hba.len() + block.len());
+    let mut placed = false;
+    for existing in hba.split_inclusive('\n') {
+        let t = existing.trim();
+        if !placed && !t.is_empty() && !t.starts_with('#') {
+            out.push_str(&block);
+            placed = true;
+        }
+        out.push_str(existing);
+    }
+    if !placed {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&block);
+    }
+    Some(out)
+}
+
+/// Write `path` through a file beside it and a rename, with the original's
+/// owner and mode, so a failed write cannot leave Postgres a half file.
+#[cfg(target_os = "linux")]
+fn replace_keeping_owner(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::metadata(path)?;
+    let tmp = path.with_extension("virtues-new");
+    std::fs::write(&tmp, contents)?;
+    std::os::unix::fs::chown(&tmp, Some(meta.uid()), Some(meta.gid()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(meta.mode() & 0o7777))?;
+    std::fs::rename(&tmp, path)
+}
 
 /// The systemd drop-in that arms a Dragon's hardware watchdog. The installer
 /// writes the same bytes on a fresh install (its bring-up runs as `virtues`,
@@ -243,5 +595,48 @@ fn state_ownership(data_dir: &std::path::Path) -> Outcome {
             String::from_utf8_lossy(&o.stderr).trim()
         )),
         Err(e) => Outcome::Failed(format!("could not run chown sweep: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_writer_socket_line_goes_ahead_of_the_first_rule_once() {
+        let hba = "# comment\n\nlocal   all   postgres   peer\nlocal all all peer\nhost all all 127.0.0.1/32 scram-sha-256\n";
+        let updated = with_hba_line(hba, WRITER_SOCKET_LINE, "why").unwrap();
+        let rules: Vec<&str> = updated.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect();
+        assert_eq!(rules[0], WRITER_SOCKET_LINE);
+        assert_eq!(rules[1], "local   all   postgres   peer");
+        assert!(updated.starts_with("# comment\n"), "comments above the rules stay first");
+        assert!(with_hba_line(&updated, WRITER_SOCKET_LINE, "why").is_none(), "added once");
+        let spaced = updated.replace(WRITER_SOCKET_LINE, "local  virtues  virtues_applet_writer  scram-sha-256");
+        assert!(with_hba_line(&spaced, WRITER_SOCKET_LINE, "why").is_none(), "spacing does not matter");
+    }
+
+    /// Fedora's `postgresql-setup --initdb` writes `ident` for 127.0.0.1,
+    /// which a role with no OS user cannot pass. The password line has to
+    /// come first, and adding the socket line later keeps both.
+    #[test]
+    fn the_tcp_line_goes_ahead_of_an_ident_rule() {
+        let hba = "local all all peer\nhost all all 127.0.0.1/32 ident\nhost all all ::1/128 ident\n";
+        let updated = with_hba_line(hba, LOGINS_TCP_LINE, "why").unwrap();
+        let updated = with_hba_line(&updated, WRITER_SOCKET_LINE, "why").unwrap();
+        let rules: Vec<&str> = updated.lines().filter(|l| !l.starts_with('#')).collect();
+        let tcp = rules.iter().position(|l| *l == LOGINS_TCP_LINE).unwrap();
+        let ident = rules.iter().position(|l| l.contains("127.0.0.1/32 ident")).unwrap();
+        assert!(tcp < ident, "{updated}");
+        assert!(rules.contains(&WRITER_SOCKET_LINE));
+        assert!(with_hba_line(&updated, LOGINS_TCP_LINE, "why").is_none(), "added once");
+    }
+
+    /// The lines name the roles `database::restricted` connects as.
+    #[test]
+    fn the_hba_lines_name_the_restricted_roles() {
+        use crate::database::restricted::Login;
+        let roles = Login::ALL.iter().map(|l| l.role()).collect::<Vec<_>>().join(",");
+        assert_eq!(LOGINS_TCP_LINE.split_whitespace().nth(2), Some(roles.as_str()));
+        assert_eq!(WRITER_SOCKET_LINE.split_whitespace().nth(2), Some(Login::Writer.role()));
     }
 }

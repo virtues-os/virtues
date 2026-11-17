@@ -58,13 +58,13 @@
 			<div class="state">Loading record…</div>
 		{:else if error}
 			<div class="state error">
-				<Icon icon="ri:error-warning-line" width="16" />
+				<Icon icon="mynaui:danger-circle" width="16" />
 				<span>{error}</span>
 			</div>
 		{:else if record}
 			<header class="head">
 				<div class="eyebrow">
-					<Icon icon="ri:database-2-line" width="12" />
+					<Icon icon="mynaui:database" width="12" />
 					<span>{record.display_name}</span>
 				</div>
 				<h1 class="title">{title}</h1>
@@ -84,7 +84,7 @@
 							{:else if r.kind === "link"}
 								<a href={r.text} target="_blank" rel="noopener noreferrer">
 									{r.text}
-									<Icon icon="ri:external-link-line" width="12" />
+									<Icon icon="mynaui:external-link" width="12" />
 								</a>
 							{:else}
 								{r.text}

@@ -38,7 +38,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, Account};
+use crate::entitlement::{self, Wallet};
 use crate::AppState;
 
 const GATEWAY_URL: &str = "https://ai-gateway.vercel.sh/v4/ai/language-model";
@@ -337,7 +337,7 @@ fn cost_micros(body: &Value, catalog: &crate::catalog::Catalog, model: &str) -> 
     model_micros + search_fee
 }
 
-fn budget_gate(ent: &Account) -> Option<Response> {
+fn budget_gate(ent: &Wallet) -> Option<Response> {
     if ent.balance_micros <= 0 {
         return Some(err(
             StatusCode::PAYMENT_REQUIRED,

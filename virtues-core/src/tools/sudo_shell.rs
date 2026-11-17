@@ -1,0 +1,399 @@
+//! `sudo` — a command on the machine this server runs on, for the admin applet.
+//!
+//! This is the owner's admin shell handed to the model: the same account, the
+//! same PATH and the same passwordless sudo the web terminal (`/ws/terminal`)
+//! gives a person. The boundaries are elsewhere:
+//!
+//! - only a shipped applet may list the tool (`applet_templates::skill`), and
+//!   only `admin` does; a chat turn it starts is the only sudo turn
+//!   (`ChatMode::is_sudo`)
+//! - the executor refuses it unless the turn's context says sudo, so a model
+//!   naming it in any other turn — or an applet run, or a subagent, none of
+//!   which can carry that flag — gets a refusal, not a shell
+//! - a command that deletes data, or one that prints the backup recovery key,
+//!   waits for the owner to allow it (`sudo_gate`); everything else runs
+//!
+//! The command does not get the server's environment, which holds the box key
+//! and the rest of `virtues.env`, because whatever it prints goes into the
+//! chat. It gets the basics ([`KEPT_ENV`]), its own PATH and pager settings,
+//! and libpq's variables for the app's database without a password. The admin
+//! applet can still read every secret on the box, `virtues.env` included; that is the
+//! owner's stated exception (agents/plan/secrets-plan.md, "Who can read
+//! what"). A clean environment keeps an ordinary `env` from printing the key.
+//!
+//! Non-interactive: stdin is closed, so a command that waits for input reads
+//! EOF instead of hanging until the timeout.
+//!
+//! The command runs in its own process group, and the whole group is killed on
+//! timeout or when the turn is stopped. Killing only `bash` would leave
+//! whatever it started running with nobody attached to it. A command that
+//! exits on its own keeps its group, so a deliberate `nohup … &` survives.
+
+use std::collections::VecDeque;
+use std::ffi::OsString;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+use super::executor::{ToolError, ToolResult};
+
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
+/// Ten minutes. Longer jobs go in the background with their output in a file,
+/// so a stuck command cannot hold the turn. The agent loop's ceiling for this
+/// tool sits just past it (`agent::executor`).
+pub const MAX_TIMEOUT_SECS: u64 = 600;
+/// Kept from the start and from the end of each stream. The end is where the
+/// error usually is; the start is where the header that explains it usually is.
+const HEAD_BYTES: usize = 12 * 1024;
+const TAIL_BYTES: usize = 12 * 1024;
+
+/// What a command the model runs keeps of the server's own environment. None
+/// of these holds a secret. The `virtues` CLI reads `virtues.env` itself, so it
+/// works without the rest; `INSTALL_PREFIX` is how it finds that file on an
+/// install outside `/usr/local` (`install_manifest::manifest_path`).
+pub(crate) const KEPT_ENV: &[&str] =
+    &["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TZ", "TMPDIR", "INSTALL_PREFIX"];
+
+/// Clear `cmd`'s environment, then set each [`KEPT_ENV`] name that
+/// `server_env` has. `server_env` reads the server's variables; a test passes
+/// its own.
+pub(crate) fn keep_only_basics(cmd: &mut tokio::process::Command, server_env: &dyn Fn(&str) -> Option<OsString>) {
+    cmd.env_clear();
+    for name in KEPT_ENV {
+        if let Some(value) = server_env(name) {
+            cmd.env(name, value);
+        }
+    }
+}
+
+/// libpq's variables for the app's database, from `DATABASE_URL` without its
+/// password, so a bare `psql` reaches the database as the app's role. A box's
+/// URL is `postgres:///virtues`, the Unix socket with peer auth, so it needs no
+/// password. Where the role does (a dev machine), psql fails and the SQL tools
+/// still work.
+fn database_env(url: &str) -> Vec<(&'static str, String)> {
+    let Ok(url) = url::Url::parse(url) else { return Vec::new() };
+    let decode = |s: &str| urlencoding::decode(s).map(|d| d.into_owned()).unwrap_or_else(|_| s.to_string());
+    let mut out = Vec::new();
+    let host = url
+        .query_pairs()
+        .find(|(k, _)| k == "host")
+        .map(|(_, v)| v.into_owned())
+        .or_else(|| url.host_str().map(decode))
+        .filter(|h| !h.is_empty());
+    if let Some(host) = host {
+        out.push(("PGHOST", host));
+    }
+    if let Some(port) = url.port() {
+        out.push(("PGPORT", port.to_string()));
+    }
+    if !url.username().is_empty() {
+        out.push(("PGUSER", decode(url.username())));
+    }
+    let database = decode(url.path().trim_start_matches('/'));
+    if !database.is_empty() {
+        out.push(("PGDATABASE", database));
+    }
+    out
+}
+
+/// `bash -c <command>` in `cwd`, with no stdin and none of the server's
+/// environment beyond [`KEPT_ENV`] and the database's libpq variables.
+fn shell_command(command: &str, cwd: &str, server_env: &dyn Fn(&str) -> Option<OsString>) -> tokio::process::Command {
+    let home = server_env("HOME").and_then(|h| h.into_string().ok());
+    let bash = if std::path::Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" };
+    let mut cmd = tokio::process::Command::new(bash);
+    keep_only_basics(&mut cmd, server_env);
+    if let Some(url) = server_env("DATABASE_URL").and_then(|u| u.into_string().ok()) {
+        cmd.envs(database_env(&url));
+    }
+    cmd.arg("-c")
+        .arg(command)
+        .current_dir(cwd)
+        .env("PATH", crate::api::terminal::session_path(home.as_deref()))
+        // Pagers and prompts would wait on a terminal that is not there.
+        .env("PAGER", "cat")
+        .env("SYSTEMD_PAGER", "")
+        .env("GIT_PAGER", "cat")
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .env("TERM", "dumb")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .kill_on_drop(true);
+    cmd
+}
+
+pub async fn execute(arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+    let command = arguments
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ToolError::InvalidParameters("command is required".into()))?
+        .to_string();
+    let timeout_secs = arguments
+        .get("timeout_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+        .clamp(1, MAX_TIMEOUT_SECS);
+
+    let cwd = arguments
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_else(|| "/".to_string());
+
+    let mut cmd = shell_command(&command, &cwd, &|name| std::env::var_os(name));
+
+    let started = Instant::now();
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return Ok(ToolResult::error(format!("could not start the command in {cwd}: {e}"))),
+    };
+    let mut group = GroupKill(child.id().map(|p| p as i32));
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let run = async {
+        let (out, err, status) =
+            tokio::join!(read_capped(stdout), read_capped(stderr), child.wait());
+        (out, err, status)
+    };
+
+    let (out, err, status, timed_out) =
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), run).await {
+            Ok((out, err, status)) => (out, err, status.ok(), false),
+            Err(_) => {
+                group.kill();
+                (Captured::default(), Captured::default(), None, true)
+            }
+        };
+    // It finished on its own: leave its group alone, so something it started
+    // in the background on purpose (`nohup … &`) keeps running.
+    group.disarm();
+
+    let mut data = serde_json::json!({
+        "exit_code": status.and_then(|s| s.code()),
+        "stdout": out.render(),
+        "stderr": err.render(),
+        "duration_ms": started.elapsed().as_millis() as u64,
+    });
+    if timed_out {
+        data["timed_out"] = serde_json::json!(true);
+        data["hint"] = serde_json::json!(format!(
+            "killed after {timeout_secs}s. Raise timeout_seconds (max {MAX_TIMEOUT_SECS}), \
+             or start it in the background with its output sent to a file \
+             (nohup … >/tmp/job.log 2>&1 &) and check on it later."
+        ));
+    }
+    if out.dropped > 0 || err.dropped > 0 {
+        data["truncated"] = serde_json::json!(true);
+    }
+    Ok(ToolResult::success(data))
+}
+
+/// Kills the command's whole process group when dropped — which covers a
+/// stopped turn, where this future is dropped mid-await and nothing after the
+/// await ever runs.
+struct GroupKill(Option<i32>);
+
+impl GroupKill {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+
+    fn kill(&self) {
+        // kill(1) with a negative pid signals the whole group. `libc` is a
+        // Linux-only dependency here and this has to work on a dev Mac too;
+        // the path is rare (timeout, stop), so a process spawn costs nothing.
+        // A group that has already exited is the outcome we wanted anyway.
+        if let Some(pgid) = self.0 {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", "--", &format!("-{pgid}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Captured {
+    head: Vec<u8>,
+    tail: VecDeque<u8>,
+    pub(crate) dropped: usize,
+}
+
+impl Captured {
+    pub(crate) fn render(&self) -> String {
+        let mut s = String::from_utf8_lossy(&self.head).into_owned();
+        if self.dropped > 0 {
+            s.push_str(&format!("\n… {} bytes omitted …\n", self.dropped));
+        }
+        let tail: Vec<u8> = self.tail.iter().copied().collect();
+        s.push_str(&String::from_utf8_lossy(&tail));
+        s
+    }
+}
+
+/// Read a stream to its end, keeping its first and last bytes. Reading to the
+/// end even past the cap matters: a full pipe blocks the writer, and a command
+/// blocked on its own output never exits.
+pub(crate) async fn read_capped(mut r: impl AsyncRead + Unpin) -> Captured {
+    let mut c = Captured::default();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = match r.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        let mut chunk = &buf[..n];
+        if c.head.len() < HEAD_BYTES {
+            let take = chunk.len().min(HEAD_BYTES - c.head.len());
+            c.head.extend_from_slice(&chunk[..take]);
+            chunk = &chunk[take..];
+        }
+        for &b in chunk {
+            if c.tail.len() == TAIL_BYTES {
+                c.tail.pop_front();
+                c.dropped += 1;
+            }
+            c.tail.push_back(b);
+        }
+    }
+    c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn runs_a_command_and_reports_its_exit() {
+        let r = execute(json!({ "command": "echo hi; echo oops >&2; exit 3" })).await.unwrap();
+        assert!(r.success);
+        assert_eq!(r.data["exit_code"], 3);
+        assert_eq!(r.data["stdout"], "hi\n");
+        assert_eq!(r.data["stderr"], "oops\n");
+    }
+
+    #[tokio::test]
+    async fn a_timeout_kills_the_command_and_says_so() {
+        let r = execute(json!({ "command": "sleep 30", "timeout_seconds": 1 })).await.unwrap();
+        assert_eq!(r.data["timed_out"], true);
+        assert!(r.data["duration_ms"].as_u64().unwrap() < 5_000);
+    }
+
+    #[tokio::test]
+    async fn stdin_is_closed_so_a_prompt_does_not_hang() {
+        let r = execute(json!({ "command": "read x; echo got:$x", "timeout_seconds": 5 }))
+            .await
+            .unwrap();
+        assert_eq!(r.data["stdout"], "got:\n");
+        assert!(r.data.get("timed_out").is_none());
+    }
+
+    /// What Stop does: the agent loop drops the running call.
+    #[tokio::test]
+    async fn dropping_a_running_command_kills_it() {
+        let marker = std::env::temp_dir().join(format!("shell-stop-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let cmd = format!("sleep 1 && touch {}", marker.display());
+        let run = execute(json!({ "command": cmd }));
+        assert!(tokio::time::timeout(Duration::from_millis(200), run).await.is_err());
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!marker.exists(), "the command outlived its dropped call");
+    }
+
+    /// The server's environment holds the box key and the database URL. A
+    /// command sees neither, only the basics and what `shell_command` sets.
+    #[tokio::test]
+    async fn the_server_environment_stays_behind() {
+        let server = |name: &str| -> Option<OsString> {
+            match name {
+                "VIRTUES_ENCRYPTION_KEY" => Some("invented-box-key".into()),
+                "DATABASE_URL" => Some("postgres://virtues:invented-password@localhost:5433/virtues".into()),
+                "VIRTUES_API_URL" => Some("https://api.example.com".into()),
+                "HOME" => Some(std::env::temp_dir().into_os_string()),
+                "LANG" => Some("en_US.UTF-8".into()),
+                "INSTALL_PREFIX" => Some("/opt".into()),
+                _ => None,
+            }
+        };
+        let out = shell_command("compgen -e; echo ===; env", "/", &server).output().await.unwrap();
+        let out = String::from_utf8_lossy(&out.stdout).into_owned();
+        let (names, env) = out.split_once("===\n").unwrap();
+
+        let set_here = [
+            "PATH", "PAGER", "SYSTEMD_PAGER", "GIT_PAGER", "DEBIAN_FRONTEND", "TERM",
+            "PGHOST", "PGPORT", "PGUSER", "PGDATABASE",
+        ];
+        // bash exports these itself.
+        let from_bash = ["PWD", "OLDPWD", "SHLVL", "_"];
+        for name in names.lines() {
+            assert!(
+                KEPT_ENV.contains(&name) || set_here.contains(&name) || from_bash.contains(&name),
+                "{name} came through from the server"
+            );
+        }
+        for leaked in ["invented-box-key", "invented-password", "VIRTUES_", "DATABASE_URL"] {
+            assert!(!env.contains(leaked), "{leaked} reached the command");
+        }
+        let set = [
+            "LANG=en_US.UTF-8", "INSTALL_PREFIX=/opt", "PGHOST=localhost", "PGPORT=5433", "PGUSER=virtues",
+            "PGDATABASE=virtues",
+        ];
+        for set in set {
+            assert!(env.lines().any(|l| l == set), "missing {set}");
+        }
+    }
+
+    /// A bare `psql` reaches the app's database: the URL's parts become
+    /// libpq's variables, and the password never does.
+    #[test]
+    fn the_database_url_becomes_libpq_variables_without_its_password() {
+        assert_eq!(database_env("postgres:///virtues"), vec![("PGDATABASE", "virtues".to_string())]);
+        assert_eq!(
+            database_env("postgres://virtues:invented-password@localhost:5432/virtues_dev"),
+            vec![
+                ("PGHOST", "localhost".to_string()),
+                ("PGPORT", "5432".to_string()),
+                ("PGUSER", "virtues".to_string()),
+                ("PGDATABASE", "virtues_dev".to_string()),
+            ]
+        );
+        assert_eq!(
+            database_env("postgresql://virtues_applet_writer:x@localhost/virtues?host=/run/postgresql"),
+            vec![
+                ("PGHOST", "/run/postgresql".to_string()),
+                ("PGUSER", "virtues_applet_writer".to_string()),
+                ("PGDATABASE", "virtues".to_string()),
+            ]
+        );
+        assert!(database_env("not a url").is_empty());
+    }
+
+    #[tokio::test]
+    async fn long_output_keeps_both_ends() {
+        let r = execute(json!({ "command": "echo START; head -c 100000 /dev/zero | tr '\\0' x; echo; echo END" }))
+            .await
+            .unwrap();
+        let out = r.data["stdout"].as_str().unwrap();
+        assert!(out.starts_with("START"));
+        assert!(out.trim_end().ends_with("END"));
+        assert!(out.contains("bytes omitted"));
+        assert_eq!(r.data["truncated"], true);
+    }
+}

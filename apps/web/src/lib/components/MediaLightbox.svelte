@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { portal } from "$lib/actions/portal";
 	import { onMount } from "svelte";
-	import { animate } from "motion";
 	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
@@ -22,7 +21,15 @@
 		typeof window !== "undefined" &&
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-	const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+	const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+	// The browser's own animations: the lightbox opens from the chat, and the
+	// motion library cost every chat home ~50 KB to animate four properties.
+	// `fill: "forwards"` holds the last frame, so a closing image stays where
+	// it ended until onClose removes it.
+	function animate(el: Element, keyframes: Keyframe[], ms: number, easing = "ease") {
+		return el.animate(keyframes, { duration: ms, easing, fill: "forwards" });
+	}
 
 	// FLIP open: paint the full image at its final centered size, then start it
 	// transformed back onto the thumbnail's footprint and release it.
@@ -35,20 +42,19 @@
 			const sx = originRect.width / target.width;
 			const sy = originRect.height / target.height;
 
-			animate(backdropEl, { opacity: [0, 1] }, { duration: 0.22, ease: "linear" });
+			animate(backdropEl, [{ opacity: 0 }, { opacity: 1 }], 220, "linear");
 			if (reduceMotion) {
-				animate(imgEl, { opacity: [0, 1] }, { duration: 0.18 });
+				animate(imgEl, [{ opacity: 0 }, { opacity: 1 }], 180);
 				return;
 			}
 			animate(
 				imgEl,
-				{
-					transform: [
-						`translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
-						"translate(0px, 0px) scale(1, 1)",
-					],
-				},
-				{ duration: 0.34, ease: EASE },
+				[
+					{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+					{ transform: "translate(0px, 0px) scale(1, 1)" },
+				],
+				340,
+				EASE,
 			);
 		};
 		// Wait for the image to have layout (natural size known).
@@ -59,7 +65,7 @@
 	async function close() {
 		if (closing) return;
 		closing = true;
-		const fade = animate(backdropEl, { opacity: 0 }, { duration: 0.18, ease: "linear" });
+		const fade = animate(backdropEl, [{ opacity: 0 }], 180, "linear");
 		if (!reduceMotion) {
 			const target = imgEl.getBoundingClientRect();
 			const dx = originRect.left - target.left;
@@ -68,11 +74,12 @@
 			const sy = originRect.height / target.height;
 			await animate(
 				imgEl,
-				{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0.6 },
-				{ duration: 0.26, ease: EASE },
+				[{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0.6 }],
+				260,
+				EASE,
 			).finished;
 		} else {
-			await animate(imgEl, { opacity: 0 }, { duration: 0.14 }).finished;
+			await animate(imgEl, [{ opacity: 0 }], 140).finished;
 		}
 		await fade.finished;
 		onClose();
@@ -101,7 +108,7 @@
 	use:portal
 >
 	<button class="lightbox-close" onclick={close} aria-label="Close">
-		<Icon icon="ri:close-line" width="20" />
+		<Icon icon="mynaui:x" width="20" />
 	</button>
 	<img
 		bind:this={imgEl}

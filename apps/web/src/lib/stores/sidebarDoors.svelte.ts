@@ -14,7 +14,7 @@
  * Moves and hides are optimistic and put back if the box refuses them,
  * because the sidebar is the feedback.
  */
-import { getProfile, updateProfile } from '$lib/api/client';
+import { getProfile, updateProfile, type Profile } from '$lib/api/client';
 
 export type DoorId = 'new-chat' | 'pages' | 'tasks' | 'projects' | 'applets' | 'wiki';
 
@@ -67,6 +67,9 @@ export function arrange(saved: readonly string[]): Door[] {
 	return out;
 }
 
+/** How recent a seeded profile must be for `load` to skip its fetch. */
+const SEED_FRESH_MS = 10_000;
+
 class SidebarDoorsStore {
 	/** Every door, in the owner's order, hidden ones included. */
 	all = $state<Door[]>([...DOORS]);
@@ -84,20 +87,38 @@ class SidebarDoorsStore {
 		return this.hidden.size > 0 || this.all.some((d, i) => d.id !== DOORS[i].id);
 	}
 
+	/** When `seed` last ran, so `load` can skip a fetch the layout just made. */
+	private seededAt = 0;
+
+	/**
+	 * Take the profile the app's layout load already fetched. The sidebar mounts
+	 * right after that load, and fetching `/api/profile` again was a second
+	 * round trip for the same answer.
+	 */
+	seed(profile: Pick<Profile, 'sidebar_doors'>) {
+		this.apply(profile.sidebar_doors);
+		this.seededAt = Date.now();
+	}
+
 	async load() {
+		if (Date.now() - this.seededAt < SEED_FRESH_MS) return;
 		try {
 			const doors = (await getProfile()).sidebar_doors;
 			if (this.saving > 0) return;
-			if (!doors) {
-				this.all = [...DOORS];
-				this.hidden = new Set();
-				return;
-			}
-			this.all = arrange(doors.order ?? []);
-			this.hidden = new Set((doors.hidden ?? []).filter((id): id is DoorId => byId.has(id as DoorId)));
+			this.apply(doors);
 		} catch (e) {
 			console.error('[sidebarDoors] load failed', e);
 		}
+	}
+
+	private apply(doors: Profile['sidebar_doors']) {
+		if (!doors) {
+			this.all = [...DOORS];
+			this.hidden = new Set();
+			return;
+		}
+		this.all = arrange(doors.order ?? []);
+		this.hidden = new Set((doors.hidden ?? []).filter((id): id is DoorId => byId.has(id as DoorId)));
 	}
 
 	/**

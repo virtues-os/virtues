@@ -11,11 +11,19 @@
 //!      only forwards allowlisted peers and stamps the proven EndpointId as a
 //!      `ProvenPeer` extension; we map it to its `app_device` row (enforcing
 //!      `revoked_at IS NULL`). Unspoofable — a typed extension, never a header.
-//!   2. **Loopback console** — a process on the box itself connecting directly
-//!      to `127.0.0.1`/`::1`. Gated: refused when a forwarding header is
-//!      present (a reverse proxy also connects from loopback — see below).
-//!   3. **Dev fallback** — `ENVIRONMENT=dev` only, so `make dev` lands in the
-//!      app with no pairing. Inert on a real appliance.
+//!   2. **Console** — a caller on the server's own machine, on the console
+//!      socket, admitted by its uid (`crate::console_socket`): root, the
+//!      service user, the `virtues-console` group, and the outside agent's
+//!      user for the data verbs' routes only. A TCP connection from loopback
+//!      is not the console.
+//!   3. **Dev fallback** — `ENVIRONMENT=dev` only, and only for a peer on
+//!      loopback. Inert on an installed box unless its operator sets
+//!      `ENVIRONMENT=dev`, as the review demo box does.
+//!
+//! The first two, and the third on a developer's stack, are authority that
+//! comes from how a request arrived. [`owner_by_transport`] names exactly
+//! those requests, and `middleware::security` refuses one whose `Host` the
+//! box does not serve, which is what keeps a DNS-rebinding page off them.
 //!
 //! Each authenticated request bumps `last_seen_at`.
 //!
@@ -53,22 +61,19 @@ use serde::Serialize;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 
-/// Synthetic device id for the "I'm sitting at the box's monitor + keyboard"
-/// session. The auth extractor returns an `AuthUser` with this id when the
-/// request's socket peer is loopback (`127.0.0.1` / `::1`) AND no forwarding
-/// header is present, bypassing the iroh-key requirement.
+use crate::console_socket::ConsoleCaller;
+
+/// Synthetic device id for the owner at the server's own machine: the CLI,
+/// an outside agent through `agent-exec`, or a browser over SSH. The auth
+/// extractor returns an `AuthUser` with this id for a request the console
+/// socket admitted (`crate::console_socket`), and on a developer's stack for
+/// any loopback request.
 ///
-/// Safe because the threat model is "physical access = you" — a process on
-/// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
-/// so trusting a loopback-only HTTP request adds no attack surface. LAN
-/// peers are NOT trusted (`is_loopback()` is strict, not RFC1918).
-///
-/// CRITICAL: a reverse proxy (Caddy/an HTTPS sidecar) terminating an external
-/// connection ALSO forwards to the box from loopback — so a naive
-/// "loopback == owner" rule would hand owner auth to anyone who reached the
-/// proxy. We therefore refuse the bypass whenever an `X-Forwarded-For` /
-/// `Forwarded` header is present: a genuinely local process connects directly
-/// and sets no such header; a proxied request always carries one.
+/// A TCP connection from loopback is NOT this. On a machine a person
+/// installed Virtues on themselves, other logins, containers on the host
+/// network, and a service tricked into fetching a loopback URL all connect
+/// from there, and none of them is the owner. Only the socket can tell who
+/// is calling.
 pub const CONSOLE_DEVICE_ID: &str = "local-console";
 pub const CONSOLE_DEVICE_LABEL: &str = "Local console";
 
@@ -111,98 +116,132 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = PgPool::from_ref(state);
-
-        // 1. iroh transport identity — the primary credential for app/iroh
-        //    clients. The QUIC raw-public-key handshake PROVED the peer's
-        //    EndpointId, and `serve()` only forwards allowlisted (paired) peers,
-        //    stamping the proven id as `ProvenPeer`. Map it to the device: the
-        //    allowlisted key IS the credential. Unspoofable — a typed extension
-        //    set post-handshake, never a header, and only the iroh serve path
-        //    sets it (the plain :8000 listener never does). A proven id that
-        //    isn't a known device falls through to the paths below.
-        if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
-            let endpoint_id = peer.0.to_string();
-            let user = match validate_iroh_peer(&pool, &endpoint_id).await {
-                Ok(user) => user,
-                Err(e) => return Err(unavailable(e)),
-            };
-            if let Some(user) = user {
-                // Best-effort: refresh the device's reported build identity from
-                // the X-Virtues-Client header (update-manifold Phase 1). Never
-                // affects auth — a missing/malformed header is simply skipped.
-                if let Some(cb) = parse_client_header(&parts.headers) {
-                    record_client_build(&pool, &user.device_id, &cb).await;
-                }
-                return Ok(user);
-            }
-        }
-
-        // 2. Loopback console — a process on the box itself (on-box CLI),
-        //    connecting
-        //    directly to 127.0.0.1 / ::1. Physical access wins the threat
-        //    model. Refused when a forwarding header is present, because a
-        //    reverse proxy in front of the box also connects from loopback
-        //    while forwarding a REMOTE client (see CONSOLE_DEVICE_ID docs).
-        //    Canonicalized first: the server binds `*:8000` (dual-stack), so an
-        //    on-box client dialling `127.0.0.1` arrives as `::ffff:127.0.0.1`
-        //    and `is_loopback()` does not match it. Fails closed, so this only
-        //    ever cost an unexplained 401 for a v4 loopback caller — but the
-        //    same oversight in `api::provision` locked every phone out of the
-        //    setup AP. See `crate::peer_addr`.
-        let is_loopback = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ci| crate::peer_addr::canonical_peer(&ci.0).is_loopback())
-            .unwrap_or(false);
-        let is_proxied = parts.headers.contains_key("x-forwarded-for")
-            || parts.headers.contains_key("forwarded");
-        if is_loopback && !is_proxied {
-            // The console row used to be startup fiction — inserted once with
-            // last_seen NULL and never touched again, so Devices said "Never"
-            // no matter how much the box's own screen or CLI was used. Record
-            // reality instead. Throttled to minute resolution because the
-            // kiosk polls over loopback at 1s and legibility does not need a
-            // write per frame. Best-effort, never blocks auth.
-            let _ = sqlx::query(
-                "UPDATE app_device SET last_seen_at = now() \
-                 WHERE id = $1 AND (last_seen_at IS NULL \
-                    OR last_seen_at < now() - interval '60 seconds')",
-            )
-            .bind(CONSOLE_DEVICE_ID)
-            .execute(&pool)
-            .await;
-            if let Some(cb) = parse_client_header(&parts.headers) {
-                record_client_build(&pool, CONSOLE_DEVICE_ID, &cb).await;
-            }
-            return Ok(AuthUser {
-                id: crate::middleware::http::OWNER_USER_ID.to_string(),
-                device_id: CONSOLE_DEVICE_ID.to_string(),
-                device_label: CONSOLE_DEVICE_LABEL.to_string(),
-            });
-        }
-
-        // 3. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
-        //    isn't exposed; the request reaches us through the vite proxy, which
-        //    defeats the loopback bypass above). Authenticate as the console
-        //    owner so `make dev` lands straight in the app with no pairing — the
-        //    complement to VIRTUES_DEV_SKIP_SETUP. A real box NEVER sets
-        //    ENVIRONMENT=dev, so this is inert in production. Last resort: the
-        //    proven iroh key / loopback still win above.
-        if is_dev() {
-            return Ok(AuthUser {
-                id: crate::middleware::http::OWNER_USER_ID.to_string(),
-                device_id: CONSOLE_DEVICE_ID.to_string(),
-                device_label: CONSOLE_DEVICE_LABEL.to_string(),
-            });
-        }
-
-        Err(unauthorized())
+        authenticate(parts, &PgPool::from_ref(state), is_dev()).await
     }
 }
 
-/// True only on a developer's local stack (`ENVIRONMENT=dev`). Gates the dev
-/// auto-login + skip-pairing conveniences; never set on a real appliance.
+/// The extractor's body, with `dev` ([`is_dev`]) passed in so a test can
+/// set it without touching the process environment.
+async fn authenticate(parts: &mut Parts, pool: &PgPool, dev: bool) -> Result<AuthUser, AuthError> {
+    // 1. iroh transport identity — the primary credential for app/iroh
+    //    clients. The QUIC raw-public-key handshake PROVED the peer's
+    //    EndpointId, and `serve()` only forwards allowlisted (paired) peers,
+    //    stamping the proven id as `ProvenPeer`. Map it to the device: the
+    //    allowlisted key IS the credential. Unspoofable — a typed extension
+    //    set post-handshake, never a header, and only the iroh serve path
+    //    sets it (the plain :8000 listener never does). A proven id that
+    //    isn't a known device falls through to the paths below.
+    if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
+        let endpoint_id = peer.0.to_string();
+        let user = match validate_iroh_peer(pool, &endpoint_id).await {
+            Ok(user) => user,
+            Err(e) => return Err(unavailable(e)),
+        };
+        if let Some((user, kind)) = user {
+            // An agent device (an MCP bridge on the owner's machine,
+            // agents/plan/mcp-plan.md) reaches the MCP endpoint and no
+            // other route, and is refused here rather than handed to the
+            // paths below.
+            if kind == AGENT_KIND && parts.uri.path() != crate::server::api::mcp::PATH {
+                return Err(agent_refused());
+            }
+            // Best-effort: refresh the device's reported build identity from
+            // the X-Virtues-Client header (update-manifold Phase 1). Never
+            // affects auth — a missing/malformed header is simply skipped.
+            if let Some(cb) = parse_client_header(&parts.headers) {
+                record_client_build(pool, &user.device_id, &cb).await;
+            }
+            return Ok(user);
+        }
+    }
+
+    // 2. The console — a caller on the server's own machine that the console
+    //    socket admitted by its uid (`crate::console_socket`). A TCP
+    //    connection from loopback is not this: any local process can open
+    //    one.
+    let is_loopback = peer_is_loopback(&parts.extensions);
+    if let Some(&caller) = parts.extensions.get::<ConsoleCaller>() {
+        if caller == ConsoleCaller::Agent
+            && !crate::console_socket::agent_may(&parts.method, parts.uri.path())
+        {
+            return Err(agent_refused());
+        }
+        // Devices shows when the console was last used. Throttled to minute
+        // resolution. Best-effort, never blocks auth.
+        let _ = sqlx::query(
+            "UPDATE app_device SET last_seen_at = now() \
+             WHERE id = $1 AND (last_seen_at IS NULL \
+                OR last_seen_at < now() - interval '60 seconds')",
+        )
+        .bind(CONSOLE_DEVICE_ID)
+        .execute(pool)
+        .await;
+        if let Some(cb) = parse_client_header(&parts.headers) {
+            record_client_build(pool, CONSOLE_DEVICE_ID, &cb).await;
+        }
+        return Ok(console_owner());
+    }
+
+    // 3. Dev fallback — `ENVIRONMENT=dev` (a developer's stack, or an
+    //    installed box whose operator set it) and a peer on loopback.
+    //    `make dev` binds every interface, and the loopback rule keeps the
+    //    rest of the developer's network from reaching core directly as the
+    //    owner. The dev server's proxy
+    //    (`apps/web/vite.config.ts`) connects from loopback, so its requests
+    //    log in here. That includes a client elsewhere on the network that
+    //    opens the dev server, which `vite dev --host` serves on every
+    //    interface (`apps/web/package.json`), and a proxy the developer runs
+    //    in front of the stack. The Host check
+    //    (`middleware::security`) still refuses a name the box does not
+    //    serve, such as a tunnel's public hostname. On a dev stack it serves
+    //    each hostname listed in VIRTUES_PUBLIC_ORIGINS, so a proxy that
+    //    serves the UI under a listed name reaches here as the owner. The
+    //    installer writes ENVIRONMENT=production, so an installed box takes
+    //    this branch only when its operator changes that. The review demo
+    //    box does (agents/build/review-access.md): every request its proxy
+    //    forwards is the owner's there.
+    if dev && is_loopback {
+        return Ok(console_owner());
+    }
+
+    Err(unauthorized())
+}
+
+/// The owner, as the box's own console.
+fn console_owner() -> AuthUser {
+    AuthUser {
+        id: crate::middleware::http::OWNER_USER_ID.to_string(),
+        device_id: CONSOLE_DEVICE_ID.to_string(),
+        device_label: CONSOLE_DEVICE_LABEL.to_string(),
+    }
+}
+
+/// Whether the request came straight from a socket on this machine. The
+/// address is canonicalized first: the server binds `*:8000` (dual-stack),
+/// so an on-box client dialing `127.0.0.1` arrives as `::ffff:127.0.0.1`,
+/// which `is_loopback()` does not match. See `crate::peer_addr`. An iroh
+/// request has no socket peer here and is never loopback.
+fn peer_is_loopback(extensions: &axum::http::Extensions) -> bool {
+    extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ci| crate::peer_addr::canonical_peer(&ci.0).is_loopback())
+}
+
+/// Whether the box takes this request as the owner because of how it
+/// arrived, before any device row is read: a proven iroh peer, a caller the
+/// console socket admitted, and on a developer's stack (`dev`) any loopback
+/// connection. These are the requests the Host check holds to the names the
+/// box serves (`middleware::security`). Every other request gets only what
+/// the box gives a stranger on its network.
+pub(crate) fn owner_by_transport(extensions: &axum::http::Extensions, dev: bool) -> bool {
+    extensions.get::<virtues_iroh::ProvenPeer>().is_some()
+        || extensions.get::<ConsoleCaller>().is_some()
+        || (dev && peer_is_loopback(extensions))
+}
+
+/// True when `ENVIRONMENT=dev`: a developer's stack, or an installed box whose
+/// operator set it, as the review demo box does. Gates the dev auto-login +
+/// skip-pairing conveniences. The installer writes `ENVIRONMENT=production`.
 pub fn is_dev() -> bool {
     std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false)
 }
@@ -213,14 +252,16 @@ pub fn is_dev() -> bool {
 /// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
 /// a live device row owning it is sufficient to authenticate. Touches last-seen.
 ///
+/// Returns the device's kind beside the user, for the agent check above.
+///
 /// `Ok(None)` is "no live device holds this key"; `Err` is "could not look",
 /// and the caller must not read the second as the first.
 pub(crate) async fn validate_iroh_peer(
     pool: &PgPool,
     endpoint_id: &str,
-) -> Result<Option<AuthUser>, sqlx::Error> {
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, d.id, d.label \
+) -> Result<Option<(AuthUser, String)>, sqlx::Error> {
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT u.id, d.id, d.label, d.kind \
          FROM app_device d \
          JOIN app_auth_user u ON u.id = d.user_id \
          WHERE d.endpoint_id = $1 AND d.revoked_at IS NULL",
@@ -228,7 +269,7 @@ pub(crate) async fn validate_iroh_peer(
     .bind(endpoint_id)
     .fetch_optional(pool)
     .await?;
-    let Some((user_id, device_id, device_label)) = row else {
+    let Some((user_id, device_id, device_label, kind)) = row else {
         return Ok(None);
     };
 
@@ -237,11 +278,14 @@ pub(crate) async fn validate_iroh_peer(
         .execute(pool)
         .await;
 
-    Ok(Some(AuthUser {
-        id: user_id,
-        device_id,
-        device_label,
-    }))
+    Ok(Some((
+        AuthUser {
+            id: user_id,
+            device_id,
+            device_label,
+        },
+        kind,
+    )))
 }
 
 /// The build identity a client reports via
@@ -335,6 +379,17 @@ pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
     Ok(())
 }
 
+/// The device kind of an MCP bridge (`api::pair`, migration 0064).
+pub const AGENT_KIND: &str = "agent";
+
+/// An agent device asked for a route other than the MCP endpoint.
+fn agent_refused() -> AuthError {
+    AuthError {
+        error: "This device is an agent and can reach only the MCP endpoint.".to_string(),
+        status: StatusCode::FORBIDDEN,
+    }
+}
+
 fn unauthorized() -> AuthError {
     AuthError {
         error: "Unauthorized".to_string(),
@@ -374,6 +429,174 @@ pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent device reaches `/api/mcp` and is refused everywhere else; a
+    /// desktop app's key is not limited the same way.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_agent_device_reaches_only_the_mcp_endpoint(pool: PgPool) {
+        let key = |seed: u8| virtues_iroh::SecretKey::from_bytes(&[seed; 32]).public();
+        for (id, kind, seed) in [("dev_agent", AGENT_KIND, 7u8), ("dev_mac", "desktop_app", 8u8)] {
+            sqlx::query(
+                "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) VALUES ($1, $2, $3, 'test', $4)",
+            )
+            .bind(id)
+            .bind(crate::middleware::http::OWNER_USER_ID)
+            .bind(kind)
+            .bind(key(seed).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let ask = |seed: u8, path: &str| {
+            let (mut parts, _) = axum::http::Request::builder().uri(path).body(()).unwrap().into_parts();
+            parts.extensions.insert(virtues_iroh::ProvenPeer(key(seed)));
+            parts
+        };
+
+        let mut mcp = ask(7, crate::server::api::mcp::PATH);
+        let user = AuthUser::from_request_parts(&mut mcp, &pool).await.unwrap();
+        assert_eq!(user.device_id, "dev_agent");
+
+        let mut pages = ask(7, "/api/pages");
+        let refused = AuthUser::from_request_parts(&mut pages, &pool).await.unwrap_err();
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+        let mut mac = ask(8, "/api/pages");
+        assert_eq!(AuthUser::from_request_parts(&mut mac, &pool).await.unwrap().device_id, "dev_mac");
+    }
+
+    /// A request from `peer` (none for one that came over iroh), with an
+    /// `X-Forwarded-For` when `forwarded`.
+    fn arriving(peer: Option<&str>, forwarded: bool) -> Parts {
+        let mut req = axum::http::Request::builder().uri("/api/pages");
+        if forwarded {
+            req = req.header("x-forwarded-for", "203.0.113.9");
+        }
+        let (mut parts, _) = req.body(()).unwrap().into_parts();
+        if let Some(peer) = peer {
+            parts.extensions.insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+        }
+        parts
+    }
+
+    /// A pool that never connects. The short timeout matters for the
+    /// console's best-effort last-seen write, which would otherwise wait out
+    /// the default 30 s per request.
+    fn lazy_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(100))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap()
+    }
+
+    /// `make dev` binds every interface. The dev fallback admits a loopback
+    /// peer and nobody else, so a phone or laptop on the developer's network
+    /// gets a 401 like it would from any box. None of these cases reads the
+    /// database, so the pool never connects.
+    #[tokio::test]
+    async fn the_dev_fallback_admits_a_loopback_peer_alone() {
+        let pool = lazy_pool();
+        for (peer, forwarded) in [
+            (Some("127.0.0.1:50000"), false),
+            (Some("127.0.0.1:50000"), true),
+            (Some("[::ffff:127.0.0.1]:50000"), true),
+            (Some("[::1]:50000"), false),
+        ] {
+            let mut parts = arriving(peer, forwarded);
+            let user = authenticate(&mut parts, &pool, true).await.unwrap();
+            assert_eq!(user.device_id, CONSOLE_DEVICE_ID, "{peer:?}");
+        }
+        for (peer, forwarded) in [
+            // Someone else on the developer's network.
+            (Some("192.168.1.20:50000"), false),
+            (Some("[::ffff:192.168.1.20]:50000"), true),
+            // No socket peer: what an iroh request from a key with no
+            // device row falls through as. A real `ProvenPeer` would read
+            // the database, which this test avoids.
+            (None, false),
+        ] {
+            let mut parts = arriving(peer, forwarded);
+            let refused = authenticate(&mut parts, &pool, true).await.unwrap_err();
+            assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{peer:?} forwarded={forwarded}");
+        }
+    }
+
+    /// On an installed server a TCP connection from loopback is a stranger,
+    /// with or without a forwarding header: another login, a container on
+    /// the host network, or a service tricked into fetching a loopback URL
+    /// all arrive this way.
+    #[tokio::test]
+    async fn loopback_tcp_is_not_the_owner_on_an_installed_server() {
+        let pool = lazy_pool();
+        for (peer, forwarded) in [
+            (Some("127.0.0.1:50000"), false),
+            (Some("[::ffff:127.0.0.1]:50000"), false),
+            (Some("[::1]:50000"), false),
+            (Some("127.0.0.1:50000"), true),
+        ] {
+            let mut parts = arriving(peer, forwarded);
+            let refused = authenticate(&mut parts, &pool, false).await.unwrap_err();
+            assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{peer:?} forwarded={forwarded}");
+        }
+    }
+
+    /// The console socket's owner callers are the console on any route. Its
+    /// agent caller reaches the data verbs' routes and is refused elsewhere.
+    /// The console's last-seen write fails against the lazy pool and is
+    /// ignored, as it is best-effort.
+    #[tokio::test]
+    async fn the_console_socket_admits_by_role() {
+        let pool = lazy_pool();
+        let on_socket = |caller: ConsoleCaller, method: &str, path: &str| {
+            let (mut parts, _) =
+                axum::http::Request::builder().method(method).uri(path).body(()).unwrap().into_parts();
+            parts.extensions.insert(caller);
+            parts
+        };
+        for path in ["/api/pages", "/ws/terminal", "/api/pair/mint"] {
+            let mut parts = on_socket(ConsoleCaller::Owner, "GET", path);
+            assert_eq!(authenticate(&mut parts, &pool, false).await.unwrap().device_id, CONSOLE_DEVICE_ID, "{path}");
+        }
+        let mut tool = on_socket(ConsoleCaller::Agent, "POST", "/api/console/tool/sql_query");
+        assert_eq!(authenticate(&mut tool, &pool, false).await.unwrap().device_id, CONSOLE_DEVICE_ID);
+        for (method, path) in [("GET", "/ws/terminal"), ("POST", "/api/pair/mint"), ("GET", "/api/pages")] {
+            let mut parts = on_socket(ConsoleCaller::Agent, method, path);
+            let refused = authenticate(&mut parts, &pool, false).await.unwrap_err();
+            assert_eq!(refused.status, StatusCode::FORBIDDEN, "{method} {path}");
+        }
+    }
+
+    /// The requests the Host check applies to: exactly the ones the extractor
+    /// above admits without reading a device row.
+    #[test]
+    fn owner_by_transport_names_the_requests_authority_comes_with() {
+        let mut proven = arriving(None, true);
+        proven
+            .extensions
+            .insert(virtues_iroh::ProvenPeer(virtues_iroh::SecretKey::from_bytes(&[9; 32]).public()));
+        assert!(owner_by_transport(&proven.extensions, false));
+
+        let mut console = arriving(None, false);
+        console.extensions.insert(ConsoleCaller::Owner);
+        assert!(owner_by_transport(&console.extensions, false));
+
+        for (peer, forwarded, dev, expected) in [
+            (Some("127.0.0.1:50000"), false, false, false),
+            (Some("[::ffff:127.0.0.1]:50000"), false, false, false),
+            (Some("127.0.0.1:50000"), true, false, false),
+            (Some("127.0.0.1:50000"), false, true, true),
+            (Some("127.0.0.1:50000"), true, true, true),
+            (Some("192.168.1.20:50000"), false, true, false),
+            (None, false, true, false),
+        ] {
+            let parts = arriving(peer, forwarded);
+            assert_eq!(
+                owner_by_transport(&parts.extensions, dev),
+                expected,
+                "{peer:?} forwarded={forwarded} dev={dev}"
+            );
+        }
+    }
 
     fn headers(v: &str) -> axum::http::HeaderMap {
         let mut h = axum::http::HeaderMap::new();

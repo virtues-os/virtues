@@ -1,0 +1,13 @@
+-- 0070_drop_sudo_requests
+--
+-- `virtues sudo` is gone. Changing the AI key and importing an applet package
+-- now need a signature from the Virtues app on a paired device
+-- (`api::owner_proof`), so nothing in this binary writes or reads
+-- `app_sudo_request`. Any approval still on file is void, so its rows go.
+--
+-- The table itself stays for one release. `virtues rollback` runs the previous
+-- binary against this schema, and that binary's sweeper deletes from the table
+-- on every tick and fails the whole pass when it is missing, which would stop
+-- it pruning auth events, telemetry, trash and visits. A later migration drops
+-- the table once no box can roll back to a binary that uses it.
+DELETE FROM app_sudo_request;

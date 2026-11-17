@@ -8,18 +8,6 @@ Default permissions for the reach plugin
 - `allow-reach-status`
 - `allow-forget`
 - `allow-discover`
-- `allow-provision-open`
-- `allow-provision-networks`
-- `allow-provision-join`
-- `allow-improv-discover`
-- `allow-improv-claim`
-- `allow-improv-grant`
-- `allow-improv-wifi-scan`
-- `allow-improv-provision`
-- `allow-improv-pair`
-- `allow-improv-disconnect`
-- `allow-improv-owner-claim`
-- `allow-reach-rehome`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
@@ -28,6 +16,7 @@ Default permissions for the reach plugin
 - `allow-pair-door-status`
 - `allow-pair-handoff-create`
 - `allow-pair-handoff-accept`
+- `allow-owner-proof-sign`
 
 ## Permission Table
 
@@ -119,214 +108,6 @@ Denies the forget command without any pre-configured scope.
 <tr>
 <td>
 
-`reach:allow-improv-claim`
-
-</td>
-<td>
-
-Enables the improv_claim command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-claim`
-
-</td>
-<td>
-
-Denies the improv_claim command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-disconnect`
-
-</td>
-<td>
-
-Enables the improv_disconnect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-disconnect`
-
-</td>
-<td>
-
-Denies the improv_disconnect command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-discover`
-
-</td>
-<td>
-
-Enables the improv_discover command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-discover`
-
-</td>
-<td>
-
-Denies the improv_discover command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-grant`
-
-</td>
-<td>
-
-Enables the improv_grant command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-grant`
-
-</td>
-<td>
-
-Denies the improv_grant command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-owner-claim`
-
-</td>
-<td>
-
-Enables the improv_owner_claim command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-owner-claim`
-
-</td>
-<td>
-
-Denies the improv_owner_claim command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-pair`
-
-</td>
-<td>
-
-Enables the improv_pair command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-pair`
-
-</td>
-<td>
-
-Denies the improv_pair command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-provision`
-
-</td>
-<td>
-
-Enables the improv_provision command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-provision`
-
-</td>
-<td>
-
-Denies the improv_provision command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-wifi-scan`
-
-</td>
-<td>
-
-Enables the improv_wifi_scan command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-wifi-scan`
-
-</td>
-<td>
-
-Denies the improv_wifi_scan command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `reach:allow-outbox-stats`
 
 </td>
@@ -346,6 +127,32 @@ Enables the outbox_stats command without any pre-configured scope.
 <td>
 
 Denies the outbox_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-owner-proof-sign`
+
+</td>
+<td>
+
+Enables the owner_proof_sign command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-owner-proof-sign`
+
+</td>
+<td>
+
+Denies the owner_proof_sign command without any pre-configured scope.
 
 </td>
 </tr>
@@ -509,84 +316,6 @@ Denies the pair_handoff_create command without any pre-configured scope.
 <tr>
 <td>
 
-`reach:allow-provision-join`
-
-</td>
-<td>
-
-Enables the provision_join command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-provision-join`
-
-</td>
-<td>
-
-Denies the provision_join command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-provision-networks`
-
-</td>
-<td>
-
-Enables the provision_networks command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-provision-networks`
-
-</td>
-<td>
-
-Denies the provision_networks command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-provision-open`
-
-</td>
-<td>
-
-Enables the provision_open command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-provision-open`
-
-</td>
-<td>
-
-Denies the provision_open command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `reach:allow-radio-stats`
 
 </td>
@@ -606,32 +335,6 @@ Enables the radio_stats command without any pre-configured scope.
 <td>
 
 Denies the radio_stats command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-reach-rehome`
-
-</td>
-<td>
-
-Enables the reach_rehome command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-reach-rehome`
-
-</td>
-<td>
-
-Denies the reach_rehome command without any pre-configured scope.
 
 </td>
 </tr>

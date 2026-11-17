@@ -52,6 +52,7 @@
 		| "model_error"
 		| "in_progress"
 		| "not_connected"
+		| "owner_proof"
 		| "generic";
 
 	// Billing states first and explicitly, so a 402 "wallet empty" is never
@@ -61,6 +62,9 @@
 		// this chat (Try again rejoins it); or there is no AI to answer with.
 		if (has(/turn_in_progress/)) return "in_progress";
 		if (has(/AI is not connected/)) return "not_connected";
+		// An admin turn without the app's signature. The box's sentence says
+		// whether to update the app.
+		if (has(/owner_proof_required/)) return "owner_proof";
 		if (has(/wallet_empty|insufficient_budget/i)) return "wallet_empty";
 		if (has(/card_declined/i)) return "card_declined";
 		if (has(/monthly_cap_reached/i)) return "monthly_cap";
@@ -204,6 +208,10 @@
 		},
 		not_connected: {
 			title: "Nothing to answer with yet",
+			sentence: null,
+		},
+		owner_proof: {
+			title: "Admin needs the Virtues app",
 			sentence: null,
 		},
 		generic: {

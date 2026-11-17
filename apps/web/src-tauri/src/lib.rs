@@ -49,10 +49,10 @@ pub mod web_bundle;
 /// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
 /// |   | mobile at 3 still rejects them and the UI treats that as silence) |
 /// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
-/// | 5 | `reach|improv_owner_claim` — reopen a moved, offline server over
-/// |   | Bluetooth as its owner (`$lib/tauri/boxRadio.ts` gates on this) |
-/// | 6 | `reach|reach_rehome` — point the pairing at a moved server's new
-/// |   | address after it joins over Bluetooth (the `/reconnect` screen) |
+/// | 5 | `reach|improv_owner_claim`, since removed with the hardware setup
+/// |   | path; the number stays taken |
+/// | 6 | `reach|reach_rehome`, since removed with the hardware setup path;
+/// |   | the number stays taken |
 /// | 7 | `recheck_collector` — make the Mac collector re-check its permissions
 /// |   | now (SIGUSR1); `get_collector_status` gains `safari_library` |
 /// |   | On iOS, same release: `location-probe|status`, `|request_location`
@@ -72,6 +72,17 @@ pub mod web_bundle;
 /// |   | the Mac `browser_login` opens there instead of a window of its own |
 /// | 12 | `start_dictation` (desktop; the Mac implements it): the composer's
 /// |   | mic button starts the system's dictation in the focused field |
+/// | 13 | `connect_agent` (desktop): pair an AI agent's MCP bridge as a device
+/// |   | of its own; the bridge is this binary run as `mcp --name <name>` |
+/// | 14 | `location-probe|sign_in` (iOS): a service's sign-in opens in Apple's
+/// |   | sign-in sheet over the app instead of in Safari (`SignInSheet.swift`) |
+/// | 15 | `reach|owner_proof_sign` (every shell): signs the owner proof for the
+/// |   | reveal, pair, AI key and import routes (`ownerProofHeaders` in
+/// |   | `$lib/api/client.ts`); `reach|reach_status` gains `problem` and
+/// |   | `keyMissing` for a pairing this device has but cannot use |
+/// | 16 | `close_permission_tile` (desktop; the Mac implements it): the Full
+/// |   | Disk Access and Accessibility panes open with a drag tile for the
+/// |   | collector, which the page closes once the grant lands |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -79,7 +90,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 12;
+pub const COMMAND_SURFACE_VERSION: u32 = 16;
 
 /// What the native shell knows about itself.
 ///
@@ -276,18 +287,9 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
           "[ota] box bundle needs shell surface {needs}, this app has {have} — \
            staying on the bundled build until the app is updated"
         ),
-        web_bundle::Outcome::BoxBehind { box_version, have } => eprintln!(
-          "[ota] box serves UI {box_version}, this app already runs {have} — \
-           staying put (upgrade the box with `sudo virtues upgrade`)"
-        ),
-        // Loud, because this one refuses every bundle until it is fixed: it
-        // means a build went out without its version stamped (see
-        // tools/ios-release.sh) and OTA is inert on that binary.
-        web_bundle::Outcome::VersionUnreadable { box_version, have } => eprintln!(
-          "[ota] cannot order box UI {box_version} against this app's {} — \
-           refusing rather than risk a downgrade",
-          have.as_deref().unwrap_or("(unstamped)")
-        ),
+        web_bundle::Outcome::DevBuild => {
+          eprintln!("[ota] this app's UI is a dev build; not taking the box's")
+        }
         _ => {}
       }
       web_bundle::record_outcome(&dir, &outcome);
@@ -312,7 +314,6 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// that no component asserts a fact it did not observe.
 ///
 /// `None` when the manifest is missing — a build whose SPA was never stamped.
-/// The gate treats that as ambiguous and refuses, which is the safe direction.
 pub fn baked_bundle_version<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
   let asset = app.asset_resolver().get(".virtues-bundle.json".into())?;
   web_bundle::Manifest::parse(&String::from_utf8_lossy(&asset.bytes)).map(|m| m.version)
@@ -564,17 +565,12 @@ pub fn run() {
       // OTA rollback is settled per page load now, in `serve_ui` (web_bundle.rs,
       // "The bundle a page load serves from"), not once here.
       if let Some(dir) = ui_data_dir(app.handle()) {
-        // Drop an overlay the App Store has overtaken. An app update keeps
-        // the container, so a bundle applied weeks ago outlives the binary that
-        // fetched it and goes on shadowing the newer build THIS binary ships
-        // with. Before the window, because this moves the pointer a live page
-        // would be serving from.
+        // A dev build shows its own UI, not an overlay a release build left in
+        // the container. Before the window, because this moves the pointer a
+        // live page would be serving from.
         let baked = baked_bundle_version(app.handle());
-        if let Some(dropped) = web_bundle::drop_stale_overlay(&dir, baked.as_deref()) {
-          eprintln!(
-            "[ota] overlay {dropped} is older than this app's own UI — \
-             back to the build it shipped with"
-          );
+        if let Some(dropped) = web_bundle::drop_overlay_for_dev_build(&dir, baked.as_deref()) {
+          eprintln!("[ota] dev build: stopped serving overlay {dropped}");
         }
       }
 
@@ -585,9 +581,20 @@ pub fn run() {
       // the first request queues rather than gets refused.
       let reach = app.reach();
       let paired = reach.is_paired();
+      // Only the bind waits; the client build (a name lookup and a dial) runs
+      // on a task so the launch never waits on the network.
       if paired {
-        if let Err(e) = tauri::async_runtime::block_on(reach.ensure_serving()) {
-          eprintln!("[reach] serve failed: {e}");
+        match reach.bind_loopback() {
+          Ok(Some(bound)) => {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+              if let Err(e) = handle.reach().serve_bound(bound).await {
+                eprintln!("[reach] serve failed: {e}");
+              }
+            });
+          }
+          Ok(None) => {}
+          Err(e) => eprintln!("[reach] serve failed: {e}"),
         }
       }
 
@@ -620,7 +627,7 @@ pub fn run() {
       // overlay present this behaves exactly as before.
       //
       // UNPAIRED, THE iPHONE OPENS SETUP (2026-09-27). Setup's first half
-      // (sign in, find the server, its four words, Wi-Fi, pair) runs from
+      // (find the server, pair by address and code) runs from
       // this app's own baked copy, over the same reach commands the connect
       // page used (apps/web/src/lib/components/setup/prepair.svelte.ts), so
       // the flow runs unbroken from Welcome to the app. A route path is

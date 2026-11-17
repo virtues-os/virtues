@@ -5,12 +5,12 @@
 
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
-import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { yUndoState } from './ykeys';
 
 /** The page's undo manager, when the editor is bound to a shared document. */
 export function undoManagerOf(state: EditorState): Y.UndoManager | null {
-	return (yUndoPluginKey.getState(state) as { undoManager?: Y.UndoManager } | undefined)?.undoManager ?? null;
+	return (yUndoState(state) as { undoManager?: Y.UndoManager } | undefined)?.undoManager ?? null;
 }
 
 /**

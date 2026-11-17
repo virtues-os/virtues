@@ -1,5 +1,5 @@
 //! The box asking about itself: `POST /account/entitlement { api_key }`
-//! → `{ linked: true, subscribed: bool }`.
+//! → `{ linked: true, subscribed: bool, email: string | null }`.
 //!
 //! atlas has always known this — `is_entitled` is exact and `key_owner` already
 //! separates "valid key, never paid" from "unknown key". What was missing was a
@@ -13,10 +13,11 @@
 //! Active on its owner's screen, and the only button that would have told them
 //! otherwise answered "try again".
 //!
-//! Read-only and Stripe-free: two indexed lookups, no external call, safe to
+//! Read-only and Stripe-free: a few indexed lookups, no external call, safe to
 //! poll. Privacy: same wall as the other api_key doors — we resolve
-//! api_key → account and answer one boolean about it, and learn nothing about
-//! the box.
+//! api_key → account and answer about it, and learn nothing about the box.
+//! The email goes back to the key's holder so Billing can say which account
+//! the subscription is on; checkout already pre-fills it for the same holder.
 
 use axum::{
     extract::State,
@@ -81,9 +82,18 @@ async fn entitlement(
         }
     };
 
+    // A failed email read is logged and sent as null. The email is a label,
+    // and the subscription answer above must still reach the box.
+    let email = super::claim::account_email_by_key_hash(&state.pool, &token_hash[..])
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("entitlement email lookup failed: {e:#}");
+            None
+        });
+
     (
         StatusCode::OK,
-        Json(json!({ "linked": true, "subscribed": subscribed })),
+        Json(json!({ "linked": true, "subscribed": subscribed, "email": email })),
     )
         .into_response()
 }

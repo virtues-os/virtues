@@ -66,7 +66,7 @@
 				<div
 					class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center"
 				>
-					<Icon icon="ri:smartphone-line" class="text-foreground-muted" />
+					<Icon icon="mynaui:mobile" class="text-foreground-muted" />
 				</div>
 				<div>
 					<div class="text-foreground font-medium mb-1">
@@ -91,7 +91,7 @@
 				<div
 					class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center"
 				>
-					<Icon icon="ri:lock-line" class="text-foreground-muted" />
+					<Icon icon="mynaui:lock" class="text-foreground-muted" />
 				</div>
 				<div>
 					<div class="text-foreground font-medium mb-1">

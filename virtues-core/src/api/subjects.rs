@@ -21,7 +21,7 @@
 //! difference is why a lookup keyed on the wrong one returns nothing rather
 //! than failing.
 
-use crate::api::wiki_editor::{CHAPTER_BRIEF, ENTITY_BRIEF, STORY_BRIEF, YEAR_BRIEF};
+use crate::api::wiki_editor::{CHAPTER_BRIEF, ENTITY_BRIEF, THING_BRIEF, YEAR_BRIEF};
 
 /// One kind of subject, and everything that varies by kind.
 #[derive(Debug, Clone, Copy)]
@@ -123,11 +123,13 @@ pub const SUBJECTS: &[Subject] = &[
         authored_fields: true,
     },
     Subject {
-        kind: "story",
-        prefix: "story",
-        table: Some("wiki_stories"),
-        route: None,
-        brief: Some(STORY_BRIEF),
+        // Named by the person, never resolved from a record. Its page lists
+        // the projects and tasks under it.
+        kind: "thing",
+        prefix: crate::ids::THING_PREFIX,
+        table: Some("wiki_things"),
+        route: Some("thing"),
+        brief: Some(THING_BRIEF),
         id_is_title: false,
         authored_fields: true,
     },

@@ -169,7 +169,7 @@ pub async fn list_handler(Path(applet_id): Path<String>) -> Response {
     let (mut files, truncated) = collect(&root);
     // Manifest first — it is what the reader is usually looking for.
     files.sort_by(|a, b| {
-        let rank = |p: &str| if p == "manifest.toml" { 0 } else { 1 };
+        let rank = |p: &str| if p == "SKILL.md" || p == "manifest.toml" { 0 } else { 1 };
         rank(&a.path)
             .cmp(&rank(&b.path))
             .then_with(|| a.path.cmp(&b.path))

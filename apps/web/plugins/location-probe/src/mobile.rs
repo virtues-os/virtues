@@ -74,6 +74,16 @@ impl<R: Runtime> LocationProbe<R> {
       .map_err(Into::into)
   }
 
+  /// Waits for the sheet to close, which can take minutes, so it does not
+  /// hold a thread.
+  pub async fn sign_in(&self, payload: SignInRequest) -> crate::Result<SignInResponse> {
+    self
+      .0
+      .run_mobile_plugin_async("signIn", payload)
+      .await
+      .map_err(Into::into)
+  }
+
   pub fn read_rows(&self, payload: RowsRequest) -> crate::Result<RowsResponse> {
     self
       .0
