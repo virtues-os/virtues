@@ -2165,6 +2165,36 @@ export interface ProjectDetail extends Project {
 	tasks_also_about?: Task[];
 }
 
+/** One day of a thread's week: minutes spent and minutes ahead. */
+export interface ThreadWeekDay {
+	date: string;
+	done_minutes: number;
+	ahead_minutes: number;
+}
+
+/** An active thread's week, day by day. */
+export interface ThreadWeek {
+	id: string;
+	name: string;
+	icon: string | null;
+	accent_color: string | null;
+	days: ThreadWeekDay[];
+}
+
+/** GET /api/threads/week — each active thread's time over seven days. */
+export interface Week {
+	start: string;
+	today: string;
+	threads: ThreadWeek[];
+	/** Recorded minutes in no thread, one per day. */
+	unfiled_minutes: number[];
+}
+
+/** The week from `start` (`YYYY-MM-DD`), or the owner's current week. */
+export function getThreadWeek(start?: string): Promise<Week> {
+	return apiGet<Week>('/threads/week', start ? { start } : {});
+}
+
 /** GET /api/threads — all Projects with counts. */
 export async function listProjects(opts?: {
 	includeArchived?: boolean;
@@ -2981,6 +3011,21 @@ export function getCapabilities(): Promise<Capability[]> {
 /** Turn one on or off. Returns them all. */
 export function setCapability(id: Capability['id'], on: boolean): Promise<Capability[]> {
 	return apiSend<Capability[]>('PUT', `/settings/capabilities/${id}`, { on });
+}
+
+/** A sample reply in the style notes being typed (`api/style_preview.rs`). */
+export interface StylePreview {
+	question: string;
+	reply: string;
+}
+
+export function previewStyle(notes: string, signal?: AbortSignal): Promise<StylePreview> {
+	return request<StylePreview>('/settings/style-preview', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ notes }),
+		signal,
+	});
 }
 
 /** One change the assistant proposes, in stored form (`api/settings_changes.rs`). */
