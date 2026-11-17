@@ -376,21 +376,6 @@ export function newChatInProject(project: Pick<Project, 'id'>): void {
 	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 }
 
-export async function renameProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
-	const name = (
-		await promptText({ title: 'Rename thread', initialValue: project.name, confirmLabel: 'Rename' })
-	)?.trim();
-	if (!name || name === project.name) return;
-	try {
-		await projectStore.update(project.id, { name });
-	} catch (e) {
-		console.error('[projectActions] rename failed:', e);
-		toast.error(`Your server couldn't rename "${project.name}"`, {
-			description: 'Nothing changed. Try again',
-		});
-	}
-}
-
 /**
  * End a project as finished or dropped. Reversible, so no confirm: the toast
  * carries the Undo.
@@ -465,13 +450,12 @@ export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Prom
 }
 
 /**
- * The menu on a project itself, wherever it is listed. A list that can
- * rename its rows in place (the sidebar) passes `rename`, so Rename opens
- * the same field a double-click does. Elsewhere it asks in a dialog.
+ * The menu on a project itself, wherever it is listed. Every list renames
+ * its rows in place, so the list passes `rename` to open its own field.
  */
 export function projectRowMenuItems(
 	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at' | 'outcome'>,
-	{ rename }: { rename?: () => void } = {},
+	{ rename }: { rename: () => void },
 ): ContextMenuItem[] {
 	const url = `/thread/${project.id}`;
 	if (project.archived_at) {
@@ -498,7 +482,7 @@ export function projectRowMenuItems(
 	return [
 		...openMenuItems(url, project.name),
 		{ id: 'new-chat', label: 'New chat here', icon: 'mynaui:chat-plus', action: () => newChatInProject(project) },
-		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: rename ?? (() => renameProject(project)) },
+		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: rename },
 		// No "Add to project": you can't put a project in a project.
 		pinMenuItem({ url, label: project.name, icon: project.icon }),
 		{ id: 'finish', label: 'Finish', icon: 'mynaui:check-circle', action: () => endProject(project, 'finished') },

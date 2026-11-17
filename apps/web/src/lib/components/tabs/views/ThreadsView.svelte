@@ -42,6 +42,7 @@
 		projectRowMenuItems,
 		REF_DRAG_TYPE,
 	} from '$lib/utils/projectActions';
+	import { renameRef } from '$lib/refs/identity.svelte';
 	import { onMount } from 'svelte';
 
 	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
@@ -210,7 +211,29 @@
 
 	function rowMenu(p: ProjectSummary, e: MouseEvent) {
 		e.preventDefault();
-		contextMenu.show({ x: e.clientX, y: e.clientY }, projectRowMenuItems(p));
+		contextMenu.show({ x: e.clientX, y: e.clientY }, projectRowMenuItems(p, { rename: () => startRename(p) }));
+	}
+
+	// ── renaming a row in place ───────────────────────────────────────────
+	// Rename (the row's menu) or F2 makes the name a field. A double-click
+	// opens the thread here, as it does in any list, so it does not rename.
+	let renaming = $state<{ id: string; draft: string; original: string } | null>(null);
+
+	function startRename(p: ProjectSummary) {
+		renaming = { id: p.id, draft: p.name, original: p.name };
+	}
+
+	async function commitRename() {
+		const r = renaming;
+		renaming = null;
+		const name = r?.draft.trim();
+		if (!r || !name || name === r.original) return;
+		await renameRef(`/thread/${r.id}`, name);
+	}
+
+	function focusAndSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
 	}
 
 	// ── dropping onto a row ────────────────────────────────────────────────
@@ -357,6 +380,7 @@
 								class="row"
 								class:shown={p.id === shownId}
 								class:drop-on={dropTarget === p.id}
+								class:renaming={renaming?.id === p.id}
 								role="option"
 								tabindex="0"
 								aria-selected={p.id === pinnedId}
@@ -366,6 +390,10 @@
 								ondblclick={() => openProject(p)}
 								onkeydown={(e) => {
 									if (e.key === 'Enter') openProject(p);
+									else if (e.key === 'F2') {
+										e.preventDefault();
+										startRename(p);
+									}
 								}}
 								oncontextmenu={(e) => rowMenu(p, e)}
 								use:dropZone={{
@@ -380,7 +408,32 @@
 							>
 								<span class="glyph"><ProjectGlyph project={p} size={16} /></span>
 								<span class="text">
-									<span class="name">{p.name || 'Untitled thread'}</span>
+									{#if renaming?.id === p.id}
+										<!-- The field keeps its keys and clicks: the row's own Enter
+										     and double-click would open the thread. -->
+										<input
+											class="rename-input name name-field"
+											aria-label="Name"
+											placeholder="Untitled thread"
+											bind:value={renaming.draft}
+											use:focusAndSelect
+											onclick={(e) => e.stopPropagation()}
+											ondblclick={(e) => e.stopPropagation()}
+											onkeydown={(e) => {
+												e.stopPropagation();
+												if (e.key === 'Enter') {
+													e.preventDefault();
+													void commitRename();
+												} else if (e.key === 'Escape') {
+													e.preventDefault();
+													renaming = null;
+												}
+											}}
+											onblur={() => void commitRename()}
+										/>
+									{:else}
+										<span class="name">{p.name || 'Untitled thread'}</span>
+									{/if}
 									{#if p.current_status || p.instructions}
 										<span class="line">{p.current_status || p.instructions}</span>
 									{/if}
@@ -614,6 +667,9 @@
 	.row.drop-on {
 		background: var(--drop-tint);
 	}
+	.row.renaming {
+		cursor: default;
+	}
 	.row.placeholder {
 		cursor: default;
 		background: transparent;
@@ -636,6 +692,20 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	/* Renaming: the name alone becomes the field (app.css), since the
+	   status line and date beside it are not edited here. Its padding and
+	   height are taken back by equal negative margins, so the name and the
+	   lines around it do not move. */
+	.name-field {
+		flex: none;
+		height: 24px;
+		margin: -2px -6px;
+		padding: 0 6px;
+		border-radius: var(--radius-sm);
+		background: var(--rename-fill);
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
 	}
 	.line {
 		font-size: 13px;
