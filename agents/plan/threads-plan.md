@@ -55,6 +55,15 @@ Each item is the owner's call, with the date and his words where they matter.
     asks about it.
   - **Automatic**: your server also adds records and tasks it is sure belong,
     and asks about the ones it is not sure of as filing questions.
+- **Task homes, proposals and notes** (2026-11-17). He took my three picks
+  ("Yes, use your picks"):
+  - A task names its home with one column per kind of parent (`thread_id`,
+    `person_id`, `place_id`, `org_id`, `thing_id`), so a foreign key keeps a
+    deleted subject from leaving a broken home.
+  - Home and thread proposals are attention items, so a proposal leaves on
+    its own when the owner files the task.
+  - Notes on tasks and threads are attention items with a subject, so home
+    already reads them.
 - **Build and break: the old project names go** (2026-11-17). "rm old
   cruft/buildnbreak. dont wory about migrating projects", "rm old api projects
   routes and things. feel free to rename schema. rename messages conversation
@@ -72,8 +81,8 @@ Checked against the working tree on 2026-11-17, after migration 0082
 
 - `app_threads` (0080, from `app_projects`): `name`, `icon`, `accent_color`,
   `current_status` with `current_status_at`, `instructions`, `archived_at`,
-  `outcome` (`finished` or `dropped`) and `thing_id` (0078). There is no column
-  for Active or Backlog.
+  `outcome` (`finished` or `dropped`), `thing_id` (0078), and `is_backlog`
+  (0083), false for Active.
 - `app_thread_items`: an item is a `url` with a `role` (`library`, `pin`,
   `manuscript`) and `added_by` (`user` or `magnet`). Items arrive only by hand
   today: `add_thread_item` in `api/threads.rs` inserts them with role
@@ -84,9 +93,13 @@ Checked against the working tree on 2026-11-17, after migration 0082
   (`HomePanel.svelte`, `fileIntoProject`); a tab's menu offers the projects
   (`projectMenuItems` in `utils/projectActions.ts`); a page has "Add to
   project…" (`PageToolbar.svelte`), and a chat has "Move to project".
-- `app_tasks`: `thread_id` or `thing_id`, never both
-  (`app_tasks_one_parent_check`, 0078). There is no column for a person, place
-  or organization, and no way to link a task to a second thread or subject. One
+- `app_tasks` (0083): one home at most among `thread_id`, `person_id`,
+  `place_id`, `org_id` and `thing_id` (`app_tasks_one_home_check`), each a
+  foreign key that clears when its subject is deleted. `app_task_links` holds
+  what else a task is about, one target column per row, deleted with its
+  target. `api/tasks.rs` takes and returns both (`also_about`), the task tools
+  take them, and a thread's detail returns `tasks` and `tasks_also_about`. The
+  web client's types do not have these fields yet. One
   `source_url`, `due_on`/`due_at`, recurrence (0078), `assignee`, and `status`
   (`open`, `active`, `done`, `dismissed`).
 - Subjects: `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_things`.
@@ -229,19 +242,18 @@ back to what the note is about, with that thread's or subject's icon.
 Migration numbers are claimed with `make migration NAME=…` when a slice
 starts. Read `.claude/rules/migrations.md` first.
 
-1. **Homes in the schema.** Add `person_id`, `place_id` and `org_id` to
-   `app_tasks`, each `REFERENCES … ON DELETE SET NULL`, and widen the
-   one-parent check to all five parents. Add `app_task_links (task_id, kind,
-   ref_id)` for "also about", with `kind` in thread, person, place, org, thing.
-   Add `status` to `app_threads` (`active` or `backlog`, default `active`).
-   The migration header says what a rollback to an older release breaks.
-   Migration 0082 already renamed `auto_add_materials` to
+1. **Homes in the schema.** Built in 0083: the three new home columns, the
+   one-home check, `app_task_links` with one foreign key per kind of target,
+   and `app_threads.is_backlog`. 0082 renamed `auto_add_materials` to
    `is_adding_automatic` and the message and email `thread_id` to
    `conversation_id`.
-2. **Homes in the API.** Tasks take and return their home and links. A
-   thread's detail returns its own tasks and the tasks that are also about it.
-   The rename to `/api/threads`, thread field names, the `thread` kinds and
-   `/thread/` urls is done, with no alias.
+2. **Homes in the API.** Built on the server: tasks take and return their
+   home and `also_about`, a new home replaces the old one, the list filters by
+   each kind of home, and a thread's detail returns its own open tasks and the
+   ones also about it. Threads return and take `is_backlog` and
+   `is_adding_automatic`. The `/api/threads` rename is done, with no alias.
+   Left for slice 3: the web client's types and a person, place, org or
+   thing page showing its tasks.
 3. **The Threads door.** Replace `ProjectsListView` and `ProjectDetailView`
    with the four views, the preview column, and the thread, task and insight
    pages. Move `TaskList` onto the new row. Statuses come from slice 1. Rename
@@ -264,21 +276,6 @@ starts. Read `.claude/rules/migrations.md` first.
    (reminders-plan, and iOS region monitoring); moving one occurrence of a
    recurring event (google-write-access-plan); the voicemail collector; filing
    records into threads by the closed question.
-
-## Open decisions
-
-Each has my pick. None is decided. The owner settled the others on 2026-11-17 (see Decided).
-
-1. **How a task names its home.** One column per kind of parent, or a generic
-   `(home_kind, home_id)`. Pick: one column per kind, because the foreign keys
-   then keep a deleted subject from leaving a broken home.
-2. **Where proposals live.** As a new kind of suggestion in `app_suggestions`,
-   or as attention items. Pick: attention items, since a proposal is a
-   condition your server observes and should leave on its own when the owner
-   files the task.
-3. **Where notes live.** A table of their own, or attention items that carry
-   the task or thread they are about. Pick: attention items with a subject, so
-   home already reads them.
 
 ## How to test
 

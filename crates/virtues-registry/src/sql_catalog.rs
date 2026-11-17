@@ -386,11 +386,18 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // The task list, read here; written only through create_task and
     // update_task so every change reaches the task's history.
     m.insert("app_tasks", TableMetadata {
-        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer. A task sits under a thread (thread_id, an app_threads id), a thing (thing_id) or neither. One that recurs comes back recur_every recur_unit after the owner finishes it",
+        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer. Its home, one at most: thread_id (app_threads), else person_id, place_id, org_id or thing_id; app_task_links lists what else it is about. One that recurs comes back recur_every recur_unit after the owner finishes it",
         category: "tasks",
-        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "thread_id", "thing_id", "recur_every", "recur_unit", "closed_at", "result", "result_url"],
+        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "thread_id", "person_id", "place_id", "org_id", "thing_id", "recur_every", "recur_unit", "closed_at", "result", "result_url"],
         join_hint: None,
         note: Some("not closed: status IN ('open','active','ready')"),
+    });
+    m.insert("app_task_links", TableMetadata {
+        description: "What else a task is about: one target per row",
+        category: "tasks",
+        key_columns: &["task_id", "thread_id", "person_id", "place_id", "org_id", "thing_id"],
+        join_hint: None,
+        note: None,
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",

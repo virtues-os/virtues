@@ -495,8 +495,9 @@ pub(crate) mod tests {
             // in 1,422 calls, so the columns stay and the prose went. Raised
             // 150 on 2026-10-20 for app_tasks, the one table the task tools
             // read through it, and 50 on 2026-11-16 for app_tasks' thing and
-            // recurrence columns.
-            ("sql_query", &["sql_query"], 6_700),
+            // recurrence columns. Raised 150 on 2026-11-17 for a task's
+            // person, place and org homes and the app_task_links table.
+            ("sql_query", &["sql_query"], 6_850),
             // Mode-only tools, each set just above its 2026-09-29 size. Sudo
             // raised on 2026-10-27 for its clean environment and the
             // recovery-key ask.
@@ -511,7 +512,7 @@ pub(crate) mod tests {
         // that group's ceiling, which this test cannot see. The rest sit just
         // above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 23_200),
+            ("chat", 23_350),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -520,15 +521,16 @@ pub(crate) mod tests {
             // less what admin no longer lists. Clarity review just above its
             // size when it shipped on 2026-10-28. New applet is the applet
             // tool alone, so it follows that group's ceiling.
-            ("admin", 9_000),
-            ("clarity-review", 7_000),
-            // Deep research rose 100 on 2026-11-16 with the sql_query group.
-            ("deep-research", 13_350),
-            ("meeting-prep", 8_400),
-            ("morning-brief", 8_700),
+            ("admin", 9_150),
+            // Each mode with sql_query rose 150 on 2026-11-17 with that
+            // group, and deep research 100 more on 2026-11-16.
+            ("clarity-review", 7_150),
+            ("deep-research", 13_500),
+            ("meeting-prep", 8_550),
+            ("morning-brief", 8_850),
             ("new-applet", 3_150),
-            ("trip-planner", 9_000),
-            ("weekly-review", 8_700),
+            ("trip-planner", 9_150),
+            ("weekly-review", 8_850),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();

@@ -76,6 +76,14 @@ pub struct Thread {
     /// That thing's name, resolved on read.
     #[serde(default)]
     pub thing_title: Option<String>,
+    /// Open and waiting rather than being worked on now. An ended thread
+    /// keeps the value it had.
+    #[serde(default)]
+    pub is_backlog: bool,
+    /// Adding is automatic: your server also files what it is sure belongs.
+    /// False is manual, where only what the owner adds is filed.
+    #[serde(default)]
+    pub is_adding_automatic: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -101,6 +109,10 @@ pub struct ThreadSummary {
     pub thing_id: Option<String>,
     #[serde(default)]
     pub thing_title: Option<String>,
+    #[serde(default)]
+    pub is_backlog: bool,
+    #[serde(default)]
+    pub is_adding_automatic: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -139,6 +151,12 @@ pub struct ThreadDetail {
     /// chats across the whole box, so a thread's older chats were counted on
     /// its card and missing from its page.
     pub chats: Vec<ThreadChat>,
+    /// Its open tasks: the ones whose home it is.
+    #[serde(default, skip_deserializing)]
+    pub tasks: Vec<crate::api::tasks::Task>,
+    /// Open tasks homed elsewhere that are also about this thread.
+    #[serde(default, skip_deserializing)]
+    pub tasks_also_about: Vec<crate::api::tasks::Task>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -197,6 +215,8 @@ pub struct UpdateThreadRequest {
     /// The thing this thread sits under. `null` takes it out from under one.
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub thing_id: Option<Option<String>>,
+    pub is_backlog: Option<bool>,
+    pub is_adding_automatic: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,7 +271,7 @@ pub struct ThreadGraph {
 const THREAD_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
      archived_at, outcome, thing_id, \
      (SELECT t.title FROM wiki_things t WHERE t.id = app_threads.thing_id) AS thing_title, \
-     created_at, updated_at";
+     is_backlog, is_adding_automatic, created_at, updated_at";
 
 /// List Threads, most-recently-active first, with member and chat counts.
 /// Open ones only unless `include_archived` — the threads page asks for both
@@ -282,7 +302,7 @@ pub async fn list_threads(
               AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats
                       WHERE thread_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
-            s.created_at, s.updated_at
+            s.is_backlog, s.is_adding_automatic, s.created_at, s.updated_at
         FROM app_threads s
         WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
           AND ($2::text IS NULL OR EXISTS (
@@ -353,7 +373,10 @@ pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
     .await
     .map_err(|e| Error::Database(format!("Failed to get thread chats: {}", e)))?;
 
-    Ok(ThreadDetail { thread, items, chats })
+    let (tasks, tasks_also_about) =
+        crate::api::tasks::open_tasks_about(pool, crate::api::tasks::Subject::Thread, id).await?;
+
+    Ok(ThreadDetail { thread, items, chats, tasks, tasks_also_about })
 }
 
 /// Create a new Thread.
@@ -427,7 +450,7 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     let thread = sqlx::query_as::<_, Thread>(&format!(
         "UPDATE app_threads \
          SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
-             instructions = $6, thing_id = $7 \
+             instructions = $6, thing_id = $7, is_backlog = $8, is_adding_automatic = $9 \
          WHERE id = $1 \
          RETURNING {THREAD_COLUMNS}"
     ))
@@ -438,6 +461,8 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     .bind(sort_order)
     .bind(&instructions)
     .bind(&thing_id)
+    .bind(req.is_backlog.unwrap_or(existing.is_backlog))
+    .bind(req.is_adding_automatic.unwrap_or(existing.is_adding_automatic))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update thread: {}", e)))?;
