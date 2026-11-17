@@ -55,6 +55,7 @@ export function setShellAppVersion(v: string): void {
 	if (!v) return;
 	shellAppVersion = v;
 	currentHeader = clientHeader();
+	deliverSoon();
 }
 
 /** The value for the X-Virtues-Client request header. */
@@ -93,6 +94,25 @@ function shouldStamp(method: string | undefined, priority: RequestPriority | und
 function settleStamp(sent: string, ok: boolean): void {
 	if (stampInFlight === sent) stampInFlight = null;
 	if (ok) stampDelivered = sent;
+}
+
+/** How long after a new identity to wait before sending it on its own. */
+const DELIVER_AFTER_MS = 3000;
+
+/**
+ * The shell's release arrives after the launch's low-priority requests may
+ * have gone out, and nothing else may ask the box for a while. When no request
+ * has carried the current value by then, send it on the session check, which
+ * is small and records the device's build like any other box route.
+ */
+function deliverSoon(): void {
+	if (typeof window === 'undefined' || !getBackendOrigin()) return;
+	setTimeout(() => {
+		if (stampDelivered === currentHeader || stampInFlight === currentHeader) return;
+		window.fetch('/auth/session', { priority: 'low' }).catch(() => {
+			// Best-effort: the next low-priority request tries again.
+		});
+	}, DELIVER_AFTER_MS);
 }
 
 /**
