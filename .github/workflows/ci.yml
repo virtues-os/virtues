@@ -218,6 +218,11 @@ jobs:
           GIT_DESCRIBE: v0.0.0-ci.1
         run: pnpm build
 
+      # What the chat home loads before its first paint may only shrink.
+      # Reads the build above, so it costs no extra build.
+      - name: First-load JavaScript within budget
+        run: node tools/perf/bundle-budget.mjs --top 10
+
       - name: Box packs the bundle
         env:
           OTA_BUILD_DIR: ${{ github.workspace }}/apps/web/build

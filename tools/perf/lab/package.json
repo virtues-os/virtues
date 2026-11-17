@@ -1,0 +1,12 @@
+{
+  "name": "virtues-perf-lab",
+  "private": true,
+  "type": "module",
+  "description": "The lab run: a production build, a scratch box with invented data, and a headless browser. See agents/build/performance.md.",
+  "scripts": {
+    "lab": "node run.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

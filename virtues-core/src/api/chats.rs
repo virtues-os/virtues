@@ -285,10 +285,23 @@ const SETTLE_AFTER_USER_TURNS: i64 = 6;
 // Functions
 // ============================================================================
 
-/// List recent chats (without messages)
-pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
-    let rows = sqlx::query(
-        r#"
+/// A chat's messages, oldest first. Onboarding's synthetic triggers are left
+/// out so a revisit shows only the AI's opening message. A constant for
+/// `query_plan_tests`.
+const TRANSCRIPT_SQL: &str = r#"
+    SELECT
+        id, role, content, model, provider, agent_id,
+        reasoning, tool_calls, intent, subject, created_at, parts,
+        started_at, ended_at
+    FROM app_chat_messages
+    WHERE chat_id = $1
+      AND (subject IS NULL OR subject != 'onboarding_synthetic')
+    ORDER BY sequence_num ASC
+"#;
+
+/// The chat list's query. A constant so `query_plan_tests` plans the very
+/// SQL this runs.
+const LIST_CHATS_SQL: &str = r#"
         SELECT
             id,
             title,
@@ -314,11 +327,14 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
           AND NOT EXISTS (SELECT 1 FROM app_tasks t WHERE t.chat_id = c.id)
         ORDER BY last_message_at DESC
         LIMIT $1
-        "#,
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+"#;
+
+/// List recent chats (without messages)
+pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
+    let rows = sqlx::query(LIST_CHATS_SQL)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
 
     let conversations = rows
         .into_iter()
@@ -403,21 +419,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let created_at: Timestamp = row.get("created_at");
     let updated_at: Timestamp = row.get("updated_at");
 
-        // Query messages from normalized table
-        // Filter out onboarding synthetic triggers (subject='onboarding_synthetic')
-        // so the user only sees the AI's opening message on revisit
-        let message_rows = sqlx::query(
-            r#"
-            SELECT
-                id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, created_at, parts,
-                started_at, ended_at
-            FROM app_chat_messages
-            WHERE chat_id = $1
-              AND (subject IS NULL OR subject != 'onboarding_synthetic')
-            ORDER BY sequence_num ASC
-            "#,
-        )
+        let message_rows = sqlx::query(TRANSCRIPT_SQL)
         .bind(&chat_id_str)
         .fetch_all(pool)
         .await?;
@@ -1128,6 +1130,52 @@ Conversation:
             let done = matches!(source.as_str(), "user" | "settled");
             Ok(GenerateTitleResponse { chat_id, title, done })
         }
+    }
+}
+
+/// The hot chat queries have an index to use.
+///
+/// The chat list runs on launch, on focus and after every turn, and the
+/// transcript on every chat open, so a full scan of `app_chat_messages` in
+/// either grows with every message ever written. With sequential scans turned
+/// off, Postgres picks a full scan only when no index can serve the query, so
+/// these fail when an index is dropped or the SQL stops matching one.
+#[cfg(test)]
+mod query_plan_tests {
+    use super::{LIST_CHATS_SQL, TRANSCRIPT_SQL};
+    use sqlx::PgPool;
+
+    /// Every `Seq Scan` in `sql`'s generic plan, by relation.
+    async fn seq_scans(pool: &PgPool, sql: &str) -> Vec<String> {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await.unwrap();
+        // The simple protocol: a prepared statement would count `$1` and want
+        // it bound, and a generic plan is the plan without one.
+        use sqlx::Row;
+        let explain = format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}");
+        let plan: serde_json::Value =
+            sqlx::raw_sql(&explain).fetch_one(&mut *tx).await.unwrap().get(0);
+        fn walk(node: &serde_json::Value, out: &mut Vec<String>) {
+            if node["Node Type"] == "Seq Scan" {
+                out.push(node["Relation Name"].as_str().unwrap_or("?").to_string());
+            }
+            for child in node["Plans"].as_array().into_iter().flatten() {
+                walk(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&plan[0]["Plan"], &mut out);
+        out
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn chat_list_scans_no_table(pool: PgPool) {
+        assert_eq!(seq_scans(&pool, LIST_CHATS_SQL).await, Vec::<String>::new());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn transcript_scans_no_table(pool: PgPool) {
+        assert_eq!(seq_scans(&pool, TRANSCRIPT_SQL).await, Vec::<String>::new());
     }
 }
 
