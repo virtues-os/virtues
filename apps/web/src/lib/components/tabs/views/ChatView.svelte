@@ -403,6 +403,9 @@
 		chat.messages = deduplicateMessages(data.messages || []).map(
 			toUiMessage,
 		) as unknown as typeof chat.messages;
+		undrawnCount = Math.max(0, chat.messages.length - DRAWN_AT_FIRST);
+		undrawnFor = id;
+		drawnAt = performance.now();
 		return true;
 	}
 
@@ -917,6 +920,74 @@
 	});
 	const lastMessageId = $derived(uniqueMessages[uniqueMessages.length - 1]?.id);
 
+	/**
+	 * A long chat draws only its latest messages, and earlier ones as you
+	 * scroll up to them. Each drawn reply holds about seventy of Svelte's
+	 * block records, nearly all from rendering its markdown, so a 300-message
+	 * chat held tens of megabytes for messages nobody was looking at. Every
+	 * message is still loaded; this is how many of the oldest are not drawn.
+	 * Set when a transcript loads; a message that arrives later is always
+	 * drawn, so nothing above the reader moves when a turn ends.
+	 */
+	const DRAWN_AT_FIRST = 60;
+	const DRAWN_MORE = 60;
+	let undrawnCount = $state(0);
+	/** The chat `undrawnCount` was set for: a view reused for another chat draws all of that one. */
+	let undrawnFor: string | null = $state(null);
+	/** When the transcript was put on screen: the top edge waits out the first scroll to the bottom. */
+	let drawnAt = 0;
+	const undrawn = $derived(undrawnFor !== null && undrawnFor === conversationId ? undrawnCount : 0);
+	const drawnMessages = $derived(undrawn > 0 ? uniqueMessages.slice(undrawn) : uniqueMessages);
+	/** The top of the transcript, which draws earlier messages when it comes into view. */
+	let earlierEdge: HTMLElement | null = $state(null);
+	let drawingEarlier = false;
+
+	/**
+	 * Draw up to `count` more of the earlier messages, holding the reader where
+	 * they are: the first message drawn before stays at the same place on
+	 * screen. Corrected for a few frames, because rows the browser skipped off
+	 * screen (`.far`) take their real height as they are first drawn, and
+	 * WebKit does not hold the scroll position by itself.
+	 */
+	async function drawEarlier(count = DRAWN_MORE, until?: string) {
+		if (undrawn === 0 || drawingEarlier) return;
+		const scroller = scrollContainer;
+		const firstId = drawnMessages[0]?.id;
+		const first = firstId ? scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(firstId)}"]`) : null;
+		const before = first?.getBoundingClientRect().top;
+		drawingEarlier = true;
+		const target = until ? uniqueMessages.findIndex((m) => m.id === until) : -1;
+		undrawnCount = target >= 0 ? Math.max(0, Math.min(undrawn - count, target - 4)) : Math.max(0, undrawn - count);
+		await tick();
+		if (scroller && first && before !== undefined && !until) {
+			for (let i = 0; i < 4; i++) {
+				const shift = first.getBoundingClientRect().top - before;
+				if (Math.abs(shift) >= 1) scroller.scrollTop += shift;
+				await new Promise((r) => requestAnimationFrame(r));
+			}
+		}
+		drawingEarlier = false;
+	}
+
+	// The top of a long transcript draws the messages before it as it comes
+	// into view, a little early, so scrolling up does not stop at an edge.
+	$effect(() => {
+		const edge = earlierEdge;
+		const scroller = scrollContainer;
+		if (!edge || !scroller || undrawn === 0) return;
+		const seen = new IntersectionObserver(
+			(entries) => {
+				// Not while the chat is first scrolled to its newest message: the
+				// view starts at the top, so the edge is in view for a moment.
+				if (performance.now() - drawnAt < 1000) return;
+				if (entries.some((e) => e.isIntersecting)) void drawEarlier();
+			},
+			{ root: scroller, rootMargin: "800px 0px 0px 0px" },
+		);
+		seen.observe(edge);
+		return () => seen.disconnect();
+	});
+
 	/** How long each stored reply's turn worked, from the span the box
 	 *  records with the row (`startedAt`/`endedAt`), for the thinking line of
 	 *  a turn this view did not watch. */
@@ -946,7 +1017,7 @@
 			inRoom ||
 			currentChatConversationId === INTERVIEW_CHAT_ID
 			? []
-			: railTurns(uniqueMessages),
+			: railTurns(drawnMessages),
 	);
 
 	/** The one line per step that carries its number — keyed by message id. */
@@ -1298,6 +1369,11 @@
 
 	/** Scroll a message into view and tint it briefly. False when it is not on screen. */
 	function revealMessage(messageId: string): boolean {
+		// Loaded but not drawn yet: draw back to it, then show it.
+		if (undrawn > 0 && uniqueMessages.slice(0, undrawn).some((m) => m.id === messageId)) {
+			void drawEarlier(0, messageId).then(() => revealMessage(messageId));
+			return true;
+		}
 		const el = scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
 		if (!el) return false;
 		const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1903,7 +1979,14 @@
 								     stacked. -->
 								<RoomCover />
 							{/if}
-							{#each uniqueMessages as message, messageIndex (message.id)}
+							{#if undrawn > 0}
+								<div class="earlier-edge" bind:this={earlierEdge}>
+									<button type="button" class="earlier-button" onclick={() => void drawEarlier()}>
+										Show earlier messages
+									</button>
+								</div>
+							{/if}
+							{#each drawnMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage ? (exchangeIndexById.get(message.id) ?? -1) : -1}
 								<!-- `far`: every row but the last two, which may be streaming or
@@ -1913,7 +1996,7 @@
 									class="flex {isUserMessage
 										? 'justify-end'
 										: 'justify-start'}"
-									class:far={messageIndex < uniqueMessages.length - 2}
+									class:far={messageIndex < drawnMessages.length - 2}
 									id={isUserMessage
 										? `exchange-${exchangeIndex}`
 										: undefined}
@@ -3080,6 +3163,26 @@
 	.far {
 		content-visibility: auto;
 		contain-intrinsic-size: auto 240px;
+	}
+
+	/* The top of a long transcript, while earlier messages are not drawn. */
+	.earlier-edge {
+		display: flex;
+		justify-content: center;
+		padding: 0.75rem 0 1.25rem;
+	}
+
+	.earlier-button {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+		padding: 0.25rem 0.75rem;
+		border-radius: var(--radius-md);
+		transition: color 150ms ease, background-color 150ms ease;
+	}
+
+	.earlier-button:hover {
+		color: var(--color-foreground);
+		background-color: var(--color-surface-overlay);
 	}
 
 	.message-wrapper.bleeds {
