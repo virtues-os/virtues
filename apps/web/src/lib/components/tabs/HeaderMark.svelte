@@ -7,8 +7,10 @@
 	 * (UnifiedSidebar). Closed, it is the top of the rail. Open, it widens
 	 * into the sidebar's first row: the ∴ on the column the rows' icons
 	 * stand on, and Virtues where their labels start. The window header
-	 * places it and gives it its width. Where nothing is behind it (the Mac
-	 * app's window buttons beside a closed rail) it is its own glass.
+	 * places it and gives it its width. In the Mac app, where the window's
+	 * buttons take the start of that row, it is a square with no name: at
+	 * the row's end when open, on its own glass beside the buttons when
+	 * closed.
 	 *
 	 * Pointing at it turns the mark into its own sidebar glyph: the three
 	 * dots line up as a column, the list, and a hairline draws down beside
@@ -21,24 +23,30 @@
 	 */
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
 
-	let { width, standalone = false }: { width: number; standalone?: boolean } = $props();
+	let {
+		width,
+		standalone = false,
+		named = true,
+	}: { width: number; standalone?: boolean; named?: boolean } = $props();
 
 	const open = $derived(!sidebarState.collapsed);
+	/** Laid out as a row (∴ then the name) only when it shows the name. */
+	const asRow = $derived(open && named);
 </script>
 
 <button
 	type="button"
 	class="header-mark"
 	class:lq={standalone}
-	class:sidebar-shown={open}
+	class:sidebar-shown={asRow}
 	class:resizing={sidebarState.resizing}
 	style:width="{width}px"
 	onclick={() => sidebarState.toggle()}
 	aria-label={open ? 'Hide the sidebar' : 'Show the sidebar'}
 	aria-expanded={open}
-	data-tip={open ? undefined : 'Show the sidebar'}
-	data-tip-key={open ? undefined : 'mod+b'}
-	style:padding-left="{open ? 10 : (width - 16) / 2}px"
+	data-tip={asRow ? undefined : open ? 'Hide the sidebar' : 'Show the sidebar'}
+	data-tip-key={asRow ? undefined : 'mod+b'}
+	style:padding-left="{asRow ? 10 : (width - 16) / 2}px"
 >
 	<!-- The dots are drawn, not typed: the app icon's geometry (equilateral,
 	     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts), so
@@ -51,7 +59,9 @@
 		<g class="move right"><circle class="mark-dot right" cx="19.5" cy="18" r="3" /></g>
 	</svg>
 	</span>
-	<span class="mark-label" aria-hidden="true">Virtues</span>
+	{#if named}
+		<span class="mark-label" aria-hidden="true">Virtues</span>
+	{/if}
 </button>
 
 <style>
