@@ -1107,7 +1107,7 @@ fn escapes_dest(path: &Path) -> bool {
 /// A bundle's content hash, exactly as `apps/web/scripts/write-bundle-manifest.mjs`
 /// computes it: SHA-256 over each file's path relative to the bundle root
 /// (`/`-separated) followed by its bytes, in sorted path order, skipping the
-/// `.gz` siblings; the first 16 hex characters. The manifest itself is skipped
+/// `.br` and `.gz` siblings; the first 16 hex characters. The manifest itself is skipped
 /// too: the build stamps it AFTER hashing, so it was never part of the hash.
 ///
 /// Checked against a real box's shipped build (2026-09-29, 597 files): this
@@ -1120,7 +1120,7 @@ fn content_hash(dir: &Path) -> std::io::Result<String> {
             let path = entry.path();
             if entry.file_type()?.is_dir() {
                 walk(root, &path, out)?;
-            } else if path.extension().map_or(true, |e| e != "gz") {
+            } else if path.extension().map_or(true, |e| e != "gz" && e != "br") {
                 let rel = path
                     .strip_prefix(root)
                     .unwrap_or(&path)

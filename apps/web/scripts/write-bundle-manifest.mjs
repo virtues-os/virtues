@@ -42,7 +42,7 @@ function deriveChannel(raw) {
  * is what a client actually compares, so a same-tag rebuild still updates and
  * an identical rebuild does not.
  *
- * The `.gz` siblings precompress.mjs writes are an encoding of these files,
+ * The `.br` and `.gz` siblings precompress.mjs writes are an encoding of these files,
  * not content, and the phone's OTA tarball excludes them — so they are left
  * out here too, and the hash of a bundle is the hash of what a client unpacks.
  * The manifest itself is left out, as the client leaves it out, so stamping
@@ -68,7 +68,7 @@ function hashTree(dir) {
 				process.exit(1);
 			}
 			if (st.isDirectory()) walk(p);
-			else if (!p.endsWith('.gz') && p !== MANIFEST) files.push(p);
+			else if (!p.endsWith('.gz') && !p.endsWith('.br') && p !== MANIFEST) files.push(p);
 		}
 	})(dir);
 

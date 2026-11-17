@@ -445,20 +445,21 @@ fn static_service() -> Option<
     }
 
     let fallback_file = static_path.join("200.html");
-    // `precompressed_gzip`: the build writes a `.gz` beside every
+    // Precompressed: the build writes `.br` and `.gz` beside every
     // compressible asset (apps/web/scripts/precompress.mjs), and ServeDir
-    // hands that sibling to a client that accepts gzip and the original to
-    // one that does not. The box never compresses at runtime; the Mac,
-    // which fetches the SPA from the box on every cold start, moves ~0.8 MB
-    // instead of ~2.6 MB.
+    // hands a client the brotli sibling when it accepts brotli, else the gzip
+    // one, else the original. The box never compresses its static files at
+    // runtime.
     let serve_dir = if fallback_file.exists() {
         ServeDir::new(&static_path)
+            .precompressed_br()
             .precompressed_gzip()
             .fallback(ServeFile::new(fallback_file))
     } else {
         // Try index.html as fallback if 200.html doesn't exist
         let index_file = static_path.join("index.html");
         ServeDir::new(&static_path)
+            .precompressed_br()
             .precompressed_gzip()
             .fallback(ServeFile::new(index_file))
     };
@@ -1039,7 +1040,7 @@ mod static_cache_policy_tests {
         let mut app = Router::new().fallback_service(
             tower::ServiceBuilder::new()
                 .layer(axum::middleware::from_fn(static_cache_policy))
-                .service(ServeDir::new(&dir).precompressed_gzip()),
+                .service(ServeDir::new(&dir).precompressed_br().precompressed_gzip()),
         );
 
         let req = |accept: Option<&'static str>| {
@@ -1064,6 +1065,22 @@ mod static_cache_policy_tests {
         assert!(res.headers().get(axum::http::header::CONTENT_ENCODING).is_none());
         let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], raw);
+
+        // With a brotli sibling too, a client that takes brotli gets it, and
+        // one that takes only gzip still gets gzip.
+        std::fs::write(dir.join("_app/immutable/chunks/a.js.br"), b"brotli bytes").unwrap();
+        let res = app.call(req(Some("gzip, br"))).await.unwrap();
+        assert_eq!(
+            res.headers().get(axum::http::header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()),
+            Some("br")
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"brotli bytes");
+        let res = app.call(req(Some("gzip"))).await.unwrap();
+        assert_eq!(
+            res.headers().get(axum::http::header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()),
+            Some("gzip")
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

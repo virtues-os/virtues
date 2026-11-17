@@ -410,7 +410,13 @@
 	<div class="ink"></div>
 </div>
 {#if closing}
-	<img class="arrival-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" />
+	<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+	     macOS (174 KB), the JPEG last (508 KB). -->
+	<picture>
+		<source srcset="/scenes/lake.avif" type="image/avif" />
+		<source srcset="/scenes/lake.webp" type="image/webp" />
+		<img class="arrival-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" />
+	</picture>
 	<div class="arrival-veil" aria-hidden="true"></div>
 {/if}
 <!-- The Mac app's title bar is an overlay, so the traffic lights float over

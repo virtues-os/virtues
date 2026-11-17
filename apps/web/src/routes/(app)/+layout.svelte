@@ -473,7 +473,13 @@
 	     sidebar and the panes alike. It does not move between pages: the
 	     glass floats over it and the paper covers it. -->
 	{#if !mobileLayout.isMobile}
-		<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" />
+		<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+		     macOS (174 KB), the JPEG last (508 KB). -->
+		<picture>
+			<source srcset="/scenes/lake.avif" type="image/avif" />
+			<source srcset="/scenes/lake.webp" type="image/webp" />
+			<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" />
+		</picture>
 	{/if}
 
 	<!-- One row across the whole window: the ∴ over the sidebar, each pane's

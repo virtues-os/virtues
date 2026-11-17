@@ -1363,6 +1363,9 @@
 		height: 150px;
 		margin-bottom: -40px;
 		background: url("/scenes/lake-ink.jpg") 60% 64% / cover no-repeat;
+		/* WebP is 147 KB to the JPEG's 334 KB. A browser without image-set()
+		   keeps the JPEG above. */
+		background-image: image-set(url("/scenes/lake-ink.webp") type("image/webp"), url("/scenes/lake-ink.jpg") type("image/jpeg"));
 		opacity: 0.75;
 		pointer-events: none;
 		-webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 100%);

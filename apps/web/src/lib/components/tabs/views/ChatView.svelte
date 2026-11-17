@@ -2407,7 +2407,13 @@
 						     page, so home draws it here. It yields to staged
 						     attachments, whose chips grow upward from the composer. -->
 						{#if mobileLayout.isMobile}
-							<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" transition:fade={{ duration: 500 }} />
+							<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+							     macOS (174 KB), the JPEG last (508 KB). -->
+							<picture>
+								<source srcset="/scenes/lake.avif" type="image/avif" />
+								<source srcset="/scenes/lake.webp" type="image/webp" />
+								<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" transition:fade={{ duration: 500 }} />
+							</picture>
 						{/if}
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />

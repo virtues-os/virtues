@@ -1,47 +1,47 @@
 {
   "cold_load": {
-    "ready_ms": 190,
+    "ready_ms": 195,
     "waterfall_depth": 6,
     "api_total": 21,
-    "js_transfer_kb": 628.85,
+    "js_transfer_kb": 528.25,
     "heap_mb": 7.95,
-    "dom_nodes": 1696.8,
+    "dom_nodes": 1707.3,
     "listeners": 259.35,
     "documents": 2
   },
   "relay_load": {
-    "composer_ms": 351,
-    "sidebar_ms": 502
+    "composer_ms": 338,
+    "sidebar_ms": 493
   },
   "long_chat": {
-    "rendered_ms": 537,
-    "open_layout_ms": 73,
-    "resize_layout_ms": 20,
-    "scroll_layout_ms": 42,
-    "longest_task_ms": 203,
-    "heap_mb": 55.7,
-    "dom_nodes": 60748.8,
+    "rendered_ms": 397,
+    "open_layout_ms": 67,
+    "resize_layout_ms": 18,
+    "scroll_layout_ms": 33,
+    "longest_task_ms": 185,
+    "heap_mb": 55.69,
+    "dom_nodes": 60759.3,
     "listeners": 448.35,
     "documents": 2
   },
   "view_cycle": {
-    "heap_mb_after": 8.29,
-    "heap_mb_per_lap": 0.26,
+    "heap_mb_after": 8.27,
+    "heap_mb_per_lap": 0.257,
     "dom_nodes_per_lap": 2,
     "listeners_per_lap": 0.5,
     "documents_per_lap": 0
   },
   "sidebar_toggle": {
-    "toggle_layout_ms": 20,
-    "toggle_style_ms": 45,
-    "toggle_script_ms": 19,
+    "toggle_layout_ms": 19,
+    "toggle_style_ms": 40,
+    "toggle_script_ms": 17,
     "toggle_slow_frames": 0
   },
   "stream_reply": {
-    "first_token_ms": 245,
-    "stream_lag_ms": 175,
-    "stream_script_ms": 813,
-    "stream_layout_ms": 621,
-    "stream_longest_frame_ms": 67
+    "first_token_ms": 240,
+    "stream_lag_ms": 180,
+    "stream_script_ms": 657,
+    "stream_layout_ms": 439,
+    "stream_longest_frame_ms": 61
   }
 }
