@@ -13,7 +13,8 @@
   },
   "relay_load": {
     "composer_ms": 320,
-    "sidebar_ms": 693
+    "sidebar_ms": 376,
+    "preflights": 2
   },
   "long_chat": {
     "rendered_ms": 332,

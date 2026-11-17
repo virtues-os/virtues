@@ -547,6 +547,10 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
         .expose_headers([axum::http::HeaderName::from_static(
             "x-virtues-box-build",
         )])
+        // The apps reach the box over the relay, where each preflight is a
+        // round trip. Without a max age a browser keeps the answer about five
+        // seconds. WebKit caps this at ten minutes.
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 /// Ctrl+C / SIGTERM. SIGTERM is the one that matters: systemd sends it on

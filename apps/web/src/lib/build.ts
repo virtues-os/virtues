@@ -4,6 +4,7 @@
 // the X-Virtues-Client header and shows on the Devices page.
 // See agents/archive/update-identity-spine.md.
 
+import { getBackendOrigin } from '$lib/config/backend';
 import { reloadOnceQuiet } from '$lib/reload';
 
 export type Channel = 'stable' | 'staging' | 'edge' | 'dev';
@@ -65,6 +66,35 @@ export function clientHeader(b: BuildInfo = BUILD): string {
 /** Cached header value; recomputed only when the shell identity arrives. */
 let currentHeader = clientHeader();
 
+// In the Mac and iPhone apps every box request is cross-origin, and a custom
+// header makes a GET need a CORS preflight: one more relay round trip before
+// the request itself. The box only needs the identity once per value, so there
+// it rides on one request at a time until the box has answered one carrying
+// the current value. A page served by the box itself is same-origin and has no
+// preflight, so it stamps every request as before.
+//
+// Only low-priority GETs carry it (recent visits, the model list, the
+// subscription), because those are kept off the launch's critical path. A
+// stamp on the first GET landed on the chat list, and the sidebar showed
+// later than with a preflight on every request.
+let stampDelivered: string | null = null;
+let stampInFlight: string | null = null;
+
+function shouldStamp(method: string | undefined, priority: RequestPriority | undefined): boolean {
+	if (!getBackendOrigin()) return true;
+	const m = (method ?? 'GET').toUpperCase();
+	// Requests that need a preflight anyway (a JSON body, a DELETE) carry it
+	// at no cost.
+	if (m !== 'GET' && m !== 'HEAD') return true;
+	if (priority !== 'low') return false;
+	return stampDelivered !== currentHeader && stampInFlight !== currentHeader;
+}
+
+function settleStamp(sent: string, ok: boolean): void {
+	if (stampInFlight === sent) stampInFlight = null;
+	if (ok) stampDelivered = sent;
+}
+
 /**
  * Install a one-time global fetch interceptor that stamps `X-Virtues-Client` on
  * same-origin box requests, so the box can record this browser's build on its
@@ -87,11 +117,23 @@ export function installClientHeader(): void {
 				// `currentHeader`, not a captured snapshot: the shell's app
 				// version arrives after install, and a frozen header would
 				// report every request as app-less forever.
-				if (!headers.has('X-Virtues-Client')) headers.set('X-Virtues-Client', currentHeader);
-				return orig(input, { ...init, headers }).then((r) => {
-					noteBoxBuild(r);
-					return r;
-				});
+				const stamp = !headers.has('X-Virtues-Client') && shouldStamp(init?.method, init?.priority);
+				if (stamp) {
+					headers.set('X-Virtues-Client', currentHeader);
+					stampInFlight = currentHeader;
+				}
+				const sent = stamp ? currentHeader : null;
+				return orig(input, { ...init, headers }).then(
+					(r) => {
+						if (sent !== null) settleStamp(sent, r.ok);
+						noteBoxBuild(r);
+						return r;
+					},
+					(e) => {
+						if (sent !== null) settleStamp(sent, false);
+						throw e;
+					}
+				);
 			}
 		}
 		return orig(input, init);

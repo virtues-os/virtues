@@ -359,12 +359,15 @@ const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimat
  */
 const RELAY_MS = 100;
 let relayUrl = '';
+/** CORS preflights the proxy saw during the current relay_load run. */
+let relayPreflights = 0;
 /** The fake model, for the stream scenario to read when it sent the last token. */
 let fakeModel = null;
 async function startRelayProxy() {
 	const box = new URL(ORIGIN);
 	const agent = new Agent({ keepAlive: true, maxSockets: 64 });
 	const server = createServer((req, res) => {
+		if (req.method === 'OPTIONS') relayPreflights++;
 		setTimeout(() => {
 			const up = httpRequest(
 				{ host: box.hostname, port: box.port, method: req.method, path: req.url, headers: { ...req.headers, host: box.host }, agent },
@@ -390,6 +393,7 @@ async function relayLoad(browser) {
 	await page.addInitScript((url) => {
 		window.__VIRTUES_BACKEND_ORIGIN__ = url;
 	}, relayUrl);
+	relayPreflights = 0;
 	await page.goto(`${ORIGIN}/chat`, { waitUntil: 'commit' });
 	// Times from the page's own clock, so they start at navigation.
 	const marks = await page.evaluate(
@@ -409,8 +413,11 @@ async function relayLoad(browser) {
 			}),
 		'A long planning thread'
 	);
+	// Preflights before the sidebar showed: each is a relay round trip ahead
+	// of the request it guards.
+	const preflights = relayPreflights;
 	await context.close();
-	return { composer_ms: marks.composer ?? -1, sidebar_ms: marks.sidebar ?? -1 };
+	return { composer_ms: marks.composer ?? -1, sidebar_ms: marks.sidebar ?? -1, preflights };
 }
 
 async function longChat(browser) {
@@ -679,7 +686,7 @@ const RULES = {
 	first_token_ms: 'time', stream_lag_ms: 'time', stream_script_ms: 'time', stream_layout_ms: 'layout',
 	stream_slow_frames: 'report', stream_longest_frame_ms: 'time',
 	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'approx', long_task_ms: 'report', longest_task_ms: 'time',
-	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
+	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count', preflights: 'approx',
 	js_transfer_kb: 'size', heap_mb: 'size', memory_mb: 'size', wasm_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
 	listeners: 'size', documents: 'count',
 	heap_mb_per_lap: 'growth', dom_nodes_per_lap: 'growth', listeners_per_lap: 'growth', documents_per_lap: 'growth'
