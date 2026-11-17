@@ -760,8 +760,10 @@
 	   Opening, it runs down to full height first, quickly, and widens on a
 	   spring that carries it a few pixels into the gap before it settles
 	   (--ease-sidebar-glass). Closing, it narrows and draws up to the
-	   rail's last glyph together, on the sidebar's clock. It follows the
-	   pointer with no easing while the seam is dragged. */
+	   rail's last glyph together, on the sidebar's clock. In the Mac app
+	   the rail starts below the header, so the top edge moves too: up
+	   around the ∴ with the height when opening, back down when closing.
+	   It follows the pointer with no easing while the seam is dragged. */
 	.sidebar-glass {
 		position: fixed;
 		z-index: 0;
@@ -769,13 +771,15 @@
 		pointer-events: none;
 		transition:
 			width 560ms var(--ease-sidebar-glass),
-			height 300ms var(--ease-sidebar);
+			height 300ms var(--ease-sidebar),
+			top 300ms var(--ease-sidebar);
 	}
 
 	.sidebar-glass.railed {
 		transition:
 			width var(--motion-sidebar) var(--ease-sidebar),
-			height var(--motion-sidebar) var(--ease-sidebar);
+			height var(--motion-sidebar) var(--ease-sidebar),
+			top var(--motion-sidebar) var(--ease-sidebar);
 	}
 
 	.sidebar-glass.resizing {

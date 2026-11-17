@@ -37,7 +37,7 @@
 <button
 	type="button"
 	class="header-mark"
-	class:lq={standalone}
+	class:standalone
 	class:sidebar-shown={asRow}
 	class:resizing={sidebarState.resizing}
 	style:width="{width}px"
@@ -51,6 +51,10 @@
 	<!-- The dots are drawn, not typed: the app icon's geometry (equilateral,
 	     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts), so
 	     the header, the chat and the Dock show one mark. -->
+	<!-- Its own glass, beside the Mac app's window buttons. It is a layer
+	     rather than a class on the button so it can fade while the
+	     sidebar's glass rises around the ∴ or draws away from it. -->
+	<span class="mark-glass lq" aria-hidden="true"></span>
 	<span class="mark-slot">
 	<svg class="mark" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
 		<path class="edge" d="M16 3.5V20.5" pathLength="1" />
@@ -92,11 +96,40 @@
 			transform var(--motion-release) var(--ease-glass);
 	}
 
-	/* On the sidebar's glass it has no surface of its own. Standing alone
-	   it takes the glass's (`.lq`). */
-	.header-mark:not(.lq) {
+	.header-mark {
+		position: relative;
 		background: transparent;
+	}
+
+	/* On the sidebar's glass it has no surface of its own. */
+	.header-mark:not(.standalone) {
 		border-radius: var(--sidebar-interactive-radius);
+	}
+
+	/* Standing alone it has its own glass (`.lq`). Opening, the glass goes
+	   quickly as the sidebar's glass comes up around the ∴. Closing, it
+	   comes back once the sidebar's glass has drawn away. */
+	.mark-glass {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 120ms var(--ease-premium);
+	}
+
+	.standalone .mark-glass {
+		opacity: 1;
+		transition: opacity 200ms var(--ease-premium) 160ms;
+	}
+
+	.standalone:hover .mark-glass {
+		box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
+	}
+
+	.mark-slot,
+	.mark-label {
+		position: relative;
 	}
 
 	.header-mark.resizing {
@@ -104,8 +137,8 @@
 	}
 
 	/* On the sidebar's glass it lights as a row does, by the glass's own
-	   light under the pointer (UnifiedSidebar). Its own glass brightens
-	   instead (`.lq`, app.css). */
+	   light under the pointer (UnifiedSidebar). Standing alone, its own
+	   glass brightens instead (`.mark-glass`). */
 
 	/* The square sinks under a press and springs back. The open row does
 	   not: a full-width row that shrank would read as a wobble. */
@@ -214,6 +247,7 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.header-mark,
+		.mark-glass,
 		.mark-label,
 		.move,
 		.edge {
