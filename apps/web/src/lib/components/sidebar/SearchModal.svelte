@@ -38,6 +38,9 @@
 	const FOCUS_MS = 290;
 	const RELEASE_MS = 210;
 	const CARD_OUT_MS = 145;
+	/** Handing off to a page ($lib/search/handoff): the card drops, the veil fades without its blur moving. */
+	const HANDOFF_CARD_MS = 160;
+	const HANDOFF_VEIL_MS = 260;
 	/** The window's blur when search is up, in px. */
 	const VEIL_BLUR = 10;
 
@@ -91,6 +94,7 @@
 
 	/** The window comes back into focus. Svelte runs an outro from t = 1 down to 0. */
 	function veilOut(_node: HTMLElement) {
+		if (search.sinking) return { duration: HANDOFF_VEIL_MS, easing: cubicOut, css: (t: number) => `opacity: ${t}` };
 		if (still()) return { duration: 120, css: (t: number) => `opacity: ${t}` };
 		return { duration: RELEASE_MS, easing: cubicOut, css: (t: number) => veilAt(t) };
 	}
@@ -108,6 +112,14 @@
 	/** The card blurs and swells a little as it fades. */
 	function leave(_node: HTMLElement) {
 		if (still()) return { duration: 120, css: (t: number) => `opacity: ${t}` };
+		if (search.sinking) {
+			// Handing off to a page: the card drops away as the page comes up.
+			return {
+				duration: HANDOFF_CARD_MS,
+				easing: cubicIn,
+				css: (t: number) => `opacity: ${t}; transform: translateY(${(1 - t) * 18}px) scale(${0.96 + 0.04 * t})`,
+			};
+		}
 		return {
 			duration: CARD_OUT_MS,
 			easing: cubicIn,

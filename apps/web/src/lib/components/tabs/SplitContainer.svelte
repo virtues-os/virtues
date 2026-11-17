@@ -10,6 +10,7 @@
 	} from "$lib/stores/dndManager.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
+	import { arrive } from "$lib/tabs/arrive";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
 	import { onMount, untrack } from "svelte";
 	import { listenForBrowserOpen } from "./browserPaneListener";
@@ -505,6 +506,7 @@
 		{@const box = slotBox(side, leaving ? leaving.frame : frame)}
 		<div
 			class="tab-slot"
+			use:arrive={{ route: tab.route, active: isActive }}
 			data-side={side}
 			data-active={isActive ? "" : undefined}
 			data-motion={leaving ? "leave" : entering ? "enter" : undefined}
@@ -605,26 +607,11 @@
 		display: none;
 	}
 
-	/* A page you switch to comes in, rather than cutting: it fades up from
-	   a few pixels below, quickly enough that switching still feels
-	   instant. Its toolbar follows a beat later, and does the same when a
-	   chat leaves home. Moving between panes has its own motion (below),
-	   which takes precedence. Home does not fade: a fading ancestor cuts
-	   its glass cards off from the painting, and they would frost only
-	   once the fade ended. */
-	.tab-slot[data-active]:not(:has(:global(.page-container.home))) {
-		animation: slot-page-in 200ms var(--ease-premium);
-	}
-
+	/* A page you open comes in rather than cutting ($lib/tabs/arrive,
+	   which also covers a tab navigating in place). Its toolbar follows a
+	   beat later, and does the same when a chat leaves home. */
 	.tab-slot :global(.action-toolbar) {
 		animation: slot-toolbar-in 260ms var(--ease-premium) 40ms backwards;
-	}
-
-	@keyframes slot-page-in {
-		from {
-			opacity: 0.4;
-			translate: 0 4px;
-		}
 	}
 
 	@keyframes slot-toolbar-in {
@@ -634,7 +621,6 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.tab-slot[data-active]:not(:has(:global(.page-container.home))),
 		.tab-slot :global(.action-toolbar) {
 			animation: none;
 		}

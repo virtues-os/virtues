@@ -18,6 +18,7 @@
 	import { loadRecentSources } from "$lib/sidebar/recents.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import { entities } from "$lib/search/entities.svelte";
+	import { handOff } from "$lib/search/handoff";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
 	import { canBrowserPane } from "$lib/tauri/bridge";
@@ -201,19 +202,16 @@
 				void row.command.run();
 				if (row.command.keepOpen) return;
 				break;
+			// A row with a preview opens with the hand-off, which closes search itself.
 			case "record":
-				windowShellStore.openTabFromRoute(row.record.url, { label: row.record.title, focusExisting: true });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(row.record.url, { label: row.record.title, focusExisting: true }));
 			case "day":
-				windowShellStore.openTabFromRoute(rowRoute(row)!, { label: row.day.title, focusExisting: true });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(rowRoute(row)!, { label: row.day.title, focusExisting: true }));
 			case "entity":
-				windowShellStore.openTabFromRoute(row.entity.url, { label: row.entity.name, focusExisting: true });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(row.entity.url, { label: row.entity.name, focusExisting: true }));
 			case "content": {
 				const target = contentTarget(row.hit);
-				windowShellStore.openTabFromRoute(target.route, { label: target.label });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(target.route, { label: target.label }));
 			}
 		}
 		onClose();
