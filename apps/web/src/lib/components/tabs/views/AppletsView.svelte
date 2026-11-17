@@ -26,6 +26,7 @@
 	import { pinMenuItem } from '$lib/pins/pinAction';
 	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
+	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -73,12 +74,11 @@
 		return null;
 	}
 
-	/** When it runs and when it last did. */
+	/** The row's one date: when it last ran, or that it is off. */
 	function when(a: Applet): string {
 		if (!a.enabled) return 'Off';
-		const runs = describeTriggers(a);
 		const last = a.last_run?.started_at;
-		return last ? `${runs} · last ran ${relativeTime(last)}` : runs;
+		return last ? formatRelativeTimestamp(last) : 'Not run yet';
 	}
 
 	// "Run now" is refused unless the applet lists the manual trigger.
@@ -146,11 +146,7 @@
 	}
 </script>
 
-<Page
-	title="Applets"
-	description="Ask Virtues to do something for you, on a schedule or when something happens."
-	maxWidth="prose"
->
+<Page title="Applets" maxWidth="prose">
 	{#snippet actions()}
 		<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
 		<Button variant="primary" size="sm" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New applet</Button>
@@ -182,16 +178,12 @@
 		{#snippet listRow(a: Applet)}
 			{@const trouble = problem(a)}
 			<span class="row">
-				<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={20} bare /></span>
+				<span class="row-icon" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={16} bare /></span>
 				<span class="row-text">
 					<span class="row-title">{a.name}</span>
-					{#if trouble}
-						<span class="row-line problem">{trouble}</span>
-					{:else if a.description}
-						<span class="row-line">{a.description}</span>
-					{/if}
-					<span class="row-when">{when(a)}</span>
+					<span class="row-line" class:problem={!!trouble}>{trouble ?? a.description ?? describeTriggers(a)}</span>
 				</span>
+				<span class="row-date">{when(a)}</span>
 			</span>
 		{/snippet}
 
@@ -224,15 +216,9 @@
 		align-items: flex-start;
 		gap: 0.875rem;
 	}
-	.glyph {
-		flex: none;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 2.25rem;
-		height: 2.25rem;
-		border-radius: var(--radius-md);
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+	.row-icon {
+		flex: 0 0 16px;
+		margin-top: 0.25rem;
 		color: var(--color-foreground-muted);
 	}
 	.row-text {
@@ -243,8 +229,7 @@
 		gap: 0.25rem;
 	}
 	.row-title,
-	.row-line,
-	.row-when {
+	.row-line {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -267,8 +252,11 @@
 	.row-line.problem {
 		color: var(--color-error);
 	}
-	.row-when {
+	.row-date {
+		flex: 0 0 auto;
+		margin-top: 0.25rem;
 		font-size: 0.8125rem;
+		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-muted);
 	}
 	.error-msg {

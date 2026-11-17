@@ -10,6 +10,7 @@
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 	import UniversalDataGrid, { type Column, type GroupInfo } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -72,19 +73,6 @@
 		return date.toLocaleDateString("en-US", { month: "long", year: sameYear ? undefined : "numeric" });
 	}
 
-	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		const days = daysAgo(dateStr);
-		if (days <= 0) return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-		if (days === 1) return "Yesterday";
-		if (days < 7) return date.toLocaleDateString("en-US", { weekday: "long" });
-		return date.toLocaleDateString("en-US", {
-			month: "short",
-			day: "numeric",
-			year: new Date().getFullYear() !== date.getFullYear() ? "numeric" : undefined,
-		});
-	}
-
 	// The list sorts newest first and groups in order of appearance, so the
 	// thread or month with the latest page comes first either way.
 	const columns: Column<PageSummary>[] = [
@@ -113,7 +101,7 @@
 	function lastWritten(group: GroupInfo<PageSummary>): string {
 		const latest = group.items[0];
 		if (!latest) return "";
-		return daysAgo(latest.updated_at) <= 0 ? "Last written today" : `Last written ${formatDate(latest.updated_at)}`;
+		return daysAgo(latest.updated_at) <= 0 ? "Last written today" : `Last written ${formatRelativeTimestamp(latest.updated_at)}`;
 	}
 
 	function openPage(page: PageSummary) {
@@ -239,7 +227,7 @@
 						<span class="row-excerpt">{displayExcerpt(page)}</span>
 					{/if}
 				</span>
-				<span class="row-date">{formatDate(page.updated_at)}</span>
+				<span class="row-date">{formatRelativeTimestamp(page.updated_at)}</span>
 			</span>
 		{/snippet}
 	</UniversalDataGrid>
