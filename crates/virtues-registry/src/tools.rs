@@ -405,19 +405,27 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads, and `purpose`, what the figure is for; the server picks the chart from the columns the query returns. It runs the query, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["kind"],
             "properties": {
+                "purpose": {
+                    "type": "string",
+                    "enum": crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>(),
+                    "description": crate::chart_marks::purpose_catalog()
+                },
                 "kind": {
                     "type": "string",
                     "enum": ["chart", "numbers", "table", "map", "timeline", "choices"],
-                    "description": "chart: first column is the x axis, then 1-3 numeric series; under 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
+                    "description": "Not needed with purpose, except choices. chart: first column is the x axis, then 1-3 numeric series; under 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
                 },
                 "title": { "type": "string", "description": "A few words naming what is shown" },
                 "sql": { "type": "string", "description": "Alias every column as the owner should read it: AS \"Hours asleep\"" },
-                "mark": { "type": "string", "enum": ["bar", "line"], "description": "chart only; default bar" },
+                "mark": {
+                    "type": "string",
+                    "enum": crate::chart_marks::MARKS.iter().map(|m| m.mark).collect::<Vec<_>>(),
+                    "description": "Optional: draw this instead of the chart the server picks. With kind chart, bar (the default) or line"
+                },
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },

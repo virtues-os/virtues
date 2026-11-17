@@ -12,16 +12,25 @@
 //!
 //! A query that cannot be drawn is refused with the fix in the message: the
 //! reader is a model in a retry loop.
+//!
+//! A call says what the figure is for (`purpose`) and the server picks the
+//! mark from the columns the query returns, trying the purpose's marks in the
+//! order `virtues_registry::chart_marks::MARKS` lists them. A call that names
+//! `kind` (and `mark`) is drawn as it says, as before `purpose` existed.
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use virtues_registry::chart_marks::{self, ChartMark};
 
 use super::executor::{ToolError, ToolResult};
 use super::sql_query::SqlQueryTool;
 
 #[derive(Debug, Deserialize)]
 struct ShowArgs {
-    kind: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    purpose: Option<String>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -105,7 +114,13 @@ pub async fn execute(
 ) -> Result<ToolResult, ToolError> {
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
-    let kind = Kind::parse(args.kind.trim())?;
+    let trimmed = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let purpose = trimmed(&args.purpose).map(|p| purpose_named(&p)).transpose()?;
+    let named_mark = trimmed(&args.mark);
+    let kind = match trimmed(&args.kind) {
+        Some(k) => Kind::parse(&k)?,
+        None => kind_before_query(purpose, named_mark.as_deref())?,
+    };
     let title = args.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|t| {
         t.chars().take(MAX_TITLE_CHARS).collect::<String>()
     });
@@ -126,9 +141,10 @@ pub async fn execute(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| invalid(format!("a {} needs `sql`: the SELECT whose rows it draws", kind.name())))?;
-    let mark = match (kind, args.mark.as_deref()) {
-        (Kind::Chart, None | Some("bar")) => Some("bar"),
-        (Kind::Chart, Some("line")) => Some("line"),
+    // A chart's mark is settled before the query when the call names it, and
+    // picked from the columns after it when only the purpose is given.
+    let named_chart_mark = match (kind, named_mark.as_deref()) {
+        (Kind::Chart, Some(m @ ("bar" | "line"))) => Some(m),
         (Kind::Chart, Some(other)) => return Err(invalid(format!("mark '{other}' is not one: use bar or line"))),
         _ => None,
     };
@@ -152,10 +168,18 @@ pub async fn execute(
     let rows: Vec<Value> = data["rows"].as_array().cloned().unwrap_or_default();
 
     let (columns, rows) = canonical_columns(kind, columns, rows);
+    let mark = match (kind, named_chart_mark) {
+        (Kind::Chart, Some(m)) => Some(m),
+        (Kind::Chart, None) => Some(pick_chart_mark(purpose, &columns, &rows).mark),
+        _ => None,
+    };
     let mut shaped = shape(kind, &columns, rows)?;
     shaped.insert("title".into(), json!(title));
     if let Some(mark) = mark {
         shaped.insert("mark".into(), json!(mark));
+    }
+    if let Some(p) = purpose {
+        shaped.insert("purpose".into(), json!(p.id));
     }
     let mut note = String::from(
         "shown to the owner as drawn from these rows; describe what they show, and quote no figure that is not in them",
@@ -171,6 +195,60 @@ pub async fn execute(
     }
     shaped.insert("note".into(), json!(note));
     Ok(ToolResult::success(Value::Object(shaped)))
+}
+
+fn purpose_named(id: &str) -> Result<&'static chart_marks::ChartPurpose, ToolError> {
+    chart_marks::purpose(id).ok_or_else(|| {
+        let known: Vec<&str> = chart_marks::PURPOSES.iter().map(|p| p.id).collect();
+        invalid(format!("unknown purpose '{id}'. Use one of: {}", known.join(", ")))
+    })
+}
+
+/// The kind to draw when the call gives no `kind`: the named mark's, else the
+/// purpose's. Every purpose's marks share one kind
+/// (`chart_marks::tests::a_purpose_draws_with_one_kind`), so the query's
+/// limit and column names are known before it runs.
+fn kind_before_query(purpose: Option<&chart_marks::ChartPurpose>, named_mark: Option<&str>) -> Result<Kind, ToolError> {
+    let m = match (named_mark, purpose) {
+        (Some(name), _) => chart_marks::mark(name).ok_or_else(|| {
+            let known: Vec<&str> = chart_marks::MARKS.iter().map(|m| m.mark).collect();
+            invalid(format!("unknown mark '{name}'. Use one of: {}, or leave mark out", known.join(", ")))
+        })?,
+        (None, Some(p)) => chart_marks::marks_for(p.id).next().expect("every purpose has a mark (chart_marks tests)"),
+        (None, None) => {
+            let known: Vec<&str> = chart_marks::PURPOSES.iter().map(|p| p.id).collect();
+            return Err(invalid(format!(
+                "say what the figure is for with purpose ({}), or give kind",
+                known.join(", ")
+            )));
+        }
+    };
+    Kind::parse(m.kind)
+}
+
+/// The chart mark for a call that gave no mark: the first of the purpose's
+/// chart marks whose columns fit, and bar when nothing else does or the call
+/// gave no purpose. Pure, so each pick is tested without a database.
+fn pick_chart_mark(purpose: Option<&chart_marks::ChartPurpose>, columns: &[String], rows: &[Value]) -> &'static ChartMark {
+    let bar = chart_marks::mark("bar").expect("bar is a chart mark");
+    let Some(p) = purpose else { return bar };
+    chart_marks::marks_for(p.id)
+        .filter(|m| m.kind == "chart")
+        .find(|m| chart_fits(m.mark, columns, rows))
+        .unwrap_or(bar)
+}
+
+fn chart_fits(mark: &str, columns: &[String], rows: &[Value]) -> bool {
+    match mark {
+        // A line runs over real time: every value in the first column is a
+        // time or a date, and at least one is there.
+        "line" => columns.first().is_some_and(|x| {
+            let mut values = rows.iter().filter_map(|r| r.get(x)).filter(|v| !v.is_null()).peekable();
+            values.peek().is_some() && values.all(|v| v.as_str().is_some_and(is_time))
+        }),
+        "bar" => true,
+        _ => false,
+    }
 }
 
 /// The columns a map and a timeline read, and the table names a model writes
@@ -559,5 +637,59 @@ mod tests {
     fn an_unknown_kind_lists_the_real_ones() {
         let Err(ToolError::InvalidParameters(m)) = Kind::parse("pie") else { panic!() };
         assert!(m.contains("chart, numbers, table, map, timeline, choices"));
+    }
+
+    fn purpose(id: &str) -> Option<&'static chart_marks::ChartPurpose> {
+        Some(purpose_named(id).unwrap())
+    }
+
+    #[test]
+    fn change_over_time_draws_a_line_over_dates_and_bars_over_labels() {
+        let dated = vec![json!({ "Week": "2026-09-01", "Steps": 1 }), json!({ "Week": "2026-09-08", "Steps": 2 })];
+        let labelled = vec![json!({ "Day": "Mon", "Steps": 1 }), json!({ "Day": "Tue", "Steps": 2 })];
+        let p = purpose("change_over_time");
+        assert_eq!(pick_chart_mark(p, &cols(&["Week", "Steps"]), &dated).mark, "line");
+        assert_eq!(pick_chart_mark(p, &cols(&["Day", "Steps"]), &labelled).mark, "bar");
+    }
+
+    #[test]
+    fn a_line_needs_every_x_value_to_be_a_time() {
+        let mixed = vec![json!({ "x": "2026-09-01", "y": 1 }), json!({ "x": "Later", "y": 2 })];
+        let empty = vec![json!({ "x": null, "y": 1 })];
+        let p = purpose("change_over_time");
+        assert_eq!(pick_chart_mark(p, &cols(&["x", "y"]), &mixed).mark, "bar");
+        assert_eq!(pick_chart_mark(p, &cols(&["x", "y"]), &empty).mark, "bar");
+    }
+
+    #[test]
+    fn compare_groups_and_no_purpose_draw_bars_even_over_dates() {
+        let dated = vec![json!({ "Week": "2026-09-01", "Steps": 1 }), json!({ "Week": "2026-09-08", "Steps": 2 })];
+        assert_eq!(pick_chart_mark(purpose("compare_groups"), &cols(&["Week", "Steps"]), &dated).mark, "bar");
+        assert_eq!(pick_chart_mark(None, &cols(&["Week", "Steps"]), &dated).mark, "bar");
+    }
+
+    #[test]
+    fn a_purpose_or_a_named_mark_settles_the_kind_without_kind() {
+        assert_eq!(kind_before_query(purpose("change_over_time"), None).unwrap(), Kind::Chart);
+        assert_eq!(kind_before_query(purpose("place"), None).unwrap(), Kind::Map);
+        assert_eq!(kind_before_query(purpose("events"), None).unwrap(), Kind::Timeline);
+        assert_eq!(kind_before_query(purpose("in_sentence"), None).unwrap(), Kind::Numbers);
+        assert_eq!(kind_before_query(purpose("table"), None).unwrap(), Kind::Table);
+        assert_eq!(kind_before_query(None, Some("line")).unwrap(), Kind::Chart);
+        assert_eq!(kind_before_query(purpose("place"), Some("table")).unwrap(), Kind::Table);
+    }
+
+    #[test]
+    fn neither_purpose_nor_kind_is_refused_with_the_purposes() {
+        let Err(ToolError::InvalidParameters(m)) = kind_before_query(None, None) else { panic!() };
+        assert!(m.contains("change_over_time") && m.contains("or give kind"), "{m}");
+    }
+
+    #[test]
+    fn an_unknown_purpose_or_mark_lists_the_real_ones() {
+        let Err(ToolError::InvalidParameters(m)) = purpose_named("vibes") else { panic!() };
+        assert!(m.contains("change_over_time, compare_groups"), "{m}");
+        let Err(ToolError::InvalidParameters(m)) = kind_before_query(None, Some("pie")) else { panic!() };
+        assert!(m.contains("line, bar"), "{m}");
     }
 }

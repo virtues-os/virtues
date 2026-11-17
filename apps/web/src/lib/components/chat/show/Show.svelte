@@ -38,7 +38,11 @@
 	const title = $derived(out ? out.title : typeof part.input?.title === "string" ? part.input.title : null);
 	const columns = $derived(out?.columns ?? []);
 	const rows = $derived(out?.rows ?? []);
-	const kind = $derived(out?.kind ?? (part.input?.kind as string | undefined));
+	// A call may give only `purpose` (virtues_registry::chart_marks); the one
+	// that draws numbers holds the short placeholder, so the reply doesn't jump.
+	const kind = $derived(
+		out?.kind ?? (part.input?.kind as string | undefined) ?? (part.input?.purpose === "in_sentence" ? "numbers" : undefined),
+	);
 </script>
 
 {#if out || (drawing && kind !== "choices")}
