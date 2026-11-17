@@ -685,6 +685,42 @@ mod tests {
         assert!(m.contains("change_over_time") && m.contains("or give kind"), "{m}");
     }
 
+    /// The whole call against a scratch database: the query runs through
+    /// sql_query's executor, then the picker and the shape. Requires a live
+    /// Postgres (`#[sqlx::test]` provisions and drops the database).
+    #[sqlx::test]
+    async fn a_purpose_call_runs_the_query_and_picks_the_chart(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(std::sync::Arc::new(pool));
+        let weeks = r#"SELECT d::date AS "Week", n AS "Steps" FROM (VALUES ('2026-09-01', 4100), ('2026-09-08', 5200), ('2026-09-15', 4800)) v(d, n)"#;
+        let days = r#"SELECT d AS "Day", n AS "Steps" FROM (VALUES ('Mon', 4100), ('Tue', 5200)) v(d, n)"#;
+        let call = |args: Value| {
+            let tool = &tool;
+            async move { execute(tool, args, None, None).await }
+        };
+
+        let out = call(json!({ "purpose": "change_over_time", "sql": weeks })).await.unwrap().data;
+        assert_eq!((out["kind"].as_str(), out["mark"].as_str()), (Some("chart"), Some("line")), "{out}");
+        assert_eq!(out["purpose"], json!("change_over_time"));
+
+        let out = call(json!({ "purpose": "change_over_time", "sql": days })).await.unwrap().data;
+        assert_eq!(out["mark"], json!("bar"), "{out}");
+
+        let out = call(json!({ "purpose": "in_sentence", "sql": r#"SELECT 7.25 AS "Hours asleep""# })).await.unwrap().data;
+        assert_eq!(out["kind"], json!("numbers"), "{out}");
+        assert!(out.get("mark").is_none(), "{out}");
+
+        // A call written before purpose existed draws as it did: bars by default.
+        let out = call(json!({ "kind": "chart", "sql": weeks })).await.unwrap().data;
+        assert_eq!(out["mark"], json!("bar"), "{out}");
+        assert!(out.get("purpose").is_none(), "{out}");
+
+        let out = call(json!({ "purpose": "change_over_time", "mark": "bar", "sql": weeks })).await.unwrap().data;
+        assert_eq!(out["mark"], json!("bar"), "a named mark wins over the pick: {out}");
+
+        let refused = call(json!({ "sql": weeks })).await;
+        assert!(matches!(refused, Err(ToolError::InvalidParameters(ref m)) if m.contains("purpose")), "{refused:?}");
+    }
+
     #[test]
     fn an_unknown_purpose_or_mark_lists_the_real_ones() {
         let Err(ToolError::InvalidParameters(m)) = purpose_named("vibes") else { panic!() };
