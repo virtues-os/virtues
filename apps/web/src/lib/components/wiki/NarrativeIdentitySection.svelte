@@ -86,11 +86,6 @@
 	{:else}
 		<div class="empty">
 			<p class="empty-lead">Nothing written yet.</p>
-			<p class="empty-body">
-				Your document is written from the interview, a conversation with your
-				assistant. When you close the interview, the document appears here and on its own page,
-				in your words and in the first person.
-			</p>
 		</div>
 	{/if}
 
@@ -291,10 +286,4 @@
 		margin: 0 0 0.5rem;
 	}
 
-	.empty-body {
-		font-size: 0.9375rem;
-		line-height: 1.55;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1.25rem;
-	}
 </style>

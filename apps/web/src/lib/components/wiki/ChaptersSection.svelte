@@ -159,11 +159,6 @@
 	{:else}
 		<div class="empty">
 			<p class="empty-lead">No chapters yet.</p>
-			<p class="empty-body">
-				Name the big stretches of your life, with rough years. The interview
-				then fills in what each one was, and each becomes a page you can keep
-				writing in.
-			</p>
 		</div>
 	{/if}
 </div>
@@ -316,10 +311,4 @@
 		margin: 0 0 0.5rem;
 	}
 
-	.empty-body {
-		font-size: 0.9375rem;
-		line-height: 1.55;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1.25rem;
-	}
 </style>
