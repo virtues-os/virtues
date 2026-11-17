@@ -17,6 +17,8 @@
 
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
+	import { fade } from "$lib/utils/transitions";
+	import { lightUp } from "$lib/utils/lit";
 	import { browser } from "$app/environment";
 	import { tick, untrack } from "svelte";
 	import type { DayEvent } from "$lib/wiki/types";
@@ -498,10 +500,7 @@
 			scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
 		if (!sentence) return;
 		sentence.scrollIntoView({ block: "center" });
-		sentence.classList.remove("flash");
-		void sentence.offsetWidth;
-		sentence.classList.add("flash");
-		setTimeout(() => sentence.classList.remove("flash"), 1700);
+		lightUp(sentence);
 		// Focus goes to the sentence's keyboard control, the next element.
 		(sentence.nextElementSibling as HTMLElement | null)?.focus({ preventScroll: true });
 	}
@@ -1238,7 +1237,7 @@
 					</h1>
 					<p class="dateline">
 						<span>{date.getFullYear()}</span>
-						{#if weather}<span class="dot" aria-hidden="true">·</span><span title="High and low, from a weather model">{weather}</span>{/if}
+						{#if weather}<span in:fade><span class="dot" aria-hidden="true">·</span><span title="High and low, from a weather model">{weather}</span></span>{/if}
 					</p>
 				</header>
 
@@ -1329,7 +1328,7 @@
 					{/if}
 
 					{#if prevDay || nextDay}
-						<nav class="adjacent" aria-label="Adjacent days">
+						<nav class="adjacent" aria-label="Adjacent days" in:fade>
 							{#if prevDay}
 								<button type="button" class="adjacent-day" onclick={() => navigateToDay(prevDay!.date)}>
 									<span class="adjacent-when">← {neighborLabel(prevDay)}</span>
@@ -1348,7 +1347,7 @@
 					{/if}
 
 					{#if similar.length}
-						<section class="similar" aria-label="Similar days">
+						<section class="similar" aria-label="Similar days" in:fade>
 							<h2 class="similar-title">Similar days</h2>
 							{#each similar as d (d.date)}
 								<button type="button" class="similar-row" onclick={() => navigateToDay(parseDateSlug(d.date))}>

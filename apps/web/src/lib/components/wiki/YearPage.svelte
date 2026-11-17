@@ -21,6 +21,8 @@
 	 * The page is readable with no AI in any of them: the dateline, the counts
 	 * and the days are all record, not prose.
 	 */
+	import { fly } from '$lib/utils/transitions';
+	import { lateFlag } from '$lib/utils/lateFlag.svelte';
 	import { onMount } from 'svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import WikiCrumbs from './WikiCrumbs.svelte';
@@ -34,6 +36,8 @@
 
 	let page = $state<YearApi | null>(null);
 	let loading = $state(true);
+	/** The "Loading" line waits, so a year that loads quickly never flashes it. */
+	const slow = lateFlag(() => loading);
 	let writing = $state(false);
 	let failed = $state<string | null>(null);
 	let editingTitle = $state(false);
@@ -99,11 +103,11 @@
 </script>
 
 {#if loading}
-	<p class="quiet">Loading {year}…</p>
+	{#if slow.current}<p class="quiet">Loading {year}…</p>{/if}
 {:else if !page}
 	<p class="quiet">There is no page for {year}.</p>
 {:else}
-	<article class="year">
+	<article class="year" in:fly={{ y: 4, duration: 200 }}>
 		<WikiCrumbs bar path={[{ label: 'Years', route: '/wiki/years' }, { label: String(year) }]} />
 		<header>
 			<p class="eyebrow">Year</p>

@@ -680,21 +680,6 @@
 		transition-delay: 0s;
 	}
 
-	/* Back from Data: the sentence the citation came from, lit and let go. */
-	.s:global(.flash) {
-		animation: sentence-flash 1.6s ease;
-	}
-
-	@keyframes sentence-flash {
-		0%,
-		40% {
-			background-color: var(--color-highlight);
-		}
-		100% {
-			background-color: transparent;
-		}
-	}
-
 	.s-block {
 		display: block;
 		border-radius: var(--radius-md);
@@ -910,12 +895,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.s {
 			transition: none;
-		}
-
-		/* Marked without the fade; the page lifts the mark after a moment. */
-		.s:global(.flash) {
-			animation: none;
-			background-color: var(--color-highlight);
 		}
 
 		.bracket.drawing {

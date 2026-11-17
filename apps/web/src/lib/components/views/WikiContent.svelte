@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { fly } from "$lib/utils/transitions";
+	import { lateFlag } from "$lib/utils/lateFlag.svelte";
 	import { onMount, untrack } from "svelte";
 	import {
 		getPersonById,
@@ -52,18 +53,8 @@
 	let { entityId = "", active = true, onLabelChange }: Props = $props();
 
 	let loading = $state(true);
-	/**
-	 * The spinner waits before it shows, so a page that loads quickly never
-	 * flashes one.
-	 */
-	const SPINNER_DELAY_MS = 400;
-	let slow = $state(false);
-	$effect(() => {
-		if (!loading) return;
-		slow = false;
-		const timer = setTimeout(() => (slow = true), SPINNER_DELAY_MS);
-		return () => clearTimeout(timer);
-	});
+	/** The spinner waits, so a page that loads quickly never flashes one. */
+	const slow = lateFlag(() => loading);
 	let error = $state<string | null>(null);
 	let wikiPage = $state<Loaded | undefined>(undefined);
 	/** Set when the route is a year; rendered on its own. */
@@ -235,7 +226,7 @@
 
 <div class="wiki-content">
 	{#if loading}
-		{#if slow}
+		{#if slow.current}
 			<div class="flex items-center justify-center h-full">
 				<Icon icon="mynaui:spinner" width="20" class="spin" />
 			</div>
@@ -247,23 +238,24 @@
 			<p>{error}</p>
 		</div>
 	{:else if yearNumber !== null}
+		<!-- A year loads its own page, and rises when it has it (YearPage). -->
 		<YearPage year={yearNumber} />
 	{:else if wikiPage}
-		{#if wikiPage.kind === "day"}
-			<DayPage page={wikiPage.page} />
-		{:else if wikiPage.kind === "person"}
-			<!-- The page rises into place as its data arrives; its late parts
-			     ease in where they land (PersonPage). -->
-			<div class="arrived" in:fly|global={{ y: 4, duration: 200 }}>
+		<!-- A page rises into place as its data arrives; its late parts ease
+		     in where they land. -->
+		<div class="arrived" in:fly|global={{ y: 4, duration: 200 }}>
+			{#if wikiPage.kind === "day"}
+				<DayPage page={wikiPage.page} />
+			{:else if wikiPage.kind === "person"}
 				<PersonPage page={wikiPage.page} />
-			</div>
-		{:else if wikiPage.kind === "place"}
-			<PlacePage page={wikiPage.page} />
-		{:else if wikiPage.kind === "organization"}
-			<OrganizationPage page={wikiPage.page} />
-		{:else if wikiPage.kind === "thing"}
-			<ThingPage page={wikiPage.page} {active} onRenamed={updateLabel} />
-		{/if}
+			{:else if wikiPage.kind === "place"}
+				<PlacePage page={wikiPage.page} />
+			{:else if wikiPage.kind === "organization"}
+				<OrganizationPage page={wikiPage.page} />
+			{:else if wikiPage.kind === "thing"}
+				<ThingPage page={wikiPage.page} {active} onRenamed={updateLabel} />
+			{/if}
+		</div>
 	{:else}
 		<div class="error">
 			<Icon icon="mynaui:file" />

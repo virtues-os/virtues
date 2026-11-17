@@ -3,10 +3,6 @@
  * message you jumped to, a cited passage, the setting a search opened. Every
  * "here it is" in the app is this one wash, so a found thing always looks
  * found.
- *
- * TODO(2026-11-17): migrate DayPage.svelte's cited sentence (the `.flash`
- * class and DayArticleBody's `sentence-flash`), which holds another change
- * in progress.
  */
 import '$lib/styles/lit.css';
 
