@@ -104,7 +104,9 @@
 		justify-content: center;
 		gap: 6px;
 		border: 1px solid transparent;
-		border-radius: var(--radius-full);
+		/* A control's box radius (design.md, Corners): the pill is the
+		   composer's alone. */
+		border-radius: var(--radius-md);
 		font-family: var(--font-sans);
 		font-weight: 500;
 		white-space: nowrap;

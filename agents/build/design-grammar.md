@@ -275,8 +275,9 @@ you met depended on which page you had opened.
   opens 48px below the last; the head clears 40px before the first turn. (The
   10px under a title's sentence is the one remaining off-grid value. It is
   recorded in the lint baseline, which does not mean it is approved.)
-- **Buttons are pills**, 40px tall at `0 22px` with the 8pt grid either side
-  (32px and 48px). Use `Button`: it was written in Tailwind utilities while 192
+- **Buttons are boxes at `--radius-md`** (8px), the radius every control
+  shares in design.md; the pill is the composer's alone. They are 40px tall
+  at `0 22px`, with the 8pt grid either side (32px and 48px). Use `Button`: it was written in Tailwind utilities while 192
   of the app's 227 components are scoped CSS against the theme tokens, which is
   why it had fourteen importers against 418 hand-rolled `<button>` elements — a
   developer in a scoped-CSS file could not reach it from the stylesheet they
