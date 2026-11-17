@@ -27,9 +27,10 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 /// The header row's centre line: 27pt down its 54pt (`--chrome-row-h`).
 const CENTRE_Y: f64 = 27.0;
-/// The close button's centre: as far in from the window's left edge as the
-/// row's centre line is down from its top.
-const CLOSE_CENTRE_X: f64 = 27.0;
+/// The close button's centre: over the sidebar's icon column, which is the
+/// window's 10pt of air plus half the 44pt rail (`--rail-w`), so the lights
+/// stand above the icons, open or closed.
+const CLOSE_CENTRE_X: f64 = 32.0;
 
 fn buttons(window: &NSWindow) -> Option<[Retained<NSButton>; 3]> {
     Some([
