@@ -176,16 +176,37 @@
 	// Glass catches the light where the pointer is: the glass under it keeps
 	// the pointer's place in --lq-x and --lq-y, which its glint is drawn at
 	// (`.lq`, app.css). One listener for the whole window.
+	//
+	// Only glass that draws a glint (a button), and at most once a frame:
+	// measuring the glass on every pointer event, right after the last write,
+	// forced a style and layout pass per event over the blurred shell. The
+	// box is read inside the frame, before the write, so a frame lays out at
+	// most once.
 	onMount(() => {
-		const follow = (e: PointerEvent) => {
-			const glass = (e.target as Element | null)?.closest?.<HTMLElement>(".lq");
-			if (!glass) return;
+		const GLINTS = ':is(button, [role="button"]).lq';
+		let glass: HTMLElement | null = null;
+		let x = 0;
+		let y = 0;
+		let frame = 0;
+		const draw = () => {
+			frame = 0;
+			if (!glass?.isConnected) return;
 			const box = glass.getBoundingClientRect();
-			glass.style.setProperty("--lq-x", `${Math.round(e.clientX - box.left)}px`);
-			glass.style.setProperty("--lq-y", `${Math.round(e.clientY - box.top)}px`);
+			glass.style.setProperty("--lq-x", `${Math.round(x - box.left)}px`);
+			glass.style.setProperty("--lq-y", `${Math.round(y - box.top)}px`);
+		};
+		const follow = (e: PointerEvent) => {
+			glass = (e.target as Element | null)?.closest?.<HTMLElement>(GLINTS) ?? null;
+			if (!glass) return;
+			x = e.clientX;
+			y = e.clientY;
+			frame ||= requestAnimationFrame(draw);
 		};
 		document.addEventListener("pointermove", follow, { passive: true });
-		return () => document.removeEventListener("pointermove", follow);
+		return () => {
+			document.removeEventListener("pointermove", follow);
+			cancelAnimationFrame(frame);
+		};
 	});
 
 	// Load chat sessions, workspaces, and initialize theme on mount

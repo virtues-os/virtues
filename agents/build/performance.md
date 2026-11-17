@@ -61,12 +61,13 @@ cd tools/perf/lab && pnpm install   # once
 node run.mjs                        # measure and compare
 node run.mjs --web-build DIR        # reuse a build, skip the clone
 node run.mjs --update               # record budgets.json from this run
+node run.mjs --keep                 # leave the box and database up to look at
 ```
 
 | Scenario | What it records |
 |---|---|
 | `cold_load` | Time from navigation to a visible composer, JavaScript transferred, API requests before ready and in total, the waterfall's depth, long tasks, and heap, DOM and listener counts after garbage collection |
-| `long_chat` | Time until the 300th message is in the page, the longest task, and heap and DOM after garbage collection |
+| `long_chat` | Time until the 300th message is in the page, the longest task, heap and DOM after garbage collection, and Chromium's layout and style time for three moves: opening the chat, narrowing the window (every message laid out again, as when the sidebar opens beside it), and scrolling to the top |
 | `view_cycle` | Ten laps through eight views by in-app navigation, and the growth per lap in heap, DOM nodes, listeners and documents between lap 2 and lap 10 |
 
 How each number is held to its budget:
@@ -74,7 +75,12 @@ How each number is held to its budget:
 - Counts (requests, documents) and growth per lap are exact. They do not
   depend on the machine.
 - Times get 30% headroom with a 50 ms floor. They depend on the machine, so
-  compare them only between runs on one machine.
+  compare them only between runs on one machine. Layout times get the same
+  30% with a 10 ms floor, because a 50 ms floor would hide a long chat's
+  relayout going back to what it cost before its rows could be skipped.
+- Other work on the machine (another agent's build) moves every time at
+  once. To compare two builds, run them back to back, more than once, and
+  compare the quiet pairs.
 - Sizes (heap, transfer, DOM nodes, listeners) get 5%.
 - The waterfall's depth can differ by one between runs of the same code,
   because it depends on which request finishes first, so it gets one step of

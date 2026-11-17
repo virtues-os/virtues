@@ -903,6 +903,20 @@
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
 
+	/**
+	 * Each user message's place among the user messages (its `exchange-N`
+	 * anchor), and the last message's id, worked out once per render. Each row
+	 * used to count the user messages before it, which is quadratic in the
+	 * chat's length, on every streamed token.
+	 */
+	const exchangeIndexById = $derived.by(() => {
+		const index = new Map<string, number>();
+		let n = 0;
+		for (const m of uniqueMessages) if (m.role === "user") index.set(m.id, n++);
+		return index;
+	});
+	const lastMessageId = $derived(uniqueMessages[uniqueMessages.length - 1]?.id);
+
 	/** How long each stored reply's turn worked, from the span the box
 	 *  records with the row (`startedAt`/`endedAt`), for the thinking line of
 	 *  a turn this view did not watch. */
@@ -1891,16 +1905,15 @@
 							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
-								{@const exchangeIndex = isUserMessage
-									? uniqueMessages
-											.slice(0, messageIndex)
-											.filter((m) => m.role === "user")
-											.length
-									: -1}
+								{@const exchangeIndex = isUserMessage ? (exchangeIndexById.get(message.id) ?? -1) : -1}
+								<!-- `far`: every row but the last two, which may be streaming or
+								     just sent. The browser skips layout and paint for one off
+								     screen, which on a long chat is most of them. -->
 								<div
 									class="flex {isUserMessage
 										? 'justify-end'
 										: 'justify-start'}"
+									class:far={messageIndex < uniqueMessages.length - 2}
 									id={isUserMessage
 										? `exchange-${exchangeIndex}`
 										: undefined}
@@ -1934,11 +1947,7 @@
 												buildCitationContextFromParts(
 													message.parts,
 												)}
-											{@const isLastMessage =
-												message.id ===
-												uniqueMessages[
-													uniqueMessages.length - 1
-												]?.id}
+											{@const isLastMessage = message.id === lastMessageId}
 											{@const isStreaming = turnPhase.working && isLastMessage}
 											<!-- Narration, tool calls and reasoning go to the thinking
 											     block; the reply starts at bodyFromIndex (see splitTurn). -->
@@ -3057,6 +3066,14 @@
 		/* Isolate each message's layout/paint so a re-render of one (e.g. the
 		   streaming tail) can't reflow siblings. */
 		contain: layout paint;
+	}
+
+	/* A settled row off screen is skipped: no layout, no paint, until it
+	   scrolls near. `auto` remembers each row's real height once it has been
+	   drawn, so scrolling back does not jump; 240px stands in before that. */
+	.far {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 240px;
 	}
 
 	.message-wrapper.bleeds {

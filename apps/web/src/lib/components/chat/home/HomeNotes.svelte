@@ -29,7 +29,10 @@
 		onShown?: (note: SuggestedQuestion) => void;
 	} = $props();
 
-	onMount(() => attention.start());
+	onMount(() => {
+		attention.start();
+		return () => attention.stop();
+	});
 
 	let hidden = $state<string[]>([]);
 	let at = $state(0);

@@ -227,6 +227,15 @@ async function coldLoad(browser) {
 	};
 }
 
+/** Chromium's running total of layout and style work, in milliseconds. */
+async function layoutWorkMs(cdp) {
+	const { metrics } = await cdp.send('Performance.getMetrics');
+	const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
+	return (m.LayoutDuration + m.RecalcStyleDuration) * 1000;
+}
+
+const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
 async function longChat(browser) {
 	const { context, page, cdp } = await newPage(browser);
 	const last = `${LONG_CHAT_ID}_${String(LONG_CHAT_MESSAGES - 1).padStart(4, '0')}`;
@@ -236,10 +245,42 @@ async function longChat(browser) {
 	const renderedMs = Date.now() - t0;
 	await page.waitForLoadState('networkidle');
 	const longTasks = await page.evaluate(() => window.__longTasks);
+
+	// Layout work a long transcript costs after it is drawn: narrowing the
+	// window lays every message out again, and scrolling to the top brings
+	// each one through the viewport. Rows the browser can skip off screen
+	// show up here, not in the time to draw.
+	await twoFrames(page);
+	// A fresh context starts the counter at zero, so this is all the layout
+	// and style work of opening the chat.
+	const openLayoutMs = await layoutWorkMs(cdp);
+	let before = openLayoutMs;
+	await page.setViewportSize({ width: 1100, height: 900 });
+	await twoFrames(page);
+	const resizeLayoutMs = (await layoutWorkMs(cdp)) - before;
+	before = await layoutWorkMs(cdp);
+	await page.evaluate(async () => {
+		const row = document.querySelector('[data-message-id]');
+		let el = row?.parentElement ?? null;
+		while (el && !(el.scrollHeight > el.clientHeight + 10 && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+		if (!el) return;
+		const steps = 20;
+		const start = el.scrollTop;
+		for (let i = 1; i <= steps; i++) {
+			el.scrollTop = start * (1 - i / steps);
+			await new Promise((r) => requestAnimationFrame(r));
+		}
+	});
+	await twoFrames(page);
+	const scrollLayoutMs = (await layoutWorkMs(cdp)) - before;
+
 	const m = await settledMetrics(cdp);
 	await context.close();
 	return {
 		rendered_ms: renderedMs,
+		open_layout_ms: Math.round(openLayoutMs),
+		resize_layout_ms: Math.round(resizeLayoutMs),
+		scroll_layout_ms: Math.round(scrollLayoutMs),
 		long_task_ms: Math.round(longTasks.reduce((a, b) => a + b, 0)),
 		longest_task_ms: Math.round(Math.max(0, ...longTasks)),
 		...m
@@ -308,7 +349,7 @@ async function repeat(name, fn, browser, runs = RUNS) {
 // steady and is budgeted instead). The waterfall depth can be one off for the
 // same race, so it gets one step of slack.
 const RULES = {
-	ready_ms: 'time', rendered_ms: 'time', long_task_ms: 'report', longest_task_ms: 'time',
+	ready_ms: 'time', rendered_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout', long_task_ms: 'report', longest_task_ms: 'time',
 	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
 	js_transfer_kb: 'size', heap_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
 	listeners: 'size', documents: 'count',
@@ -318,6 +359,10 @@ const TIME_HEADROOM = 1.3;
 // A time measured as 0 (no long tasks) would otherwise budget 0, and the
 // first 51 ms task anywhere would fail it.
 const TIME_FLOOR_MS = 50;
+// Layout work is a few to tens of milliseconds, and a 50 ms floor would let
+// the long chat's relayout go back to what it cost before its rows could be
+// skipped. Its floor is smaller.
+const LAYOUT_FLOOR_MS = 10;
 const SIZE_HEADROOM = 1.05;
 const GROWTH_SLACK = { heap_mb_per_lap: 0.25, dom_nodes_per_lap: 2, listeners_per_lap: 0.5, documents_per_lap: 0 };
 
@@ -329,6 +374,7 @@ function toBudget(results) {
 			const rule = RULES[k];
 			if (!rule || rule === 'report') continue;
 			if (rule === 'time') b[scenario][k] = Math.ceil(Math.max(v * TIME_HEADROOM, v + TIME_FLOOR_MS));
+			else if (rule === 'layout') b[scenario][k] = Math.ceil(Math.max(v * TIME_HEADROOM, v + LAYOUT_FLOOR_MS));
 			else if (rule === 'size') b[scenario][k] = +(v * SIZE_HEADROOM).toFixed(2);
 			else if (rule === 'approx') b[scenario][k] = v + 1;
 			else if (rule === 'growth') b[scenario][k] = +(Math.max(0, v) + GROWTH_SLACK[k]).toFixed(3);
@@ -379,7 +425,11 @@ async function main() {
 			}
 			rmSync(state, { recursive: true, force: true });
 		} else {
-			log(`kept: box pid ${box.pid} on ${ORIGIN}, database ${DB}`);
+			// Let this process exit while the box runs on: an open pipe and a
+			// referenced child would hold it until the box was stopped.
+			box.stderr.destroy();
+			box.unref();
+			log(`kept: box pid ${box.pid} on ${ORIGIN}, database ${DB}. Stop it with: kill ${box.pid}`);
 		}
 	}
 

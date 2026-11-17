@@ -15,6 +15,8 @@ class AttentionStore {
 	items = $state<AttentionItem[]>([]);
 	loaded = $state(false);
 	private timer: ReturnType<typeof setInterval> | null = null;
+	/** Views showing the list now. The poll runs while there is one. */
+	private users = 0;
 	private inflight: Promise<void> | null = null;
 
 	refresh(): Promise<void> {
@@ -34,9 +36,13 @@ class AttentionStore {
 		return this.inflight;
 	}
 
-	/** Poll while the window is showing. The conditions change on the
-	 *  server's clock (a stream goes quiet overnight), not on a click here. */
+	/** Poll while a view shows the list and the window is showing. The
+	 *  conditions change on the server's clock (a stream goes quiet
+	 *  overnight), not on a click here. Each `start` is matched by a `stop`
+	 *  when its view goes: the poll used to run for the life of the window
+	 *  once home had been shown, and each poll scans every stream. */
 	start(): void {
+		this.users++;
 		void this.refresh();
 		if (this.timer) return;
 		this.timer = setInterval(() => {
@@ -46,6 +52,8 @@ class AttentionStore {
 	}
 
 	stop(): void {
+		this.users = Math.max(0, this.users - 1);
+		if (this.users > 0) return;
 		if (this.timer) {
 			clearInterval(this.timer);
 			this.timer = null;
