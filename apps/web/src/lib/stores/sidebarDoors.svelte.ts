@@ -2,7 +2,7 @@
  * The sidebar's doors, as the owner arranged them.
  *
  * The doors are the places every box has (New chat, Pages, Projects,
- * Applets, Wiki). Tasks have no door: they live on the Projects page. Their arrangement is the owner's: an order and a set of
+ * Applets, Wiki, Storage). Tasks have no door: they live on the Projects page. Their arrangement is the owner's: an order and a set of
  * hidden doors, saved on the profile (`sidebar_doors`, migration 0058) so
  * every device shows the same sidebar. Setup is not a door here: it shows
  * while setup is unfinished and leaves when it is done.
@@ -16,7 +16,7 @@
  */
 import { getProfile, updateProfile, type Profile } from '$lib/api/client';
 
-export type DoorId = 'new-chat' | 'pages' | 'projects' | 'applets' | 'wiki';
+export type DoorId = 'new-chat' | 'pages' | 'projects' | 'applets' | 'wiki' | 'storage';
 
 export interface Door {
 	id: DoorId;
@@ -31,6 +31,7 @@ export const DOORS: readonly Door[] = [
 	{ id: 'projects', label: 'Projects', glyph: 'projects' },
 	{ id: 'applets', label: 'Applets', glyph: 'applets' },
 	{ id: 'wiki', label: 'Wiki', glyph: 'wiki' },
+	{ id: 'storage', label: 'Storage', glyph: 'drive' },
 ];
 
 const byId = new Map(DOORS.map((d) => [d.id, d]));

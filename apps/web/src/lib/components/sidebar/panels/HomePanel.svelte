@@ -508,11 +508,15 @@
 		windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true });
 	}
 
+	function openStorage() {
+		windowShellStore.openTabFromRoute('/storage', { label: 'Storage', focusExisting: true });
+	}
+
 	/**
 	 * What each door does. Pages and Projects carry a + on hover: the word
 	 * is the list, the plus is a new one. Projects never shows a count: the
-	 * tasks on its page do not nag from the sidebar. The Wiki opens its
-	 * overview, whose index reaches its sections.
+	 * tasks on its page do not nag from the sidebar. The Wiki and Storage open
+	 * their front pages, whose links reach their sections.
 	 */
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: newChat },
@@ -520,6 +524,7 @@
 		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
+		storage: { open: openStorage },
 	};
 
 	// ── arranging the doors ────────────────────────────────────────────────

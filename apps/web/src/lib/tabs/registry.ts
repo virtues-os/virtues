@@ -398,7 +398,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: BookmarksView,
 	},
 
-	// PASSWORDS: /passwords — the logins saved on the box, in Drive beside
+	// PASSWORDS: /passwords — the logins saved on the box, in Storage beside
 	// Bookmarks. Its own namespace, not under /storage, because nothing here
 	// is a file and Storage's search and indexing must never reach it.
 	passwords: {
@@ -832,10 +832,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (sub === 'trash') {
 				return { type: 'storage', label: 'Recently deleted', icon: 'mynaui:trash' };
 			}
-			// Drive, possibly deep inside a folder: /storage/drive/Documents/2026
+			// The front page: what Storage holds, newest first.
+			if (path === '/storage') {
+				return { type: 'storage', label: 'Storage', icon: 'mynaui:archive' };
+			}
+			// Files, possibly deep inside a folder: /storage/drive/Documents/2026
 			const storagePath = path.replace(/^\/storage\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'storage', label: 'Drive', icon: 'mynaui:hard-drive' };
+				return { type: 'storage', label: 'Files', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'storage',
@@ -851,8 +855,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/storage';
 		},
-		icon: 'mynaui:hard-drive',
-		defaultLabel: 'Drive',
+		icon: 'mynaui:archive',
+		defaultLabel: 'Storage',
 		component: StorageView,
 	},
 
@@ -865,7 +869,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => {
 			const storagePath = path.replace(/^\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'drive', label: 'Drive', icon: 'mynaui:hard-drive' };
+				return { type: 'drive', label: 'Files', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'drive',
@@ -879,7 +883,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('drive_')) {
 				return `/storage/drive/${decodeURIComponent(serialized.slice(6))}`;
 			}
-			return '/storage';
+			return '/storage/drive';
 		},
 		icon: 'mynaui:hard-drive',
 		defaultLabel: 'Drive',

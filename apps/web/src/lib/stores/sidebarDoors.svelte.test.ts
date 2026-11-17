@@ -16,8 +16,11 @@ const ids = (doors: { id: string }[]) => doors.map((d) => d.id);
 describe('arranging the doors', () => {
 	it('keeps the saved order, skips ids this build does not know, and puts a missing door at its shipped place', () => {
 		// 'tasks' was a door until Tasks joined Projects; a profile saved then still says it.
+		// Storage is missing from that save, so it lands after Wiki, the door
+		// before it in the shipped order.
 		expect(ids(arrange(['wiki', 'tasks', 'new-chat', 'pages', 'wiki']))).toEqual([
 			'wiki',
+			'storage',
 			'new-chat',
 			'pages',
 			'projects',
@@ -32,14 +35,14 @@ describe('arranging the doors', () => {
 	it('moves among the shown doors and leaves a hidden door where it was', async () => {
 		await sidebarDoors.reset();
 		await sidebarDoors.setHidden('projects', true);
-		// Shown: new-chat, pages, applets, wiki. Wiki to the top.
+		// Shown: new-chat, pages, applets, wiki, storage. Wiki to the top.
 		await sidebarDoors.move(3, 0);
-		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'pages', 'applets']);
-		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'new-chat', 'projects', 'pages', 'applets']);
+		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'pages', 'applets', 'storage']);
+		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'new-chat', 'projects', 'pages', 'applets', 'storage']);
 		await sidebarDoors.setHidden('projects', false);
-		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'projects', 'pages', 'applets']);
+		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'projects', 'pages', 'applets', 'storage']);
 		expect(saved.at(-1)).toEqual({
-			sidebar_doors: { order: ['wiki', 'new-chat', 'projects', 'pages', 'applets'], hidden: [] },
+			sidebar_doors: { order: ['wiki', 'new-chat', 'projects', 'pages', 'applets', 'storage'], hidden: [] },
 		});
 	});
 });

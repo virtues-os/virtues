@@ -116,6 +116,7 @@
 		projects: { open: () => go("/projects", "Projects"), add: { label: "New project", run: addProject } },
 		applets: { open: () => go("/applets", "Applets") },
 		wiki: { open: () => go("/wiki", "Wiki") },
+		storage: { open: () => go("/storage", "Storage") },
 	};
 
 	function openPin(pin: Pin, title: string) {

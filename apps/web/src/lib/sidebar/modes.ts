@@ -282,27 +282,36 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/things',
 			group: 'Subjects',
 		},
+	],
+};
+
+/**
+ * Storage: what your server keeps that you file or save, apart from the
+ * wiki's story of your life. Its door opens the front page at `/storage`,
+ * which links to these rows.
+ */
+export const STORAGE_MODE: SidebarMode = {
+	id: 'storage',
+	title: 'Storage',
+	rows: [
 		{
 			id: 'files',
 			label: 'Files',
 			icon: 'mynaui:hard-drive',
 			glyph: 'files',
-			href: '/storage',
-			// Every Storage section sits under `/storage`, Streams included, which
-			// is a Settings row. Files is the bare route and the folders under
-			// `/storage/drive`.
-			activeWhen: (route) => route === '/storage' || route.startsWith('/storage/drive'),
-			group: 'Drive',
+			href: '/storage/drive',
+			group: 'Storage',
 		},
-		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media', group: 'Drive' },
 		{
 			id: 'bookmarks',
 			label: 'Bookmarks',
 			icon: 'mynaui:bookmark',
 			glyph: 'bookmarks',
 			href: '/bookmarks',
-			group: 'Drive',
+			activeWhen: (route) => route === '/bookmarks' || route.startsWith('/bookmark/'),
+			group: 'Storage',
 		},
+		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media', group: 'Storage' },
 		// Saved logins. Kept on the box and never read by the assistant
 		// (api/passwords.rs); API keys stay in Settings → Keys.
 		{
@@ -311,7 +320,7 @@ export const WIKI_MODE: SidebarMode = {
 			icon: 'mynaui:lock-password',
 			glyph: 'passwords',
 			href: '/passwords',
-			group: 'Drive',
+			group: 'Storage',
 		},
 		{
 			id: 'trash',
@@ -319,7 +328,7 @@ export const WIKI_MODE: SidebarMode = {
 			icon: 'mynaui:trash',
 			glyph: 'trash',
 			href: '/storage/trash',
-			group: 'Drive',
+			group: 'Storage',
 		},
 	],
 };

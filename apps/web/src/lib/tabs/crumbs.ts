@@ -9,7 +9,7 @@
  * `paneActions.setCrumbs`.
  */
 
-import { SETTINGS_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
+import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 
 export interface Crumb {
 	label: string;
@@ -28,7 +28,7 @@ export type CrumbMenu =
 	| { kind: 'pages' }
 	| { kind: 'applets' }
 	/** A sidebar mode's rows: all of them by heading, or one heading's. */
-	| { kind: 'mode'; mode: 'settings' | 'wiki'; group?: string };
+	| { kind: 'mode'; mode: 'settings' | 'wiki' | 'storage'; group?: string };
 
 export const projectsCrumb = (): Crumb => ({ label: 'Projects', route: '/projects', menu: { kind: 'projects' } });
 
@@ -112,18 +112,18 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		return { glyph: 'settings', crumbs };
 	}
 
+	if (path === '/storage') return { glyph: 'drive', crumbs: [{ label: 'Storage' }] };
+	const storageRow = rowForRoute(STORAGE_MODE, path);
+	if (storageRow) {
+		const root: Crumb = { label: 'Storage', route: '/storage', menu: { kind: 'mode', mode: 'storage' } };
+		return { glyph: 'drive', crumbs: inRow(root, storageRow, path, title) };
+	}
+
 	const entity = path.match(/^\/(\w+)\//)?.[1];
 	const wikiRow =
 		rowForRoute(WIKI_MODE, path) ??
 		(entity && WIKI_ENTITY_ROWS[entity] ? rowForRoute(WIKI_MODE, WIKI_ENTITY_ROWS[entity]) : null);
 	if (wikiRow) {
-		if (wikiRow.group === 'Drive') {
-			const root: Crumb = { label: 'Drive', route: '/storage', menu: { kind: 'mode', mode: 'wiki', group: 'Drive' } };
-			if (wikiRow.href === '/storage') {
-				return { glyph: 'drive', crumbs: path === '/storage' ? [{ label: 'Drive' }] : [root, { label: title }] };
-			}
-			return { glyph: 'drive', crumbs: inRow(root, wikiRow, path, title) };
-		}
 		return { glyph: 'wiki', crumbs: inRow(wikiCrumb(), wikiRow, path, title) };
 	}
 	if (under(path, '/wiki')) return { glyph: 'wiki', crumbs: [{ label: path === '/wiki' ? 'Wiki' : title }] };

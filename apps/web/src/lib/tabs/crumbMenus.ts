@@ -9,7 +9,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import type { Crumb, CrumbMenu } from '$lib/tabs/crumbs';
 import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recents.svelte';
 import { appletsStore } from '$lib/stores/applets.svelte';
-import { SETTINGS_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
+import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 import { search } from '$lib/stores/search.svelte';
 
 const LIST_ROWS = 10;
@@ -87,12 +87,12 @@ function withFooter(rows: ContextMenuItem[], footer: ContextMenuItem[]): Context
 /** A mode's rows. The whole mode puts each heading's rows in a submenu and
  *  the rows with no heading after them; one heading lists its rows. */
 function modeItems(
-	which: 'settings' | 'wiki',
+	which: 'settings' | 'wiki' | 'storage',
 	group: string | undefined,
 	current: string,
 	open: (route: string) => void,
 ): ContextMenuItem[] {
-	const mode = which === 'settings' ? SETTINGS_MODE : WIKI_MODE;
+	const mode = which === 'settings' ? SETTINGS_MODE : which === 'storage' ? STORAGE_MODE : WIKI_MODE;
 	const at = rowForRoute(mode, current)?.id;
 	const item = (row: ModeRow): ContextMenuItem => ({
 		id: row.id,
