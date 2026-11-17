@@ -305,8 +305,43 @@
 	const recentsFiltered = $derived(
 		recentFilter === 'all' ? recents : recents.filter((r) => r.kind === recentFilter),
 	);
-	const recentsShown = $derived(recentsFiltered.slice(0, RECENTS_CAP));
-	const recentsMore = $derived(recentsFiltered.length > RECENTS_CAP);
+	// The sidebar does not scroll. Recent shows as many whole rows as fit
+	// below the doors and pins, up to RECENTS_CAP, and "See all" takes a row
+	// when some are left out. A shorter window shows fewer recents.
+	let recentZoneEl: HTMLDivElement | undefined = $state();
+	let recentRoom = $state(Infinity);
+	const recentFit = $derived.by(() => {
+		const all = Math.min(RECENTS_CAP, recentsFiltered.length);
+		if (recentRoom >= all) return all;
+		// "See all" stands where the last row would.
+		return Math.max(0, recentRoom - 1);
+	});
+	const recentsShown = $derived(recentsFiltered.slice(0, recentFit));
+	const recentsMore = $derived(recentsFiltered.length > recentFit);
+
+	/** Gap between two rows (UnifiedSidebar `.sidebar-expandable-inner`). */
+	const ROW_GAP_PX = 2;
+	$effect(() => {
+		const zone = recentZoneEl;
+		const body = zone?.closest<HTMLElement>('.panel-body');
+		if (!zone || !body) return;
+		const measure = () => {
+			const rows = zone.querySelector<HTMLElement>('.sidebar-expandable-inner');
+			if (!rows) return;
+			const row = parseFloat(getComputedStyle(body).getPropertyValue('--sidebar-interactive-height')) || 34;
+			const bottom = body.getBoundingClientRect().bottom - parseFloat(getComputedStyle(body).paddingBottom);
+			const room = bottom - rows.getBoundingClientRect().top;
+			recentRoom = Math.max(0, Math.floor((room + ROW_GAP_PX) / (row + ROW_GAP_PX)));
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(body);
+		// The doors and pins above Recent move it down when they grow, and
+		// they share its parent. Recent's own rows change the parent's height
+		// too, but not where its rows start, so the count settles.
+		if (zone.parentElement) observer.observe(zone.parentElement);
+		measure();
+		return () => observer.disconnect();
+	});
 	const recentLabel = $derived(recentFilter === 'all' ? 'Recent' : `Recent ${filterDef.plural}`);
 
 	function recentFilterMenu(): ContextMenuItem[] {
@@ -1331,7 +1366,7 @@
 {/if}
 
 {#if recents.length > 0}
-<div class="recent-zone" inert={railed}>
+<div class="recent-zone" inert={railed} bind:this={recentZoneEl}>
 	{@render groupHead('recent', recentLabel, Math.max(1, recentsShown.length), recentHeadActions, recentFilter !== 'all')}
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">

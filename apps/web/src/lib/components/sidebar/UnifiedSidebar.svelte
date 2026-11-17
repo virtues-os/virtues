@@ -838,10 +838,6 @@
 		}
 	}
 
-	.railed .panel-body {
-		overflow-y: hidden;
-	}
-
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
@@ -862,8 +858,8 @@
 	.panel-body {
 		height: 100%;
 		min-height: 0;
-		overflow-y: auto;
-		overflow-x: hidden;
+		/* No scrolling: Recent shows only the rows that fit (HomePanel). */
+		overflow: hidden;
 		padding: calc(var(--chrome-control-top) + var(--chrome-tab-h) + 16px - var(--chrome-row-h)) 4px 12px;
 		transition: padding var(--motion-sidebar) var(--ease-sidebar);
 	}
