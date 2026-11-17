@@ -154,7 +154,8 @@
 		/** Rendered in the bulk bar while rows are selected. */
 		bulkActions?: Snippet<[T[], () => void]>;
 		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
-		 *  way a right-click-only menu never is. */
+		 *  way a right-click-only menu never is. In the List view they sit
+		 *  beside the row and always show. */
 		rowActions?: Snippet<[T]>;
 		/** Leading glyph for a row. It shares one column with the select box:
 		 *  the icon is what you see at rest, the checkbox is what you see on
@@ -1115,7 +1116,7 @@
 						<ul class="list-rows">
 							{#each group.items as item (item.id)}
 								{@const i = rowIndexById.get(item.id) ?? 0}
-								<li>
+								<li class="list-item">
 									<button
 										type="button"
 										class="list-row"
@@ -1129,6 +1130,11 @@
 									>
 										{@render listRow(item, { rowIndex: i, colIndex: 0, total })}
 									</button>
+									{#if rowActions}
+										<!-- Beside the row, not in it: the row is a button, and a
+										     button cannot hold another. -->
+										<div class="list-row-actions">{@render rowActions(item)}</div>
+									{/if}
 								</li>
 							{/each}
 						</ul>
@@ -2066,9 +2072,19 @@
 	}
 	/* One rule per group, under its heading; rows are set apart by space and
 	   a fill under the pointer, not a line each. */
+	.list-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		border-radius: var(--radius-md);
+	}
+	.list-item:hover {
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
+	}
 	.list-row {
 		display: block;
-		width: 100%;
+		flex: 1 1 auto;
+		min-width: 0;
 		padding: 0.75rem 0.5rem;
 		border: 0;
 		border-radius: var(--radius-md);
@@ -2078,8 +2094,12 @@
 		color: inherit;
 		cursor: pointer;
 	}
-	.list-row:hover {
-		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
+	.list-row-actions {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding-right: 0.5rem;
 	}
 	.list-row:focus-visible {
 		outline: 2px solid var(--color-primary);
