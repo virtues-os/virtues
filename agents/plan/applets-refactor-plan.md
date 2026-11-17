@@ -90,7 +90,7 @@ existing one.
   are one place since the home page was removed on 2026-10-06) and on the
   applet's page. A
   notification ("Your client work breakdown is ready") is a pointer through
-  [notifications-plan.md](notifications-plan.md)'s router, never a copy sent
+  [archive/notifications-plan.md](../archive/notifications-plan.md)'s router, never a copy sent
   by the applet itself. External channels get a pointer by default.
 - **Chat is not a delivery target.** Chat is where you make and change an
   applet. Reports do not go back into it.
@@ -142,7 +142,7 @@ output does not depend on the chat it came from.
 
 - A record for every scheduled time: ran, skipped and why, failed and why.
 - "From your applets" on the new chat screen.
-- The notification object from [notifications-plan.md](notifications-plan.md),
+- The notification object from [archive/notifications-plan.md](../archive/notifications-plan.md),
   built once, with applets as a first producer ("ready" and "didn't run").
   First channel decided below.
 

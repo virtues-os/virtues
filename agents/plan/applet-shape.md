@@ -347,7 +347,7 @@ the `limits` object and its aliases, `agent` (now `prompt`), `face_html`
 - **Told:** an unattended run that makes a page or text adds one Inbox item
   that links to the run. A run that only writes rows adds nothing. A failed
   run always adds one. Notifications, when built
-  ([notifications-plan.md](notifications-plan.md)), point to the same item.
+  ([archive/notifications-plan.md](../archive/notifications-plan.md)), point to the same item.
 - **Talked to:** the same thread. A message there starts a run.
 - **Answers where it was started.** From `/` or called by the assistant, it
   replies in that chat. Started by a schedule, rows or a webhook, it writes
