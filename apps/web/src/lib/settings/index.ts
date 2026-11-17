@@ -139,3 +139,12 @@ export function matchSettings(query: string, assistantName?: string | null): Set
 		.sort((a, b) => b.rank - a.rank || a.order - b.order)
 		.map((x) => x.setting);
 }
+
+/**
+ * The ids the Settings page shows for what was typed, or `null` when the
+ * field is empty and everything shows.
+ */
+export function matchingIds(query: string, assistantName?: string | null): Set<string> | null {
+	if (!query.trim()) return null;
+	return new Set(matchSettings(query, assistantName).map((s) => s.id));
+}

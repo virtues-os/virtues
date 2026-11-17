@@ -13,6 +13,7 @@
 	 */
 	import { Button } from '$lib';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
+	import { settingsFilter } from '$lib/settings/filter';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
@@ -29,6 +30,9 @@
 	} from '$lib/api/client';
 	import { toast } from 'svelte-sonner';
 	import { reloadApp } from '$lib/reload';
+
+	// A note under a row hides with it while the page is filtered.
+	const filter = settingsFilter();
 
 	const isSubscribed = $derived(subscriptionStore.subscribed);
 	const standingUnknown = $derived(!subscriptionStore.entitlementKnown && !isSubscribed);
@@ -269,7 +273,7 @@
 			{portalLoading ? 'Opening…' : 'Manage in Stripe'}
 		</button>
 	</SettingRow>
-	{#if portalError}
+	{#if portalError && filter.shows('subscription')}
 		<p class="note note-error">
 			{portalError}
 			{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
@@ -289,7 +293,7 @@
 			</button>
 		{/if}
 	</SettingRow>
-	{#if subscribeError}
+	{#if subscribeError && filter.shows('subscription')}
 		<p class="note note-error">
 			{subscribeError}
 			{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
@@ -357,7 +361,7 @@
 	<SettingRow id="balance" label="Balance" help="Your server couldn't read the balance.">
 		<button class="btn-quiet" onclick={() => void loadUsage()}>Check again</button>
 	</SettingRow>
-	<p class="note note-error"><span class="error-code">{usageError}</span></p>
+	{#if filter.shows('balance')}<p class="note note-error"><span class="error-code">{usageError}</span></p>{/if}
 {/if}
 
 {#if autoTopup}
@@ -375,7 +379,9 @@
 			onclick={() => setAutoTopup(!autoTopup!.enabled)}
 		></button>
 	</SettingRow>
-	{#if !autoTopup.enabled && autoTopup.disabled_at}
+	{#if !filter.shows('auto-top-up')}
+		<!-- hidden with its row -->
+	{:else if !autoTopup.enabled && autoTopup.disabled_at}
 		<p class="note note-error">
 			Auto top-up turned itself off after charges failed three times in a day. Update your payment
 			method in Stripe, then turn it back on.
@@ -389,7 +395,7 @@
 	<SettingRow id="auto-top-up" label="Auto top-up" help="Your server couldn't read this setting.">
 		<button class="btn-quiet" onclick={() => void loadLocal()}>Check again</button>
 	</SettingRow>
-	<p class="note note-error"><span class="error-code">{localError}</span></p>
+	{#if filter.shows('auto-top-up')}<p class="note note-error"><span class="error-code">{localError}</span></p>{/if}
 {/if}
 
 <style>

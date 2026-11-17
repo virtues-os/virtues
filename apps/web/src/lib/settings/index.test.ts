@@ -2,7 +2,7 @@
 // page draws, reads correctly on its own, and is found by the words people
 // type for it.
 import { describe, expect, it } from 'vitest';
-import { SECTIONS, SETTINGS, findSetting, matchSettings, settingsIn, titleOf } from './index';
+import { SECTIONS, SETTINGS, findSetting, matchSettings, matchingIds, settingsIn, titleOf } from './index';
 
 describe('the list of settings', () => {
 	it('gives every setting a unique id', () => {
@@ -93,5 +93,17 @@ describe('findSetting', () => {
 	it('looks a setting up by id', () => {
 		expect(findSetting('start-over')?.destructive).toBe(true);
 		expect(findSetting('nope')).toBeUndefined();
+	});
+});
+
+describe('matchingIds', () => {
+	it('is null for an empty field, so everything shows', () => {
+		expect(matchingIds('')).toBeNull();
+		expect(matchingIds('   ')).toBeNull();
+	});
+
+	it('is the set of matching ids otherwise, empty when nothing matches', () => {
+		expect(matchingIds('dark')?.has('theme')).toBe(true);
+		expect(matchingIds('zzqx')?.size).toBe(0);
 	});
 });

@@ -8,6 +8,7 @@
 	 * find the row (`data-setting`).
 	 */
 	import type { Snippet } from 'svelte';
+	import { settingsFilter } from '$lib/settings/filter';
 
 	let {
 		id,
@@ -25,9 +26,11 @@
 		block?: boolean;
 		children: Snippet;
 	} = $props();
+
+	const filter = settingsFilter();
 </script>
 
-<div class="row" class:block id="setting-{id}" data-setting={id}>
+<div class="row" class:block class:filtered={!filter.shows(id)} id="setting-{id}" data-setting={id}>
 	<div class="words">
 		{#if forId}
 			<label class="name" for={forId}>{label}</label>
@@ -40,6 +43,11 @@
 </div>
 
 <style>
+	/* Hidden while the page's search field doesn't match it. */
+	.filtered {
+		display: none !important;
+	}
+
 	.row {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
