@@ -538,7 +538,12 @@ async fn run_collector_status(
         Ok((code, out, err))
     };
     match tokio::time::timeout(COLLECTOR_STATUS_TIMEOUT, collect).await {
-        Ok(result) => result,
+        Ok(Ok(result)) => Ok(result),
+        // A read that failed may leave the process running; stop it too.
+        Ok(Err(e)) => {
+            let _ = child.kill();
+            Err(e)
+        }
         Err(_) => {
             let _ = child.kill();
             Err(format!(
@@ -1983,11 +1988,21 @@ fn main() {
             // own box reach for its session (the collector reaches the box over
             // its own embedded iroh, independent of this).
             //
-            // Only the bind happens here. Building the client resolves the
-            // box's LAN name and dials, which off the home network can take
-            // seconds, so it runs on a task and the window opens now. The bound
-            // port already listens: the webview's first requests wait in its
-            // backlog until the client is up.
+            // On the Mac only the bind happens here. Building the client
+            // resolves the box's LAN name and dials, which off the home
+            // network can take seconds, so it runs on a task and the window
+            // opens now: the Mac opens its own copy of the UI with no probe,
+            // and the bound port already listens, so the webview's first
+            // requests wait in its backlog until the client is up. Windows
+            // and Linux probe the box before choosing the window's page
+            // (below), and that probe needs the client, so they wait for it.
+            #[cfg(not(target_os = "macos"))]
+            if app.reach().is_paired() {
+                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
+                    eprintln!("[reach] ensure_serving failed: {e}");
+                }
+            }
+            #[cfg(target_os = "macos")]
             if app.reach().is_paired() {
                 match app.reach().bind_loopback() {
                     Ok(Some(bound)) => {

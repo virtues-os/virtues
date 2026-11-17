@@ -403,9 +403,11 @@ struct PairDoor {
   task: tauri::async_runtime::JoinHandle<()>,
 }
 
-/// A loopback port bound by `ReachState::bind_loopback`, not yet served.
+/// A loopback bound by `ReachState::bind_loopback`, not yet served. The port
+/// itself waits in `ReachState::pending` under this ticket, so `forget` and a
+/// handoff can close it while the client is still being built.
 pub struct BoundLoopback {
-  listener: StdTcpListener,
+  ticket: u64,
   rec: PairedBox,
 }
 
@@ -416,6 +418,14 @@ pub struct ReachState {
   /// them (freeing the loopback port + dropping the old client) and let a re-pair
   /// serve fresh without an app restart.
   tasks: std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+  /// The loopback bound by `bind_loopback` whose client `serve_bound` is still
+  /// building, with its ticket. Held here, not in the build's future, so
+  /// `forget` and a handoff can close it (freeing the port for the next
+  /// pairing) and the build, when it finishes, finds it gone and stands down
+  /// instead of serving an identity that was just replaced.
+  pending: std::sync::Mutex<Option<(u64, StdTcpListener)>>,
+  /// Numbers each `bind_loopback`, so a build only ever takes its own port.
+  tickets: std::sync::atomic::AtomicU64,
   /// The pairing door, when one is open. At most one at a time — a second
   /// "Add device" sheet replaces the first rather than leaving an orphan
   /// listener bound to the LAN with nobody watching it.
@@ -428,7 +438,26 @@ impl ReachState {
       store: Arc::new(FileStore::new()),
       serving: AtomicBool::new(false),
       tasks: std::sync::Mutex::new(Vec::new()),
+      pending: std::sync::Mutex::new(None),
+      tickets: std::sync::atomic::AtomicU64::new(0),
       pair_door: std::sync::Mutex::new(None),
+    }
+  }
+
+  /// Take the pending loopback if it is still `ticket`'s.
+  fn take_pending(&self, ticket: u64) -> Option<StdTcpListener> {
+    let mut slot = self.pending.lock().ok()?;
+    if slot.as_ref().is_some_and(|(t, _)| *t == ticket) {
+      slot.take().map(|(_, l)| l)
+    } else {
+      None
+    }
+  }
+
+  /// Close a loopback whose client is still being built.
+  fn drop_pending(&self) {
+    if let Ok(mut slot) = self.pending.lock() {
+      slot.take();
     }
   }
 
@@ -567,7 +596,11 @@ impl ReachState {
       // Refresh the outbox's device id now that we're definitely paired
       // (setup() may have run pre-pair with an empty id).
       init_outbox(&self.store);
-      Ok(BoundLoopback { listener, rec })
+      let ticket = self.tickets.fetch_add(1, Ordering::SeqCst) + 1;
+      if let Ok(mut slot) = self.pending.lock() {
+        *slot = Some((ticket, listener));
+      }
+      Ok(BoundLoopback { ticket, rec })
     })();
     match bound {
       Ok(b) => Ok(Some(b)),
@@ -581,18 +614,27 @@ impl ReachState {
   /// The network half of `ensure_serving`: build the warm client, then serve
   /// the bound loopback and start the upload loop.
   pub async fn serve_bound(&self, bound: BoundLoopback) -> Result<()> {
-    let BoundLoopback { listener: std_listener, rec } = bound;
+    let BoundLoopback { ticket, rec } = bound;
     // Every failure from here to the spawn below has to put the flag back. It
     // used to stay set on a failed bind or a failed client build (a launch off
     // the home network with no relay, a port someone else held), and every
     // later call took the early return: nothing listened on the loopback again
-    // until the app was killed.
+    // until the app was killed. Only while the port is still this build's: a
+    // `forget` or handoff in the meantime has reset the flag itself, and a
+    // newer bind owns it now.
     let client = match virtues_reach_client::build_client(&rec).await {
       Ok(c) => c,
       Err(e) => {
-        self.serving.store(false, Ordering::SeqCst);
+        if self.take_pending(ticket).is_some() {
+          self.serving.store(false, Ordering::SeqCst);
+        }
         return Err(e.into());
       }
+    };
+    // Forgotten or replaced while the client was built: the port is closed
+    // and the identity is not this device's any more. Stand down.
+    let Some(std_listener) = self.take_pending(ticket) else {
+      return Ok(());
     };
     // WARM_CLIENT is the single source of truth — the loopback, upload path, and
     // FFI background drain all read it, so a network-change rebuild (which swaps
@@ -713,6 +755,15 @@ impl ReachState {
       if let Err(e) = self.ensure_serving().await {
         tracing::debug!(error = %e, "reach: loopback still can't start");
       }
+    }
+    // A launch builds the client on a task (`bind_loopback`, then
+    // `serve_bound`). A status asked for meanwhile, as the phone's connect
+    // page does at once, waits for that build, as long as the session probe
+    // below would wait, instead of reading "no client" as unreachable.
+    let building = || self.pending.lock().map(|p| p.is_some()).unwrap_or(false);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    while paired && building() && warm_client().is_none() && std::time::Instant::now() < deadline {
+      tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     // The probe both diagnoses auth AND (re)connects, so read the live path
     // AFTER it so `path` reflects the current route rather than a cold cache.
@@ -907,6 +958,7 @@ impl ReachState {
         h.abort();
       }
     }
+    self.drop_pending();
     clear_warm_client();
     self.serving.store(false, Ordering::SeqCst);
 
@@ -928,6 +980,7 @@ impl ReachState {
     // A door onto a box we are no longer paired with can only mislead — and it
     // is bound to the LAN, so leaving it up is the worst of the two.
     self.close_pair_door();
+    self.drop_pending();
     clear_warm_client();
     self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
