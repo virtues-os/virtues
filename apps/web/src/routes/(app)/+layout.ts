@@ -56,9 +56,11 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// loopback, and right after an app resume the parked endpoint may still
 		// be rebuilding (~1-3s) — the first attempt can die in that window.
 		let sessionResponse: Response;
+		let sessionRetried = false;
 		try {
 			sessionResponse = await fetch('/auth/session');
 		} catch {
+			sessionRetried = true;
 			await new Promise((r) => setTimeout(r, 1500));
 			sessionResponse = await fetch('/auth/session');
 		}
@@ -120,7 +122,10 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// own app over a box that blipped.
 
 		try {
-			const setup = (await setupP) ?? (await askSetup());
+			// Asked again only when the session itself had to retry: then the
+			// early attempts may have died with its first try. A setup state
+			// that fails on its own has had its three tries already.
+			const setup = (await setupP) ?? (sessionRetried ? await askSetup() : null);
 			// The shell's setup store and sidebar would ask again on mount;
 			// hand them these answers instead (see `seed` on each).
 			if (setup) setupStateStore.seed(setup as SetupState);
@@ -160,9 +165,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// Fetch profile for user preferences
 		let profileResponse = await profileP;
-		if (!profileResponse?.ok) profileResponse = await fetch('/api/profile');
+		if (!profileResponse?.ok && sessionRetried) profileResponse = await fetch('/api/profile');
 
-		if (profileResponse.ok) {
+		if (profileResponse?.ok) {
 			const profile = await profileResponse.json();
 			sidebarDoors.seed(profile);
 

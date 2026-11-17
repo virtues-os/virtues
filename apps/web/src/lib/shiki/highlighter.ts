@@ -27,7 +27,9 @@ export function ensureHighlighter(): Promise<Highlighter> {
 	// first code block on, for the life of the page.
 	highlighter ??= Promise.all([import('shiki'), import('shiki/engine/javascript')])
 		.then(([{ createHighlighter }, { createJavaScriptRegexEngine }]) =>
-			createHighlighter({ themes: [getThemeFromCSS()], langs: [], engine: createJavaScriptRegexEngine() })
+			// `forgiving`: a pattern this browser's RegExp cannot express is
+			// skipped, so one rule degrades instead of the whole block.
+			createHighlighter({ themes: [getThemeFromCSS()], langs: [], engine: createJavaScriptRegexEngine({ forgiving: true }) })
 		)
 		.catch((err) => {
 			// Let the next code block try again instead of every caller waiting forever.

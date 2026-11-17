@@ -133,6 +133,9 @@ export async function request<T>(
 	const { query: _query, ...fetchInit } = init ?? {};
 	const isGet = (fetchInit.method ?? 'GET').toUpperCase() === 'GET';
 	let res: ReadResponse;
+	// A write ends sharing: a GET that starts after it must not take the
+	// answer of one that started before it and read the old state.
+	if (!isGet) inflightGets.clear();
 	if (isGet && !fetchInit.signal && fetchInit.body == null) {
 		// Headers would make two GETs differ; the shared ones are header-free.
 		const shareable = fetchInit.headers == null;

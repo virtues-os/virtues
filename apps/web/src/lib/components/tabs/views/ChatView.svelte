@@ -400,10 +400,14 @@
 		if (data.conversation && data.conversation.project_id !== undefined) {
 			chatSessions.noteProject(id, data.conversation.project_id ?? null);
 		}
+		// A reload of the chat on screen keeps what the reader had drawn.
+		const drawnBefore = undrawnFor === id ? uniqueMessages.length - undrawn : 0;
 		chat.messages = deduplicateMessages(data.messages || []).map(
 			toUiMessage,
 		) as unknown as typeof chat.messages;
-		undrawnCount = Math.max(0, chat.messages.length - DRAWN_AT_FIRST);
+		// Rooms and the interview open at their start, so they are drawn whole.
+		const whole = inRoom || id === INTERVIEW_CHAT_ID;
+		undrawnCount = whole ? 0 : Math.max(0, chat.messages.length - Math.max(DRAWN_AT_FIRST, drawnBefore));
 		undrawnFor = id;
 		drawnAt = performance.now();
 		return true;
@@ -740,7 +744,7 @@
 				// Scroll to bottom after loading existing chat — but the
 				// getting-started room opens on its cover.
 				setTimeout(() => {
-					if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
+					if (!restoreScroll() && !openAtStart()) openAtNewest();
 				}, 10);
 			}
 		}
@@ -879,7 +883,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
+				if (!restoreScroll() && !openAtStart()) openAtNewest();
 				enableTransitions = true;
 			}, 50);
 
@@ -938,6 +942,10 @@
 	let drawnAt = 0;
 	const undrawn = $derived(undrawnFor !== null && undrawnFor === conversationId ? undrawnCount : 0);
 	const drawnMessages = $derived(undrawn > 0 ? uniqueMessages.slice(undrawn) : uniqueMessages);
+	/** The drawn messages' ids. The rail numbers turns across the whole chat, as the rows' `exchange-N` ids do, and lists the drawn ones. */
+	const drawnIds = $derived(new Set(drawnMessages.map((m) => m.id)));
+	/** Until when the top edge holds off: a reveal scrolls past it, and drawing then would fight that scroll. */
+	let edgeQuietUntil = 0;
 	/** The top of the transcript, which draws earlier messages when it comes into view. */
 	let earlierEdge: HTMLElement | null = $state(null);
 	let drawingEarlier = false;
@@ -950,19 +958,32 @@
 	 * WebKit does not hold the scroll position by itself.
 	 */
 	async function drawEarlier(count = DRAWN_MORE, until?: string) {
+		// A reveal waits for a draw already under way; the top edge just
+		// skips, since the draw under way moves it out of view anyway.
+		for (let i = 0; until && drawingEarlier && i < 30; i++) await new Promise((r) => requestAnimationFrame(r));
 		if (undrawn === 0 || drawingEarlier) return;
 		const scroller = scrollContainer;
 		const firstId = drawnMessages[0]?.id;
 		const first = firstId ? scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(firstId)}"]`) : null;
-		const before = first?.getBoundingClientRect().top;
+		// Where the first drawn row sits in the content, which a scroll does
+		// not change: holding it there corrects only for what is drawn above
+		// it, and never undoes the reader's own scrolling. Only where the
+		// browser does not anchor scrolling itself (WebKit): Chromium and
+		// Firefox already keep the row in place, and correcting there too
+		// moved the reader by everything drawn.
+		const anchorsItself = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+		const inContent = (el: HTMLElement) =>
+			el.getBoundingClientRect().top - scroller!.getBoundingClientRect().top + scroller!.scrollTop;
+		let at = first && scroller ? inContent(first) : undefined;
 		drawingEarlier = true;
 		const target = until ? uniqueMessages.findIndex((m) => m.id === until) : -1;
 		undrawnCount = target >= 0 ? Math.max(0, Math.min(undrawn - count, target - 4)) : Math.max(0, undrawn - count);
 		await tick();
-		if (scroller && first && before !== undefined && !until) {
+		if (scroller && first && at !== undefined && !until && !anchorsItself) {
 			for (let i = 0; i < 4; i++) {
-				const shift = first.getBoundingClientRect().top - before;
-				if (Math.abs(shift) >= 1) scroller.scrollTop += shift;
+				const now = inContent(first);
+				if (Math.abs(now - at) >= 1) scroller.scrollTop += now - at;
+				at = now;
 				await new Promise((r) => requestAnimationFrame(r));
 			}
 		}
@@ -979,7 +1000,7 @@
 			(entries) => {
 				// Not while the chat is first scrolled to its newest message: the
 				// view starts at the top, so the edge is in view for a moment.
-				if (performance.now() - drawnAt < 1000) return;
+				if (performance.now() - drawnAt < 1000 || performance.now() < edgeQuietUntil) return;
 				if (entries.some((e) => e.isIntersecting)) void drawEarlier();
 			},
 			{ root: scroller, rootMargin: "800px 0px 0px 0px" },
@@ -1017,7 +1038,7 @@
 			inRoom ||
 			currentChatConversationId === INTERVIEW_CHAT_ID
 			? []
-			: railTurns(drawnMessages),
+			: railTurns(uniqueMessages).filter((turn) => drawnIds.has(turn.id)),
 	);
 
 	/** The one line per step that carries its number — keyed by message id. */
@@ -1369,20 +1390,31 @@
 
 	/** Scroll a message into view and tint it briefly. False when it is not on screen. */
 	function revealMessage(messageId: string): boolean {
-		// Loaded but not drawn yet: draw back to it, then show it.
+		const find = () => scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+		// Loaded but not drawn yet: draw back to it, then show it once. If it
+		// is still not there, nothing more is tried.
 		if (undrawn > 0 && uniqueMessages.slice(0, undrawn).some((m) => m.id === messageId)) {
-			void drawEarlier(0, messageId).then(() => revealMessage(messageId));
+			edgeQuietUntil = performance.now() + 1500;
+			void drawEarlier(0, messageId).then(() => {
+				const drawn = find();
+				if (drawn) showRevealed(drawn);
+			});
 			return true;
 		}
-		const el = scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+		const el = find();
 		if (!el) return false;
+		edgeQuietUntil = performance.now() + 1500;
+		showRevealed(el);
+		return true;
+	}
+
+	function showRevealed(el: HTMLElement) {
 		const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 		el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
 		el.animate(
 			[{ backgroundColor: "var(--color-highlight)" }, { backgroundColor: "transparent" }],
 			{ duration: reduce ? 0 : 1600, easing: "ease-out" },
 		);
-		return true;
 	}
 
 	function openChatMenu(e?: MouseEvent) {
@@ -1533,8 +1565,16 @@
 	/** Back or Forward to a place seen before: open where you were. */
 	function restoreScroll(): boolean {
 		const top = savedScroll(tab.id, tab.historyIndex, tab.route);
-		if (top === undefined || !scrollContainer) return false;
-		scrollContainer.scrollTo({ top, behavior: "instant" });
+		const scroller = scrollContainer;
+		if (top === undefined || !scroller) return false;
+		// The place was saved against the chat as it was drawn then; draw it
+		// whole so the same offset lands on the same words.
+		if (undrawn > 0) {
+			undrawnCount = 0;
+			void tick().then(() => scroller.scrollTo({ top, behavior: "instant" }));
+			return true;
+		}
+		scroller.scrollTo({ top, behavior: "instant" });
 		return true;
 	}
 
@@ -1570,6 +1610,34 @@
 			scroller.removeEventListener("scroll", measure);
 		};
 	});
+
+	/**
+	 * Open on the newest message and stay there while the first rows draw.
+	 * Rows the browser skips off screen (`.far`) stand in at a guessed
+	 * height until they are drawn, and WebKit does not hold the bottom when
+	 * they take their real one, so the end can slide below the fold. For
+	 * about a third of a second, or until the reader scrolls, wheels, touches
+	 * or types, it is put back at the bottom.
+	 */
+	function openAtNewest() {
+		const scroller = scrollContainer;
+		if (!scroller) return;
+		scrollToBottom("instant");
+		let moved = false;
+		const stop = () => (moved = true);
+		const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+		for (const e of events) scroller.addEventListener(e, stop, { passive: true, once: true });
+		let frames = 0;
+		const hold = () => {
+			if (moved || ++frames > 20) {
+				for (const e of events) scroller.removeEventListener(e, stop);
+				return;
+			}
+			if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 2) scroller.scrollTop = scroller.scrollHeight;
+			requestAnimationFrame(hold);
+		};
+		requestAnimationFrame(hold);
+	}
 
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {

@@ -53,7 +53,7 @@
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
 	import MenuItem from './MenuItem.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { PIN_COLORS, accentCss } from '$lib/sidebar/pin-colors';
 	import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { loadLucide } from '$lib/lucide';
@@ -218,9 +218,11 @@
 			.catch((e) => console.error('Failed to load icon set:', e));
 	});
 
-	// The emoji set loads when its tab opens, not with the picker.
+	// The emoji set loads when its tab opens, not with the picker. Untracked:
+	// loadEmojis reads its own loading state, and a failed load that set it
+	// back would otherwise run this again, and again.
 	$effect(() => {
-		if (activeTab === 'emoji') loadEmojis();
+		if (activeTab === 'emoji') untrack(() => loadEmojis());
 	});
 
 	function handleSelect(icon: string) {
