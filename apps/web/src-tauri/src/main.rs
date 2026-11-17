@@ -1180,6 +1180,14 @@ fn record_update_failure(app: &AppHandle, err: String) {
 async fn check_for_update(app: &AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
 
+    // A debug build runs as a bare binary in cargo's target dir, not from an
+    // .app. The updater takes the binary's grandparent for the bundle and
+    // installs the release over it, which replaces the whole shared
+    // `debug/` directory with a copy of Virtues.app.
+    if cfg!(debug_assertions) {
+        return;
+    }
+
     // ONE channel: the configured `mac-latest` manifest. This used to route by
     // the box's channel toward `mac-edge` — an endpoint that stopped
     // publishing a manifest (a Mac sent there would never update again, and
