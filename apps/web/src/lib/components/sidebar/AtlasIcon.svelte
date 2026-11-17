@@ -95,9 +95,16 @@
 	};
 
 	/**
-	 * The size of a glyph on the sidebar's rows and in the window header.
+	 * The size of a glyph in the window header.
 	 */
 	export const SHELL_GLYPH_PX = 16;
+
+	/**
+	 * The size of a door's glyph on the sidebar's rows. Pins draw an 18px
+	 * tile to match (PinGlyph). At 16px in the 44px rail the glyphs looked
+	 * small for their rows.
+	 */
+	export const ROW_GLYPH_PX = 18;
 </script>
 
 <script lang="ts">

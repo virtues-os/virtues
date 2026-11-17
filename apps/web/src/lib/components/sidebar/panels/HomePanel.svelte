@@ -88,7 +88,7 @@
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import PinGlyph from '../PinGlyph.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { ROW_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 	import { openMenuItems } from '$lib/utils/openMenuItems';
 
@@ -1039,7 +1039,7 @@
 			}}
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
-			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare fillable />
+			<AtlasIcon name={door.glyph} size={ROW_GLYPH_PX} bare fillable />
 			<span class="panel-row-text">{door.label}</span>
 			{#if act.add}
 				{@const add = act.add}
@@ -1528,8 +1528,11 @@
 	}
 
 	/* A door's glyph is muted and its word is ink, like the header's controls
-	   above it; pointing at the door brings the glyph up to ink. */
+	   above it; pointing at the door brings the glyph up to ink. It is 18px,
+	   a pixel past the row's 16px slot on each side, so its center stays on
+	   the icons' column and the label does not move. */
 	.panel-door > :global(.atlas-icon) {
+		margin: 0 -1px;
 		color: var(--color-foreground-muted);
 		transition: color var(--motion-hover-out) var(--ease-premium);
 	}

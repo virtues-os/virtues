@@ -103,22 +103,6 @@
 	transition-duration: var(--motion-hover-in);
 }
 
-/* A door's glyph draws at 18px, a pixel past the row's 16px slot on each
-   side, so its center stays on the icons' column and the label does not
-   move. At 16px in the 44px rail the glyphs looked small for their rows.
-   The stroke keeps the 1.25px line at 18px. Pins match (PinGlyph).
-   TODO(2026-11-17): move this to the `size` HomePanel gives the door's
-   AtlasIcon once HomePanel is free to edit. */
-.panel-door > .atlas-icon {
-	width: 18px;
-	height: 18px;
-	margin: 0 -1px;
-}
-
-.panel-door > .atlas-icon .glyph-outline :is(path, circle, rect, line, polyline, ellipse) {
-	stroke-width: 1.667;
-}
-
 /* Sub-folder styling - smaller text and icons for nested items */
 .sidebar-interactive--sub-folder {
 	font-size: 0.9em;
