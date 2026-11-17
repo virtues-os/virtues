@@ -237,19 +237,10 @@
    ANIMATIONS
    Shared keyframes
    ----------------------------- */
-@keyframes sidebar-spin {
-	from {
-		transform: rotate(0deg);
-	}
-
-	to {
-		transform: rotate(360deg);
-	}
-}
 
 .sidebar-spinner {
 	color: var(--color-foreground-subtle);
-	animation: sidebar-spin 1s linear infinite;
+	animation: virtues-spin 1s linear infinite;
 }
 
 @keyframes sidebar-fade-slide-in {

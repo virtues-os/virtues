@@ -637,13 +637,7 @@
 	}
 
 	.restarting :global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

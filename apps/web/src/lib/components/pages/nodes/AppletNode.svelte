@@ -165,7 +165,7 @@
 	}
 
 	.doc-applet-handle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 

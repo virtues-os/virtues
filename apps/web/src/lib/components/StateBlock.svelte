@@ -78,7 +78,7 @@
 
 	.is-spinning :global(svg) {
 		opacity: 1;
-		animation: state-spin 1s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.state-title {
@@ -96,15 +96,6 @@
 
 	.state-actions {
 		margin-top: 8px;
-	}
-
-	@keyframes state-spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	/* Keep the information, drop the travel (design.md). A spinner that cannot

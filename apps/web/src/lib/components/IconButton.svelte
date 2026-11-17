@@ -169,7 +169,7 @@
 
 	/* Keyboard only. A mouse press should not leave a ring behind it. */
 	.v-iconbtn:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 

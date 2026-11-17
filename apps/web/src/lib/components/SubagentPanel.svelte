@@ -142,12 +142,7 @@
 	}
 
 	:global(.subagent-card .spin) {
-		animation: subagent-spin 0.9s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
-	@keyframes subagent-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 </style>

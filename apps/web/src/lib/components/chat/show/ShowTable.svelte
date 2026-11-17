@@ -130,7 +130,7 @@
 	}
 	.open:focus-visible,
 	.more:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 	.more {
@@ -154,7 +154,7 @@
 		color: var(--color-primary);
 	}
 	.toggle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 </style>

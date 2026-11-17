@@ -618,16 +618,7 @@
        instead, via the universal selector — which is what reaches an element
        this component never writes. */
 
-    @keyframes spin {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
     .animate-spin {
-        animation: spin 1s linear infinite;
+        animation: virtues-spin 1s linear infinite;
     }
 </style>

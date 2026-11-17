@@ -14,10 +14,10 @@
  * on `--motion-exit` and `--ease-exit`, which is quicker and leaves faster
  * than it arrived.
  *
- * TODO(2026-11-17): migrate HomePanel.svelte and UniversalDataGrid.svelte,
- * which still import from svelte/transition and svelte/animate, then add the
- * arch-lint rule that keeps every import here. Both files hold another
- * change in progress, so they move in their own commit.
+ * TODO(2026-11-17): migrate UniversalDataGrid.svelte, which still imports
+ * from svelte/transition and svelte/animate, then add the arch-lint rule that
+ * keeps every import here. The file holds another change in progress, so it
+ * moves in its own commit.
  */
 import {
 	fade as svelteFade,

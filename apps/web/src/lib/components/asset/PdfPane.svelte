@@ -1426,12 +1426,4 @@
 	.pdf-status.error {
 		color: var(--color-danger, #e5484d);
 	}
-	.pdf-status :global(.spin) {
-		animation: pdf-pane-spin 0.8s linear infinite;
-	}
-	@keyframes pdf-pane-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 </style>

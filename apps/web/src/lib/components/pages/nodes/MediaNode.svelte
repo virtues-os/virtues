@@ -393,7 +393,7 @@
 	}
 
 	.doc-image-handle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 
@@ -493,13 +493,7 @@
 	}
 
 	.doc-upload :global(.doc-upload-spinner) {
-		animation: doc-upload-spin 1s linear infinite;
-	}
-
-	@keyframes doc-upload-spin {
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.doc-upload-failed {

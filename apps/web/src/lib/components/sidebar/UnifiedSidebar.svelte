@@ -871,11 +871,6 @@
 		transition: padding var(--motion-sidebar) var(--ease-sidebar);
 	}
 
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
-
 	.loading-state {
 		display: flex;
 		align-items: center;
@@ -885,5 +880,5 @@
 		font-size: 13px;
 	}
 
-	.spinner { animation: spin 1s linear infinite; }
+	.spinner { animation: virtues-spin 1s linear infinite; }
 </style>

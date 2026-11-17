@@ -155,7 +155,7 @@
 
 	.v-btn-spinner :global(svg) {
 		display: block;
-		animation: v-btn-spin 1s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	/* Busy is not disabled. The button takes no clicks while it works, but the
@@ -166,18 +166,9 @@
 		cursor: progress;
 	}
 
-	@keyframes v-btn-spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	/* Keyboard only. A mouse press should not leave a ring behind it. */
 	.v-btn:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
 

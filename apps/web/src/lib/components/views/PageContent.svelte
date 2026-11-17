@@ -1212,7 +1212,7 @@
 	}
 
 	.page-adder:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
 	}
 
@@ -1341,20 +1341,6 @@
 			min-height: 0;
 			padding: 0;
 			border: none;
-		}
-	}
-
-	/* Spinning animation */
-	:global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
 		}
 	}
 

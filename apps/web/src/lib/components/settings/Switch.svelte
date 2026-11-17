@@ -38,7 +38,7 @@
 		flex: none;
 		border: 0;
 		cursor: pointer;
-		transition: background 150ms ease;
+		transition: background var(--motion-state) var(--ease-premium);
 		padding: 0;
 	}
 
@@ -56,7 +56,7 @@
 		border-radius: 50%;
 		background: #fff;
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-		transition: transform 150ms ease;
+		transition: transform var(--motion-state) var(--ease-premium);
 	}
 
 	.switch.on::after {
@@ -69,7 +69,7 @@
 	}
 
 	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
+		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
 	}
 

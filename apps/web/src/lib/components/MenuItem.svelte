@@ -182,7 +182,7 @@
 	}
 
 	.v-menuitem:focus-visible {
-		outline: 2px solid var(--color-border-focus);
+		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 	}
 
@@ -262,16 +262,7 @@
 	}
 
 	.mi-spin :global(svg) {
-		animation: mi-spin 1s linear infinite;
-	}
-
-	@keyframes mi-spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	/* Keep the information, drop the travel. A spinner that cannot spin still

@@ -683,11 +683,7 @@
 
 	/* Spinner */
 	:global(.spin) {
-		animation: spin 1s linear;
+		animation: virtues-spin 1s linear;
 	}
 
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
 </style>

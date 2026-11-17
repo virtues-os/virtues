@@ -201,12 +201,4 @@
 	.text-status.error {
 		color: var(--color-danger, #e5484d);
 	}
-	.text-status :global(.spin) {
-		animation: text-pane-spin 0.8s linear infinite;
-	}
-	@keyframes text-pane-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 </style>

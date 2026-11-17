@@ -8,11 +8,8 @@
  * (prefers-reduced-motion)` blocks do for the device setting. Code that
  * animates in JS (Svelte transitions, the Web Animations API, canvases,
  * smooth scrolling) asks `reducedMotion()` instead of the media query, so it
- * follows both.
- *
- * TODO(2026-11-17): migrate HomePanel.svelte and ChatView.svelte, which
- * still read the media query (svelte/motion's `prefersReducedMotion` and
- * `matchMedia`) and so ignore the Settings choice.
+ * follows both. Svelte transitions come from $lib/utils/transitions, which
+ * asks it for them.
  */
 
 export type MotionSetting = 'device' | 'reduce';

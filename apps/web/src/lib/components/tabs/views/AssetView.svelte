@@ -297,12 +297,4 @@
 	.asset-status.error {
 		color: var(--color-danger, #e5484d);
 	}
-	.asset-status :global(.spin) {
-		animation: asset-spin 0.8s linear infinite;
-	}
-	@keyframes asset-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 </style>
