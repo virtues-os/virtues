@@ -1544,7 +1544,7 @@
 		justify-content: center;
 		width: 32px;
 		height: 32px;
-		background: var(--color-background-secondary);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		color: var(--color-foreground-muted);
@@ -1576,17 +1576,17 @@
 		white-space: nowrap;
 	}
 
-	/* Menu shared by the group control. Same surface as .add-popover — one
-	   popover look for the whole toolbar. */
+	/* Menu shared by the group control. Same surface and shadow as the
+	   context menu, so every menu in the app is one look. */
 	.menu-popover {
 		min-width: 170px;
 		display: flex;
 		flex-direction: column;
 		padding: 0.25rem;
-		background: var(--color-background, #fff);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--shadow-float);
 	}
 	/* Filter add: button + popover wrapper */
 	.filter-add {
@@ -1620,10 +1620,10 @@
 		display: flex;
 		flex-direction: column;
 		padding: 0.25rem;
-		background: var(--color-background, #fff);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--shadow-float);
 	}
 
 	/* States */
