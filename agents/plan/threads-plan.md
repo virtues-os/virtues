@@ -258,10 +258,16 @@ starts. Read `.claude/rules/migrations.md` first.
    `is_adding_automatic`. The `/api/threads` rename is done, with no alias.
    Left for slice 3: the web client's types and a person, place, org or
    thing page showing its tasks.
-3. **The Threads door.** Part 1 is built: the door with its Tasks and
-   Threads views, the preview column and the thread page. Left: the Tasks
-   view and task page (a row shows its home and what it is also about), the
-   Overview with the week once slice 4 exists, and Insights after slice 6.
+3. **The Threads door.** Parts 1 and 2 are built: the door with its Tasks
+   and Threads views, the preview column, the thread page, and the task page
+   at `/task/{id}`. A task row names its home and shows the icons of what it
+   is also about, grouped Today, Tomorrow, Later this week, Later and No
+   date; a past day stays under Today and is never marked late. Its home
+   moves to a thread, thing, person, place or organization, and "Also about"
+   takes threads and subjects. Left: person, place and organization pages
+   listing their tasks (those pages held other sessions' uncommitted work on
+   2026-11-17), the Overview with the week once slice 4 exists, and Insights
+   after slice 6.
    The menus already say "Add to thread…" and "Move to thread", and
    Materials and thread rows take a drop.
 4. **The week.** One endpoint returns, per thread and per day, minutes done and

@@ -303,9 +303,14 @@
 						<ul class="tasks">
 							{#each tasksHere.slice(0, 8) as { task, also } (task.id)}
 								<li>
-									<span class="ring" aria-hidden="true"></span>
-									<span class="task-title">{task.title}</span>
-									{#if also}<span class="also">Also about it</span>{/if}
+									<button
+										class="task-row"
+										onclick={() => windowShellStore.openTabFromRoute(`/task/${task.id}`, { label: task.title, focusExisting: true })}
+									>
+										<span class="ring" aria-hidden="true"></span>
+										<span class="task-title">{task.title}</span>
+										{#if also}<span class="also">Also about it</span>{/if}
+									</button>
 								</li>
 							{/each}
 						</ul>
@@ -569,7 +574,24 @@
 		margin: 0;
 		padding: 0;
 	}
-	.tasks li {
+	.task-row {
+		width: 100%;
+		margin: 0 -8px;
+		padding: 0 8px;
+		border: 0;
+		border-radius: var(--radius-md);
+		background: transparent;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.task-row:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.tasks li,
+	.task-row {
 		display: flex;
 		align-items: baseline;
 		gap: 8px;

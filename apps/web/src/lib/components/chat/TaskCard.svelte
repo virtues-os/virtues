@@ -9,7 +9,7 @@
 	import type { Task } from "$lib/api/client";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { dueGroup, dueLabel } from "$lib/tasks/due";
+	import { dueLabel } from "$lib/tasks/due";
 	import { toast } from "svelte-sonner";
 
 	let { tasks, verb }: { tasks: Task[]; verb: "added" | "updated" } = $props();
@@ -76,7 +76,7 @@
 					<span class="chip">Queued</span>
 				{/if}
 				{#if t.due_on && !closed}
-					<span class="chip" class:overdue={dueGroup(t.due_on) === "overdue"}>{dueLabel(t.due_on, t.due_at)}</span>
+					<span class="chip">{dueLabel(t.due_on, t.due_at)}</span>
 				{/if}
 				{#if t.assignee === "assistant"}
 					<span class="chip">Assistant</span>
@@ -165,8 +165,5 @@
 		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 		color: var(--color-foreground-muted);
 		white-space: nowrap;
-	}
-	.chip.overdue {
-		color: var(--color-error);
 	}
 </style>

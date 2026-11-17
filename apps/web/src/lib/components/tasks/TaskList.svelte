@@ -11,11 +11,12 @@
 	 *             once the list is long enough to need them.
 	 *   Done      folded: accepted requests, finished and dismissed tasks.
 	 *
-	 * One list, three places. The Projects page shows every task above the
-	 * projects; a project's page shows its own (`projectId`); a thing's page
-	 * shows the tasks under it (`thingId`). A task added in a scoped list sits
-	 * under that project or thing, and its row leaves out the parent's name,
-	 * since the page already says it.
+	 * One list, three places. The Threads door's Tasks view shows every task,
+	 * grouped by day; a thread's page shows the tasks whose home it is
+	 * (`projectId`); a thing's page shows the tasks under it (`thingId`). A
+	 * task added in a scoped list gets that home, and its row leaves out the
+	 * home's name, since the page already says it. A row names the task's home
+	 * and shows the icons of what else it is about.
 	 *
 	 * Return in the add row makes a to-do; Mod+Return makes a request. A row
 	 * opens in place, with its title editable in the row. No counts, no
@@ -44,6 +45,10 @@
 	import TaskCheck from "$lib/components/tasks/TaskCheck.svelte";
 	import TaskComposer from "$lib/components/tasks/TaskComposer.svelte";
 	import DuePicker from "$lib/components/tasks/DuePicker.svelte";
+	import TaskHome from "$lib/components/tasks/TaskHome.svelte";
+	import TaskAlsoAbout from "$lib/components/tasks/TaskAlsoAbout.svelte";
+	import { eventLine, eventTime } from "$lib/tasks/history";
+	import { homeOf, subjectIcon, subjectName } from "$lib/tasks/homes";
 	import { isClosed, toggleTaskDone } from "$lib/tasks/actions";
 	import { dueGroup, dueLabel, isoDay, parseDue, type DueGroup } from "$lib/tasks/due";
 	import { RECUR_CHOICES, recurLabel, recurrenceOf, type Recurrence } from "$lib/tasks/recur";
@@ -86,9 +91,10 @@
 	const POLL_IDLE_MS = 30_000;
 
 	const GROUPS: { id: DueGroup; label: string }[] = [
-		{ id: "overdue", label: "Earlier" },
 		{ id: "today", label: "Today" },
-		{ id: "upcoming", label: "Coming up" },
+		{ id: "tomorrow", label: "Tomorrow" },
+		{ id: "week", label: "Later this week" },
+		{ id: "later", label: "Later" },
 		{ id: "none", label: "No date" },
 	];
 
@@ -130,7 +136,10 @@
 			);
 	});
 	const todoGroups = $derived.by(() => {
-		if (todos.length <= GROUP_FROM) return [{ id: "all", label: null as string | null, tasks: todos }];
+		// The whole list is always grouped by day; a thread's or thing's list
+		// only once it is long enough to need it.
+		const scopedList = !!projectId || !!thingId;
+		if (scopedList && todos.length <= GROUP_FROM) return [{ id: "all", label: null as string | null, tasks: todos }];
 		const now = new Date();
 		return GROUPS.map((g) => ({
 			id: g.id as string,
@@ -159,17 +168,19 @@
 		return names;
 	});
 
-	/** What a task sits under, by name: its project or its thing. */
-	function parentName(t: Task): string | undefined {
-		if (t.thread_id) return projectName.get(t.thread_id);
-		return thingsStore.byId(t.thing_id)?.title;
+	/** The task's home, by name. */
+	function homeName(t: Task): string | undefined {
+		const home = homeOf(t);
+		if (!home) return undefined;
+		if (home.kind === "thread") return projectName.get(home.id) ?? subjectName(home);
+		return subjectName(home);
 	}
 
-	/** The parent's name for the row, left out on that parent's own page. */
-	function rowParentName(t: Task): string | undefined {
+	/** The home's name for the row, left out on that home's own page. */
+	function rowHomeName(t: Task): string | undefined {
 		if (projectId && t.thread_id === projectId) return undefined;
 		if (thingId && t.thing_id === thingId) return undefined;
-		return parentName(t);
+		return homeName(t);
 	}
 
 	// ── loading and live refresh ────────────────────────────────────────────
@@ -351,11 +362,8 @@
 	}
 
 	/** Put a task under a project, under a thing, or on its own. */
-	function saveParent(t: Task, parent: { thread_id: string } | { thing_id: string } | null) {
-		const thread_id = parent && "thread_id" in parent ? parent.thread_id : null;
-		const thing_id = parent && "thing_id" in parent ? parent.thing_id : null;
-		if (thread_id === (t.thread_id ?? null) && thing_id === (t.thing_id ?? null)) return;
-		void save(t.id, { thread_id, thing_id }, "Your server couldn't move that");
+	function openTaskPage(t: Task) {
+		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
 	}
 
 	function saveRecurrence(t: Task, recurs: Recurrence | null) {
@@ -420,14 +428,12 @@
 	let focused = $state<string | null>(null);
 	let history = $state<TaskEvent[]>([]);
 	let duePickerOpen = $state(false);
-	let parentPickerOpen = $state(false);
 	let recurPickerOpen = $state(false);
 
 	function open(id: string | null, focusTitle = false) {
 		expanded = id;
 		history = [];
 		duePickerOpen = false;
-		parentPickerOpen = false;
 		recurPickerOpen = false;
 		if (!id) return;
 		focused = id;
@@ -487,7 +493,7 @@
 	function onKeydown(e: KeyboardEvent) {
 		if (!active || e.defaultPrevented) return;
 		// A picker that is open takes its own Escape.
-		if (duePickerOpen || parentPickerOpen || recurPickerOpen) return;
+		if (duePickerOpen || recurPickerOpen) return;
 		if (e.key === "Escape" && expanded) {
 			const id = expanded;
 			open(null);
@@ -523,58 +529,6 @@
 	}
 
 	// ── history ─────────────────────────────────────────────────────────────
-
-	/** One line of history, as the owner reads it. */
-	function eventLine(e: TaskEvent): string {
-		const who = e.author === "assistant" ? "The assistant" : "You";
-		const body = e.body as Record<string, unknown>;
-		switch (e.kind) {
-			case "created":
-				return body.recurred_from ? "It came back after the last one was finished" : `${who} added this`;
-			case "status": {
-				const to = String(body.to ?? "");
-				const said: Record<string, string> = {
-					ready: "finished a run and left a result",
-					done: e.author === "owner" ? "closed it" : "finished it",
-					dismissed: "dismissed it",
-					active: "started working on it",
-					open: e.author === "owner" ? "sent it back" : "put it back in the queue",
-				};
-				return `${who} ${said[to] ?? "changed its status"}`;
-			}
-			case "edited": {
-				const fields = Object.keys(body);
-				if (fields.length === 1 && fields[0] === "assignee") {
-					return body.assignee === "assistant" ? `${who} handed it to the assistant` : `${who} took it back`;
-				}
-				const names: Record<string, string> = {
-					title: "title",
-					notes: "notes",
-					assignee: "assignee",
-					due_on: "date",
-					due_at: "time",
-					thread_id: "thread",
-					thing_id: "thing",
-					recur_every: "recurrence",
-					recur_unit: "recurrence",
-					result_url: "result",
-				};
-				const changed = [...new Set(fields.map((f) => names[f] ?? f))];
-				return `${who} changed the ${changed.join(" and ")}`;
-			}
-			default:
-				return String(body.text ?? "");
-		}
-	}
-
-	function eventTime(e: TaskEvent): string {
-		return new Date(e.created_at).toLocaleString("en-US", {
-			month: "short",
-			day: "numeric",
-			hour: "numeric",
-			minute: "2-digit",
-		});
-	}
 
 	function openRoute(url: string) {
 		windowShellStore.openTabFromRoute(url, { focusExisting: true });
@@ -739,7 +693,7 @@
 
 {#snippet line(t: Task)}
 	{@const request = t.assignee === "assistant" && !isClosed(t)}
-	{@const parent = rowParentName(t)}
+	{@const parent = rowHomeName(t)}
 	{@const recurs = isClosed(t) ? null : recurrenceOf(t)}
 	<div class="line">
 		{#if request}
@@ -780,6 +734,9 @@
 			{#if parent}
 				<span>{parent}</span>
 			{/if}
+			{#each (t.also_about ?? []).slice(0, 3) as link (link.kind + link.id)}
+				<span class="also-icon"><Icon icon={subjectIcon(link.kind)} width="12" /></span>
+			{/each}
 		</button>
 		{#if !isClosed(t)}
 			<button type="button" class="dismiss" aria-label={`Dismiss ${t.title}`} title="Dismiss" onclick={() => dismiss(t)}>
@@ -813,7 +770,6 @@
 
 {#snippet detail(t: Task)}
 	{@const request = t.assignee === "assistant"}
-	{@const parent = parentName(t)}
 	{@const recurs = recurrenceOf(t)}
 	{@const where = whereItRan(t)}
 	<div class="detail">
@@ -846,54 +802,7 @@
 				{/snippet}
 			</Popover>
 			<span class="dot" aria-hidden="true">·</span>
-			<Popover bind:open={parentPickerOpen} placement="bottom-start" offset={4}>
-				{#snippet trigger({ toggle: toggleParent })}
-					<button type="button" class="fact" onclick={toggleParent} aria-haspopup="menu">
-						{parent ?? "On its own"}
-					</button>
-				{/snippet}
-				{#snippet children({ close })}
-					<div class="menu" role="menu" aria-label="What this task sits under">
-						<MenuItem
-							role="menuitemradio"
-							checked={!t.thread_id && !t.thing_id}
-							label="On its own"
-							onclick={() => {
-								saveParent(t, null);
-								close();
-							}}
-						/>
-						{#if projectStore.projects.length > 0}
-							<p class="menu-label">Threads</p>
-							{#each projectStore.projects as p (p.id)}
-								<MenuItem
-									role="menuitemradio"
-									checked={t.thread_id === p.id}
-									label={p.name}
-									onclick={() => {
-										saveParent(t, { thread_id: p.id });
-										close();
-									}}
-								/>
-							{/each}
-						{/if}
-						{#if thingsStore.things.length > 0}
-							<p class="menu-label">Things</p>
-							{#each thingsStore.things as th (th.id)}
-								<MenuItem
-									role="menuitemradio"
-									checked={t.thing_id === th.id}
-									label={th.title}
-									onclick={() => {
-										saveParent(t, { thing_id: th.id });
-										close();
-									}}
-								/>
-							{/each}
-						{/if}
-					</div>
-				{/snippet}
-			</Popover>
+			<TaskHome task={t} onSave={(patch) => void save(t.id, patch, "Your server couldn't move that")} />
 			{#if !request}
 				<span class="dot" aria-hidden="true">·</span>
 				<Popover bind:open={recurPickerOpen} placement="bottom-start" offset={4}>
@@ -937,6 +846,15 @@
 			{/if}
 		</div>
 
+		<div class="facts also">
+			<span class="also-label">Also about</span>
+			<TaskAlsoAbout
+				task={t}
+				readonly={isClosed(t)}
+				onSave={(patch) => void save(t.id, patch, "Your server couldn't change that")}
+			/>
+		</div>
+
 		{#if request && (where || t.spent_micros)}
 			<p class="spend">
 				{#if where}Ran on {where}.{/if}
@@ -958,6 +876,7 @@
 					<button type="button" class="action" onclick={() => takeBack(t)}>Take it back</button>
 				{/if}
 				<button type="button" class="action" onclick={() => dismiss(t)}>Dismiss</button>
+				<button type="button" class="action" onclick={() => openTaskPage(t)}>Open its page</button>
 			</div>
 			{#if request && t.status !== "ready"}
 				<div class="reply">
@@ -990,6 +909,17 @@
 {/snippet}
 
 <style>
+	.also-icon {
+		display: inline-flex;
+		color: var(--color-foreground-muted);
+	}
+	.facts.also {
+		margin-top: 8px;
+	}
+	.also-label {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
 	.add-row {
 		display: flex;
 		align-items: center;
@@ -1301,7 +1231,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 	}
-	.menu-label,
 	.menu-note {
 		margin: 0;
 		padding: 0.5rem 0.5rem 0.25rem;

@@ -84,7 +84,7 @@ function storeIdentity(url: string): Identity | null {
  * named by its date, and a view titles it better ("Wednesday, 30 September")
  * than its id would; an app screen has no record at all.
  */
-const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'file']);
+const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'thing', 'file']);
 
 /** Resolved identities by url, filled in batches as surfaces ask. */
 const resolved = new SvelteMap<string, RefIdentity>();

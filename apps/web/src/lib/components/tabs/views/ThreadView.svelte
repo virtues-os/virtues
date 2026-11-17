@@ -336,10 +336,7 @@
 	const today = localDay(new Date());
 
 	function openTask(t: Task) {
-		windowShellStore.openTabFromRoute(`/threads?view=tasks&task=${encodeURIComponent(t.id)}`, {
-			label: 'Threads',
-			focusExisting: true,
-		});
+		windowShellStore.openRouteBeside(`/task/${t.id}`, t.title);
 	}
 
 	const line = $derived.by(() => {

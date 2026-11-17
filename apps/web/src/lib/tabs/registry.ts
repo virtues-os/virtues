@@ -46,6 +46,7 @@ const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/Passw
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
 const ThreadsView: ViewLoader = () => import('$lib/components/tabs/views/ThreadsView.svelte');
 const ThreadView: ViewLoader = () => import('$lib/components/tabs/views/ThreadView.svelte');
+const TaskView: ViewLoader = () => import('$lib/components/tabs/views/TaskView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
@@ -484,6 +485,28 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Threads',
 		component: ThreadsView,
 		detailComponent: ThreadView,
+	},
+
+	// ========================================================================
+	// TASK: /task/{id}, one task's page. It sits under the Threads door.
+	// ========================================================================
+	task: {
+		match: (path) => /^\/task\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'task',
+			label: 'Task',
+			icon: 'atlas:tasks',
+			entityId: path.match(/^\/task\/([^/]+)$/)?.[1],
+		}),
+		// Task ids carry their own `task_` prefix, so the serialized form is
+		// `task_task_…`, and the type prefix comes off whole.
+		serialize: (id) => (id ? `task_${id}` : 'task'),
+		deserialize: (serialized) =>
+			serialized.startsWith('task_') && serialized.length > 5 ? `/task/${serialized.slice(5)}` : '/threads?view=tasks',
+		icon: 'atlas:tasks',
+		defaultLabel: 'Task',
+		component: TaskView,
+		detailComponent: TaskView,
 	},
 
 	// ========================================================================
@@ -1011,6 +1034,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'org',
 		'thing',
 		'thread',
+		'task',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices
 		// that BOTH have to be listed here. An entry in `tabRegistry` alone is

@@ -200,13 +200,20 @@ export function dueLabel(due_on: string, due_at: string | null, now: Date = new 
 	return label;
 }
 
-export type DueGroup = 'overdue' | 'today' | 'upcoming' | 'none';
+export type DueGroup = 'today' | 'tomorrow' | 'week' | 'later' | 'none';
 
-/** Which group an open task sits in. A task due earlier today is still Today. */
+/**
+ * Which group an open task sits in. A task whose day has passed is still
+ * Today: it is still to do, and the list never marks it late. "Later this
+ * week" runs to Sunday.
+ */
 export function dueGroup(due_on: string | null, now: Date = new Date()): DueGroup {
 	if (!due_on) return 'none';
 	const today = isoDay(now);
-	if (due_on < today) return 'overdue';
-	if (due_on === today) return 'today';
-	return 'upcoming';
+	if (due_on <= today) return 'today';
+	const day = (offset: number) => isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset));
+	if (due_on === day(1)) return 'tomorrow';
+	const toSunday = (7 - now.getDay()) % 7;
+	if (due_on <= day(toSunday)) return 'week';
+	return 'later';
 }

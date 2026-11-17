@@ -2454,14 +2454,18 @@ export interface NewTask {
 	due_at?: string | null;
 	thread_id?: string | null;
 	thing_id?: string | null;
+	person_id?: string | null;
+	place_id?: string | null;
+	org_id?: string | null;
+	also_about?: TaskLink[];
 	recur_every?: number | null;
 	recur_unit?: RecurUnit | null;
 }
 
 /**
  * A partial edit: `null` clears a field, an absent key leaves it. Recurrence
- * is set or cleared as a pair, and moving a task under a thing takes it out
- * of its project (and the other way round).
+ * is set or cleared as a pair. Giving a task one new home takes it out of the
+ * old one, and `also_about` replaces the whole list.
  */
 export type TaskPatch = Partial<
 	Pick<
@@ -2474,6 +2478,10 @@ export type TaskPatch = Partial<
 		| 'due_at'
 		| 'thread_id'
 		| 'thing_id'
+		| 'person_id'
+		| 'place_id'
+		| 'org_id'
+		| 'also_about'
 		| 'recur_every'
 		| 'recur_unit'
 		| 'sort_order'
@@ -2485,6 +2493,10 @@ export function listTasks(
 	filter: { assignee?: TaskActor; thread_id?: string; thing_id?: string } = {},
 ): Promise<Task[]> {
 	return apiGet('/tasks', { status, ...filter });
+}
+
+export function getTask(id: string): Promise<Task> {
+	return apiGet(`/tasks/${encodeURIComponent(id)}`);
 }
 
 export function createTask(task: NewTask): Promise<Task> {

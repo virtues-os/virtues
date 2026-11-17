@@ -60,9 +60,11 @@ describe('dueLabel and dueGroup', () => {
 	});
 
 	it('groups by day', () => {
-		expect(dueGroup('2030-01-01', NOW)).toBe('overdue');
+		expect(dueGroup('2030-01-01', NOW)).toBe('today');
 		expect(dueGroup('2030-01-02', NOW)).toBe('today');
-		expect(dueGroup('2030-01-09', NOW)).toBe('upcoming');
+		expect(dueGroup('2030-01-03', NOW)).toBe('tomorrow');
+		expect(dueGroup('2030-01-06', NOW)).toBe('week');
+		expect(dueGroup('2030-01-07', NOW)).toBe('later');
 		expect(dueGroup(null, NOW)).toBe('none');
 	});
 });
