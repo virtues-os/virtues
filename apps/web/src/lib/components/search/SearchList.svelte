@@ -17,6 +17,7 @@
 	import { visits } from "$lib/stores/visits.svelte";
 	import { loadRecentSources } from "$lib/sidebar/recents.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
+	import { entities } from "$lib/search/entities.svelte";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
 	import { canBrowserPane } from "$lib/tauri/bridge";
@@ -26,6 +27,8 @@
 		contentTarget,
 		parseQuery,
 		previewOf,
+		rowNoun,
+		rowRoute,
 		searchGroups,
 		type Command,
 		type SearchRow,
@@ -48,10 +51,12 @@
 		here: string | null;
 		/** "theme" while choosing a theme, so the host can say so in its field. */
 		mode?: "search" | "theme";
+		/** The row the keys or the pointer are on, for the host's preview and footer. */
+		selected?: SearchRow | null;
 		onClose: () => void;
 	}
 
-	let { query = $bindable(), here, mode = $bindable("search"), onClose }: Props = $props();
+	let { query = $bindable(), here, mode = $bindable("search"), selected = $bindable(null), onClose }: Props = $props();
 
 	let listEl: HTMLDivElement | null = $state(null);
 	let selectedIndex = $state(0);
@@ -61,6 +66,9 @@
 		if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) chatSessions.load();
 		if (projectStore.projects.length === 0 && !projectStore.loading) projectStore.load();
 		loadRecentSources();
+		void entities.load().catch(() => {
+			// People and places are left out of this search; the rest still works.
+		});
 		// The frecency prior, refreshed at most once a minute.
 		visits.refresh();
 		void canBrowserPane().then((ok) => (browserAvailable = ok));
@@ -172,6 +180,10 @@
 		if (mode === "search") selectedIndex = 0;
 	});
 
+	$effect(() => {
+		selected = mode === "search" ? (rows[selectedIndex] ?? null) : null;
+	});
+
 	// Keep the selected row in view as the keys move it.
 	$effect(() => {
 		listEl?.querySelector(`[data-index="${selectedIndex}"]`)?.scrollIntoView({ block: "nearest" });
@@ -191,6 +203,12 @@
 				break;
 			case "record":
 				windowShellStore.openTabFromRoute(row.record.url, { label: row.record.title, focusExisting: true });
+				break;
+			case "day":
+				windowShellStore.openTabFromRoute(rowRoute(row)!, { label: row.day.title, focusExisting: true });
+				break;
+			case "entity":
+				windowShellStore.openTabFromRoute(row.entity.url, { label: row.entity.name, focusExisting: true });
 				break;
 			case "content": {
 				const target = contentTarget(row.hit);
@@ -233,11 +251,6 @@
 	}
 
 	const RECORD_GLYPH = { chat: "atlas:chats", page: "atlas:pages", project: "atlas:projects", applet: "atlas:applets" };
-
-	/** `content_bookmark` → "bookmark": the kind, without the table's prefix. */
-	function kindOf(ontology: string): string {
-		return ontology.replace(/^[a-z]+_/, "").replaceAll("_", " ");
-	}
 </script>
 
 {#snippet row(item: SearchRow, index: number)}
@@ -257,31 +270,31 @@
 		{:else if item.kind === "ask"}
 			<Icon icon="atlas:new-chat" width="16" class="row-icon" />
 			<span class="row-label">Ask <span class="muted">{item.query}</span></span>
-			<!-- The answer is written by a model provider, so the row says so. -->
-			<span class="row-note" title="The answer is written by a model provider, off your server.">
-				<Icon icon="mynaui:cloud" width="14" />
-				Off your server
-			</span>
-			<kbd>Tab</kbd>
 		{:else if item.kind === "command"}
 			<Icon icon={item.command.icon} width="16" class="row-icon" />
 			<span class="row-label">{item.command.label}</span>
 			{#if item.command.shortcut}<kbd>{item.command.shortcut}</kbd>{/if}
 		{:else if item.kind === "record"}
-			{#if item.record.kind === "project"}
+			{#if item.record.kind === "thread"}
 				<span class="glyph-slot"><ProjectGlyph project={item.record.project} size={16} /></span>
 			{:else}
 				<Icon icon={RECORD_GLYPH[item.record.kind]} width="16" class="row-icon" />
 			{/if}
 			<span class="row-label" class:muted={item.record.untitled}>{item.record.title}</span>
+		{:else if item.kind === "day"}
+			<Icon icon="atlas:calendar" width="16" class="row-icon" />
+			<span class="row-label">{item.day.title}{#if item.day.hint}<span class="muted">&ensp;{item.day.hint}</span>{/if}</span>
+		{:else if item.kind === "entity"}
+			<Icon icon={item.entity.kind === "person" ? "mynaui:user" : "mynaui:map-pin"} width="16" class="row-icon" />
+			<span class="row-label">{item.entity.name}</span>
 		{:else}
 			<Icon icon={contentGlyph(item.hit)} width="16" class="row-icon" />
 			<span class="row-text">
 				<span class="row-label">{item.hit.title || "Untitled"}</span>
 				{#if previewOf(item.hit)}<span class="row-preview">{previewOf(item.hit)}</span>{/if}
 			</span>
-			<span class="row-note">{kindOf(item.hit.ontology)}</span>
 		{/if}
+		{#if rowNoun(item)}<span class="row-kind">{rowNoun(item)}</span>{/if}
 	</button>
 {/snippet}
 
@@ -413,6 +426,20 @@
 		overflow: hidden;
 	}
 
+	/* What the row is, at the right edge so the nouns line up down the list. */
+	.row-kind {
+		flex: none;
+		margin-left: auto;
+		padding-left: 8px;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+
+	.two-line .row-kind {
+		align-self: center;
+	}
+
 	.row-note {
 		display: flex;
 		flex: none;
@@ -421,10 +448,6 @@
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
-	}
-
-	.two-line .row-note {
-		align-self: center;
 	}
 
 	.row kbd {
