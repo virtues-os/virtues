@@ -39,6 +39,9 @@ export const TOKENS = REPLY.match(/[\s\S]{1,4}/g);
 export const REPLY_TEXT = REPLY;
 
 export function startFakeModel() {
+	// When the last stream sent its first and last token, in epoch ms, so the
+	// lab can measure the page's lag against the model's own clock.
+	const stats = { firstSentAt: 0, lastSentAt: 0 };
 	const server = createServer((req, res) => {
 		if (req.method !== 'POST' || !req.url.startsWith('/v1/ai/chat/completions')) {
 			res.writeHead(404).end();
@@ -59,20 +62,33 @@ export function startFakeModel() {
 				return;
 			}
 			res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+			// Each token on an absolute schedule: a repeating timer drifts about
+			// a millisecond a tick, which over 242 tokens read as page lag.
+			const start = Date.now();
 			let i = 0;
-			const timer = setInterval(() => {
+			let timer = null;
+			let closed = false;
+			const send = () => {
+				if (closed) return;
 				if (i < TOKENS.length) {
-					res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: TOKENS[i++] } }] })}\n\n`);
+					res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: TOKENS[i] } }] })}\n\n`);
+					if (i === 0) stats.firstSentAt = Date.now();
+					if (i === TOKENS.length - 1) stats.lastSentAt = Date.now();
+					i++;
+					timer = setTimeout(send, Math.max(0, start + i * TOKEN_INTERVAL_MS - Date.now()));
 					return;
 				}
-				clearInterval(timer);
 				res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: TOKENS.length } })}\n\n`);
 				res.end('data: [DONE]\n\n');
-			}, TOKEN_INTERVAL_MS);
+			};
+			send();
 			// The response's close, not the request's: a request closes as soon
 			// as its body is read, which stopped every stream before it began.
-			res.on('close', () => clearInterval(timer));
+			res.on('close', () => {
+				closed = true;
+				clearTimeout(timer);
+			});
 		});
 	});
-	return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}` })));
+	return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, stats, url: `http://127.0.0.1:${server.address().port}` })));
 }

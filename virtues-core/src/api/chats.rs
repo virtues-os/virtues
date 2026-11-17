@@ -1135,13 +1135,15 @@ Conversation:
     }
 }
 
-/// The hot chat queries have an index to use.
+/// The hot chat queries are planned without a sequential scan.
 ///
 /// The chat list runs on launch, on focus and after every turn, and the
 /// transcript on every chat open, so a full scan of `app_chat_messages` in
 /// either grows with every message ever written. With sequential scans turned
-/// off, Postgres picks a full scan only when no index can serve the query, so
-/// these fail when an index is dropped or the SQL stops matching one.
+/// off, Postgres picks one only when no index can serve a table's part of the
+/// query, so these fail when an index is dropped or the SQL stops matching
+/// one. A full scan of an index still passes: the chat list reads every row
+/// of `app_chats` by its primary key.
 #[cfg(test)]
 mod query_plan_tests {
     use super::{LIST_CHATS_SQL, TRANSCRIPT_SQL};

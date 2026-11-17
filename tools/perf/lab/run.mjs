@@ -26,7 +26,8 @@
 // only with each other. See agents/build/performance.md.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { createServer, request as httpRequest, Agent } from 'node:http';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync, openSync, closeSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,10 +72,15 @@ function chromiumPath() {
 	throw new Error('no headless Chromium found. Set CHROMIUM_PATH, or run `npx playwright-core install chromium-headless-shell`.');
 }
 
-/** Build apps/web from a commit in a scratch clone, so the measurement is of committed code. */
+/**
+ * Build apps/web from a commit in a scratch clone. The source is the commit;
+ * dependencies are this checkout's installed node_modules, linked in, so a
+ * --ref far from HEAD can build against the wrong versions. Returns the build
+ * and the clone to remove afterwards (none for --web-build).
+ */
 function buildWeb() {
 	const given = opt('--web-build');
-	if (given) return resolve(given);
+	if (given) return { webBuild: resolve(given), clone: null };
 	const ref = opt('--ref', 'HEAD');
 	const dir = mkdtempSync(join(tmpdir(), 'virtues-perf-'));
 	log(`building ${ref} in ${dir}`);
@@ -82,7 +88,36 @@ function buildWeb() {
 	execFileSync('git', ['-C', dir, 'checkout', '--quiet', execFileSync('git', ['-C', repo, 'rev-parse', ref]).toString().trim()]);
 	symlinkSync(join(repo, 'apps/web/node_modules'), join(dir, 'apps/web/node_modules'));
 	execFileSync('pnpm', ['build'], { cwd: join(dir, 'apps/web'), stdio: ['ignore', 'ignore', 'inherit'] });
-	return join(dir, 'apps/web/build');
+	return { webBuild: join(dir, 'apps/web/build'), clone: dir };
+}
+
+/**
+ * One lab run at a time on this machine. A second run would drop the first
+ * one's database mid-measurement (the port, the database and results/ are
+ * fixed), so it refuses while the first is alive.
+ */
+const LOCK = join(RESULTS, 'lab.lock');
+function takeLock() {
+	mkdirSync(RESULTS, { recursive: true });
+	if (existsSync(LOCK)) {
+		const pid = Number(readFileSync(LOCK, 'utf8'));
+		let alive = false;
+		try {
+			process.kill(pid, 0);
+			alive = true;
+		} catch {
+			/* gone: a run that crashed left the file */
+		}
+		if (alive && pid !== process.pid) throw new Error(`another lab run (pid ${pid}) is going; wait for it, or stop it`);
+	}
+	writeFileSync(LOCK, String(process.pid));
+}
+function releaseLock() {
+	try {
+		if (readFileSync(LOCK, 'utf8') === String(process.pid)) rmSync(LOCK);
+	} catch {
+		/* already gone */
+	}
 }
 
 function psql(url, sql) {
@@ -93,8 +128,13 @@ async function startBox(webBuild, modelUrl) {
 	psql(ADMIN_URL, `DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
 	psql(ADMIN_URL, `CREATE DATABASE ${DB}`);
 	const state = mkdtempSync(join(tmpdir(), 'virtues-perf-state-'));
+	// Only what the box needs from this shell. The rest of the environment,
+	// and any .env the box would read beside its working directory, could
+	// carry real keys or a relay identity into a scratch box.
 	const env = {
-		...process.env,
+		PATH: process.env.PATH,
+		HOME: process.env.HOME,
+		TMPDIR: process.env.TMPDIR,
 		DATABASE_URL: DB_URL,
 		NOMAD_PORT_http: String(PORT),
 		ENVIRONMENT: 'dev',
@@ -110,25 +150,34 @@ async function startBox(webBuild, modelUrl) {
 		VIRTUES_APPLET_STATE_DIR: join(state, 'applets'),
 		RUST_LOG: process.env.PERF_RUST_LOG ?? 'warn'
 	};
-	const box = spawn(SERVER_BIN, ['server'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-	// The box's log, for a scenario that fails: results/box.log.
+	// Loopback only: with setup skipped and ENVIRONMENT=dev, a box on every
+	// interface would be the owner's to anyone on the network. Its log goes
+	// straight to results/box.log, a file the box keeps writing after this
+	// runner exits (--keep), never a pipe that closes under it.
 	mkdirSync(RESULTS, { recursive: true });
-	const boxLog = createWriteStream(join(RESULTS, 'box.log'));
-	let stderr = '';
-	box.stderr.on('data', (d) => {
-		boxLog.write(d);
-		stderr = (stderr + d).slice(-4000);
-	});
+	const logPath = join(RESULTS, 'box.log');
+	const logFd = openSync(logPath, 'w');
+	const box = spawn(SERVER_BIN, ['server', '--host', '127.0.0.1'], { env, cwd: state, stdio: ['ignore', 'ignore', logFd] });
+	closeSync(logFd);
+	const tail = () => {
+		try {
+			return readFileSync(logPath, 'utf8').slice(-4000);
+		} catch {
+			return '';
+		}
+	};
 	for (let i = 0; i < 120; i++) {
-		if (box.exitCode !== null) throw new Error(`box exited early:\n${stderr}`);
+		if (box.exitCode !== null) throw new Error(`box exited early:\n${tail()}`);
 		try {
 			if ((await fetch(`${ORIGIN}/health`)).ok) break;
 		} catch {
 			/* not up yet */
 		}
 		await sleep(500);
-		if (i === 119) throw new Error(`box never answered /health:\n${stderr}`);
+		if (i === 119) throw new Error(`box never answered /health:\n${tail()}`);
 	}
+	// A box from an earlier run still on this port would answer /health too.
+	if (box.exitCode !== null) throw new Error(`box exited early (is port ${PORT} taken?):\n${tail()}`);
 	// Migrations have run by the time /health answers.
 	const seedFile = join(state, 'seed.sql');
 	writeFileSync(seedFile, seedSql());
@@ -143,13 +192,16 @@ async function settledMetrics(cdp, page) {
 	const { metrics } = await cdp.send('Performance.getMetrics');
 	const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
 	// heap_mb is the JavaScript heap alone. memory_mb adds the DOM's own memory
-	// and ArrayBuffer storage, where WebAssembly memory lives: Shiki's
-	// WebAssembly engine once held 24 MB there that heap_mb never showed.
+	// and ArrayBuffer storage, as Chromium counts them. Neither counted Shiki's
+	// WebAssembly engine's 22 MB, so WebAssembly memory is wasm_mb, read from
+	// the modules themselves. It is kept apart, not added: Chromium's
+	// ArrayBuffer count may include some modules' memory, and adding would
+	// count those twice.
 	const usage = await cdp.send('Runtime.getHeapUsage');
 	const wasm = page
 		? await page.evaluate(() => [...(window.__wasmMemories ?? [])].reduce((a, m) => a + m.buffer.byteLength, 0)).catch(() => 0)
 		: 0;
-	const memory = usage.usedSize + (usage.embedderHeapUsedSize ?? 0) + (usage.backingStorageSize ?? 0) + wasm;
+	const memory = usage.usedSize + (usage.embedderHeapUsedSize ?? 0) + (usage.backingStorageSize ?? 0);
 	return {
 		heap_mb: +(m.JSHeapUsedSize / 1e6).toFixed(2),
 		memory_mb: +(memory / 1e6).toFixed(2),
@@ -296,22 +348,48 @@ async function layoutWorkMs(cdp) {
 const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
 /**
- * A cold load as the Mac and iPhone apps see it: the UI is local, and every
- * API request crosses the relay. Each request to the box waits RELAY_MS
- * before it goes; the UI files load at once. The browser still opens at most
- * six connections to the box, as it does to the apps' loopback proxy, so
- * requests beyond six wait their turn, a round trip at a time.
+ * A cold load as the Mac and iPhone apps see it: the UI loads at once, and
+ * every request to the box goes through a proxy that holds it RELAY_MS before
+ * forwarding it, about a round trip over the relay. The page reaches the
+ * proxy the way the apps reach their loopback: the shell's injected
+ * `__VIRTUES_BACKEND_ORIGIN__`, which the app's fetch shim
+ * (lib/config/backend.ts) sends every box path to, CORS preflights included. The browser opens at most six connections to the
+ * proxy, as to the apps' loopback, and a held request keeps its connection,
+ * so requests beyond six wait their turn.
  */
 const RELAY_MS = 100;
+let relayUrl = '';
+/** The fake model, for the stream scenario to read when it sent the last token. */
+let fakeModel = null;
+async function startRelayProxy() {
+	const box = new URL(ORIGIN);
+	const agent = new Agent({ keepAlive: true, maxSockets: 64 });
+	const server = createServer((req, res) => {
+		setTimeout(() => {
+			const up = httpRequest(
+				{ host: box.hostname, port: box.port, method: req.method, path: req.url, headers: { ...req.headers, host: box.host }, agent },
+				(r) => {
+					res.writeHead(r.statusCode ?? 502, r.headers);
+					r.pipe(res);
+				}
+			);
+			up.on('error', () => {
+				if (!res.headersSent) res.writeHead(502);
+				res.end();
+			});
+			req.pipe(up);
+		}, RELAY_MS);
+	});
+	server.keepAliveTimeout = 60_000;
+	await new Promise((r) => server.listen(0, '127.0.0.1', r));
+	relayUrl = `http://127.0.0.1:${server.address().port}`;
+	return server;
+}
 async function relayLoad(browser) {
 	const { context, page } = await newPage(browser);
-	await page.route(
-		(url) => url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/') || url.pathname === '/health',
-		async (route) => {
-			await sleep(RELAY_MS);
-			await route.continue();
-		}
-	);
+	await page.addInitScript((url) => {
+		window.__VIRTUES_BACKEND_ORIGIN__ = url;
+	}, relayUrl);
 	await page.goto(`${ORIGIN}/chat`, { waitUntil: 'commit' });
 	// Times from the page's own clock, so they start at navigation.
 	const marks = await page.evaluate(
@@ -451,7 +529,19 @@ async function sidebarToggle(browser) {
  * main thread's script, layout and style time, and frames over 20 ms. Each
  * run then removes the turn, so every run starts from the same 300 messages.
  */
+/**
+ * Remove any turn after the seeded 300, so every run streams into the same
+ * chat. Run before each run as well as after, and after the box has had a
+ * moment to write the reply's row: one cut short or still being saved would
+ * otherwise carry into the next run.
+ */
+async function resetLongChat() {
+	await sleep(500);
+	psql(DB_URL, `DELETE FROM app_chat_messages WHERE chat_id = '${LONG_CHAT_ID}' AND sequence_num >= ${LONG_CHAT_MESSAGES}; UPDATE app_chats SET message_count = ${LONG_CHAT_MESSAGES} WHERE id = '${LONG_CHAT_ID}'`);
+}
+
 async function streamReply(browser) {
+	await resetLongChat();
 	const { context, page, cdp } = await newPage(browser);
 	await page.goto(`${ORIGIN}/chat/${LONG_CHAT_ID}`);
 	await waitOrExplain(page, page.locator('.chat-input').first(), 'visible', 30_000);
@@ -463,43 +553,59 @@ async function streamReply(browser) {
 	};
 	await page.locator('.chat-input').first().click();
 	await page.keyboard.type('What should the weekend look like?');
-	await page.evaluate(() => {
-		window.__frames = [];
-		window.__framesOn = true;
-		const tick = (t) => {
-			window.__frames.push(t);
-			if (window.__framesOn) requestAnimationFrame(tick);
-		};
-		requestAnimationFrame(tick);
-	});
+	// Frame times, and when the reply's first and last words reach the page,
+	// on the page's own clock. Watched with a MutationObserver on the reply
+	// rows themselves: polling the page's text every frame would force a
+	// layout per frame and count the lab's own work in the numbers.
+	await page.evaluate(
+		({ last }) => {
+			window.__frames = [];
+			window.__framesOn = true;
+			const tick = (t) => {
+				window.__frames.push(t);
+				if (window.__framesOn) requestAnimationFrame(tick);
+			};
+			requestAnimationFrame(tick);
+			const before = new Set([...document.querySelectorAll('[data-message-id]')].map((e) => e.dataset.messageId));
+			window.__marks = {};
+			const seen = new MutationObserver(() => {
+				const fresh = [...document.querySelectorAll('[data-message-id][data-role="assistant"]')].filter((e) => !before.has(e.dataset.messageId));
+				const text = fresh.map((e) => e.textContent ?? '').join('');
+				if (!window.__marks.first && text.trim().length > 0) window.__marks.first = performance.timeOrigin + performance.now();
+				if (!window.__marks.last && text.includes(last)) {
+					window.__marks.last = performance.timeOrigin + performance.now();
+					seen.disconnect();
+				}
+			});
+			seen.observe(document.body, { childList: true, subtree: true, characterData: true });
+		},
+		{ last: 'until next weekend' }
+	);
 	const m0 = await metrics();
-	const sentAt = Date.now();
+	const sentAt = await page.evaluate(() => performance.timeOrigin + performance.now());
 	await page.keyboard.press('Enter');
-	// The reply's first words, then its last, as they appear in the page.
 	try {
-		await page.waitForFunction(() => document.body.innerText.includes('A plan for the weekend'), null, { timeout: 30_000 });
+		await page.waitForFunction(() => window.__marks.first, null, { timeout: 30_000, polling: 100 });
 	} catch (e) {
 		const shot = join(RESULTS, `failure-${Date.now()}.png`);
 		await page.screenshot({ path: shot }).catch(() => {});
 		const tail = await page.evaluate(() => document.body.innerText.slice(-400)).catch(() => '');
 		throw new Error(`no streamed reply: ${e.message.split('\n')[0]}\n  page ends: ${JSON.stringify(tail)}\n  screenshot: ${shot}; box log: ${join(RESULTS, 'box.log')}`);
 	}
-	const firstAt = Date.now();
-	await page.waitForFunction(() => document.body.innerText.includes('until next weekend'), null, { timeout: 60_000 });
-	const lastAt = Date.now();
+	await page.waitForFunction(() => window.__marks.last, null, { timeout: 60_000, polling: 100 });
+	const { first: firstAt, last: lastAt } = await page.evaluate(() => window.__marks);
 	const m1 = await metrics();
 	const frames = await page.evaluate(() => {
 		window.__framesOn = false;
 		return window.__frames;
 	});
 	await context.close();
-	// Remove the turn, so the next run streams into the same 300 messages.
-	psql(DB_URL, `DELETE FROM app_chat_messages WHERE chat_id = '${LONG_CHAT_ID}' AND sequence_num >= ${LONG_CHAT_MESSAGES}; UPDATE app_chats SET message_count = ${LONG_CHAT_MESSAGES} WHERE id = '${LONG_CHAT_ID}'`);
 	const gaps = frames.slice(1).map((t, k) => t - frames[k]);
-	const streamMs = lastAt - firstAt;
 	return {
-		first_token_ms: firstAt - sentAt,
-		stream_lag_ms: Math.max(0, streamMs - (TOKENS.length - 1) * TOKEN_INTERVAL_MS),
+		first_token_ms: Math.round(firstAt - sentAt),
+		// From the model sending the last token to the page showing it: the
+		// box's relay of the stream plus the page's rendering, on one clock.
+		stream_lag_ms: Math.max(0, Math.round(lastAt - fakeModel.stats.lastSentAt)),
 		stream_script_ms: Math.round((m1.ScriptDuration - m0.ScriptDuration) * 1000),
 		stream_layout_ms: Math.round((m1.LayoutDuration - m0.LayoutDuration + m1.RecalcStyleDuration - m0.RecalcStyleDuration) * 1000),
 		stream_slow_frames: gaps.filter((g) => g > 20).length,
@@ -612,8 +718,11 @@ function compare(results, budgets) {
 	for (const [scenario, limits] of Object.entries(budgets)) {
 		for (const [k, limit] of Object.entries(limits)) {
 			const v = results[scenario]?.[k];
-			if (v === undefined) continue;
-			if (v > limit) over.push(`${scenario}.${k} = ${v}, budget ${limit}`);
+			// A number the run did not produce, or a -1 from a wait that timed
+			// out, fails: a budget that skips them passes a broken scenario.
+			if (v === undefined || v === null || Number.isNaN(v)) over.push(`${scenario}.${k} is missing`);
+			else if (v < 0) over.push(`${scenario}.${k} = ${v}: the scenario never got there`);
+			else if (v > limit) over.push(`${scenario}.${k} = ${v}, budget ${limit}`);
 		}
 	}
 	return over;
@@ -621,14 +730,29 @@ function compare(results, budgets) {
 
 async function main() {
 	if (!existsSync(SERVER_BIN)) throw new Error(`no box binary at ${SERVER_BIN}; run \`cargo build -p virtues\``);
-	const webBuild = buildWeb();
-	log(`web build: ${webBuild}`);
-	const model = await startFakeModel();
-	const { box, state } = await startBox(webBuild, model.url);
-	log(`box on ${ORIGIN}, database ${DB}, seeded`);
-	const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true });
+	takeLock();
+	const keep = flag('--keep');
+	let built = null;
+	let model = null;
+	let relay = null;
+	let boxed = null;
+	let browser = null;
+	// The box is a plain child process: an exit or a crash here would leave it
+	// running on the port, where the next run's health check would find it.
+	const killBox = () => {
+		if (boxed && !keep) boxed.box.kill('SIGTERM');
+	};
+	process.on('exit', killBox);
 	let results;
 	try {
+		built = buildWeb();
+		log(`web build: ${built.webBuild}`);
+		model = await startFakeModel();
+		fakeModel = model;
+		boxed = await startBox(built.webBuild, model.url);
+		relay = await startRelayProxy();
+		log(`box on ${ORIGIN}, database ${DB}, seeded; relay proxy ${relayUrl}`);
+		browser = await chromium.launch({ executablePath: chromiumPath(), headless: true });
 		// One untimed load warms the box (prepared statements, the first
 		// query plans) so the first measured run is not an outlier.
 		await coldLoad(browser);
@@ -640,25 +764,26 @@ async function main() {
 			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser),
 			stream_reply: await repeat('stream_reply', streamReply, browser)
 		};
+		await resetLongChat();
 	} finally {
-		await browser.close();
-		if (!flag('--keep')) {
-			box.kill('SIGTERM');
-			model.server.close();
+		await browser?.close().catch(() => {});
+		relay?.close();
+		if (!keep) {
+			boxed?.box.kill('SIGTERM');
+			model?.server.close();
 			await sleep(500);
 			try {
 				psql(ADMIN_URL, `DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
 			} catch {
 				/* the box may still hold it for a moment */
 			}
-			rmSync(state, { recursive: true, force: true });
-		} else {
-			// Let this process exit while the box runs on: an open pipe and a
-			// referenced child would hold it until the box was stopped.
-			box.stderr.destroy();
-			box.unref();
-			log(`kept: box pid ${box.pid} on ${ORIGIN}, database ${DB}. This runner keeps serving the fake model for it; stop both with Ctrl-C, then kill ${box.pid}`);
+			if (boxed) rmSync(boxed.state, { recursive: true, force: true });
+			if (built?.clone) rmSync(built.clone, { recursive: true, force: true });
+		} else if (boxed) {
+			boxed.box.unref();
+			log(`kept: box pid ${boxed.box.pid} on ${ORIGIN}, database ${DB}, log ${join(RESULTS, 'box.log')}. This runner keeps serving the fake model for it; stop both with Ctrl-C, then kill ${boxed.box.pid}`);
 		}
+		releaseLock();
 	}
 
 	const commit = execFileSync('git', ['-C', repo, 'rev-parse', '--short', opt('--ref', 'HEAD')]).toString().trim();
@@ -680,7 +805,8 @@ async function main() {
 	const over = compare(results, JSON.parse(readFileSync(BUDGETS, 'utf8')));
 	if (over.length) {
 		console.error('[lab] over budget:\n  ' + over.join('\n  '));
-		process.exit(1);
+		process.exitCode = 1;
+		return;
 	}
 	log('within budget');
 }

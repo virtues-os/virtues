@@ -5,9 +5,8 @@
  * The box serves the SPA with tower-http's `ServeDir` and its precompressed
  * brotli and gzip siblings: a client that accepts brotli gets the `.br`, one
  * that accepts only gzip the `.gz`, and everyone else the original. Brotli is
- * about a fifth smaller than gzip on this JavaScript. Compressing once here, at build, means the box never spends
- * CPU on it and the Mac — a thin client that pulls the SPA from the box on
- * every cold start — moves ~2.6 MB of initial JavaScript as ~0.8 MB.
+ * about a fifth smaller than gzip on this JavaScript. Compressing once here,
+ * at build, means the box never spends CPU on it.
  *
  * Only the content-hashed tree under `_app/immutable/` and the fonts are
  * compressed. Documents (`200.html`, `index.html`) are `no-store` on the box

@@ -10,12 +10,9 @@
 //
 // A RATCHET, like tools/design-lint.sh: the baseline may only go down. When a
 // change genuinely needs more, update the baseline in the same commit and say
-// why in its message. Cut it in a scratch clone, never in the shared checkout
-// (CLAUDE.md, "Never cut a ratchet baseline from this checkout"):
-//
-//     git clone --local -b wave . /tmp/budget && cd /tmp/budget/apps/web \
-//       && ln -s "$OLDPWD/apps/web/node_modules" node_modules && pnpm build \
-//       && node ../../tools/perf/bundle-budget.mjs --update
+// why in its message. Measure it from a scratch clone's build, never from the
+// shared checkout (CLAUDE.md, "Never cut a ratchet baseline from this
+// checkout"); agents/build/performance.md has the commands.
 //
 // Usage, after `pnpm build` in apps/web:
 //     node tools/perf/bundle-budget.mjs            check against the baseline
