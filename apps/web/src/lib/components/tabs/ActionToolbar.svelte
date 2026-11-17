@@ -208,15 +208,17 @@
 						>{crumb.label}</button
 					>
 				{:else if i === pageAt && draft !== null}
-					<input
-						class="crumb current rename"
-						bind:value={draft}
-						onkeydown={renameKeydown}
-						onblur={commitRename}
-						style:width="{Math.max(draft.length, 4) + 2}ch"
-						aria-label="Name"
-						use:focusAndSelect
-					/>
+					<span class="rename-sizer crumb-field" data-value={draft}>
+						<input
+							class="crumb current rename"
+							size="1"
+							bind:value={draft}
+							onkeydown={renameKeydown}
+							onblur={commitRename}
+							aria-label="Name"
+							use:focusAndSelect
+						/>
+					</span>
 				{:else}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<span
@@ -418,11 +420,24 @@
 	}
 
 	/* The name as a field, in the same look as a renaming tab or sidebar
-	   row (app.css). It keeps the crumb's type and padding, so the path
-	   does not jump when it opens. */
-	.crumb.rename {
-		min-width: 6ch;
+	   row (app.css). It keeps the crumb's type and padding, and the sizer
+	   keeps it as wide as the name, so the path does not jump when it
+	   opens. The sizer's hidden copy takes the same padding and weight. */
+	.crumb-field {
+		flex: none;
 		max-width: 60%;
+	}
+
+	.crumb-field::after {
+		padding: 0 6px;
+		font-weight: 500;
+	}
+
+	.crumb.rename {
+		min-width: 4ch;
+		/* The sizer holds the crumb's 60% cap; on the input it would be 60%
+		   of the sizer. */
+		max-width: none;
 		height: 24px;
 		border: none;
 		border-radius: var(--radius-sm);

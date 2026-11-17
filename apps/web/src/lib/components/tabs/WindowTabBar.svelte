@@ -18,6 +18,7 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
+	import { toast } from "svelte-sonner";
 	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
@@ -371,7 +372,12 @@
 		renamingTabId = null;
 		renameValue = "";
 		if (!tab?.route || !ownedRef(tab.route)) return;
-		renameRef(tab.route, newLabel).catch((e) => console.error("[WindowTabBar] rename failed:", e));
+		const original = tabLook(tab).title;
+		if (newLabel === original) return;
+		renameRef(tab.route, newLabel).catch((e) => {
+			console.error("[WindowTabBar] rename failed:", e);
+			toast.error(`Your server couldn't rename "${original}"`, { description: "It keeps its old name. Try again" });
+		});
 	}
 
 	// `autofocus` only applies on page load, so a field mounted later has to
@@ -727,15 +733,19 @@
 				</span>
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
-						<input
-							type="text"
-							class="rename-input"
-							bind:value={renameValue}
-							onkeydown={handleRenameKeydown}
-							onblur={handleRenameSubmit}
-							onclick={(e) => e.stopPropagation()}
-							use:focusAndSelect
-						/>
+						<span class="rename-sizer" data-value={renameValue}>
+							<input
+								type="text"
+								class="rename-input"
+								size="1"
+								aria-label="Name"
+								bind:value={renameValue}
+								onkeydown={handleRenameKeydown}
+								onblur={handleRenameSubmit}
+								onclick={(e) => e.stopPropagation()}
+								use:focusAndSelect
+							/>
+						</span>
 					{:else}
 						<!-- On a ⌘ hold each tab's own label becomes its number:
 						     the title slides up and out, ⌘N slides up and in.
@@ -756,7 +766,7 @@
 						</span>
 					{/if}
 				{/if}
-				{#if !tab.pinned && tab.id !== renamingTabId && windowShellStore.canClose(tab.id)}
+				{#if !tab.pinned && windowShellStore.canClose(tab.id)}
 					<button
 						class="tab-close"
 						onclick={(e) => handleTabClose(e, tab.id)}
@@ -1160,6 +1170,12 @@
 	   text, drawn as a spread shadow so it takes no room. */
 	/* Renaming: the tab is the field (app.css). It outranks the glass of
 	   the tab you are on and the hover wash. */
+	/* The × keeps its space while you type, so the tab keeps its width,
+	   but it can't be seen or pressed. */
+	.tab.renaming .tab-close {
+		visibility: hidden;
+	}
+
 	.tab.renaming,
 	.tab.renaming:hover {
 		background: var(--rename-fill);

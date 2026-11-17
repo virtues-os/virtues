@@ -50,6 +50,38 @@
 	color: var(--color-foreground);
 }
 
+/* A rename field as wide as the name in it, where the field sits in a row
+ * of other things (a tab, the page bar's path). An input's own width is
+ * about 20 characters, which would double a short name's tab and push
+ * every tab after it. A hidden copy of the name sets the width and the
+ * input lies over it, with 1px past the name for the caret. The
+ * input needs size="1", or its own 20-character width still sets the
+ * column.
+ * Usage: <span class="rename-sizer" data-value={draft}><input size="1" …></span> */
+.rename-sizer {
+	display: inline-grid;
+	grid-template-columns: minmax(0, auto);
+	align-self: stretch;
+	align-items: center;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+.rename-sizer::after {
+	content: attr(data-value);
+	padding-inline-end: 1px;
+	grid-area: 1 / 1;
+	visibility: hidden;
+	overflow: hidden;
+	white-space: pre;
+}
+
+.rename-sizer > input {
+	grid-area: 1 / 1;
+	width: 100%;
+	min-width: 1ch;
+}
+
 /* ===================================
    BACKGROUND TREATMENT
    Applies gradient/texture overlays from theme
