@@ -663,15 +663,12 @@
 		}
 	}
 
-	/* Two measures, not five — the same rule the Page shell states, applied to
-	   this room's hand-rolled wraps. `wide` (72rem) for anything gridded,
-	   `prose` (48rem) for reading, both on the shell's 3rem padding. These
-	   sections used to run 72 / 54 / 50 / 44rem at 1.5rem padding, so moving
-	   between the room's own tabs — and between the room and its neighbours —
-	   shifted the column every time. */
+	/* This room's own wraps use the page widths in themes.css: full for
+	   anything gridded, reading for text, on the shell's 3rem padding, so
+	   the column does not shift between the room's tabs or its neighbors. */
 	.grid-wrap,
 	.days-wrap {
-		max-width: 72rem;
+		max-width: var(--page-full);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -725,7 +722,7 @@
 	}
 
 	.identity-wrap {
-		max-width: 48rem;
+		max-width: var(--page-reading);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -739,7 +736,7 @@
 
 	/* Years: a plain index, set to the reading measure. */
 	.measure {
-		max-width: 42rem;
+		max-width: var(--page-reading);
 		padding: 1.5rem 0;
 	}
 

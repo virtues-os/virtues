@@ -195,12 +195,6 @@
 			transform 280ms var(--ease-premium) 130ms;
 	}
 
-	/* Inside the button's own shape, as on a sidebar row. */
-	.header-mark:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.mark {
 		display: block;
 		/* The app opening scales the dots past the 24-box. */

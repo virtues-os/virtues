@@ -228,7 +228,7 @@
 <div class="person-page-layout">
 	<article class="person-article wiki-article">
 		<div class="person-content">
-			<WikiCrumbs bar parent={{ label: "People", href: "/wiki/people" }} current={page.name} />
+			<WikiCrumbs bar path={[{ label: "People", route: "/wiki/people" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="person-header">
 				<button
@@ -466,7 +466,7 @@
 	}
 
 	.person-content {
-		max-width: 48rem;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;
@@ -522,11 +522,6 @@
 
 	.picture-button:hover {
 		opacity: 0.85;
-	}
-
-	.picture-button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	.picture-button.busy {

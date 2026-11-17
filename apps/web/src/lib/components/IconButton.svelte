@@ -167,12 +167,6 @@
 		cursor: not-allowed;
 	}
 
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-iconbtn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	/* Sizes — the four clusters the tree actually had. Every value is a
 	   multiple of 4; 28px is the shell's own tab height and 44px is the touch
 	   floor, so neither is invented here. */

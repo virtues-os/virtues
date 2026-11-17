@@ -110,6 +110,12 @@
 		color: var(--color-foreground-muted);
 	}
 
+	/* Without a title above it (the desktop, where the title is in the
+	   action toolbar), the sentence starts the page. */
+	.page-heading-description:first-child {
+		margin-top: 0;
+	}
+
 	.page-heading-actions {
 		flex-shrink: 0;
 	}

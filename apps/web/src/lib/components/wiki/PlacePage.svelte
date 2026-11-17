@@ -107,7 +107,7 @@
 <div class="page-layout">
 	<article class="wiki-article">
 		<div class="page-content">
-			<WikiCrumbs bar parent={{ label: "Places", href: "/wiki/places" }} current={page.name} />
+			<WikiCrumbs bar path={[{ label: "Places", route: "/wiki/places" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="page-header">
 				<h1 class="page-title">{page.name}</h1>

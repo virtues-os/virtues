@@ -673,8 +673,6 @@
 		font-family: var(--font-sans);
 		font-size: 0.75rem;
 		color: var(--color-foreground);
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
 	}
 
 	.s:global(.active) {

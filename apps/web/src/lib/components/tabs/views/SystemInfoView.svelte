@@ -5,6 +5,7 @@
 	import { apiGet } from "$lib/api/client";
 	import { onMount } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -276,7 +277,7 @@
 	</div>
 {/snippet}
 
-<Page title="System" description="Your server, examined." maxWidth="wide">
+<Page title="System" description="Your server, examined." maxWidth="full">
 	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
 	     (no border, no hover, nothing to press); Detail ACTS. A status light
 	     styled like a button invites clicks that do nothing, which is why the
@@ -549,49 +550,16 @@
 		{/if}
 
 		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
-		<!--
-			This is the only place the backup's state appears. There is no
-			restore button — restore needs the service
-			stopped, so the box cannot do it to itself, and a button would imply
-			a capability that cannot exist.
-		-->
+		<!-- Backup's state, its drives and restoring are on their own page
+		     (settings/BackupPage.svelte); this row says how old the newest
+		     backup is and opens it. -->
 		{#if backup}
 			<section class="chapter">
 				<h2 class="settings-label">Backup</h2>
-				<div class="cols">
-					<div class="col">
-						{#if backup.state === "none"}
-							{@render ledger("Off-server copies", "none", false, "crit")}
-						{:else}
-							{@render ledger(
-								"Last backup",
-								backupAge(backup.age_seconds),
-								false,
-								backup.state === "ok" ? "ok" : backup.state === "never" ? "crit" : "warn",
-							)}
-						{/if}
-					</div>
-					<div class="col">
-						{#each backup.volumes as v}
-							{@render ledger(
-								v.name,
-								v.last_error ? "failing" : v.attached ? "attached" : "not attached",
-								false,
-								v.last_error ? "crit" : v.attached ? "ok" : "warn",
-							)}
-						{/each}
-					</div>
-				</div>
-				{#if backup.state === "none"}
-					<p class="note">
-						This server holds one copy of its data. Register a drive with
-						<code>virtues volumes add &lt;path&gt;</code>.
-					</p>
-				{:else if backup.volumes.some((v) => v.last_error)}
-					<p class="note">
-						{backup.volumes.find((v) => v.last_error)?.last_error}
-					</p>
-				{/if}
+				<button type="button" class="backup-link" onclick={() => windowShellStore.navigate('/virtues/backup', { label: 'Settings · Backup' })}>
+					<span>{backup.state === "none" ? "No backup drive yet" : `Last backup ${backupAge(backup.age_seconds)}`}</span>
+					<span class="open">Open</span>
+				</button>
 			</section>
 		{/if}
 
@@ -854,11 +822,6 @@
 		margin: 10px 0 0;
 		max-width: 60ch;
 	}
-	.note code {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: var(--foreground);
-	}
 
 	/* ─── Drives ───────────────────────────────────────────────────────── */
 	.drives { display: flex; flex-direction: column; gap: 18px; }
@@ -917,4 +880,28 @@
 	}
 
 	.mono { font-family: var(--font-mono); }
+
+	/* Backup's own page opens from here. */
+	.backup-link {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		width: 100%;
+		max-width: 60ch;
+		padding: 8px 0;
+		border: none;
+		border-bottom: 1px solid var(--color-border-subtle);
+		background: none;
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+
+	.backup-link .open {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
 </style>

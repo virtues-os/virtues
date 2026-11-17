@@ -318,7 +318,7 @@
 <Page
 	title="Devices"
 	description="Your server, and every app, browser and sensor paired to it."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>

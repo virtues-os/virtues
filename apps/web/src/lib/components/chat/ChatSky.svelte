@@ -1053,12 +1053,6 @@
 		background: color-mix(in srgb, currentColor 75%, transparent);
 	}
 
-	.rung:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 1px;
-		border-radius: var(--radius-full);
-	}
-
 	.rung-name {
 		position: absolute;
 		left: 24px;
@@ -1068,12 +1062,6 @@
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 		pointer-events: none;
-	}
-
-	.sky:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 8px;
-		border-radius: var(--radius-md);
 	}
 
 	.moment-head,
@@ -1352,13 +1340,6 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.thread:focus-visible,
-	.petal button:focus-visible,
-	.bloom-title:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 2px;
-	}
-
 	.bloom-head {
 		text-align: center;
 		white-space: nowrap;
@@ -1395,11 +1376,6 @@
 		color: var(--color-foreground);
 	}
 
-	.note-add:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 2px;
-	}
-
 	.note-input {
 		display: block;
 		width: 220px;
@@ -1414,7 +1390,6 @@
 	}
 
 	.note-input:focus {
-		outline: none;
 		border-color: var(--color-border-focus);
 	}
 

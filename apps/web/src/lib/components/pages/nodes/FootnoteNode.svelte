@@ -72,7 +72,6 @@
 		line-height: 0;
 	}
 
-	.doc-footnote:focus-visible,
 	.doc-footnote.selected {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;

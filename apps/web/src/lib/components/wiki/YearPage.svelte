@@ -104,7 +104,7 @@
 	<p class="quiet">There is no page for {year}.</p>
 {:else}
 	<article class="year">
-		<WikiCrumbs bar parent={{ label: 'Years', href: '/wiki/years' }} current={String(year)} />
+		<WikiCrumbs bar path={[{ label: 'Years', route: '/wiki/years' }, { label: String(year) }]} />
 		<header>
 			<p class="eyebrow">Year</p>
 			{#if editingTitle}

@@ -324,11 +324,6 @@
 		background: var(--hover-bg);
 	}
 
-	.toolbar-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	/* Open, as IconButton draws a button whose popover is open: a ground,
 	   not the accent, which means a thing is on or can be pressed. */
 	.toolbar-action.active {

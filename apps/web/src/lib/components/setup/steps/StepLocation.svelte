@@ -465,10 +465,6 @@
 	.globe:global([data-dragging]) {
 		cursor: grabbing;
 	}
-	.globe:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 4px;
-	}
 
 	.place {
 		display: flex;
@@ -581,11 +577,6 @@
 		opacity: 0;
 		cursor: pointer;
 		font: inherit;
-	}
-	.zone:has(select:focus-visible) {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 4px;
-		border-radius: var(--radius-md);
 	}
 	.sep {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));

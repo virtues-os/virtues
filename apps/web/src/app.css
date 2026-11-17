@@ -41,6 +41,15 @@
 	caret-color: var(--color-primary);
 }
 
+/* The name is selected when the field opens. The reading highlight is a
+ * warm yellow, which looks like a marker pen beside the field's blue edge,
+ * so a field's selection takes the edge's color. */
+.rename-input::selection,
+.crumb.rename::selection {
+	background-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+	color: var(--color-foreground);
+}
+
 /* ===================================
    BACKGROUND TREATMENT
    Applies gradient/texture overlays from theme
@@ -84,6 +93,14 @@
 .app-shell {
 	background-attachment: fixed;
 	background-blend-mode: multiply;
+}
+
+/* No focus rings, from the browser or from a component. Focus still moves
+   with Tab and the arrow keys; it is not drawn. :where() gives the rule no
+   weight, so an outline a component draws for another reason (a selected
+   footnote, the rename field's edge) still shows. */
+:where(:focus, :focus-visible) {
+	outline: none;
 }
 
 /* Liquid glass (themes.css, `--lq-*`). One recipe for everything that
@@ -157,12 +174,32 @@
 	transition-duration: var(--motion-hover-in);
 }
 
-/* Reduce transparency: the glass turns to the plain surface, with its rim
-   and lift, and nothing behind it shows through. */
+/* Settings · Appearance · Glass (stores/glass.svelte.ts): how much the
+   glass fills thin the surface (themes.css). Medium is 1, the default.
+   None is a plain surface with its rim and lift, and nothing behind it
+   shows through. */
+:root[data-glass="low"] {
+	--lq-see: 0.5;
+}
+
+:root[data-glass="high"] {
+	--lq-see: 1.4;
+}
+
+:root[data-glass="none"] {
+	--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
+	--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
+	--lq-fill-selected: linear-gradient(var(--color-surface), var(--color-surface));
+	--lq-filter: none;
+	--lq-filter-regular: none;
+}
+
+/* Reduce transparency on the device is None. */
 @media (prefers-reduced-transparency: reduce) {
-	:root {
+	:root:root {
 		--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
 		--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
+		--lq-fill-selected: linear-gradient(var(--color-surface), var(--color-surface));
 		--lq-filter: none;
 		--lq-filter-regular: none;
 	}
@@ -455,15 +492,10 @@ h6 {
 	text-decoration-color: transparent !important;
 }
 
-/* The spinner every "working" glyph in the app wears: `<Icon … class="spin" />`.
-   It lives here because it was never anywhere: SIX components each declared
-   their own `:global(.spin)` (ContextMenuItem, CoverImagePicker,
-   ProjectDetailView, PageContent, VersionHistoryPanel, the public share page)
-   and TEN more used the class without declaring it — SubagentPanel,
-   SystemInfoView, DeveloperSqlView, ReferencesPanel and the rest — so whether
-   your spinner turned depended on whether an unrelated component happened to
-   be mounted. Removing ContextMenuItem's copy on 2026-09-16 is what surfaced
-   it. The duplicate declarations are harmless now and should go. */
+/* The one spinner. A working glyph wears `<Icon … class="spin" />`; a
+   component that spins an element of its own names `virtues-spin` at 1s, and
+   never declares a rotation keyframe of its own, so every spinner in the app
+   turns at one speed and stills in one place. */
 .spin {
 	animation: virtues-spin 1s linear infinite;
 }
@@ -473,9 +505,13 @@ h6 {
 	to { transform: rotate(360deg); }
 }
 
-/* Keep the information, drop the travel (design.md). */
+/* Keep the information, drop the travel (design.md): under reduced motion
+   the keyframes hold still, so a spinner stays where it is and still says
+   that something is working. */
 @media (prefers-reduced-motion: reduce) {
-	.spin { animation: none; }
+	@keyframes virtues-spin {
+		from, to { transform: none; }
+	}
 }
 
 /* Reduce motion turned on in Settings (stores/motion.svelte.ts). It stands in

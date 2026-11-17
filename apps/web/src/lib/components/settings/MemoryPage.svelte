@@ -24,6 +24,6 @@
 	const spoken = $derived(name.charAt(0).toUpperCase() + name.slice(1));
 </script>
 
-<Page title={titleOf(findSetting('memory')?.title ?? '', spoken)} maxWidth="prose">
+<Page title={titleOf(findSetting('memory')?.title ?? '', spoken)} maxWidth="reading">
 	<MemorySettings assistantName={spoken} />
 </Page>

@@ -181,11 +181,6 @@
 		cursor: not-allowed;
 	}
 
-	.v-menuitem:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	/* A checkbox in a set shows only its tick; shading every checked row
 	   reads as that many highlights. Any other checked row is shaded. */
 	.v-menuitem.is-checked:not([role="menuitemcheckbox"]) {

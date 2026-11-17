@@ -144,7 +144,7 @@
 
 </script>
 
-<Page title="What AI has cost" description="This month, day by day, by kind of work, and every call." maxWidth="wide">
+<Page title="What AI has cost" description="This month, day by day, by kind of work, and every call." maxWidth="full">
 <div class="plan-sections">
 	<!-- ─── THE MONTH ─────────────────────────────────────────────────────
 	     The two figures and the wallet's money in and out. Auto top-up, the

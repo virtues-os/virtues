@@ -228,11 +228,6 @@
 		border-color: var(--color-info);
 	}
 
-	.relaunch:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.footer.collapsed {
 		@apply items-center;
 		padding-left: 4px;

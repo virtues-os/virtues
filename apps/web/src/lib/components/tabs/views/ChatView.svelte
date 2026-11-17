@@ -3128,11 +3128,6 @@
 		translate: 0 1px;
 	}
 
-	.jump-to-end:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	/* Track E1 — in-message media */
 	.msg-attachments {
 		display: flex;

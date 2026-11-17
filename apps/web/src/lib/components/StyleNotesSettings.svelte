@@ -3,11 +3,16 @@
 	 * The owner's notes on how the assistant should talk to them. They sit
 	 * beneath the assistant's own character in the prompt, and where the two
 	 * disagree about manner the notes win (`prompt::style_notes_block`).
+	 *
+	 * "Show a sample reply" asks the server for a few sentences in the notes'
+	 * style, about an invented week (`api/style_preview.rs`). While it is
+	 * open it follows the field, a moment after typing stops, before
+	 * anything is saved.
 	 */
 	// By path, not the `$lib` barrel, which the component tests cannot load.
 	import Button from '$lib/components/Button.svelte';
 	import Textarea from '$lib/components/Textarea.svelte';
-	import { updateAssistantProfile } from '$lib/api/client';
+	import { updateAssistantProfile, previewStyle, ApiError, type StylePreview } from '$lib/api/client';
 
 	/** Mirrors `STYLE_NOTES_MAX_CHARS` in assistant_profile.rs. */
 	const MAX_CHARS = 1000;
@@ -61,6 +66,39 @@
 		}
 	}
 
+	// ─── Sample reply ─────────────────────────────────────────────────────
+	let previewOpen = $state(false);
+	let preview = $state<StylePreview | null>(null);
+	let previewing = $state(false);
+	let previewError = $state<string | null>(null);
+	/** The notes the shown sample was written for. */
+	let previewedFor = $state<string | null>(null);
+
+	$effect(() => {
+		if (!previewOpen) return;
+		const text = draft.trim();
+		if (text === previewedFor) return;
+		const controller = new AbortController();
+		// A pause in typing, so one sample is written per thought, not per key.
+		const timer = setTimeout(async () => {
+			previewing = true;
+			previewError = null;
+			try {
+				preview = await previewStyle(text, controller.signal);
+				previewedFor = text;
+			} catch (e) {
+				if ((e as Error)?.name === 'AbortError') return;
+				previewError = e instanceof ApiError ? e.message : `${assistantName} couldn't write a sample. Try again in a moment.`;
+			} finally {
+				previewing = false;
+			}
+		}, previewedFor === null ? 0 : 1200);
+		return () => {
+			clearTimeout(timer);
+			controller.abort();
+		};
+	});
+
 	function retry() {
 		// The error line already says what failed.
 		commit(draft).catch(() => {});
@@ -100,6 +138,23 @@
 			</p>
 		{/if}
 	</div>
+	{#if !previewOpen}
+		<div>
+			<Button variant="ghost" size="sm" onclick={() => (previewOpen = true)}>Show a sample reply</Button>
+		</div>
+	{:else}
+		<div class="sample" aria-live="polite" aria-busy={previewing}>
+			<p class="sample-q">“{preview?.question ?? 'How did this week go?'}”</p>
+			{#if previewError}
+				<p class="field-error">{previewError}</p>
+			{:else if preview}
+				<p class="sample-reply" class:stale={previewing}>{preview.reply}</p>
+			{:else}
+				<p class="sample-wait">{assistantName} is writing a sample…</p>
+			{/if}
+			<p class="sample-note">About a made-up week, so it shows only how {assistantName} sounds.</p>
+		</div>
+	{/if}
 </section>
 
 <style>
@@ -131,6 +186,48 @@
 	.sec-hint,
 	.count {
 		color: var(--color-foreground-subtle);
+	}
+
+	.sample {
+		max-width: 60ch;
+		padding: 12px 16px;
+		border-radius: var(--radius-md);
+		background: var(--color-surface-elevated);
+	}
+
+	.sample p {
+		margin: 0;
+	}
+
+	.sample-q,
+	.sample-note,
+	.sample-wait {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+
+	.sample .sample-reply {
+		margin: 8px 0;
+		font-family: var(--font-serif);
+		font-size: 17px;
+		line-height: 1.5;
+		color: var(--color-foreground);
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
+	}
+
+	/* A new sample is on its way. */
+	.sample-reply.stale {
+		opacity: 0.55;
+	}
+
+	.sample .sample-wait {
+		margin: 8px 0;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.sample-reply {
+			transition: none;
+		}
 	}
 
 	.count {

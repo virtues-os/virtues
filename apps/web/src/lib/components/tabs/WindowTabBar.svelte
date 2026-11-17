@@ -893,11 +893,6 @@
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
 	}
 
-	.tab:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	/* The tab you are on: full ink on glass. Never marked by weight: a
 	   bolder label is a wider one, and every tab to its right moved when you
 	   switched. */
@@ -1227,8 +1222,6 @@
 
 	.tab-close:focus-visible {
 		opacity: 1;
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	.new-tab-btn {
@@ -1274,8 +1267,6 @@
 	}
 
 	.new-tab-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 		color: var(--color-foreground);
 	}
 

@@ -875,7 +875,9 @@
 			);
 		} else if (owned?.kind === 'thread') {
 			const p = projects.find((x) => x.id === owned.id);
-			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null });
+			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null }, {
+				rename: () => startRename(pin.url, look.title, 'thread'),
+			});
 		}
 		if (base) {
 			const rename = base.findIndex((i) => i.id === 'rename');
@@ -927,7 +929,9 @@
 	function recentMenu(row: RecentRow): ContextMenuItem[] {
 		if (row.kind === 'chat') return chatMenu(row.session);
 		if (row.kind === 'page') return pageMenu(row.page);
-		if (row.kind === 'thread') return projectRowMenuItems(row.project);
+		if (row.kind === 'thread') {
+			return projectRowMenuItems(row.project, { rename: () => startRename(row.url, row.title, 'thread') });
+		}
 		return [
 			...openMenuItems(row.url, row.title),
 			pinMenuItem({ url: row.url, label: row.title }),
@@ -1403,11 +1407,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.group-label:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	/* ONE MOTION for the fold: chevron and body share a duration (--fold-ms,
 	   set per group) and a curve, so they start and stop on the same frame.
 	   Closing runs at 0.85x — what leaves should get out of the way.
@@ -1688,11 +1687,6 @@
 		transition: none;
 	}
 
-	.panel-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.panel-row-text {
 		flex: 1;
 		min-width: 0;
@@ -1838,11 +1832,6 @@
 
 	.row-action.on {
 		color: var(--color-foreground);
-	}
-
-	.row-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	.panel-more {

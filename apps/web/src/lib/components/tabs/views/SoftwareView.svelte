@@ -63,7 +63,7 @@
 <Page
 	title="Software"
 	description="What each part of the app runs. Updates are in Settings."
-	maxWidth="wide"
+	maxWidth="reading"
 >
 
 	<section class="artifacts">

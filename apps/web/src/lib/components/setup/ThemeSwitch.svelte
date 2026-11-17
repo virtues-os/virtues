@@ -87,10 +87,6 @@
 	.flip:hover {
 		color: var(--color-foreground);
 	}
-	.flip:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	svg {
 		fill: none;
 		stroke: currentColor;

@@ -212,12 +212,6 @@
 		cursor: pointer;
 	}
 
-	button.hit:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 4px;
-		border-radius: var(--radius-md);
-	}
-
 	/* ── quote ── */
 	.fig-quote q {
 		display: block;

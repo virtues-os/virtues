@@ -644,10 +644,6 @@
 		border-color: var(--color-border-strong);
 		background: var(--color-surface);
 	}
-	.week:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
 	.week-go {
 		margin-left: auto;
 		color: var(--color-foreground-subtle);

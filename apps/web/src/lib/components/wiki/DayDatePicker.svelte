@@ -106,11 +106,6 @@
 		border-radius: var(--radius-md);
 	}
 
-	.trigger:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 4px;
-	}
-
 	.calendar {
 		width: 15rem;
 		padding: 0.625rem;

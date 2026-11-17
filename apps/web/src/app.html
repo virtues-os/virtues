@@ -28,6 +28,9 @@
 				try {
 					var t = localStorage.getItem("virtues-theme");
 					if (t) document.documentElement.setAttribute("data-theme", t);
+					// Settings · Appearance · Glass (stores/glass.svelte.ts).
+					var g = localStorage.getItem("virtues-glass");
+					if (g) document.documentElement.setAttribute("data-glass", g);
 					var bg =
 						localStorage.getItem("virtues-theme-surface") ||
 						localStorage.getItem("virtues-theme-bg") ||

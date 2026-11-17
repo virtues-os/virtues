@@ -501,7 +501,7 @@
 <Page
 	title="Catalog"
 	description="Services you can connect. Some sync your data to your server. In others, the assistant can act for you when you ask in chat."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#if store.error}
 		<div class="error">{store.error}</div>

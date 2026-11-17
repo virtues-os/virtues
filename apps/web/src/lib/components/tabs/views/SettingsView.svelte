@@ -16,6 +16,7 @@
 	  Billing      /virtues/billing        — subscription, balance, limits
 	  Cost         /virtues/billing/cost   — what AI has cost, and every call
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
+	  Backup       /virtues/backup         — the newest backup, the drives, restoring
 	  Server       /virtues/server         — updates, and reaching it from away
 	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
@@ -56,6 +57,7 @@
 	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
 	import MemoryPage from '$lib/components/settings/MemoryPage.svelte';
 	import ByoPage from '$lib/components/settings/ByoPage.svelte';
+	import BackupPage from '$lib/components/settings/BackupPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -175,6 +177,7 @@
 		| 'profile'
 		| 'appearance'
 		| 'server'
+		| 'backup'
 		| 'assistant'
 		| 'billing'
 		| 'keys'
@@ -189,6 +192,7 @@
 		'profile',
 		'appearance',
 		'server',
+		'backup',
 		'assistant',
 		'billing',
 		'keys',
@@ -222,6 +226,8 @@
 			<SettingsSection section="appearance" />
 		{:else if section === 'server'}
 			<SettingsSection section="server" />
+		{:else if section === 'backup'}
+			<BackupPage />
 		{:else if section === 'assistant'}
 			{#if sub === 'memory'}
 				<MemoryPage />
@@ -306,7 +312,7 @@
 	}
 
 	.measure {
-		max-width: 72rem;
+		max-width: var(--page-full);
 		width: 100%;
 		margin: 0 auto;
 	}

@@ -58,7 +58,7 @@ export interface Setting {
 export const SECTIONS: readonly Section[] = [
 	{ id: 'you', title: 'Profile', lede: 'What {name} knows about you to start with. Your pages and day summaries use it too.', route: '/virtues/profile' },
 	{ id: 'assistant', title: '{name}', lede: 'How it talks to you, what it can do, and the models it runs on.', route: '/virtues/assistant' },
-	{ id: 'data', title: 'Your data', lede: "What {name} remembers, the keys your server keeps, and what you've shared.", route: null },
+	{ id: 'data', title: 'Your data', lede: "What {name} remembers, the keys your server keeps, what you've shared, and its backups.", route: null },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: 'Your subscription, what AI may spend, and what it has cost.', route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
@@ -86,9 +86,11 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'memory', title: 'What {name} remembers', section: 'data', kind: 'page', words: ['memory', 'memories', 'notes', 'forget'], route: '/virtues/assistant/memory' },
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/shared' },
+	{ id: 'backup', title: 'Backup', section: 'data', kind: 'page', words: ['backup', 'drive', 'restore', 'copy', 'recovery key', 'disaster'], route: '/virtues/backup' },
 
 	// Appearance
 	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues/appearance' },
+	{ id: 'glass', title: 'Glass', section: 'appearance', kind: 'control', words: ['glass', 'transparency', 'translucent', 'blur', 'see-through', 'solid', 'frosted'], route: '/virtues/appearance' },
 	{ id: 'reading-font', title: 'Reading font', section: 'appearance', kind: 'control', words: ['font', 'typeface', 'serif', 'sans', 'mono', 'pages', 'reading'], route: '/virtues/appearance' },
 	{ id: 'text-size', title: 'Text size', section: 'appearance', kind: 'control', words: ['font size', 'bigger text', 'smaller text', 'larger', 'zoom', 'readable'], route: '/virtues/appearance' },
 	{ id: 'reduce-motion', title: 'Reduce motion', section: 'appearance', kind: 'control', words: ['animation', 'motion', 'movement', 'still', 'accessibility', 'dizzy'], route: '/virtues/appearance' },
@@ -108,7 +110,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'update-channel', title: 'Which updates', section: 'server', kind: 'control', words: ['channel', 'early', 'beta', 'released', 'prerelease'], route: '/virtues/server' },
 	{ id: 'reach', title: 'Reach your server away from home', section: 'server', kind: 'control', words: ['remote', 'relay', 'network', 'anywhere', 'away'], route: '/virtues/server' },
 	{ id: 'search-runs-on', title: 'Where search runs', section: 'server', kind: 'page', words: ['search', 'accelerator', 'npu', 'cpu', 'index'], route: '/virtues/search' },
-	{ id: 'server-health', title: 'How your server is doing', section: 'server', kind: 'page', words: ['system', 'storage', 'disk', 'memory', 'cpu', 'health', 'backup'], route: '/virtues/system' },
+	{ id: 'server-health', title: 'How your server is doing', section: 'server', kind: 'page', words: ['system', 'storage', 'disk', 'memory', 'cpu', 'health'], route: '/virtues/system' },
 	{ id: 'devices', title: 'Devices', section: 'server', kind: 'page', words: ['phone', 'iphone', 'mac', 'paired', 'unpair'], route: '/virtues/devices' },
 	{ id: 'pair-device', title: 'Pair a device', section: 'server', kind: 'action', words: ['add device', 'connect', 'new phone'], route: '/virtues/devices' },
 	{ id: 'start-over', title: 'Start over', section: 'server', kind: 'action', words: ['reset', 'unpair everything', 'setup again'], route: '/virtues', destructive: true },
@@ -175,6 +177,7 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 			{ label: 'What {name} remembers', blurb: 'Notes from your chats', route: '/virtues/assistant/memory' },
 			{ label: 'Keys', blurb: 'What your applets sign in with', route: '/virtues/keys' },
 			{ label: 'Shared links', blurb: "Everything you've shared", route: '/virtues/shared' },
+			{ label: 'Backup', blurb: 'A drive, every night, and restoring', route: '/virtues/backup' },
 		],
 	},
 	{

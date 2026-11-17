@@ -1,14 +1,16 @@
 <script lang="ts">
 	/**
-	 * Appearance rows after the theme: reading font and text size, which are
-	 * the page display settings a page's Aa menu also sets (stores/pageDisplay),
-	 * and Reduce motion (stores/motion). All three are kept in this browser.
+	 * Appearance rows after the theme: Glass (stores/glass), reading font and
+	 * text size, which are the page display settings a page's Aa menu also
+	 * sets (stores/pageDisplay), and Reduce motion (stores/motion). All four
+	 * are kept in this browser.
 	 */
 	import SettingRow from './SettingRow.svelte';
 	import Choice from './Choice.svelte';
 	import Switch from './Switch.svelte';
 	import { pageDisplay, type FontMode, type TextSize } from '$lib/stores/pageDisplay.svelte';
 	import { motion } from '$lib/stores/motion.svelte';
+	import { glass, type GlassLevel } from '$lib/stores/glass.svelte';
 	import { titleOf, findSetting } from '$lib/settings';
 
 	let { assistantName }: { assistantName: string } = $props();
@@ -25,6 +27,13 @@
 		{ value: 'l', label: 'Large' },
 	] as const satisfies readonly { value: TextSize; label: string }[];
 
+	const GLASS = [
+		{ value: 'none', label: 'None' },
+		{ value: 'low', label: 'Low' },
+		{ value: 'medium', label: 'Medium' },
+		{ value: 'high', label: 'High' },
+	] as const satisfies readonly { value: GlassLevel; label: string }[];
+
 	const title = (id: string) => titleOf(findSetting(id)?.title ?? id, assistantName);
 
 	const motionHelp = $derived(
@@ -33,6 +42,10 @@
 			: 'Things appear and close without sliding or fading.',
 	);
 </script>
+
+<SettingRow id="glass" label={title('glass')} help="How much of the painting shows through the sidebar, tabs and buttons. None makes them solid." forId="glass-choice">
+	<Choice id="glass-choice" value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
+</SettingRow>
 
 <SettingRow id="reading-font" label={title('reading-font')} help="The typeface your pages are set in. A page's Aa menu changes it too." forId="reading-font-choice">
 	<Choice id="reading-font-choice" value={pageDisplay.fontMode} options={FONTS} onchange={(v) => pageDisplay.setFontMode(v)} />

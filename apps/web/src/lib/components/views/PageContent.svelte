@@ -782,7 +782,7 @@
 			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
-		<div class="max-w-2xl mx-auto p-4">
+		<div class="max-w-[var(--page-reading)] mx-auto p-4">
 			<div
 				class="p-4 bg-error-subtle border border-error rounded-lg text-error"
 			>
@@ -825,9 +825,6 @@
 							save();
 						}}
 					/>
-				{:else}
-					<!-- No cover: the home painting comes back as an ink print. -->
-					<div class="page-ink" aria-hidden="true"></div>
 				{/if}
 
 				<div
@@ -1211,11 +1208,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.page-adder:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
-	}
-
 	/* The page has a cover: the button stays only as the anchor its picker
 	   opens from when the cover asks for a change. */
 	.page-adder.hidden-adder {
@@ -1342,24 +1334,5 @@
 			padding: 0;
 			border: none;
 		}
-	}
-
-
-	.page-ink {
-		height: 150px;
-		margin-bottom: -40px;
-		background: url("/scenes/lake-ink.jpg") 60% 64% / cover no-repeat;
-		/* WebP is 147 KB to the JPEG's 334 KB. A browser without image-set()
-		   keeps the JPEG above. */
-		background-image: image-set(url("/scenes/lake-ink.webp") type("image/webp"), url("/scenes/lake-ink.jpg") type("image/jpeg"));
-		opacity: 0.75;
-		pointer-events: none;
-		-webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
-		mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
-	}
-
-	:global(:is([data-theme="lothlorien"], [data-theme="baker-street"], [data-theme="narnia"], [data-theme="canterbury"], [data-theme="borghese"], [data-theme="lyceum"], [data-theme="asgard"], [data-theme="agora"], [data-theme="shire"])) .page-ink {
-		filter: invert(1) brightness(0.85);
-		opacity: 0.45;
 	}
 </style>

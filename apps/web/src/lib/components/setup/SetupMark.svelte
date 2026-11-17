@@ -205,10 +205,6 @@
 		color: var(--color-foreground);
 		cursor: pointer;
 	}
-	.glyph:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	/* The step's name, always there under the mark: small capitals, quiet,
 	   darker on hover and with the list. */
 	.label {

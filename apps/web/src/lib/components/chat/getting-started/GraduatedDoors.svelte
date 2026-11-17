@@ -116,11 +116,6 @@
 		background: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	}
 
-	.door:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.line {
 		display: flex;
 		align-items: baseline;

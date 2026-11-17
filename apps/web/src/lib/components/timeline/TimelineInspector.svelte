@@ -916,7 +916,6 @@
 		font-size: 14px;
 	}
 	.name-input:focus {
-		outline: none;
 		border-color: var(--color-primary);
 	}
 	.name-error {

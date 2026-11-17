@@ -138,7 +138,7 @@
 	];
 </script>
 
-<Page title="Keys" description="Keys your applets use. Values show only when you ask." maxWidth="wide">
+<Page title="Keys" description="Keys your applets use. Values show only when you ask." maxWidth="full">
 	<section class="block">
 		<h2 class="block-title">Keys</h2>
 		<p class="block-body">

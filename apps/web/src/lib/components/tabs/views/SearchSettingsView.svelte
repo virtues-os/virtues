@@ -99,7 +99,7 @@
 	});
 </script>
 
-<Page title="Search" description="Where search runs, and how much of your record it covers." maxWidth="wide">
+<Page title="Search" description="Where search runs, and how much of your record it covers." maxWidth="reading">
 	{#if error}
 		<p class="error">
 			Couldn't load search status: {error}.

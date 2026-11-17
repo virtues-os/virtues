@@ -603,11 +603,6 @@
 		flex-direction: column;
 	}
 
-	/* A heading holds focus only to place the reader; it isn't a control. */
-	.flow :global(h1[tabindex="-1"]:focus),
-	.flow :global(h2[tabindex="-1"]:focus) {
-		outline: none;
-	}
 	.close-error {
 		position: fixed;
 		z-index: 21;
@@ -642,11 +637,6 @@
 	}
 	.later:hover {
 		color: var(--color-foreground);
-	}
-	.later:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-		border-radius: 0;
 	}
 
 	.corner {
@@ -700,10 +690,6 @@
 	}
 	.sound:hover {
 		color: var(--color-foreground);
-	}
-	.sound:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 	.sound svg {
 		fill: none;

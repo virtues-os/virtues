@@ -295,12 +295,6 @@
 		animation: menu-fade-in var(--motion-enter) var(--ease-premium);
 	}
 
-	/* Opened from a button, the menu holds the focus (`activeDescendant.ts`);
-	   the row reached is what is drawn as focused. */
-	.context-menu:focus {
-		outline: none;
-	}
-
 	@keyframes menu-fade-in {
 		from {
 			opacity: 0;

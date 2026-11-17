@@ -15,7 +15,7 @@
 	}
 </script>
 
-<Page maxWidth="wide">
+<Page maxWidth="full">
 	{#snippet heading()}
 		<div class="back">
 			<Button variant="ghost" size="sm" icon="mynaui:arrow-left" onclick={backToAssistant}>

@@ -522,10 +522,6 @@
 	.door button:hover {
 		opacity: 0.86;
 	}
-	.door button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-	}
 	.door svg {
 		fill: none;
 		stroke: currentColor;

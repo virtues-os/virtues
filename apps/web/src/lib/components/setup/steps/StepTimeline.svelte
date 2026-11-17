@@ -1312,11 +1312,6 @@
 		background: transparent;
 		cursor: pointer;
 	}
-	.advance:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 8px;
-		border-radius: var(--radius-md);
-	}
 	.stage > svg {
 		position: absolute;
 		inset: 0;
@@ -1499,10 +1494,6 @@
 	.editor.unborn .band-hit {
 		cursor: pointer;
 	}
-	.band-hit:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
-	}
 
 	.label {
 		position: absolute;
@@ -1624,12 +1615,6 @@
 	.handle:focus-visible .tick::before {
 		transform: scale(1.35);
 		background: var(--color-primary);
-	}
-	.handle:focus-visible {
-		outline: none;
-	}
-	.handle:focus-visible .tick {
-		outline: 3px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
 	}
 
 	.year-btn,
@@ -1925,10 +1910,6 @@
 	.example-link[aria-expanded="true"] {
 		color: var(--color-foreground);
 	}
-	.example-link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-	}
 	.example-pop {
 		position: absolute;
 		z-index: 5;
@@ -2001,16 +1982,6 @@
 	.quiet:disabled {
 		opacity: 0.45;
 		cursor: default;
-	}
-	.quiet:focus-visible,
-	.primary:focus-visible,
-	.link:focus-visible,
-	.year-btn:focus-visible,
-	.row-year-btn:focus-visible,
-	.row-remove:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-		border-radius: var(--radius-md);
 	}
 	.under {
 		display: flex;

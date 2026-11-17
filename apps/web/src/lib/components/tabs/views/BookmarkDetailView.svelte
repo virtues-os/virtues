@@ -128,7 +128,7 @@
 	}
 </script>
 
-<Page title={heading} description={origin} maxWidth="prose">
+<Page title={heading} description={origin} maxWidth="reading">
 	{#if loading}
 		<p class="state">Opening…</p>
 	{:else if error}
@@ -304,7 +304,6 @@
 		resize: vertical;
 	}
 	.note-input:focus {
-		outline: none;
 		border-color: var(--color-foreground-muted);
 	}
 	.note-input::placeholder {

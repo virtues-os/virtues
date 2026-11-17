@@ -2,6 +2,7 @@
     import { twMerge } from "tailwind-merge";
     import type { Snippet } from "svelte";
     import PageHeading from "./PageHeading.svelte";
+    import { usePageActions } from "$lib/stores/paneActions.svelte";
 
     let {
         title,
@@ -17,14 +18,14 @@
         title?: string;
         description?: string;
         /**
-         * Two measures, so views read as siblings: `prose` for reading, `wide`
-         * for tables and grids. (Was five — narrow/full were each used once or
-         * twice and only made neighboring pages disagree by a few rem.)
+         * The page's width, one of the three in themes.css: `reading` for
+         * text and plain lists, `detail` for a page with a side column, `full`
+         * for tables and grids.
          *
          * This is chrome, chosen by the view. The *reader's* width preference
          * is a different thing and lives in `stores/pageDisplay.svelte.ts`.
          */
-        maxWidth?: "none" | "prose" | "wide";
+        maxWidth?: "none" | "reading" | "detail" | "full";
         padding?: "default" | "compact" | "none";
         scrollable?: boolean;
         class?: string;
@@ -64,10 +65,19 @@
         none: "",
     }[padding]);
 
+    // On the desktop the page's title is the last segment of its tab's
+    // action toolbar, and its controls sit at the toolbar's end. The phone
+    // has no toolbar, so there both stay at the top of the page.
+    const toolbar = usePageActions(() => actions);
+    const headingTitle = $derived(toolbar.inToolbar ? undefined : title);
+    const headingActions = $derived(toolbar.inToolbar ? undefined : actions);
+    const showHeading = $derived(!!headingTitle || !!description);
+
     const maxWidthClass = $derived({
         none: "",
-        prose: "max-w-3xl mx-auto",
-        wide: "max-w-6xl mx-auto",
+        reading: "max-w-[var(--page-reading)] mx-auto",
+        detail: "max-w-[var(--page-detail)] mx-auto",
+        full: "max-w-[var(--page-full)] mx-auto",
     }[maxWidth]);
 </script>
 
@@ -76,16 +86,16 @@
         <div class={maxWidthClass}>
             {#if heading}
                 {@render heading()}
-            {:else if title}
-                <PageHeading {title} {description} {actions} />
+            {:else if title && showHeading}
+                <PageHeading title={headingTitle} {description} actions={headingActions} />
             {/if}
             {@render children()}
         </div>
     {:else}
         {#if heading}
             {@render heading()}
-        {:else if title}
-            <PageHeading {title} {description} {actions} />
+        {:else if title && showHeading}
+            <PageHeading title={headingTitle} {description} actions={headingActions} />
         {/if}
         {@render children()}
     {/if}

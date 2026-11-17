@@ -243,7 +243,7 @@
 		{:else if wikiPage.kind === "organization"}
 			<OrganizationPage page={wikiPage.page} />
 		{:else if wikiPage.kind === "thing"}
-			<ThingPage page={wikiPage.page} onRenamed={updateLabel} />
+			<ThingPage page={wikiPage.page} {active} onRenamed={updateLabel} />
 		{/if}
 	{:else}
 		<div class="error">

@@ -73,7 +73,7 @@
 	title={source?.name ?? sourceId}
 	description={source?.description ??
 		'This source is not installed on this server. Anything still connected to it won\'t run.'}
-	maxWidth="wide"
+	maxWidth="detail"
 >
 	{#snippet actions()}
 		{#if source}

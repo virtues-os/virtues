@@ -76,7 +76,7 @@
 <div class="page-layout">
 	<article class="wiki-article">
 		<div class="page-content">
-			<WikiCrumbs bar parent={{ label: "Organizations", href: "/wiki/orgs" }} current={page.name} />
+			<WikiCrumbs bar path={[{ label: "Organizations", route: "/wiki/orgs" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="page-header">
 				<!-- `cover_image` has a PUT that accepts it and no client that
@@ -192,7 +192,7 @@
 	}
 
 	.page-content {
-		max-width: 48rem;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;

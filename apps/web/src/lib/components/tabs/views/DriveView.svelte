@@ -559,7 +559,7 @@
 	</div>
 {/snippet}
 
-<Page title="Files" description="The files you keep on your server." maxWidth="wide">
+<Page title="Files" description="The files you keep on your server." maxWidth="full">
 
 		<!-- Usage Bar -->
 		{#if usage}

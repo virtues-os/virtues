@@ -172,7 +172,7 @@
                     <textarea
                         bind:value={sql}
                         onkeydown={handleKeydown}
-                        class="min-h-[80px] w-full rounded-md border border-border bg-surface-elevated p-2 font-mono text-xs text-foreground focus:border-primary focus:outline-none"
+                        class="min-h-[80px] w-full rounded-md border border-border bg-surface-elevated p-2 font-mono text-xs text-foreground focus:border-primary"
                         placeholder="Enter SQL query..."
                     ></textarea>
                     <div class="mt-2 flex items-center justify-between">

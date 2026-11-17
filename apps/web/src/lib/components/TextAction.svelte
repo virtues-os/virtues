@@ -206,13 +206,6 @@
 		cursor: progress;
 	}
 
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-textaction:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-md);
-	}
-
 	/* The way back. Muted ink, so "Cancel" beside "Send a link" reads as the
 	   lesser of the two without either growing a box. */
 	.v-textaction[data-quiet="true"] {

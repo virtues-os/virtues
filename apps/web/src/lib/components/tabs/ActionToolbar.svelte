@@ -581,12 +581,4 @@
 		opacity: 0.4;
 		cursor: default;
 	}
-
-	.action:focus-visible,
-	.status:focus-visible,
-	.pin:focus-visible,
-	.crumb.link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
 </style>

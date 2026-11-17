@@ -206,10 +206,9 @@
 
 <style>
 	.page {
-		max-width: 720px;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		padding: 40px 32px 96px;
-		box-sizing: border-box;
 	}
 
 	h1 {
@@ -228,14 +227,11 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		color: var(--color-foreground-muted);
-		transition:
-			border-color var(--motion-hover-out) var(--ease-premium),
-			box-shadow var(--motion-hover-out) var(--ease-premium);
+		transition: border-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.search:focus-within {
 		border-color: var(--color-border-focus);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent);
 	}
 
 	.search input {

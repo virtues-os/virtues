@@ -95,6 +95,7 @@
 	import IconButton from "$lib/components/IconButton.svelte";
 	import MenuItem from "$lib/components/MenuItem.svelte";
 	import WikiCrumbs from "./WikiCrumbs.svelte";
+	import { usePageActions, usePageStatus } from "$lib/stores/paneActions.svelte";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -111,9 +112,28 @@
 	const titleLabel = $derived(
 		date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
 	);
-	/** The breadcrumb's last part: "Mar 14, 2026". The title has the weekday. */
+	/** The phone's breadcrumb ends "Mar 14, 2026"; the title has the weekday. */
 	const crumbLabel = $derived(
 		date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+	);
+
+	// On the desktop the day bar's controls are the action toolbar's, with
+	// the days on either side after them.
+	const dayToolbar = usePageActions(() => toolbarControls);
+
+	/**
+	 * Below Wiki. On the desktop, the action toolbar's path climbs through
+	 * the year (a page of its own) and the month to the day's title; the
+	 * month has no page, so it is not a link. The phone's line is shorter.
+	 */
+	const crumbPath = $derived(
+		dayToolbar.inToolbar
+			? [
+					{ label: String(date.getFullYear()), route: `/year/year_${date.getFullYear()}` },
+					{ label: date.toLocaleDateString("en-US", { month: "long" }) },
+					{ label: titleLabel },
+				]
+			: [{ label: "Days", route: "/wiki/days" }, { label: crumbLabel }],
 	);
 
 	// Shared hover state for chart ↔ timeline sync
@@ -415,6 +435,19 @@
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
 	}
+
+	// The day's page is written by a model provider from the day's evidence
+	// (privacy-boundary.md, "the nightly day write-up"), and the action
+	// toolbar says so while there is a page.
+	usePageStatus(() =>
+		summaryText
+			? {
+					label: "Written off your server",
+					tip: "Your server sent this day's evidence to a model provider to write this page.",
+					offBox: true,
+				}
+			: null,
+	);
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Section visibility (hide empty sections)
@@ -1064,111 +1097,144 @@
 
 </script>
 
+{#snippet backToSentence()}
+	<button type="button" class="bar-action back" aria-label="Back to the sentence" onclick={backToArticle}>← Back<span class="bar-more">{" to the sentence"}</span></button>
+{/snippet}
+
+{#snippet dayControls()}
+	<div class="segmented" role="group" aria-label="View">
+		<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
+		<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Data</button>
+	</div>
+	{#if view === "article" && currentDateSlug <= todaySlug}
+		<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
+	{/if}
+	{#if showAutobiography}
+		<button
+			type="button"
+			class="bar-action"
+			disabled={rewriteRunning}
+			title={rewriteRunning ? "Your server is writing this page again." : undefined}
+			onclick={openDayArticle}
+		>Edit</button>
+	{/if}
+	<div class="day-more">
+		<Popover bind:open={menuOpen} placement="bottom-end" offset={4}>
+			{#snippet trigger({ toggle })}
+				<IconButton icon="mynaui:dots" label="More" haspopup="menu" expanded={menuOpen} onclick={toggle} />
+			{/snippet}
+			{#snippet children({ close })}
+				<div class="day-menu" role="menu" aria-label="More" use:menuKeys>
+					{#if canRewrite}
+						<MenuItem
+							label={rewriteSending || rewriteRunning ? "Writing this page…" : "Rewrite this page…"}
+							loading={rewriteSending || rewriteRunning}
+							onclick={() => {
+								close();
+								void rewritePage();
+							}}
+						/>
+					{/if}
+					{#if canPaint}
+						<MenuItem
+							label={painting ? "Painting…" : "Paint this day"}
+							loading={painting}
+							disabled={(paintingDay !== null && !painting) || rewriteRunning}
+							onclick={() => {
+								close();
+								void paintThisDay();
+							}}
+						/>
+					{/if}
+					<MenuItem
+						label="History"
+						onclick={() => {
+							close();
+							openHistory();
+						}}
+					/>
+					<MenuItem
+						label="Open in Timeline"
+						onclick={() => {
+							close();
+							openInTimeline();
+						}}
+					/>
+					<MenuItem
+						label={linkCopy === "copied" ? "Link copied" : linkCopy === "failed" ? "Couldn't copy the link" : "Copy link"}
+						onclick={copyLink}
+					/>
+					<div class="menu-rule" role="separator"></div>
+					<MenuItem
+						label={veil.on ? "Show names" : "Hide names"}
+						shortcut={veil.on && !touchOnly ? "Hold V" : undefined}
+						onclick={() => {
+							close();
+							veil.toggle();
+						}}
+					/>
+					<div class="menu-rule" role="separator"></div>
+					<div class="menu-pictures" role="group" aria-label="Pictures">
+						<span class="menu-label" aria-hidden="true">Pictures</span>
+						<div class="picture-choices">
+							{#each PICTURE_CHOICES as choice (choice.value)}
+								<button
+									type="button"
+									role="menuitemradio"
+									aria-checked={pictures === choice.value}
+									class="picture-choice"
+									class:on={pictures === choice.value}
+									onclick={() => choosePictures(choice.value)}>{choice.label}</button
+								>
+							{/each}
+						</div>
+						<span class="menu-hint">About one a week, of a place from your pages</span>
+					</div>
+				</div>
+			{/snippet}
+		</Popover>
+	</div>
+{/snippet}
+
+{#snippet toolbarControls()}
+	{#if view === "record" && citedRef}
+		{@render backToSentence()}
+	{/if}
+	{@render dayControls()}
+	<span class="day-steps">
+		<IconButton
+			icon="mynaui:chevron-left"
+			label={prevDay ? `Previous day, ${neighborLabel(prevDay)}` : "Previous day"}
+			disabled={!prevDay}
+			onclick={() => prevDay && navigateToDay(prevDay.date)}
+		/>
+		<IconButton
+			icon="mynaui:chevron-right"
+			label={nextDay ? `Next day, ${neighborLabel(nextDay)}` : "Next day"}
+			disabled={!nextDay}
+			onclick={() => nextDay && navigateToDay(nextDay.date)}
+		/>
+	</span>
+{/snippet}
+
 {#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
 
 <div class="day-page-outer">
 	<div class="day-page-layout">
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
-			<div class="day-bar" role="toolbar" aria-label="Day">
-				{#if view === "record" && citedRef}
-					<button type="button" class="bar-action back" aria-label="Back to the sentence" onclick={backToArticle}>← Back<span class="bar-more">{" to the sentence"}</span></button>
-				{:else}
-					<WikiCrumbs parent={{ label: "Days", href: "/wiki/days" }} current={crumbLabel} />
-				{/if}
-				<span class="bar-gap"></span>
-				<div class="segmented" role="group" aria-label="View">
-					<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
-					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Data</button>
+			{#if dayToolbar.inToolbar}
+				<WikiCrumbs path={crumbPath} />
+			{:else}
+				<div class="day-bar" role="toolbar" aria-label="Day">
+					{#if view === "record" && citedRef}
+						{@render backToSentence()}
+					{:else}
+						<WikiCrumbs path={crumbPath} />
+					{/if}
+					<span class="bar-gap"></span>
+					{@render dayControls()}
 				</div>
-				{#if view === "article" && currentDateSlug <= todaySlug}
-					<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
-				{/if}
-				{#if showAutobiography}
-					<button
-						type="button"
-						class="bar-action"
-						disabled={rewriteRunning}
-						title={rewriteRunning ? "Your server is writing this page again." : undefined}
-						onclick={openDayArticle}
-					>Edit</button>
-				{/if}
-				<div class="day-more">
-					<Popover bind:open={menuOpen} placement="bottom-end" offset={4}>
-						{#snippet trigger({ toggle })}
-							<IconButton icon="mynaui:dots" label="More" haspopup="menu" expanded={menuOpen} onclick={toggle} />
-						{/snippet}
-						{#snippet children({ close })}
-							<div class="day-menu" role="menu" aria-label="More" use:menuKeys>
-								{#if canRewrite}
-									<MenuItem
-										label={rewriteSending || rewriteRunning ? "Writing this page…" : "Rewrite this page…"}
-										loading={rewriteSending || rewriteRunning}
-										onclick={() => {
-											close();
-											void rewritePage();
-										}}
-									/>
-								{/if}
-								{#if canPaint}
-									<MenuItem
-										label={painting ? "Painting…" : "Paint this day"}
-										loading={painting}
-										disabled={(paintingDay !== null && !painting) || rewriteRunning}
-										onclick={() => {
-											close();
-											void paintThisDay();
-										}}
-									/>
-								{/if}
-								<MenuItem
-									label="History"
-									onclick={() => {
-										close();
-										openHistory();
-									}}
-								/>
-								<MenuItem
-									label="Open in Timeline"
-									onclick={() => {
-										close();
-										openInTimeline();
-									}}
-								/>
-								<MenuItem
-									label={linkCopy === "copied" ? "Link copied" : linkCopy === "failed" ? "Couldn't copy the link" : "Copy link"}
-									onclick={copyLink}
-								/>
-								<div class="menu-rule" role="separator"></div>
-								<MenuItem
-									label={veil.on ? "Show names" : "Hide names"}
-									shortcut={veil.on && !touchOnly ? "Hold V" : undefined}
-									onclick={() => {
-										close();
-										veil.toggle();
-									}}
-								/>
-								<div class="menu-rule" role="separator"></div>
-								<div class="menu-pictures" role="group" aria-label="Pictures">
-									<span class="menu-label" aria-hidden="true">Pictures</span>
-									<div class="picture-choices">
-										{#each PICTURE_CHOICES as choice (choice.value)}
-											<button
-												type="button"
-												role="menuitemradio"
-												aria-checked={pictures === choice.value}
-												class="picture-choice"
-												class:on={pictures === choice.value}
-												onclick={() => choosePictures(choice.value)}>{choice.label}</button
-											>
-										{/each}
-									</div>
-									<span class="menu-hint">About one a week, of a place from your pages</span>
-								</div>
-							</div>
-						{/snippet}
-					</Popover>
-				</div>
-			</div>
+			{/if}
 
 			<div class="day-content">
 				<header class="day-header">
@@ -1415,11 +1481,18 @@
 		display: flex;
 		align-items: center;
 		gap: 1.125rem;
-		max-width: 53.5rem;
+		max-width: var(--page-detail);
 		height: 3.25rem;
 		margin: 0 auto;
 		font-family: var(--font-sans);
 		font-size: 0.8125rem;
+	}
+
+	/* In the action toolbar, after the day's controls: the days either side. */
+	.day-steps {
+		display: flex;
+		align-items: center;
+		gap: 2px;
 	}
 
 	.bar-gap {
@@ -1533,11 +1606,6 @@
 	.picture-choice.on {
 		border-color: var(--color-foreground-muted);
 		background: var(--active-bg);
-	}
-
-	.picture-choice:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 
 	/* A phone: every action stays, with the words that don't fit cut short. */
@@ -1796,7 +1864,7 @@
 
 
 	.day-content {
-		max-width: 53.5rem;
+		max-width: var(--page-detail);
 		width: 100%;
 		margin: 0 auto;
 		padding-top: 1rem;

@@ -464,9 +464,14 @@ export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Prom
 	}
 }
 
-/** The menu on a project itself, wherever it is listed. */
+/**
+ * The menu on a project itself, wherever it is listed. A list that can
+ * rename its rows in place (the sidebar) passes `rename`, so Rename opens
+ * the same field a double-click does. Elsewhere it asks in a dialog.
+ */
 export function projectRowMenuItems(
 	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at' | 'outcome'>,
+	{ rename }: { rename?: () => void } = {},
 ): ContextMenuItem[] {
 	const url = `/thread/${project.id}`;
 	if (project.archived_at) {
@@ -493,7 +498,7 @@ export function projectRowMenuItems(
 	return [
 		...openMenuItems(url, project.name),
 		{ id: 'new-chat', label: 'New chat here', icon: 'mynaui:chat-plus', action: () => newChatInProject(project) },
-		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renameProject(project) },
+		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: rename ?? (() => renameProject(project)) },
 		// No "Add to project": you can't put a project in a project.
 		pinMenuItem({ url, label: project.name, icon: project.icon }),
 		{ id: 'finish', label: 'Finish', icon: 'mynaui:check-circle', action: () => endProject(project, 'finished') },
@@ -517,6 +522,9 @@ export function projectRowMenuItems(
  */
 export function memberIcon(url: string): string {
 	if (/^https?:\/\//.test(url)) return 'mynaui:external-link';
+	// A record from a source: a calendar event says so, the rest are records.
+	if (url.startsWith('/record/calendar_event/')) return 'atlas:calendar';
+	if (url.startsWith('/record/')) return 'atlas:sources';
 	const map: Record<string, string> = {
 		page: 'atlas:pages',
 		person: 'atlas:people',

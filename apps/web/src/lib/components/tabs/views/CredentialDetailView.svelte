@@ -256,7 +256,7 @@
 		flex-direction: column;
 		gap: 1.25rem;
 		padding: 1rem 0.5rem;
-		max-width: 64rem;
+		max-width: var(--page-detail);
 	}
 
 	.state {

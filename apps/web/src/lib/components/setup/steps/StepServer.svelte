@@ -426,8 +426,6 @@
 	.addr:focus,
 	.box:focus {
 		border-color: var(--color-primary);
-		outline: 2px solid var(--color-primary);
-		outline-offset: -1px;
 	}
 	.addr::placeholder {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));
@@ -516,10 +514,6 @@
 	.finder:active {
 		transform: scale(0.98);
 		transition-duration: 90ms;
-	}
-	.finder:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
 	}
 	.corner {
 		position: absolute;
@@ -706,9 +700,6 @@
 	.server:disabled {
 		cursor: default;
 		color: var(--color-foreground-muted);
-	}
-	.server:focus-visible {
-		outline: 2px solid var(--color-primary);
 	}
 	.name {
 		font-family: var(--font-serif-ui, var(--font-serif));

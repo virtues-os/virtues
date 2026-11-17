@@ -67,11 +67,6 @@
 		background: var(--color-surface-elevated);
 	}
 
-	.project-chip:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	/* On the phone's bar: the title slot, so it reads as where you are. */
 	.project-chip.bar {
 		height: 32px;

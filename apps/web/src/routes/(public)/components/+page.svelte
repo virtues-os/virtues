@@ -1382,17 +1382,17 @@
 			<!-- ---------------------------------------------------------- -->
 			<h3>Page</h3>
 			<p class="group-blurb">
-				<code>maxWidth</code>: none · prose · wide. <code>padding</code>: default ·
+				<code>maxWidth</code>: none · reading · detail · full. <code>padding</code>: default ·
 				compact · none. Each specimen is boxed to 320px because Page is
 				<code>h-full</code> and has no measure of its own.
 			</p>
 			<div class="spec two-up">
-				{#each [["prose", "default"], ["wide", "compact"]] as [w, p] (w)}
+				{#each [["reading", "default"], ["detail", "compact"], ["full", "compact"]] as [w, p] (w)}
 					<div>
 						<span class="spec-label">maxWidth="{w}" padding="{p}"</span>
 						<div class="page-box">
 							<Page
-								maxWidth={w as "none" | "prose" | "wide"}
+								maxWidth={w as "none" | "reading" | "detail" | "full"}
 								padding={p as "default" | "compact" | "none"}
 								title="Sources"
 								description="Everything your server is reading."

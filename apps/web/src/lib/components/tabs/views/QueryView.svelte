@@ -171,7 +171,7 @@
 		overflow-y: auto;
 	}
 	.inner {
-		max-width: 720px;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		padding: 3.5rem 2rem 6rem;
 	}
@@ -245,10 +245,6 @@
 	.link:hover {
 		text-decoration: underline;
 		text-underline-offset: 2px;
-	}
-	.link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	.section + .section {

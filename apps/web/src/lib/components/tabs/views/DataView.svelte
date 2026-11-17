@@ -108,7 +108,7 @@
 		overflow-y: auto;
 	}
 	.inner {
-		max-width: 720px;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		padding: 3.5rem 2rem 6rem;
 	}

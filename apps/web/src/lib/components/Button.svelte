@@ -166,12 +166,6 @@
 		cursor: progress;
 	}
 
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	/* Sizes — 8pt grid, with the grammar's 40px in the middle. */
 	.v-btn[data-size="sm"] {
 		height: 32px;

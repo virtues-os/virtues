@@ -674,11 +674,6 @@
 			0 1px 2px rgb(0 0 0 / 0.08);
 	}
 
-	.detail-switch button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
-	}
-
 	.brief {
 		margin: 0;
 		color: var(--color-foreground);

@@ -17,7 +17,7 @@
 	};
 </script>
 
-<Page title={labels[entityType] || tab.label} maxWidth="wide">
+<Page title={labels[entityType] || tab.label} maxWidth="full">
 	{#if entityType === 'person'}
 		<PersonTable />
 	{:else if entityType === 'place'}

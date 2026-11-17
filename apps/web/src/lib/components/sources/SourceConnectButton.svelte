@@ -218,7 +218,6 @@
 	.source-row:hover,
 	.source-row:focus-visible {
 		background: var(--color-surface-elevated, #f3f4f6);
-		outline: none;
 	}
 
 	.row-icon {

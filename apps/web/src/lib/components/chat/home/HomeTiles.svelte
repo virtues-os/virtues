@@ -340,11 +340,6 @@
 			0 1px 2px rgb(0 0 0 / 0.08);
 	}
 
-	.layout-switch button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
-	}
-
 	.cards {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -380,13 +375,6 @@
 
 	button.tile:hover {
 		transform: translateY(-2px);
-	}
-
-	button.tile:focus-visible,
-	button.row:focus-visible,
-	.link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	.kicker {

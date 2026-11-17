@@ -179,14 +179,6 @@
 	.item.linked {
 		cursor: pointer;
 	}
-	.item:focus-visible {
-		outline: none;
-	}
-	.item:focus-visible rect,
-	.item:focus-visible circle {
-		stroke: var(--color-border-focus);
-		stroke-width: 2;
-	}
 	.in {
 		font-family: var(--font-mono);
 		font-size: 9.5px;

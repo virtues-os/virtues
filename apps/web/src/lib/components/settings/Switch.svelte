@@ -68,11 +68,6 @@
 		opacity: 0.6;
 	}
 
-	.switch:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.switch,
 		.switch::after {

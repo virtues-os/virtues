@@ -179,7 +179,7 @@
 	}
 </script>
 
-<Page title="Pages" maxWidth="prose">
+<Page title="Pages" maxWidth="reading">
 	{#snippet actions()}
 		<Button
 			variant="secondary"

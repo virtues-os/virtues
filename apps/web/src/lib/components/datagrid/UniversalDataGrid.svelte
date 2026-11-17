@@ -51,8 +51,7 @@
 <script lang="ts" generics="T extends { id: string }">
 	import type { Snippet } from 'svelte';
 	import { reducedMotion } from '$lib/stores/motion.svelte';
-	import { fly } from 'svelte/transition';
-	import { flip } from 'svelte/animate';
+	import { flip, fly } from '$lib/utils/transitions';
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
 	import SearchField from '$lib/components/SearchField.svelte';
@@ -1091,8 +1090,9 @@
 		<div class="list-view" bind:this={gridEl} in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
 			{#each groupedItems as group (group.key)}
 				{@const closed = collapsedGroups.has(group.key)}
-				<section class="list-group" class:ungrouped={!isGrouped}>
-					{#if isGrouped}
+				<!-- One group needs no heading: it would only repeat the page's title. -->
+				<section class="list-group" class:ungrouped={!isGrouped || groupedItems.length < 2}>
+					{#if isGrouped && groupedItems.length > 1}
 						<header class="list-group-head">
 							<button
 								type="button"
@@ -1563,11 +1563,6 @@
 		background: var(--color-background-hover);
 	}
 
-	.ctrl-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	.ctrl-btn.has-active {
 		color: var(--color-primary);
 	}
@@ -1765,11 +1760,6 @@
 		color: var(--color-foreground);
 	}
 
-	.th-sort:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	.th-content :global(svg),
 	.th-sort :global(svg) {
 		opacity: 0.7;
@@ -1803,8 +1793,6 @@
 	}
 
 	.data-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
@@ -1917,10 +1905,6 @@
 		transform: scale(1);
 		clip-path: inset(42% 8% 42% 8%);
 	}
-	.sel-box:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	@media (prefers-reduced-motion: reduce) {
 		.sel-box, .sel-box::before { transition: none; }
 	}
@@ -2006,7 +1990,6 @@
 		cursor: pointer;
 	}
 	.group-toggle:hover { color: var(--color-foreground); }
-	.group-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 	.group-toggle :global(.group-chev) {
 		color: var(--color-foreground-subtle);
 		transition: transform 0.16s ease;
@@ -2101,11 +2084,6 @@
 		gap: 0.5rem;
 		padding-right: 0.5rem;
 	}
-	.list-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-		border-radius: var(--radius-sm);
-	}
 	@media (max-width: 768px) {
 		.list-group-chev {
 			position: static;
@@ -2186,12 +2164,6 @@
 		cursor: pointer;
 	}
 
-	.wall-tile:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-md);
-	}
-
 	@media (max-width: 900px) {
 		.wall {
 			columns: 2;
@@ -2239,12 +2211,6 @@
 		width: 100%;
 		font: inherit;
 		color: inherit;
-	}
-
-	.card:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-lg);
 	}
 
 	/* The default card body. `.card` itself stays an unstyled button because

@@ -913,9 +913,6 @@
 	.cell[data-level='4'] {
 		background: var(--level-4);
 	}
-	.cell:focus-visible {
-		outline-color: var(--color-foreground);
-	}
 	/* Days after the last day keep the year's shape: blank, not zero. */
 	.cell[data-future] {
 		border: 1px solid var(--level-0);
@@ -1062,12 +1059,8 @@
 	.swatch[data-level='4']::before {
 		background: var(--level-4);
 	}
-	.swatch[aria-pressed='true']::before,
-	.swatch:focus-visible::before {
+	.swatch[aria-pressed='true']::before {
 		outline-color: var(--color-foreground);
-	}
-	.swatch:focus-visible {
-		outline: none;
 	}
 
 	/* One bubble for the whole grid. The outer layer glides between cells; the

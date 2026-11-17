@@ -197,7 +197,7 @@
 <Page
 	title="Sources"
 	description="Where your data comes from, and whether it is still arriving."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		<div class="head-actions">

@@ -190,7 +190,7 @@
 	description={status?.configured && status.endpoint_url
 		? `Every AI call goes to ${byoHost(status.endpoint_url)}${status.default_model ? `, using ${status.default_model} by default` : ''}.`
 		: 'Send every AI call to an endpoint of your own instead of the subscription.'}
-	maxWidth="prose"
+	maxWidth="reading"
 >
 	<p class="prose-note">
 		Any endpoint that speaks OpenAI-style chat completions with a bearer token works. That covers

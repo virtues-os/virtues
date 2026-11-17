@@ -118,7 +118,7 @@
 	];
 </script>
 
-<Page title="Shared links" {description} maxWidth="wide">
+<Page title="Shared links" {description} maxWidth="full">
 	{#if !loading && all.length === 0 && !error}
 		<div class="empty">
 			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>

@@ -277,7 +277,7 @@
 	}
 
 	.front {
-		max-width: 60rem;
+		max-width: var(--page-detail);
 		margin: 0 auto;
 		padding-bottom: 2rem;
 	}

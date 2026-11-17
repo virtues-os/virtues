@@ -225,7 +225,7 @@
 <Page
 	title="Recently deleted"
 	description="Deleted chats, pages, threads and files stay here for 30 days. After that your server removes them for good."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		{#if rows.length > 0}

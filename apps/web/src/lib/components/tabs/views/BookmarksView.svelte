@@ -288,7 +288,7 @@
 <Page
 	title="Bookmarks"
 	description="Everything you kept from the web - browser bookmarks, starred repositories, and links you saved by hand."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		<form class="save-row" onsubmit={save}>
@@ -408,7 +408,6 @@
 	}
 
 	.save-input:focus {
-		outline: none;
 		border-color: var(--color-foreground-muted);
 	}
 

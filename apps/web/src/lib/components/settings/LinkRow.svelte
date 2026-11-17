@@ -83,10 +83,4 @@
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in);
 	}
-
-	.row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
-	}
 </style>

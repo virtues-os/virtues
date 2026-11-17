@@ -186,7 +186,7 @@
 <Page
 	title="Passwords"
 	description="Saved on your server. Your assistant can't see them."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#if openError}
 		<p class="form-error">{openError}</p>

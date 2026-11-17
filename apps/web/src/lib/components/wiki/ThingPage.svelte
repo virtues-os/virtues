@@ -11,7 +11,7 @@
 	import { onMount } from "svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import TextAction from "$lib/components/TextAction.svelte";
-	import TaskCheck from "$lib/components/tasks/TaskCheck.svelte";
+	import TaskList from "$lib/components/tasks/TaskList.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import { getArticle, getThing, startThingArticle, type ThingDetailApi } from "$lib/wiki/api";
 	import { thingsStore } from "$lib/stores/things.svelte";
@@ -22,18 +22,17 @@
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { wikiCrumb } from "$lib/tabs/crumbs";
 	import { newProject, openProject, outcomeLabel } from "$lib/utils/projectActions";
-	import { toggleTaskDone } from "$lib/tasks/actions";
-	import { dueLabel, parseDue } from "$lib/tasks/due";
-	import { recurLabel, recurrenceOf } from "$lib/tasks/recur";
 	import { toast } from "svelte-sonner";
 
 	interface Props {
 		page: ThingDetailApi;
+		/** Whether its tab is the one showing, so its task list loads and takes keys. */
+		active?: boolean;
 		/** The thing was renamed, so the tab can follow. */
 		onRenamed?: (title: string) => void;
 	}
 
-	let { page, onRenamed }: Props = $props();
+	let { page, active = true, onRenamed }: Props = $props();
 
 	/** A newer copy after an edit made here, so a rename or a new article shows without a reload. */
 	let edited = $state<ThingDetailApi | null>(null);
@@ -139,50 +138,14 @@
 
 	onMount(() => {
 		if (!projectStore.loaded) void projectStore.load();
-		void tasksStore.load();
 	});
 
 	const openProjects = $derived(projectStore.projects.filter((p) => p.thing_id === thing.id));
 	const endedProjects = $derived(projectStore.archived.filter((p) => p.thing_id === thing.id));
-	const tasks = $derived(
-		tasksStore.open
-			.filter((t) => t.thing_id === thing.id)
-			.sort((a, b) => (a.due_on ?? "~").localeCompare(b.due_on ?? "~") || a.sort_order - b.sort_order),
-	);
 
 	function endedOn(iso: string | null): string {
 		if (!iso) return "";
 		return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-	}
-
-	/** A task's line of facts: who has it when that is the assistant, when it is due, how it recurs. */
-	function taskFacts(t: (typeof tasks)[number]): string {
-		const recurs = recurrenceOf(t);
-		return [
-			t.assignee === "assistant" ? "With the assistant" : null,
-			t.due_on ? dueLabel(t.due_on, t.due_at) : null,
-			recurs ? recurLabel(recurs.every, recurs.unit).toLowerCase() : null,
-		]
-			.filter(Boolean)
-			.join(" · ");
-	}
-
-	let draft = $state("");
-
-	/** The row clears on Return and stays live for the next one, as the task list's does. */
-	async function addTask() {
-		const { title, due_on, due_at } = parseDue(draft);
-		if (!title) return;
-		const typed = draft;
-		draft = "";
-		try {
-			await tasksStore.create({ title, due_on, due_at, thing_id: thing.id });
-		} catch (e) {
-			if (!draft) draft = typed;
-			toast.error("Your server couldn't add that", {
-				description: e instanceof Error ? e.message : undefined,
-			});
-		}
 	}
 
 	// ── removing it ─────────────────────────────────────────────────────────
@@ -308,37 +271,7 @@
 
 			<section class="section" id="tasks" aria-labelledby="thing-tasks">
 				<h2 class="section-title" id="thing-tasks">Tasks</h2>
-				<ul class="rows">
-					{#each tasks as t (t.id)}
-						<li class="row">
-							{#if t.assignee === "owner"}
-								<TaskCheck done={false} label={`Complete ${t.title}`} onclick={() => toggleTaskDone(t)} />
-							{/if}
-							<button
-								type="button"
-								class="row-title"
-								onclick={() => windowShellStore.openTabFromRoute(`/tasks?task=${t.id}`)}>{t.title}</button
-							>
-							{#if taskFacts(t)}
-								<span class="row-facts">{taskFacts(t)}</span>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-				<form
-					class="add-row"
-					onsubmit={(e) => {
-						e.preventDefault();
-						void addTask();
-					}}
-				>
-					<input
-						bind:value={draft}
-						class="add-input"
-						placeholder="Add a task"
-						aria-label={`New task under ${thing.title}`}
-					/>
-				</form>
+				<TaskList {active} route={`/thing/${thing.id}`} thingId={thing.id} emptyText={null} />
 			</section>
 
 			<NotesRail subjectType="thing" subjectId={thing.id} />
@@ -510,28 +443,6 @@
 
 	.add {
 		margin-top: 0.75rem;
-	}
-
-	.add-row {
-		display: flex;
-		align-items: center;
-		min-height: 2.5rem;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.add-input {
-		flex: 1;
-		min-width: 0;
-		background: transparent;
-		border: none;
-		outline: none;
-		font: inherit;
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-	}
-
-	.add-input::placeholder {
-		color: var(--color-foreground-subtle);
 	}
 
 	.remove {

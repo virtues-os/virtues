@@ -195,7 +195,7 @@
 <Page
 	title={sessionDetail?.conversation.title || untitled('chat')}
 	description={sessionDetail ? `Started ${formatDate(sessionDetail.conversation.first_message_at)}` : undefined}
-	maxWidth="prose"
+	maxWidth="reading"
 >
 	{#if contextViewLoading}
 		<div class="cv-loading">Loading...</div>

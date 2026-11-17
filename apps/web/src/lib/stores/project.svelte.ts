@@ -121,6 +121,12 @@ export class ProjectStore {
 		await Promise.all([this.load(), this.details.has(id) ? this.get(id, { force: true }) : null]);
 	}
 
+	private applyName(id: string, name: string): void {
+		this.all = this.all.map((p) => (p.id === id ? { ...p, name } : p));
+		const cached = this.details.get(id);
+		if (cached) this.setDetail({ ...cached, name });
+	}
+
 	byId(id: string): ProjectSummary | undefined {
 		return this.all.find((s) => s.id === id);
 	}
@@ -170,7 +176,18 @@ export class ProjectStore {
 			is_adding_automatic?: boolean;
 		}
 	): Promise<Project> {
-		const updated = await updateProject(id, patch);
+		// A new name shows at once wherever the thread is listed, as a renamed
+		// chat or page does. Waiting for the server would leave the old name
+		// in the row for a round trip after the rename field closes.
+		const before = patch.name !== undefined ? this.byId(id)?.name : undefined;
+		if (patch.name !== undefined) this.applyName(id, patch.name);
+		let updated: Project;
+		try {
+			updated = await updateProject(id, patch);
+		} catch (e) {
+			if (before !== undefined) this.applyName(id, before);
+			throw e;
+		}
 		// Merge into any cached detail.
 		const cached = this.details.get(id);
 		if (cached) this.setDetail({ ...cached, ...updated });

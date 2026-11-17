@@ -723,7 +723,7 @@
 		}
 	}
 	.measure {
-		max-width: 920px;
+		max-width: var(--page-detail);
 		margin: 0 auto;
 		display: flex;
 		flex-direction: column;

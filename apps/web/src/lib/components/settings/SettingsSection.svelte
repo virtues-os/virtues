@@ -160,10 +160,9 @@
 
 <style>
 	.page {
-		max-width: 720px;
+		max-width: var(--page-reading);
 		margin: 0 auto;
 		padding: 32px 32px 96px;
-		box-sizing: border-box;
 	}
 
 	.back {

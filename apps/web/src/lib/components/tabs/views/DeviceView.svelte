@@ -224,11 +224,11 @@
 {:else if res.error}
 	<ErrorState message={String(res.error)} />
 {:else if !device}
-	<Page title="No such device" description="It may have been unpaired.">
+	<Page title="No such device" description="It may have been unpaired." maxWidth="reading">
 		<Button variant="secondary" onclick={backToDevices}>Back to devices</Button>
 	</Page>
 {:else}
-	<Page title={device.label} description="What this device runs, and whether it is reaching your server.">
+	<Page title={device.label} description="What this device runs, and whether it is reaching your server." maxWidth="reading">
 		<!-- ── Header: the two questions people open this page for ─────────── -->
 		<Card>
 			<div class="flex items-center gap-3">
