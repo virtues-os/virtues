@@ -26,12 +26,13 @@
 // only with each other. See agents/build/performance.md.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { seedSql, LONG_CHAT_ID, LONG_CHAT_MESSAGES } from './seed.mjs';
+import { startFakeModel, TOKENS, TOKEN_INTERVAL_MS } from './fake-model.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../../..');
@@ -88,7 +89,7 @@ function psql(url, sql) {
 	return execFileSync('psql', [url, '-v', 'ON_ERROR_STOP=1', '-q', '-c', sql]).toString();
 }
 
-async function startBox(webBuild) {
+async function startBox(webBuild, modelUrl) {
 	psql(ADMIN_URL, `DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
 	psql(ADMIN_URL, `CREATE DATABASE ${DB}`);
 	const state = mkdtempSync(join(tmpdir(), 'virtues-perf-state-'));
@@ -100,18 +101,24 @@ async function startBox(webBuild) {
 		VIRTUES_DEV_SKIP_SETUP: '1',
 		VIRTUES_HTTPS_PORT: '0',
 		VIRTUES_PUBLIC_ORIGINS: `${ORIGIN},http://localhost:${PORT}`,
-		// No AI: nothing in the scenarios asks a model, and a dead address
-		// keeps one from being asked by accident.
-		VIRTUES_API_URL: 'http://127.0.0.1:9',
+		// The model is fake-model.mjs: a fixed reply at a fixed pace, so a
+		// streamed turn is the same every run and no real model is asked.
+		VIRTUES_API_URL: modelUrl,
 		VIRTUES_API_KEY: 'dev-local-key',
 		STATIC_DIR: webBuild,
 		STORAGE_PATH: join(state, 'storage'),
 		VIRTUES_APPLET_STATE_DIR: join(state, 'applets'),
-		RUST_LOG: 'warn'
+		RUST_LOG: process.env.PERF_RUST_LOG ?? 'warn'
 	};
 	const box = spawn(SERVER_BIN, ['server'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+	// The box's log, for a scenario that fails: results/box.log.
+	mkdirSync(RESULTS, { recursive: true });
+	const boxLog = createWriteStream(join(RESULTS, 'box.log'));
 	let stderr = '';
-	box.stderr.on('data', (d) => (stderr = (stderr + d).slice(-4000)));
+	box.stderr.on('data', (d) => {
+		boxLog.write(d);
+		stderr = (stderr + d).slice(-4000);
+	});
 	for (let i = 0; i < 120; i++) {
 		if (box.exitCode !== null) throw new Error(`box exited early:\n${stderr}`);
 		try {
@@ -384,6 +391,70 @@ async function sidebarToggle(browser) {
 	};
 }
 
+/**
+ * Send a message in the long chat and let fake-model.mjs stream its reply:
+ * a fixed 242-token answer, one token every 15 ms. Records when the first
+ * token shows and when the last does, how far the page's rendering falls
+ * behind the stream's own pace (the extra beyond the stream's length), the
+ * main thread's script, layout and style time, and frames over 20 ms. Each
+ * run then removes the turn, so every run starts from the same 300 messages.
+ */
+async function streamReply(browser) {
+	const { context, page, cdp } = await newPage(browser);
+	await page.goto(`${ORIGIN}/chat/${LONG_CHAT_ID}`);
+	await waitOrExplain(page, page.locator('.chat-input').first(), 'visible', 30_000);
+	await page.waitForLoadState('networkidle');
+	await sleep(1000);
+	const metrics = async () => {
+		const { metrics } = await cdp.send('Performance.getMetrics');
+		return Object.fromEntries(metrics.map((x) => [x.name, x.value]));
+	};
+	await page.locator('.chat-input').first().click();
+	await page.keyboard.type('What should the weekend look like?');
+	await page.evaluate(() => {
+		window.__frames = [];
+		window.__framesOn = true;
+		const tick = (t) => {
+			window.__frames.push(t);
+			if (window.__framesOn) requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	});
+	const m0 = await metrics();
+	const sentAt = Date.now();
+	await page.keyboard.press('Enter');
+	// The reply's first words, then its last, as they appear in the page.
+	try {
+		await page.waitForFunction(() => document.body.innerText.includes('A plan for the weekend'), null, { timeout: 30_000 });
+	} catch (e) {
+		const shot = join(RESULTS, `failure-${Date.now()}.png`);
+		await page.screenshot({ path: shot }).catch(() => {});
+		const tail = await page.evaluate(() => document.body.innerText.slice(-400)).catch(() => '');
+		throw new Error(`no streamed reply: ${e.message.split('\n')[0]}\n  page ends: ${JSON.stringify(tail)}\n  screenshot: ${shot}; box log: ${join(RESULTS, 'box.log')}`);
+	}
+	const firstAt = Date.now();
+	await page.waitForFunction(() => document.body.innerText.includes('until next weekend'), null, { timeout: 60_000 });
+	const lastAt = Date.now();
+	const m1 = await metrics();
+	const frames = await page.evaluate(() => {
+		window.__framesOn = false;
+		return window.__frames;
+	});
+	await context.close();
+	// Remove the turn, so the next run streams into the same 300 messages.
+	psql(DB_URL, `DELETE FROM app_chat_messages WHERE chat_id = '${LONG_CHAT_ID}' AND sequence_num >= ${LONG_CHAT_MESSAGES}; UPDATE app_chats SET message_count = ${LONG_CHAT_MESSAGES} WHERE id = '${LONG_CHAT_ID}'`);
+	const gaps = frames.slice(1).map((t, k) => t - frames[k]);
+	const streamMs = lastAt - firstAt;
+	return {
+		first_token_ms: firstAt - sentAt,
+		stream_lag_ms: Math.max(0, streamMs - (TOKENS.length - 1) * TOKEN_INTERVAL_MS),
+		stream_script_ms: Math.round((m1.ScriptDuration - m0.ScriptDuration) * 1000),
+		stream_layout_ms: Math.round((m1.LayoutDuration - m0.LayoutDuration + m1.RecalcStyleDuration - m0.RecalcStyleDuration) * 1000),
+		stream_slow_frames: gaps.filter((g) => g > 20).length,
+		stream_longest_frame_ms: Math.round(Math.max(0, ...gaps))
+	};
+}
+
 /** Move between views through the app's own router, and see what stays behind. */
 async function viewCycle(browser) {
 	const { context, page, cdp } = await newPage(browser);
@@ -447,6 +518,8 @@ async function repeat(name, fn, browser, runs = RUNS) {
 // same race, so it gets one step of slack.
 const RULES = {
 	ready_ms: 'time', rendered_ms: 'time', composer_ms: 'time', sidebar_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout',
+	first_token_ms: 'time', stream_lag_ms: 'time', stream_script_ms: 'time', stream_layout_ms: 'layout',
+	stream_slow_frames: 'report', stream_longest_frame_ms: 'time',
 	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'count', long_task_ms: 'report', longest_task_ms: 'time',
 	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
 	js_transfer_kb: 'size', heap_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
@@ -498,7 +571,8 @@ async function main() {
 	if (!existsSync(SERVER_BIN)) throw new Error(`no box binary at ${SERVER_BIN}; run \`cargo build -p virtues\``);
 	const webBuild = buildWeb();
 	log(`web build: ${webBuild}`);
-	const { box, state } = await startBox(webBuild);
+	const model = await startFakeModel();
+	const { box, state } = await startBox(webBuild, model.url);
 	log(`box on ${ORIGIN}, database ${DB}, seeded`);
 	const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true });
 	let results;
@@ -511,12 +585,14 @@ async function main() {
 			relay_load: await repeat('relay_load', relayLoad, browser),
 			long_chat: await repeat('long_chat', longChat, browser),
 			view_cycle: await repeat('view_cycle', viewCycle, browser, Math.min(RUNS, 3)),
-			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser)
+			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser),
+			stream_reply: await repeat('stream_reply', streamReply, browser)
 		};
 	} finally {
 		await browser.close();
 		if (!flag('--keep')) {
 			box.kill('SIGTERM');
+			model.server.close();
 			await sleep(500);
 			try {
 				psql(ADMIN_URL, `DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
@@ -529,7 +605,7 @@ async function main() {
 			// referenced child would hold it until the box was stopped.
 			box.stderr.destroy();
 			box.unref();
-			log(`kept: box pid ${box.pid} on ${ORIGIN}, database ${DB}. Stop it with: kill ${box.pid}`);
+			log(`kept: box pid ${box.pid} on ${ORIGIN}, database ${DB}. This runner keeps serving the fake model for it; stop both with Ctrl-C, then kill ${box.pid}`);
 		}
 	}
 

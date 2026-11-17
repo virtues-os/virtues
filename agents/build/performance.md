@@ -45,7 +45,10 @@ git clone --local -b wave . /tmp/budget && cd /tmp/budget/apps/web \
 
 1. It builds the web UI from a commit (HEAD by default) in a scratch clone.
 2. It starts a box from the shared target's `virtues` binary on its own
-   database, `virtues_perf_lab`, with `ENVIRONMENT=dev` and no AI. The box
+   database, `virtues_perf_lab`, with `ENVIRONMENT=dev`. Its model is
+   `fake-model.mjs`: `POST /v1/ai/chat/completions` streams one fixed
+   invented reply (242 tokens, one every 15 ms) in the shape the box reads,
+   so a streamed turn is the same every run and no real model is asked. The box
    serves that build from `STATIC_DIR`, the way an installed box does, so the
    bytes and their compression are a box's.
 3. It seeds invented data (`seed.mjs`): 40 short chats and one chat of 300
@@ -62,6 +65,7 @@ node run.mjs                        # measure and compare
 node run.mjs --web-build DIR        # reuse a build, skip the clone
 node run.mjs --update               # record budgets.json from this run
 node run.mjs --keep                 # leave the box and database up to look at
+PERF_RUST_LOG=info node run.mjs     # the box's log goes to results/box.log either way
 ```
 
 | Scenario | What it records |
@@ -69,6 +73,7 @@ node run.mjs --keep                 # leave the box and database up to look at
 | `cold_load` | Time from navigation to a visible composer, JavaScript transferred, API requests before ready and in total, the waterfall's depth, long tasks, and heap, DOM and listener counts after garbage collection |
 | `relay_load` | A cold load as the Mac and iPhone apps see it: every API request waits 100 ms (about the relay to a phone) and the UI files load at once. Records when the composer is usable and when the sidebar shows the newest chat. The browser's six connections to the box still apply, as they do to the apps' loopback proxy |
 | `long_chat` | Time until the 300th message is in the page, the longest task, heap and DOM after garbage collection, and Chromium's layout and style time for three moves: opening the chat, narrowing the window (every message laid out again, as when the sidebar opens beside it), and scrolling to the top |
+| `stream_reply` | A message sent in the long chat and the fake model's reply streamed back: time to the first token on screen, how far the page's rendering lags behind the stream's own pace, the main thread's script and layout time over the turn, and frames over 20 ms. Each run deletes its turn, so every run streams into the same 300 messages |
 | `sidebar_toggle` | Six opens and closes of the sidebar beside the long chat, through the header's ∴ button: main-thread layout, style and script time per toggle (median after two warm-ups) and the most frames over 20 ms in any toggle |
 | `view_cycle` | Ten laps through eight views by in-app navigation, and the growth per lap in heap, DOM nodes, listeners and documents between lap 2 and lap 10 |
 
@@ -115,8 +120,8 @@ join this module the same way.
 
 ## What these do not cover
 
-- A streamed reply. Nothing in the lab asks a model, so the per-token cost of
-  rendering a reply is not measured.
+- A real model's stream: its pace varies, it sends reasoning and tool calls,
+  and it pauses. `stream_reply` sends plain text at an even pace.
 - The relay's real behavior. `relay_load` adds a fixed 100 ms to each API
   request; a real relay varies, and loses packets.
 - The Mac and iPhone shells: launch time, the `virtues://` handler, the tray.
