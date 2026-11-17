@@ -41,7 +41,7 @@
 	);
 </script>
 
-<div class="flex h-full w-full flex-col bg-background">
+<div class="flex h-full w-full flex-col">
 	<div class="min-h-0 flex-1">
 		{#if tab.route === "/storage/streams"}
 			<!-- Forwarding to Sources · Streams (the effect above). -->
