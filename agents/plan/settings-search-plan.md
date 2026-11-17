@@ -1,149 +1,205 @@
-# Settings you search
+# Settings on one page
 
-Status: planned. Decided with the owner on 2026-11-17, after five rounds of
-sketches on the "Settings navigation" design canvas (Round 4 shows the states,
-Round 5 what this plan builds).
+Status: planned. Decided with the owner on 2026-11-17, over seven rounds of
+sketches on the "Settings navigation" design canvas. Round 7 shows what this
+plan builds; Round 4 holds the search states it keeps.
 
-Settings opens on one question, "What do you want to change?", with a search
-field under it. Typing brings up the settings themselves, with their controls,
-instead of links to pages. The section list down the left of every Settings
-page goes away. Sources gets its own button in the window's corner, and SQL and
-Terminal leave Settings.
+Settings becomes one scrolling page of the settings people actually change, in
+six sections, with a search field at the top. Typing filters the page in place.
+Return hands the text to the assistant, which drafts the change for you to
+apply. Anything that is a list, a chart, a table or a form opens its own page
+from a row. The section list beside every Settings page goes away, Sources gets
+a button in the window's corner, and SQL and Terminal leave Settings.
 
 ## What the app has today
 
 - One Settings room, `SettingsView.svelte`, rendering a section per route under
   `/virtues/*`. Bare `/virtues` lands on Profile.
-- `SectionNav.svelte`, a 208px list of 15 rows in four groups (Account, Server,
-  Sources, Developer), drawn inside the pane beside every Settings page. It
-  copies the sidebar's row style, so the window shows two sidebars side by
-  side. Its rows come from `SETTINGS_MODE` in `lib/sidebar/modes.ts`.
-- Settings pages are written by hand. Each page holds its own fields (Profile:
-  name, birth date, height, timezone and so on; Assistant: name, how it talks,
-  rules, memory, models, spending on requests, suggestions). Nothing lists every
-  setting in one place.
+- `SectionNav.svelte`, a 208px list of 15 rows in four groups, drawn inside the
+  pane beside every Settings page in the sidebar's own row style, so the window
+  shows two sidebars side by side. Its rows come from `SETTINGS_MODE` in
+  `lib/sidebar/modes.ts`.
+- An audit on 2026-11-17 counted about 60 blocks across the Settings pages: 18
+  settings, about 21 readings, about 10 one-off actions, 8 to 10 tools and 3
+  explainers. System has one setting in eleven blocks; Search has none.
 - The ⌘K palette (`components/search/SearchList.svelte`, `lib/search/results.ts`)
   searches commands, records and record contents, and has an "Ask" row. Its
   "Change theme" command already changes a setting inside search (`keepOpen`).
-- The window corner (`tabs/HeaderCorner.svelte`) holds two glass buttons,
-  Search and Settings. Sources has no door of its own: you reach it through
-  Settings or ⌘K's "Go to Sources".
+- The window corner (`tabs/HeaderCorner.svelte`) holds Search and Settings.
+  Sources has no door of its own.
 - `app_auth_event` records pairing and other auth events. No table records
   setting changes.
+- The assistant's name is a setting (default "Ari", `setup.svelte.ts`), and
+  about 15 files put it in their copy.
 
-## The design
+### What the audit found wrong
 
-### The landing page
+- The "Chat sky" switch (`SuggestionsSettings.svelte`) saves a preference that
+  nothing reads; `ChatSky.svelte` is rendered nowhere.
+- "Suggested questions" can be switched on Assistant and again on Applets.
+- Models are picked two ways: Assistant's selects and the catalog's "Use for"
+  buttons.
+- Spending limits sit on Assistant while balance and top-up sit on Billing. The
+  bring-your-own-AI key sits on Billing while every other key sits on Keys.
+- Keys' "Sign-ins" list repeats Sources.
+- Raw JSON, process ids, commit hashes and raw `source_id`s show to everyone.
+  The update channels are named after git branches ("Main", "Staging").
+- One page says "Revoke" and another "Unpair"; some pages say "box".
+- Stale comments in `SystemInfoView.svelte` (Backup "above" Storage, links to
+  Settings routes that now redirect) and `modes.ts` (a `/virtues/system/network`
+  route that does not exist).
+- Profile asks for ethnicity, which nothing is known to use.
 
-`/virtues` shows the question, the search field (focused, ⌘ , opens it from
-anywhere), a "Changed lately" list, and every section in three groups:
+## The page
 
-- You: Profile, Assistant, Billing
-- Your data: Keys, Shared links
-- Your server: System, Devices, Search, Applets
+`/virtues` is one page, 720px wide, in this order:
 
-"Changed lately" lists changes you made and things that stopped working, newest
-first, each with one action: Undo, Open or Sign in. "You set the chat model to
-Standard, yesterday, Undo." "Google Calendar stopped arriving. It needs you to
-sign in again." It ships with the landing page, not after it.
+1. The title, the search field ("Find a setting, or say what you want changed",
+   ⌘ , from anywhere), and the six section names.
+2. **Changed lately**: changes you made, changes the assistant made at your
+   request, and things that stopped working, newest first, each with one action
+   (Undo, Open, Sign in). It ships with the page.
+3. Six sections, each a serif heading, one sentence, and rows:
 
-### Results
+| Section | Rows |
+|---|---|
+| You | Name; what the assistant calls you; birthday; work; where you live (sets the time zone); units |
+| Assistant (titled with its name) | Name; how it talks to you, with a live preview of a sample reply; subjects it never raises; remember things from chats; what it remembers (opens); what it can do: search the web, read pages you link, make applets, write into your pages; model for chat; model for background work; every model (opens); suggested questions |
+| Your data | What the assistant may read (opens); shared links (opens); keys (opens); backup (opens); keep recordings; export everything |
+| Appearance | Light or dark; theme; reading font; text size; reduce motion |
+| Billing | Subscription (Stripe); balance; auto top-up; most a request can spend in a day; most one request can spend; bring your own AI (opens); what AI has cost (opens) |
+| Server and devices | Updates (check now); install updates on their own; which updates ("Released", "Early, may break"); reach it away from home; search runs on (setup guide); how your server is doing (opens); each device (opens); pair a device |
 
-Each result is a setting, shown in one of three ways:
+4. **Start over** alone at the bottom, then the founder's letter and "Run the
+   introduction again" as quiet links.
 
-- **Control.** The setting's own control in the row: a switch, a choice, a
-  short field. Changing it there saves it, as it would on its page.
-- **Value.** Something you read, shown with its current value and an Open link:
-  storage used, balance, the release a device runs.
-- **Action.** Anything that cannot be undone (unpair, start over, turn off a
-  link, delete) shows only "Open its page". Search never performs it. The page
-  asks first, as it does today.
+Rows are 58px with a hairline between them: the label and one line of help on
+the left, the control on the right. Nothing carries a count, a badge or a dot.
 
-Each result has a title that makes sense outside its page ("Most one request
-can spend", not "Each run, in dollars") and names its section under the title.
-Arrow keys move, Tab enters a control, Return opens the page.
+### Rows that open a page
 
-### Opening a result
+A setting moves off the main page when it holds a list that grows, a chart or a
+table, or more than about three controls. Those rows show "Open" and push a page
+with a back link ("Settings, Billing"), a title, one sentence, then the
+content. Back returns to the same scroll position and flashes the row once.
 
-The section's page opens at `/virtues/<section>#<setting>`, scrolls to the
-setting and lights it in the highlighter yellow, which fades. The citation
-highlight already does this for passages opened from a chat; reuse it. The
-search field stays at the top of every section page in a smaller form, with
-"1 of 3, next" to step through the other matches without going back.
+- What the assistant remembers: the notes list.
+- Every model: the catalog, which becomes the only other way to pick a model,
+  writing the same two choices as the selects.
+- What the assistant may read: one switch per source. Turning one off hides it
+  from the assistant; the server keeps collecting it. Cycle is off unless you
+  turn it on.
+- Backup: drive, schedule, last copy, restore.
+- Bring your own AI: the endpoint, key and model fields. The key is stored in
+  the one `credentials` table with every other key.
+- What AI has cost: two weeks by day, cost by kind of work, every call.
+- How your server is doing: vitals, storage, the last day. Process lists and raw
+  telemetry sit behind its own Detail switch.
+- Each device: one page per device, saying "Unpair" everywhere.
+- Keys and Shared links: their grids, as today.
 
-### When nothing matches
+### Where you are on the page
 
-If the query reads like a question or matches nothing, the last row offers
-"Ask Iris", which opens a new chat with what was typed. The palette's existing
-"Ask" row does this.
+As you scroll, the title folds into the bar, following the scroll position, and
+the six section names stay beside a small search field with an underline under
+the section you are reading (Round 6, option 1). Clicking a name scrolls there;
+its heading gets one sweep of the highlighter yellow, which fades.
 
-### ⌘K
+## Search
 
-The palette gets a Settings group built from the same list. Simple controls
-(a switch, a choice of two or three) work inside the palette; everything else
-opens its page. `#settings` scopes the palette to settings, beside the existing
-`#chats`, `#pages` and the rest. "Change theme" stays as it is.
+- **Each keystroke filters the page.** Matching runs in the browser on a list of
+  every setting, by title, section and the words people use for it, and
+  tolerates typos. Rows without a match collapse (about 180ms), sections with
+  none fold shut and grey their name in the bar, and matched words take the
+  highlighter. Settings inside the opened pages match too and are listed under
+  their row. Esc shows everything.
+- **↑ and ↓** move through matching rows; Return on a row enters its control or
+  opens its page.
+- **Return with no row picked** asks the assistant. A hint under the field says
+  so before you press it. The assistant drafts one or more changes as a card at
+  the top of the page: each setting, its old and new value, with Apply, Edit
+  first and Not this. Applying writes each change to Changed lately as "You
+  changed X with <name>", with Undo. The assistant only drafts settings whose
+  kind is a control; for an action (unpair, start over, delete, turn off a link)
+  it offers to open the page, and the page asks first.
+- **A question** ("how much room do my photos take") shows the value if a
+  setting holds it, or offers to ask in a new chat.
 
-### Sources in the corner
+## Outside Settings
 
-The corner holds three glass buttons: Search, Sources, Settings. Sources opens
-its own page with Overview, Catalog, Activity, Streams and Query across the top.
-The button lights while a Sources page has focus, as Settings does. It carries
-no dot or badge, not even when a source stops: that would be an alarm. A stopped
-source shows in "Changed lately" and as a sentence on the Sources page.
+- The corner holds Search, Sources and Settings. Sources opens its own page with
+  Overview, Catalog, Activity, Streams and Query. The button lights while a
+  Sources page has focus and never carries a dot or badge.
+- SQL becomes the Query tab on Sources. Terminal becomes a ⌘K command, "Open a
+  terminal on your server".
+- The applet list and its runs move to the Applets door.
+- ⌘K gets a Settings group from the same list and a `#settings` scope; simple
+  controls work in the palette.
 
-### SQL and Terminal
+## The assistant's name
 
-SQL becomes the Query tab on the Sources page, beside Streams, since it queries
-those streams. Terminal becomes a ⌘K command, "Open a terminal on your server".
-Neither is a Settings section.
+The name stays a setting. Copy uses it only where the assistant is the actor in
+a sentence ("Ari drafted two changes", "What Ari remembers"), and "your
+assistant" where no name was chosen. It is never a door or button label ("New
+chat" stays), and there is no greeting or avatar.
+
+## Removed
+
+The Chat sky switch, the second Suggested questions switch, Keys' Sign-ins,
+the ethnicity field (height and weight move to the Health source if anything
+uses them), developer-only content outside the server page's Detail switch,
+the branch-named channels, "Revoke", "box" in copy, the "measured here" and "as
+your server heard it" labels, and the stale comments listed above.
 
 ## Slices
 
 1. **The list of settings.** `lib/settings/index.ts`: one entry per setting,
-   about 60, each with an id, a title that makes sense outside its page, the
-   words people use for it, its section, its kind (control, value, action), and
-   for controls a small component that reads and writes through the calls the
-   page already makes. Every settings page marks each entry's block with
-   `data-setting="<id>"`. Search for an existing matcher before writing one
-   (`commandsMatching` in `results.ts`).
-2. **The landing page and results.** `/virtues` renders the question page.
-   Matching runs in the browser on the list. Values fetch when their rows
-   appear, one request per section. Delete `SectionNav.svelte`, its use in
-   `TabContent.svelte`, and the Settings rows of `SETTINGS_MODE`. Add legacy
-   route redirects for every removed row.
-3. **Opening a result.** The anchor, the scroll, the fading highlight, and the
-   small field with "1 of 3" on section pages.
-4. **Changed lately.** Server: an append-only record of setting changes, written
-   by each settings endpoint, with enough to undo a change. Read pairing from
+   with an id, a title that reads on its own, the words people use for it, its
+   section, the page it opens if any, its kind (control, value, action), and for
+   controls a component that reads and writes through the calls the pages make
+   today. Search for an existing matcher before writing one (`commandsMatching`
+   in `results.ts`).
+2. **The page.** `/virtues` renders the six sections from the list, with rows
+   that open pages. Delete `SectionNav.svelte`, its use in `TabContent.svelte`,
+   the Settings rows of `SETTINGS_MODE`, and the removals above. Move spending
+   limits into Billing. Redirect every old `/virtues/*` route to its section
+   anchor.
+3. **Filter and the bar.** Filtering in place, the folding title, the section
+   names and the scroll highlight.
+4. **Changed lately.** An append-only record of setting changes written by each
+   settings endpoint, with enough to undo a change. Pairing comes from
    `app_auth_event` and stopped sources from their status, without copying them.
    Claim the migration number first (`make migration`).
-5. **Sources and the corner.** The Sources button in `HeaderCorner.svelte`, the
-   Sources page with its five tabs, SQL moved into Query, the Terminal command
-   in ⌘K, redirects from `/virtues/developer/*`.
-6. **⌘K.** The Settings group, `#settings`, controls inside the palette, and
-   ⌘ , opening Settings with the field focused.
+5. **Return asks the assistant.** The drafting card, the rule that it only
+   drafts controls, Apply and Undo through Changed lately.
+6. **Sources and the corner.** The Sources button, its page with five tabs, SQL
+   as Query, the Terminal command, redirects from `/virtues/developer/*`, the
+   applet list moved to Applets.
+7. **New settings.** Each needs its own work behind it and can land one at a
+   time: units, what the assistant can do, what it may read (server-enforced,
+   as cycle data is today), keep recordings, export everything, backup as a
+   page, reading font, text size, reduce motion, the live style preview.
+8. **⌘K.** The Settings group, `#settings`, controls in the palette.
 
-Later: the phone layout, and Iris drafting a change from a sentence (Round 3,
-H2 on the canvas). Drafting works only for settings written as text (how it
-talks, rules, memory).
+Later: the phone, which takes the same single page.
 
 ## Who it serves
 
-- Narrative seeker: you ask in your own words, and results and "Changed lately"
-  are written as sentences.
-- Quantified self: values like storage and costs show in results, and Sources is
-  one click from anywhere.
-- Tech prosumer: ⌘ , and settings that change from ⌘K on any page.
-- Recovery: no counts, badges or warnings anywhere in it. "Changed lately" is a
-  plain list.
-- Data sovereign: searching a device shows everything tied to it in one place.
+- Narrative seeker: one page that reads top to bottom in sentences, a live
+  preview of how the assistant will sound, and changes asked for in plain words.
+- Quantified self: what AI has cost and how the server is doing are one row
+  away, with real charts; Sources has its own door.
+- Tech prosumer: filter as you type, ⌘ , drafted changes, settings in ⌘K.
+- Recovery: no counts, badges or warnings; Changed lately is a plain list.
+- Data sovereign: what the assistant may read, source by source; export; keys,
+  shared links and every device on one page.
 
 ## Open questions
 
-- How long "Changed lately" reaches back, and whether it shows changes made from
+- Whether "subjects it never raises" moves to its own page once it holds more
+  than a few rules.
+- How far back Changed lately reaches, and whether it shows changes made from
   another device.
-- Which settings can be undone from the list. A change of model can; a pairing
+- Which changes can be undone from Changed lately. A model change can; a pairing
   cannot.
-- Whether the words people use for each setting are written by hand only, or
-  also learned from searches that found nothing.
+- What "keep recordings" removes and when, and what "export everything" writes.
