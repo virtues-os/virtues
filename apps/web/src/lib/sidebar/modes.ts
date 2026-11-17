@@ -65,28 +65,15 @@ export interface SidebarMode {
 }
 
 /**
- * Settings: every room that is the server's plumbing rather than the record,
- * under four headings, the way the wiki asks Time and Subjects.
+ * Settings' pages under two headings, for the crumbs on those pages:
  *
  *   ACCOUNT — you, your assistant, what AI costs you.
- *   SERVER — the machine, the devices paired to it, the screen on it.
- *   SOURCES — what fills the record. Its own rail door until 2026-10-05; the
- *     rail now holds only what you read (Home, Wiki, Timeline), and
- *     connecting a source is a setting you make, then leave. Streams, the
- *     raw rows each source sent, sits here too: it is the other end of a
- *     source, and it left Drive's page on 2026-10-21.
- *   DEVELOPER — the SQL and terminal consoles. Tools, not preferences, which
- *     is why they sit under their own heading at the foot rather than mixed
- *     into the rows above.
- *
- * Sources and the consoles keep their routes (`/sources/*`,
- * `/virtues/developer/*`); only the door moved. `rowForRoute` matches both,
- * so either lights the sidebar's Settings row and carries the section list.
+ *   SERVER — the machine, its search, the devices paired to it, shared links
+ *     and applets.
  */
 // TODO(2026-11-17): migrate the crumbs off these rows. Settings is one page
-// now (lib/settings lists its settings); the Account and Server rows stay only
-// because tabs/crumbs.ts builds Settings' crumbs from them, and the Sources and
-// Developer rows still draw SectionNav on those pages (TabContent).
+// now (lib/settings lists its settings) and Sources is its own room with tabs;
+// these rows stay only because tabs/crumbs.ts builds Settings' crumbs from them.
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
@@ -156,50 +143,6 @@ export const SETTINGS_MODE: SidebarMode = {
 			glyph: 'applets',
 			href: '/virtues/applets',
 			group: 'Server',
-		},
-		// In the order the questions get asked: is anything broken right now,
-		// what can I plug in, and what has actually been running.
-		{ id: 'sources', label: 'Overview', icon: 'mynaui:layout-dashboard', glyph: 'overview', href: '/sources', group: 'Sources' },
-		{
-			id: 'catalog',
-			label: 'Catalog',
-			icon: 'mynaui:grid',
-			glyph: 'catalog',
-			href: '/sources/catalog',
-			group: 'Sources',
-		},
-		{
-			id: 'activity',
-			label: 'Activity',
-			icon: 'mynaui:clock-circle',
-			glyph: 'history',
-			href: '/sources/activity',
-			group: 'Sources',
-		},
-		// The route stays under `/storage`; only the door moved.
-		{
-			id: 'streams',
-			label: 'Streams',
-			icon: 'mynaui:database',
-			glyph: 'streams',
-			href: '/storage/streams',
-			group: 'Sources',
-		},
-		{
-			id: 'sql',
-			label: 'SQL',
-			icon: 'mynaui:terminal',
-			glyph: 'sql',
-			href: '/virtues/developer/sql',
-			group: 'Developer',
-		},
-		{
-			id: 'terminal',
-			label: 'Terminal',
-			icon: 'mynaui:terminal',
-			glyph: 'terminal',
-			href: '/virtues/developer/terminal',
-			group: 'Developer',
 		},
 	],
 };

@@ -116,6 +116,8 @@
 		...commandsFromMenu(newTabMenuItems(undefined, { browser: browserAvailable })),
 		{ id: "go-sources", label: "Go to Sources", icon: "atlas:sources", run: () => void windowShellStore.openTabFromRoute("/sources") },
 		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", run: () => void windowShellStore.openTabFromRoute("/virtues") },
+		// The terminal left Settings' list; this is its door.
+		{ id: "open-terminal", label: "Open a terminal on your server", icon: "atlas:terminal", run: () => void windowShellStore.openTabFromRoute("/virtues/developer/terminal", { label: "Terminal" }) },
 		{ id: "change-theme", label: "Change theme", icon: "mynaui:swatches", run: enterThemeMode, keepOpen: true },
 	]);
 

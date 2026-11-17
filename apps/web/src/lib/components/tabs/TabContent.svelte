@@ -5,27 +5,13 @@
 	import { loadView, peekView, reloadForStaleChunk, type View, type ViewLoader } from "$lib/tabs/lazy";
 	import { reloadApp } from "$lib/reload";
 	import Button from "$lib/components/Button.svelte";
-	import SectionNav from "$lib/components/settings/SectionNav.svelte";
 	import ActionToolbar from "./ActionToolbar.svelte";
 	import { provideTabId } from "$lib/stores/paneActions.svelte";
-	import { SETTINGS_MODE, rowForRoute, type SidebarMode } from "$lib/sidebar/modes";
-
-	const TOOLS_NAV: SidebarMode = {
-		...SETTINGS_MODE,
-		rows: SETTINGS_MODE.rows.filter((r) => r.group === "Sources" || r.group === "Developer"),
-	};
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	provideTabId(() => tab.id);
-
-	// TODO(2026-11-17): migrate Sources and Developer off this list. Settings
-	// itself is one page now (settings/SettingsPage.svelte) with no list
-	// beside it; Sources' four pages and SQL/Terminal still move between each
-	// other through it until Sources gets its own page with tabs (slice 6 of
-	// agents/plan/settings-search-plan.md). Then SectionNav goes.
-	const toolsNav = $derived(!mobileLayout.isMobile && !!rowForRoute(TOOLS_NAV, tab.route));
 
 	// Which view this tab wants, as a loader (see $lib/tabs/lazy.ts). Handles
 	// detail variants for entity namespaces.
@@ -92,18 +78,9 @@
 	{#if !mobileLayout.isMobile}
 		<ActionToolbar {tab} />
 	{/if}
-	<div class="tab-body" class:with-nav={toolsNav}>
-		{#if toolsNav}
-			<SectionNav mode={TOOLS_NAV} route={tab.route} />
-		{/if}
+	<div class="tab-body">
 		{#if ViewComponent}
-			{#if toolsNav}
-				<div class="section-body">
-					<ViewComponent {tab} {active} />
-				</div>
-			{:else}
-				<ViewComponent {tab} {active} />
-			{/if}
+			<ViewComponent {tab} {active} />
 		{:else if loadFailed}
 			<div class="placeholder" role="alert">
 				<Icon icon="mynaui:refresh" />
@@ -139,20 +116,6 @@
 		position: relative;
 		flex: 1;
 		min-height: 0;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-
-	/* The section list, then the page. */
-	.tab-body.with-nav {
-		flex-direction: row;
-	}
-
-	.section-body {
-		position: relative;
-		flex: 1;
-		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;

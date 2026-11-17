@@ -21,7 +21,7 @@
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
-	  Developer    /virtues/developer      — SQL · Terminal
+	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
 	picker, an update installer, an 8-chapter telemetry console and a
@@ -55,7 +55,6 @@
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
-	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
@@ -114,12 +113,6 @@
 		'/virtues/this-mac': '/virtues/devices/this',
 		'/virtues/box/this-mac': '/virtues/devices/this',
 		'/virtues/system/this-mac': '/virtues/devices/this',
-		// Developer flattened — Console layer removed
-		'/virtues/developer': '/virtues/developer/sql',
-		'/virtues/developer/console': '/virtues/developer/sql',
-		// The pre-Settings developer doors (/virtues/sql, and the /developers/*
-		// group that used to self-heal them). One room now.
-		'/virtues/sql': '/virtues/developer/sql',
 		'/virtues/terminal': '/virtues/developer/terminal',
 		// The auth-activity log is gone. Its old doors land on Devices, which is
 		// where the thing it reported on — what is paired, and what you can
@@ -139,10 +132,11 @@
 		'/virtues/tools',
 	];
 
-	// The Lake console is gone: it listed the archive's streams, which Drive's
-	// Streams page shows. Its doors land there, a different tab type, so they
-	// go through `navigate` like Sources' aliases.
-	const LAKE_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
+	// Streams and SQL are sections of Sources now (Streams, Query). Their old
+	// doors land there, a different tab type, so they go through `navigate`
+	// like Sources' aliases. Terminal keeps its route; ⌘K opens it.
+	const STREAMS_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
+	const QUERY_ALIASES = ['/virtues/developer', '/virtues/developer/sql', '/virtues/developer/console', '/virtues/sql'];
 
 	$effect(() => {
 		// Services the assistant can act in are rows in the Sources catalog.
@@ -154,8 +148,12 @@
 			windowShellStore.navigate('/sources', { label: 'Sources' });
 			return;
 		}
-		if (LAKE_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/storage/streams', { label: 'Streams' });
+		if (STREAMS_ALIASES.includes(tab.route)) {
+			windowShellStore.navigate('/sources/streams', { label: 'Sources · Streams' });
+			return;
+		}
+		if (QUERY_ALIASES.includes(tab.route)) {
+			windowShellStore.navigate('/sources/query', { label: 'Sources · Query' });
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
@@ -263,12 +261,10 @@
 				     standing on the machine it describes. -->
 				<DeviceView deviceId={sub} {tab} {active} />
 			{/if}
-		{:else if section === 'developer'}
-			{#if sub === 'terminal'}
-				<DeveloperTerminalView {tab} {active} />
-			{:else}
-				<DeveloperSqlView {tab} {active} />
-			{/if}
+		{:else if section === 'developer' && sub === 'terminal'}
+			<!-- Terminal, opened from ⌘K. SQL is Sources · Query; the other
+			     developer routes forward there, so they mount nothing here. -->
+			<DeveloperTerminalView {tab} {active} />
 		{/if}
 	</main>
 </div>

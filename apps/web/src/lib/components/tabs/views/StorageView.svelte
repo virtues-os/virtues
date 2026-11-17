@@ -1,14 +1,12 @@
 <script lang="ts">
-	// Storage — the four kinds of bytes the box holds, as tabs.
+	// Storage — the kinds of bytes the box holds that you file or keep, as tabs.
 	//
 	//   Drive       files you filed          read-write
-	//   Streams     raw evidence + its blobs read-only
 	//   App Media   assets the app made/uses read-only
 	//   Recently deleted   everything deleted in the app   restore/purge
 	//
-	// These were previously scattered (/drive, /trash, /developers/lake) and one of
-	// them — the lake — was a stub rendering zeros. They are one surface because
-	// they answer one question: what is on this disk, and who put it there.
+	// Streams, the raw evidence your sources send, is a section of Sources
+	// (`/sources/streams`); its old route here forwards there.
 	//
 	// Note the base is /storage, NOT /drive: Drive's sub-paths are user folder
 	// names (/storage/drive/Documents/…), so a tab at /drive/streams would be
@@ -16,13 +14,18 @@
 	import type { Tab } from "$lib/tabs/types";
 	import SubNav, { type SubNavItem } from "$lib/components/SubNav.svelte";
 	import DriveView from "./DriveView.svelte";
-	import StreamsView from "./StreamsView.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import AppMediaView from "./AppMediaView.svelte";
 	import TrashView from "./TrashView.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type SubTab = "drive" | "streams" | "media" | "trash";
+	type SubTab = "drive" | "media" | "trash";
+
+	// Streams moved to Sources; an old link or bookmark lands there.
+	$effect(() => {
+		if (tab.route === "/storage/streams") windowShellStore.navigate("/sources/streams", { label: "Sources · Streams" });
+	});
 
 	// Derived from the route; SubNav owns the writing side. A drive folder path
 	// (/storage/drive/Documents/2026) still resolves to the `drive` tab.
@@ -32,7 +35,7 @@
 	const subTab = $derived<SubTab>(
 		tab.route === "/trash"
 			? "trash"
-			: ((tab.route.match(/^\/storage\/(streams|media|trash)$/)?.[1] as SubTab) ?? "drive"),
+			: ((tab.route.match(/^\/storage\/(media|trash)$/)?.[1] as SubTab) ?? "drive"),
 	);
 
 	const tabs: SubNavItem[] = [
@@ -43,9 +46,7 @@
 </script>
 
 <div class="flex h-full w-full flex-col bg-background">
-	<!-- Streams opens from Settings, under Sources, so its page has no strip:
-	     the strip's other sections are the Wiki's Drive rows. -->
-	{#if subTab !== "streams"}
+	{#if tab.route !== "/storage/streams"}
 		<SubNav
 			tabId={tab.id}
 			route={tab.route}
@@ -58,10 +59,10 @@
 	{/if}
 
 	<div class="min-h-0 flex-1">
-		{#if subTab === "drive"}
+		{#if tab.route === "/storage/streams"}
+			<!-- Forwarding to Sources · Streams (the effect above). -->
+		{:else if subTab === "drive"}
 			<DriveView {tab} {active} />
-		{:else if subTab === "streams"}
-			<StreamsView />
 		{:else if subTab === "media"}
 			<AppMediaView />
 		{:else if subTab === "trash"}

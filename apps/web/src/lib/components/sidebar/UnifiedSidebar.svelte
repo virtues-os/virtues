@@ -486,7 +486,7 @@
 			{:else}
 				<!-- One list, always: the sidebar never changes. Every door opens
 				     a page, and a page that has sections carries their list
-				     itself (the Wiki's index, Settings' SectionNav, Setup's
+				     itself (the Wiki's index, Sources' tabs, Setup's
 				     step strip). -->
 				<div class="panel-body">
 					<HomePanel />

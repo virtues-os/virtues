@@ -1,33 +1,20 @@
 <!--
-	SourcesView — the Sources room.
+	SourcesView — the Sources room, opened from its button in the window's
+	corner (HeaderCorner), beside Search and Settings.
 
-	Sources used to be one row inside Settings rendering a single panel: a
-	paragraph explaining what a source is, a flow table, and a flat grid of
-	credentials. Two halves that shared no join key (the flow table is keyed on
-	ontology tables, the grid on credentials), so a stopped stream could not be
-	clicked through to whatever was supposed to be filling it.
-
-	Now it is a door with three sections, in the order the questions get asked:
+	Five sections, across the top, in the order the questions get asked:
 
 	  Overview  — is anything broken right now, and is data still arriving
 	  Catalog   — what can I plug in, and what is already plugged in
 	  Activity  — what has actually been running
+	  Streams   — every stream your server keeps, and how full each is
+	  Query     — SQL against your own record
 
-	Section is a pure function of the route, the way SettingsView does it, and
-	the reserved words live in the registry beside the matcher (SOURCES_SECTIONS)
-	so the router and this file cannot disagree about whether `/sources/catalog`
-	is a section or a credential id.
-
-	The section nav lives in the SIDEBAR — the rail's Sources panel carries
-	Overview / Catalog / Activity (SOURCES_MODE in `lib/sidebar/modes.ts`), and
-	this room renders whatever the route names. There is deliberately no strip
-	at the top: the same three words one column to the left is the same list
-	twice in one viewport, which is the reason the wiki lost its strip too.
-
-	`section` below was always derived from the route, so nothing here depended
-	on the strip — SubNav only ever WROTE the route, and the panel's rows write
-	it the same way (through `windowShellStore.navigate`, which also pushes
-	history, so Back walks the sections).
+	Section is a pure function of the route, and the reserved words live in
+	the registry beside the matcher (SOURCES_SECTIONS), so the router and this
+	file cannot disagree about whether `/sources/catalog` is a section or a
+	credential id. One source's page and one connection's page carry no strip:
+	they are reached from a section, and Back returns to it.
 -->
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
@@ -40,12 +27,23 @@
 	import SourcesCatalog from './SourcesCatalog.svelte';
 	import SourcesActivity from './SourcesActivity.svelte';
 	import SourceDetail from './SourceDetail.svelte';
+	import SubNav from '$lib/components/SubNav.svelte';
+	import StreamsView from '$lib/components/tabs/views/StreamsView.svelte';
+	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { reloadOnReturn } from './connectDispatch';
 
-	let { tab }: { tab: Tab; active?: boolean } = $props();
+	let { tab, active = true }: { tab: Tab; active?: boolean } = $props();
+
+	const SECTION_ITEMS = [
+		{ id: 'overview', label: 'Overview' },
+		{ id: 'catalog', label: 'Catalog' },
+		{ id: 'activity', label: 'Activity' },
+		{ id: 'streams', label: 'Streams' },
+		{ id: 'query', label: 'Query' },
+	];
 
 	// Three shapes share this slot, discriminated without a lookup:
 	//   ''                  → Overview
@@ -83,11 +81,20 @@
 </script>
 
 <div class="sources-room">
+	{#if section !== 'connection' && section !== 'source'}
+		<SubNav tabId={tab.id} route={tab.route} base="/sources" default="overview" items={SECTION_ITEMS} divider ariaLabel="Sources sections" />
+	{/if}
+	{#if section === 'query'}
+		<!-- The SQL console fills the room and scrolls itself. -->
+		<div class="sources-fill"><DeveloperSqlView {tab} {active} /></div>
+	{:else}
 	<div class="sources-scroll">
 		{#if section === 'catalog'}
 			<SourcesCatalog />
 		{:else if section === 'activity'}
 			<SourcesActivity />
+		{:else if section === 'streams'}
+			<StreamsView />
 		{:else if section === 'connection'}
 			<CredentialDetailView {tab} />
 		{:else if section === 'source'}
@@ -96,6 +103,7 @@
 			<SourcesOverview />
 		{/if}
 	</div>
+	{/if}
 </div>
 
 <DevicePairModal
@@ -130,5 +138,12 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+	}
+
+	.sources-fill {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 	}
 </style>

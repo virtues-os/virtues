@@ -98,7 +98,7 @@ export const WIKI_SECTION_RE =
  *
  * Overview is the bare `/sources` and so is not in this list.
  */
-export const SOURCES_SECTIONS = ['catalog', 'activity'] as const;
+export const SOURCES_SECTIONS = ['catalog', 'activity', 'streams', 'query'] as const;
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
 
 export const tabRegistry: Record<TabType, TabDefinition> = {

@@ -1,11 +1,15 @@
 <script lang="ts">
 	/**
-	 * The right corner of the window header: search and Settings, two glass
-	 * buttons level with the ∴ at the other end.
+	 * The right corner of the window header: Search, Sources and Settings,
+	 * three glass buttons level with the ∴ at the other end.
 	 *
 	 * Search opens the search palette (SearchModal), as ⌘K does. It searches
 	 * everything, so it lives in the window's corner rather than on a page's
-	 * toolbar, where it would read as a search of that page. Settings opens
+	 * toolbar, where it would read as a search of that page. Sources opens
+	 * where your data comes from: its overview, catalog, activity, streams and
+	 * Query. It carries no dot or badge, even when a source stops: a stopped
+	 * source shows on the Sources page and in Settings' Changed lately.
+	 * Settings opens
 	 * the Settings page, every setting on one scroll. It is something you
 	 * open now and then, so it sits in the corner rather
 	 * than in the sidebar's list, and lights while the focused pane shows a
@@ -16,12 +20,16 @@
 	import { search } from '$lib/stores/search.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
-	const inSettings = $derived.by(() => {
+	const activePath = $derived.by(() => {
 		const pane = windowShellStore.activePane;
-		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
-		const path = route?.split('?')[0];
-		return path === '/virtues' || !!path?.startsWith('/virtues/');
+		return pane?.tabs.find((t) => t.id === pane.activeTabId)?.route?.split('?')[0];
 	});
+	const inSources = $derived(activePath === '/sources' || !!activePath?.startsWith('/sources/'));
+	const inSettings = $derived(activePath === '/virtues' || !!activePath?.startsWith('/virtues/'));
+
+	function openSources() {
+		windowShellStore.openTabFromRoute('/sources', { label: 'Sources', focusExisting: true });
+	}
 
 	function openSettings() {
 		windowShellStore.openTabFromRoute('/virtues', { label: 'Settings', focusExisting: true });
@@ -31,6 +39,17 @@
 <div class="header-corner">
 	<button type="button" class="corner-button lq" onclick={() => search.show()} aria-label="Search" data-tip="Search" data-tip-key="mod+k">
 		<AtlasIcon name="search" size={SHELL_GLYPH_PX} bare />
+	</button>
+	<button
+		type="button"
+		class="corner-button lq"
+		class:lq-selected={inSources}
+		onclick={openSources}
+		aria-label="Sources"
+		aria-current={inSources ? 'page' : undefined}
+		data-tip="Sources"
+	>
+		<AtlasIcon name="sources" size={SHELL_GLYPH_PX} bare />
 	</button>
 	<button
 		type="button"
