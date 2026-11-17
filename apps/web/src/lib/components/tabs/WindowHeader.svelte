@@ -1,44 +1,31 @@
 <script lang="ts">
 	/**
-	 * The window header: one row across the whole window, on the desk ground
-	 * above the cards.
+	 * The window header: one row across the whole window, over the painting.
 	 *
-	 * Over the sidebar it holds the ∴ mark, which is also the sidebar toggle
-	 * (HeaderMark). New chat is the sidebar's first door. The mark moves only
-	 * when the Mac app's traffic lights come or go, on entering and leaving
-	 * full screen. At the right end sit search (HeaderSearch), which searches
-	 * everything, and the status capsule, which says what your server is doing
-	 * and opens what needs you (StatusCapsule).
-	 * Back and forward are on each page's action toolbar (ActionToolbar),
-	 * since they act on that page's tab. Over the cards it holds each pane's tab strip, lined up with the
-	 * pane below it, so a tab always sits on top of its own content.
-	 *
-	 * With the sidebar closed the mark stays where it was, over the sidebar's
-	 * glyphs, so the left pane's tabs start just after it.
+	 * At the left is the ∴, a glass button that shows and hides the sidebar
+	 * (HeaderMark), standing directly over the rail. It moves only when the
+	 * Mac app's traffic lights come or go, on entering and leaving full
+	 * screen. At the right end are search and Settings (HeaderCorner). Over
+	 * the panes it holds each pane's tab strip, lined up with the pane below
+	 * it, so a tab always sits on top of its own content. Back and forward
+	 * are on each page's action toolbar (ActionToolbar), since they act on
+	 * that page's tab.
 	 */
 	import HeaderMark from './HeaderMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
-	import StatusCapsule from './StatusCapsule.svelte';
-	import HeaderSearch from './HeaderSearch.svelte';
+	import HeaderCorner from './HeaderCorner.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
-	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
+	import { sidebarState, SIDEBAR_INSET, RAIL_GLASS_PX, CHROME_TAB_PX } from '$lib/stores/sidebarState.svelte';
 	import { trafficLights } from '$lib/tauri/trafficLights.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
-	/** Air between the controls and the first tab when they meet. */
+	/** Air between the ∴ and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
-	/** The controls' glyphs, the same size as the sidebar's rows. */
-	const GLYPH_PX = SHELL_GLYPH_PX;
-	/** The scale's control box: every clickable thing in the header. */
-	const CONTROL_PX = 28;
-	/** Between two controls' boxes, as the scale spaces them. */
-	const CONTROL_GAP_PX = 4;
-	/** Between two neighbouring controls' glyphs: 16px. */
-	const GLYPH_AIR_PX = CONTROL_PX - GLYPH_PX + CONTROL_GAP_PX;
-	/** The ∴ glyph inside HeaderMark's control box. */
-	const MARK_GLYPH_PX = 17;
-	/** From the ∴'s box to its glyph. */
-	const MARK_INSET_PX = (CONTROL_PX - MARK_GLYPH_PX) / 2;
+	/** Between the last traffic light and the ∴. */
+	const LIGHTS_GAP_PX = 12;
+	/** How far a sidebar row stands in from the glass's edge, open or closed (UnifiedSidebar). */
+	const ROW_INSET_PX = 4;
+	/** The ∴ and Virtues beside the Mac app's window buttons. */
+	const BESIDE_LIGHTS_PX = 120;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
@@ -48,23 +35,27 @@
 	const cardLeft = $derived(sidebarState.cardLeft);
 
 	/**
-	 * Where the sidebar's icons start: the desk gap, the panel body's 4px
-	 * and a row's 12px. The ∴'s glyph starts on
-	 * that line, so the header's controls head the sidebar's own column. They
-	 * keep that place with the sidebar closed: controls that slid would move
-	 * under the pointer that just closed it.
-	 */
-	const ICON_LINE_PX = SIDEBAR_INSET + 4 + 12;
-	/**
+	 * The ∴ is the sidebar's first line, on its glass. Closed, it is the
+	 * top of the rail, as wide as a rail row. Open, it is a row as wide as
+	 * the sidebar's rows, standing where they stand.
+	 *
 	 * In the Mac app the title bar is an overlay and the traffic lights sit
 	 * in this row, on its centre line (src-tauri traffic_lights.rs). The ∴
-	 * follows them with the same air that separates the controls' glyphs, so
-	 * the lights and the controls read as one evenly spaced row. In full
-	 * screen macOS hides the lights, and the ∴ moves back to the sidebar's
-	 * icon line, as it sits in a browser.
+	 * follows them instead, and stands on its own glass, a square the size
+	 * of the corner buttons, while the sidebar is closed, since the rail
+	 * cannot hold the lights. In full screen macOS
+	 * hides the lights, and the ∴ goes back to the sidebar, as in a browser.
 	 */
+	const sidebarOpen = $derived(!sidebarState.collapsed);
 	const leadLeft = $derived(
-		(trafficLights.shown ? trafficLights.end + GLYPH_AIR_PX : ICON_LINE_PX) - MARK_INSET_PX
+		trafficLights.shown
+			? trafficLights.end + LIGHTS_GAP_PX
+			: SIDEBAR_INSET + ROW_INSET_PX
+	);
+	const markWidth = $derived(
+		trafficLights.shown
+			? sidebarOpen ? BESIDE_LIGHTS_PX : CHROME_TAB_PX
+			: (sidebarOpen ? sidebarState.width : RAIL_GLASS_PX) - 2 * ROW_INSET_PX
 	);
 
 	let leadWidth = $state(0);
@@ -87,14 +78,13 @@
 		style:left="{leadLeft}px"
 		bind:clientWidth={leadWidth}
 	>
-		<HeaderMark />
+		<HeaderMark width={markWidth} standalone={trafficLights.shown && !sidebarOpen} />
 	</div>
 
 	<div class="strips" data-tauri-drag-region>
 		<div
 			data-tauri-drag-region
 			class="strip"
-			class:flush={overlap === 0}
 			style:width="calc({leftWidth}% - {gutterPx / 2}px)"
 			style:padding-left="{overlap}px"
 		>
@@ -103,16 +93,14 @@
 		<!-- The gutter and the right strip stay mounted at zero width with one
 		     pane, so they open and close on the cards' clock. -->
 		<div class="gutter" style:width="{gutterPx}px" aria-hidden="true"></div>
-		<div class="strip flush" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
+		<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
 			{#if isSplit}
 				<WindowTabBar paneId="right" />
 			{/if}
 		</div>
 	</div>
-	<!-- One positioned corner, so search moves left as the capsule widens. -->
 	<div class="corner">
-		<HeaderSearch />
-		<StatusCapsule />
+		<HeaderCorner />
 	</div>
 </header>
 
@@ -134,7 +122,7 @@
 		z-index: 1;
 		display: flex;
 		align-items: center;
-		transition: left var(--motion-layout) var(--ease-premium);
+		transition: left var(--motion-sidebar) var(--ease-sidebar);
 	}
 
 	/* The strips span exactly the panes below them: from the pane's left edge
@@ -145,15 +133,13 @@
 		top: 0;
 		bottom: 0;
 		left: var(--card-left);
-		right: 0;
+		right: var(--window-air);
 		display: flex;
 		transition: left var(--motion-sidebar) var(--ease-sidebar);
 	}
 
 	/* The strips open and close with the cards below them (SplitContainer),
-	   on the same clock, so a tab never runs ahead of its pane. A `flush`
-	   strip's first tab sits on its card's left edge, so an active first tab
-	   squares off the card's corner instead of flaring (WindowTabBar). */
+	   on the same clock, so a tab never runs ahead of its pane. */
 	.strip {
 		min-width: 0;
 		/* The left padding clears the header's controls, which only changes
@@ -163,21 +149,21 @@
 			width var(--motion-layout) var(--ease-premium);
 	}
 
-	/* The last strip's tabs stop short of the corner: search and the status
-	   capsule at their resting widths, the gap between them, and the air
-	   around them. */
+	/* The strips end where the panes do, the window's air in from the
+	   edge. The last one's tabs stop short of the corner: its two buttons,
+	   the gap between them, and the gap before them. */
 	.strip:last-child {
-		padding-right: 84px;
+		padding-right: calc(2 * var(--chrome-tab-h) + 16px);
 	}
 
 	.corner {
 		position: absolute;
-		top: 7px;
-		right: 10px;
+		top: 0;
+		bottom: 0;
+		right: var(--window-air);
 		z-index: 3;
 		display: flex;
 		align-items: center;
-		gap: 6px;
 	}
 
 	.resizing .strips,

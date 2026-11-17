@@ -12,7 +12,7 @@
 	 * Mac's menu bar. The last segment is the page itself: double-click to
 	 * rename it in place, right-click for its actions. Search is not here:
 	 * it searches everything, so it sits in the window header's corner
-	 * (HeaderSearch). The right end holds the page's status mark
+	 * (HeaderCorner). The right end holds the page's status mark
 	 * (`usePageStatus`), then what the page lets you do: the controls a
 	 * view hands over with `usePageActions`, then the buttons it publishes
 	 * with `paneActions.set`, two inline and the rest behind a `···`, since a
@@ -300,8 +300,7 @@
 		gap: 12px;
 		height: 48px;
 		padding: 0 12px;
-		/* A full rule under the bar, edge to edge across the pane. */
-		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+		/* No rule under the bar: it is the top of the page's paper. */
 	}
 
 	/* The bar of the pane you are not in keeps its layout and goes quiet:

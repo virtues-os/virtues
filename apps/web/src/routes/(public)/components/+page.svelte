@@ -180,7 +180,7 @@
 			blurb: "The non-color tokens. Shown because a regression here (a chrome row that stops matching the pane inset, a z-index that overtakes the modal) is just as invisible as a color one.",
 			kind: "text",
 			tokens: [
-				"chrome-row-h", "chrome-tab-h", "pane-inset", "radius-full",
+				"chrome-row-h", "chrome-tab-h", "radius-full",
 				"sidebar-interactive-height", "sidebar-interactive-radius",
 				"sidebar-interactive-font-size", "sidebar-interactive-icon-size",
 				"sidebar-padding-left-base", "sidebar-indent-width", "sidebar-item-gap",

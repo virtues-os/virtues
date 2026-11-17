@@ -91,18 +91,18 @@
 {/if}
 
 <style>
+	/* It sits on the tiles' top row, beside their switch (HomeTiles). The
+	   dot is close to its words, the actions a little further off. */
 	.note {
-		width: min(var(--reading-measure, 38rem), calc(100% - 2 * var(--reading-gutter, 1.5rem)));
-		box-sizing: border-box;
-		padding-left: 4px;
+		flex: 1;
+		min-width: 0;
 		margin: 0;
 		pointer-events: auto;
 		display: flex;
 		align-items: baseline;
-		gap: 12px;
+		gap: 8px;
 		font-size: 14px;
 		color: var(--color-foreground);
-		min-width: 0;
 	}
 
 	.dot {
@@ -132,6 +132,7 @@
 	}
 
 	.act {
+		margin-left: 4px;
 		font-weight: 500;
 		color: var(--color-foreground);
 	}

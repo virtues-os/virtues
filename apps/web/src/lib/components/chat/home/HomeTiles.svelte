@@ -8,7 +8,10 @@
 	 *
 	 * A small switch above them picks how they are shown (`homeLayout`):
 	 * cards, rows, or one short paragraph that says the same things in words.
+	 * The row it sits on also holds `lead`, home's notes line (HomeNotes), so
+	 * the line sits just above the tiles instead of on a row of its own.
 	 */
+	import type { Snippet } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
@@ -19,7 +22,7 @@
 	import { hoursMinutes, lastReplyLine, pinLine, recentNights, type Nights } from './homeTiles';
 	import { homeLayout, type HomeLayout } from './homeLayout.svelte';
 
-	let { currentChatId = null }: { currentChatId?: string | null } = $props();
+	let { currentChatId = null, lead }: { currentChatId?: string | null; lead?: Snippet } = $props();
 
 	const pin = $derived(pinsStore.pins[0] ?? null);
 	const pinTitle = $derived(pin ? (pin.title ?? pin.label ?? 'Untitled') : '');
@@ -214,8 +217,11 @@
 	<span class="row-kicker">{t.kicker}</span>
 {/snippet}
 
-{#if tiles.length}
+{#if tiles.length || lead}
 	<div class="home-tiles">
+		<div class="tiles-head">
+		{@render lead?.()}
+		{#if tiles.length}
 		<div class="layout-switch" role="radiogroup" aria-label="How home shows these" tabindex="-1" bind:this={switchEl} onkeydown={onSwitchKey}>
 			{#each LAYOUTS as l (l.key)}
 				{@const on = homeLayout.value === l.key}
@@ -234,21 +240,24 @@
 				</button>
 			{/each}
 		</div>
+		{/if}
+		</div>
 
+		{#if tiles.length}
 		{#key homeLayout.value}
 			<div class="layout" in:fade={{ duration: 160 }}>
 				{#if homeLayout.value === 'cards'}
 					<div class="cards">
 						{#each ordered as t (t.key)}
 							{#if t.open}
-								<button class="tile" onclick={t.open}>{@render body(t)}</button>
+								<button class="tile lq lq-regular" onclick={t.open}>{@render body(t)}</button>
 							{:else}
-								<div class="tile still">{@render body(t)}</div>
+								<div class="tile lq lq-regular still">{@render body(t)}</div>
 							{/if}
 						{/each}
 					</div>
 				{:else if homeLayout.value === 'rows'}
-					<div class="rows">
+					<div class="rows lq lq-regular">
 						{#each ordered as t (t.key)}
 							{#if t.open}
 								<button class="row" onclick={t.open}>{@render row(t)}</button>
@@ -271,6 +280,7 @@
 				{/if}
 			</div>
 		{/key}
+		{/if}
 	</div>
 {/if}
 
@@ -279,13 +289,22 @@
 		width: min(var(--reading-measure, 38rem), calc(100% - 2 * var(--reading-gutter, 1.5rem)));
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: 8px;
 		pointer-events: auto;
+	}
+
+	/* The notes line at the left, the switch at the right, on one row. */
+	.tiles-head {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		min-width: 0;
 	}
 
 	/* Quiet until you look for it: three small glyphs at the row's right end. */
 	.layout-switch {
-		align-self: flex-end;
+		flex: none;
+		margin-left: auto;
 		display: flex;
 		gap: 2px;
 		padding: 2px;
@@ -332,14 +351,16 @@
 		gap: 12px;
 	}
 
-	/* Short enough that the painting's village shows below the row. The
-	   height is fixed, so a line arriving after its read does not move it. */
+	/* Regular glass on the painting (`.lq-regular`, app.css), because a
+	   card holds lines to read. Short enough that the painting's village
+	   shows below the row. The height is fixed, so a line arriving after its
+	   read does not move it. */
 	.tile {
 		height: 138px;
 		box-sizing: border-box;
 		padding: 13px 15px;
-		border: 1px solid var(--color-border);
-		border-radius: 14px;
+		border: none;
+		border-radius: var(--radius-xl);
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
@@ -347,9 +368,10 @@
 		text-align: left;
 		font: inherit;
 		color: var(--color-foreground);
-		background: var(--color-surface);
 		cursor: pointer;
-		transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+		transition:
+			transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+			box-shadow var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.tile.still {
@@ -424,12 +446,9 @@
 		background: var(--color-primary);
 	}
 
-	/* One card of rows, so the text keeps the surface under it where the
-	   painting shows through the page. */
+	/* One glass card of rows, in the tiles' regular glass. */
 	.rows {
-		border: 1px solid var(--color-border);
 		border-radius: var(--radius-xl);
-		background: var(--color-surface);
 		overflow: hidden;
 	}
 

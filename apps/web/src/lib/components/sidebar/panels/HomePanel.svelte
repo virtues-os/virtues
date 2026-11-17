@@ -51,11 +51,12 @@
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { sidebarDoors, type DoorId } from '$lib/stores/sidebarDoors.svelte';
+	import { sidebarState } from '$lib/stores/sidebarState.svelte';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
+	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
 	import { pinIdentity, renameRef, ownedRef, untitled, isUntitled } from '$lib/refs/identity.svelte';
 	import {
 		loadRecentSources,
@@ -70,8 +71,6 @@
 	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { clothFor } from '$lib/sidebar/pin-colors';
-	import { isEmoji } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
 		fileIntoProject,
@@ -85,8 +84,8 @@
 		setMentionDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
+	import PinGlyph from '../PinGlyph.svelte';
 	import SetupRing from '../SetupRing.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
@@ -112,25 +111,6 @@
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
 
-	// The tree under the Projects door: every project, in your order. It
-	// folds like a group, and opens by itself when you open a project from
-	// anywhere else, so the line to it is on screen.
-	const openProjectIndex = $derived(projects.findIndex((p) => activeRoute === `/project/${p.id}`));
-	const openProjectId = $derived(openProjectIndex >= 0 ? projects[openProjectIndex].id : null);
-	$effect(() => {
-		if (openProjectId && untrack(() => folded('projects'))) sidebarZones.toggle(zoneId('projects'));
-	});
-
-	function toggleProjectTree(e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		const door = (e.currentTarget as HTMLElement).closest('.panel-door') as HTMLElement | null;
-		if (door) toggleGroup('projects', door);
-	}
-
-	function openProject(p: ProjectSummary) {
-		windowShellStore.openTabFromRoute(`/project/${p.id}`, { label: p.name, focusExisting: true });
-	}
 	// The pinned project a dragged sidebar row is over. A dragged TAB is
 	// tracked by dndManager instead (it is not an HTML drag); either lights
 	// the row.
@@ -383,18 +363,6 @@
 	// the rows under it are not thrown down a group's height in one frame.
 	const zoneSlide = (node: Element) => slide(node, { duration: moving() ? MOVE_MS : 0, easing: easePremium });
 
-	/** The glyph a pin with no chosen mark wears, by what it opens. */
-	function pinKindGlyph(url: string): string {
-		if (/^https?:\/\//i.test(url)) return 'wiki';
-		if (url.startsWith('/chat/')) return 'chats';
-		if (url.startsWith('/project/') || url.startsWith('/notebook/')) return 'projects';
-		if (url.startsWith('/applet')) return 'applets';
-		if (url.startsWith('/tasks')) return 'tasks';
-		if (url.startsWith('/wiki')) return 'wiki';
-		if (url.startsWith('/day/')) return 'day';
-		return 'pages';
-	}
-
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
@@ -532,21 +500,13 @@
 	// ── arranging the doors ────────────────────────────────────────────────
 
 	const doors = $derived(sidebarDoors.visible);
-	onMount(() => void sidebarDoors.load());
-	// The hand-drawn rule after a group's label. Three strokes, each a little
-	// off level in its own way, picked by the group's id so a group always
-	// draws the same one and neighbours rarely match.
-	const RULE_STROKES = [
-		'M0 2.3C14 1.6 27 2.7 41 2.2S71 1.5 85 2.1S96 2.4 100 1.9',
-		'M0 1.8C11 2.5 26 1.7 44 2.3S69 2.6 83 1.9S95 1.6 100 2.2',
-		'M0 2.1C17 1.5 31 2.4 50 2S78 1.6 91 2.4S98 2.1 100 2',
-	];
-	function ruleStroke(id: string): string {
-		let sum = 0;
-		for (const ch of id) sum += ch.charCodeAt(0);
-		return RULE_STROKES[sum % RULE_STROKES.length];
-	}
 
+	// Closed, the sidebar narrows to its glyphs: the same rows, with the words
+	// faded and clipped (UnifiedSidebar). Rows with no glyph go out of reach,
+	// the doors name themselves in a tooltip as the pins already do, and a
+	// row's hover controls stay hidden: they would float over the glyph.
+	const railed = $derived(sidebarState.collapsed);
+	onMount(() => void sidebarDoors.load());
 	// A door being dragged, and the gap it would land in among the doors.
 	let draggingDoorId = $state<DoorId | null>(null);
 	let doorGap = $state<number | null>(null);
@@ -1001,7 +961,7 @@
 	}}
 >
 	{#if setupOpen}
-		<button type="button" class="panel-row panel-door" onclick={openSetup}>
+		<button type="button" class="panel-row panel-door" onclick={openSetup} data-tip={railed ? 'Setup' : undefined} data-tip-side="right">
 			<SetupRing size={16} />
 			<span class="panel-row-text">Setup</span>
 			<span class="door-meta">{setupCount}</span>
@@ -1015,13 +975,15 @@
 		<!-- A div, not a button, so a door's + can be a real button inside it. -->
 		<div
 			class="panel-row panel-door drop-slot"
-			class:panel-row-has-actions={!!act.add}
+			class:panel-row-has-actions={!!act.add && !railed}
 			class:drop-before={doorLine === index}
 			class:drop-after={doorLine === doors.length && index === doors.length - 1}
 			class:dragging={draggingDoorId === door.id}
 			class:stale-hover={staleHover}
 			role="link"
 			tabindex="0"
+			data-tip={railed ? door.label : undefined}
+			data-tip-side="right"
 			aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 			draggable="true"
 			ondragstart={(e) => {
@@ -1067,31 +1029,8 @@
 			}}
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
-			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare />
-			{#if door.id === 'projects' && projects.length}
-				{@const shut = folded('projects')}
-				<span class="panel-row-text door-label">
-					{door.label}
-					<button
-						type="button"
-						class="door-chev"
-						class:shut
-						aria-expanded={!shut}
-						aria-label={shut ? 'Show projects' : 'Hide projects'}
-						data-tip={shut ? 'Show projects' : 'Hide projects'}
-						onclick={toggleProjectTree}
-					>
-						<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
-							<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-						</svg>
-					</button>
-				</span>
-				{#if !shut}
-					<span class="tree-stem" class:lit={openProjectId !== null} aria-hidden="true"></span>
-				{/if}
-			{:else}
-				<span class="panel-row-text">{door.label}</span>
-			{/if}
+			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare fillable />
+			<span class="panel-row-text">{door.label}</span>
 			{#if act.add}
 				{@const add = act.add}
 				<span class="row-actions">
@@ -1101,50 +1040,9 @@
 				</span>
 			{/if}
 		</div>
-		{#if door.id === 'projects' && projects.length}
-			<div class="sidebar-expandable fold" class:expanded={!folded('projects')} style={foldStyle(projects.length)}>
-				<div class="sidebar-expandable-inner">
-					{@render projectTree()}
-				</div>
-			</div>
-		{/if}
 		</div>
 	{/each}
 </div>
-
-<!-- Projects as a tree under their door. The rows start at the door's word.
-     A faint line runs from the door's glyph down the tree, and the stretch
-     of it that leads to the open project is drawn in ink and curves into
-     that row. -->
-{#snippet projectTree()}
-	<div class="project-tree" role="group" aria-label="Projects">
-		<span class="tree-guide" aria-hidden="true"></span>
-		{#each projects as p, i (p.id)}
-			{@const url = `/project/${p.id}`}
-			<div
-				class="panel-row tree-row"
-				class:active={activeRoute === url}
-				class:stale-hover={staleHover}
-				role="link"
-				tabindex="0"
-				data-tip={p.name}
-				onclick={() => openProject(p)}
-				onkeydown={(e) => {
-					if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-						e.preventDefault();
-						openProject(p);
-					}
-				}}
-				oncontextmenu={(e) => showMenu(e, projectRowMenuItems(p))}
-			>
-				{#if activeRoute === url}
-					<span class="tree-branch" style="--tree-i: {i}" aria-hidden="true"></span>
-				{/if}
-				<span class="panel-row-text">{p.name}</span>
-			</div>
-		{/each}
-	</div>
-{/snippet}
 
 <!-- A group's head: the label folds the group; the chevron says so on
      approach and stays while the group is shut, because a folded group has
@@ -1159,7 +1057,6 @@
 			type="button"
 			class="group-label group-toggle"
 			aria-expanded={!folded(id)}
-			data-tip={folded(id) ? `Show ${label}` : `Hide ${label}`}
 			onclick={(e) => toggleGroup(id, e.currentTarget.parentElement as HTMLElement)}
 		>
 			<span>{label}</span>
@@ -1167,9 +1064,6 @@
 				<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
 		</button>
-		<svg class="group-rule" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
-			<path d={ruleStroke(id)} vector-effect="non-scaling-stroke" />
-		</svg>
 		{#if action}
 			<span class="group-actions" class:shown={actionShown}>{@render action()}</span>
 		{/if}
@@ -1193,7 +1087,8 @@
 
 <!-- One row for every kind. No glyph: Recent is a list of titles, and they
      start under the group's label. Ten repeated marks would make it a second
-     block of doors. The tooltip says what kind of thing it is. -->
+     block of doors. When a title is cut off, its tooltip gives it in full
+     and says what kind of thing it is. -->
 {#snippet recentRow(row: RecentRow)}
 	{@const pinned = isPinned(row.url)}
 	{@const chatId = row.kind === 'chat' ? row.session.conversation_id : null}
@@ -1206,6 +1101,7 @@
 		role="link"
 		tabindex="0"
 		data-tip={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
+		data-tip-clipped
 		data-tip-side="right"
 		draggable={renaming?.url !== row.url}
 		ondragstart={(e) => {
@@ -1286,7 +1182,7 @@
 			onblur={() => void commitRename()}
 		/>
 	{:else}
-		<span class="panel-row-text" class:untitled={untitledTitle}>{title}</span>
+		<span class="panel-row-text" class:untitled={untitledTitle} data-tip-text>{title}</span>
 	{/if}
 {/snippet}
 
@@ -1336,7 +1232,8 @@
 					in:rowIn={pin.url}
 					out:rowOut={pin.url}
 					animate:rowFlip
-					class="panel-row panel-row-has-actions drop-slot"
+					class="panel-row drop-slot"
+					class:panel-row-has-actions={!railed}
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
@@ -1349,6 +1246,7 @@
 					role="link"
 					tabindex="0"
 					data-tip={look.title}
+					data-tip-clipped={railed ? undefined : ''}
 					data-tip-side="right"
 					aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 					draggable={renaming?.url !== pin.url}
@@ -1401,32 +1299,7 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The mark the user picked, else the glyph of what it opens, in
-					     the pin's cloth. A solid dot read as a status light: red and
-					     amber said error and warning about a page that had neither. -->
-					<span class="row-glyph" aria-hidden="true">
-						{#if pinChat && chatActivity.running(pinChat)}
-							<ThinkingMark depth={3} size={14} />
-						{:else if look.icon && isEmoji(look.icon)}
-							<span class="row-emoji">{look.icon}</span>
-						{:else if look.icon}
-							<!-- Drawn at the nav rows' size. An Atlas pick goes through
-							     AtlasIcon so it keeps the same 1.25px line as the glyphs
-							     above it; through iconify at a smaller box it thinned and
-							     shrank. -->
-							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								{#if look.icon.startsWith('atlas:')}
-									<AtlasIcon name={look.icon.slice('atlas:'.length)} size={SHELL_GLYPH_PX} bare />
-								{:else}
-									<Icon icon={look.icon} width={SHELL_GLYPH_PX} />
-								{/if}
-							</span>
-						{:else}
-							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKindGlyph(pin.url)} size={SHELL_GLYPH_PX} bare />
-							</span>
-						{/if}
-					</span>
+					<PinGlyph {pin} />
 					{@render rowTitle(pin.url, look.title, isUntitled(look.title, look.kind))}
 					{@render unreadDot(pinChat)}
 					<span class="row-actions">
@@ -1458,6 +1331,7 @@
 {/if}
 
 {#if recents.length > 0}
+<div class="recent-zone" inert={railed}>
 	{@render groupHead('recent', recentLabel, Math.max(1, recentsShown.length), recentHeadActions, recentFilter !== 'all')}
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
@@ -1471,12 +1345,12 @@
 			{/each}
 		</div>
 	</div>
-{/if}
-
-<!-- Hidden while Recent is folded: "See all" under a closed heading would
-     point at nothing on screen. -->
-{#if recentsMore && !folded('recent')}
-	<button type="button" class="panel-row panel-more" onclick={() => filterDef.seeAll()}>See all</button>
+	<!-- Hidden while Recent is folded: "See all" under a closed heading would
+	     point at nothing on screen. -->
+	{#if recentsMore && !folded('recent')}
+		<button type="button" class="panel-row panel-more" onclick={() => filterDef.seeAll()}>See all</button>
+	{/if}
+</div>
 {/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
@@ -1493,7 +1367,7 @@
 		   the rows under it and not the tail of the ones above. */
 		height: 22px;
 		margin-top: 16px;
-		padding-right: 6px;
+		padding-right: var(--row-action-inset);
 		user-select: none;
 	}
 
@@ -1502,7 +1376,7 @@
 		align-items: center;
 		gap: 6px;
 		height: 100%;
-		padding: 0 0 0 12px;
+		padding: 0 0 0 10px;
 		border: none;
 		background: none;
 		cursor: pointer;
@@ -1528,7 +1402,6 @@
 	   old --ease-premium over 150ms put 88% of the travel in the first 75ms,
 	   so the move strobed in a few big jumps and then crept for another 75ms. */
 	.group-head,
-	.door-chev,
 	.fold {
 		--fold-open: var(--fold-ms, 200ms);
 		--fold-close: calc(var(--fold-ms, 200ms) * 0.85);
@@ -1571,24 +1444,7 @@
 		transform: rotate(-90deg);
 	}
 
-	/* The rule fills the room between the label and the head's actions, so
-	   it shortens at both ends as the chevron and the actions open their
-	   slots. It stays out of the hit area: the label is the toggle, the rule
-	   is only ink. */
-	.group-rule {
-		flex: 1;
-		min-width: 0;
-		height: 4px;
-		margin: 0 8px;
-		fill: none;
-		stroke: var(--color-foreground-subtle);
-		stroke-width: 1;
-		stroke-linecap: round;
-		opacity: 0.45;
-		pointer-events: none;
-	}
-
-	/* The head's actions open their slot the same way, from the right. */
+	/* The head's actions sit at its right end and open their slot from there. */
 	.group-actions {
 		margin-left: auto;
 		display: flex;
@@ -1604,7 +1460,7 @@
 	.group-head:hover .group-actions,
 	.group-actions:focus-within,
 	.group-actions.shown {
-		max-width: 28px;
+		max-width: var(--row-action-size);
 		opacity: 1;
 	}
 
@@ -1659,105 +1515,6 @@
 		flex-direction: column;
 	}
 
-	/* The Projects door's word carries its fold. The chevron shows when you
-	   point at the door, and turns to say which way the tree is. */
-	.door-label {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-	}
-
-	.door-chev {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		opacity: 0;
-		transition: opacity 150ms ease;
-	}
-
-	.panel-door:not(.stale-hover):hover .door-chev,
-	.door-chev:focus-visible {
-		opacity: 0.8;
-	}
-
-	.door-chev:hover {
-		background: var(--hover-bg);
-	}
-
-	.door-chev .chev {
-		transition: transform var(--fold-open) var(--fold-ease);
-	}
-
-	.door-chev.shut .chev {
-		transform: rotate(-90deg);
-		transition-duration: var(--fold-close);
-	}
-
-	/* The tree's lines run down the centre of the door's glyph. The stem is
-	   the stretch inside the door row, from under the glyph to the row's
-	   foot; the tree's own box clips while it folds, so the stem lives here. */
-	.tree-stem,
-	.tree-guide,
-	.tree-branch {
-		position: absolute;
-		left: calc(12px + var(--sidebar-interactive-icon-size) / 2);
-		border-left: 1px solid var(--color-border);
-		pointer-events: none;
-	}
-
-	.tree-stem {
-		top: calc(50% + var(--sidebar-interactive-icon-size) / 2);
-		bottom: 0;
-	}
-
-	/* Ink from the glyph to the open project, faint everywhere else. */
-	.tree-stem.lit {
-		border-left-color: var(--color-foreground-muted);
-	}
-
-	.project-tree {
-		position: relative;
-	}
-
-	/* Down the whole tree, to the middle of the last row. */
-	.tree-guide {
-		top: 0;
-		bottom: calc(var(--sidebar-interactive-height) / 2);
-	}
-
-	/* From the top of the tree to the open project's middle, then round into
-	   its word: a row's height for each project above it. */
-	.tree-branch {
-		top: calc(-1 * var(--tree-i) * var(--sidebar-interactive-height));
-		bottom: 50%;
-		width: calc(var(--sidebar-interactive-icon-size) / 2 + var(--sidebar-interactive-gap) - 4px);
-		border-left-color: var(--color-foreground-muted);
-		border-bottom: 1px solid var(--color-foreground-muted);
-		border-bottom-left-radius: var(--radius-md);
-	}
-
-	/* A project in the tree starts where its door's word does, in a quieter
-	   ink than the doors. The open one is ink on the selected wash. */
-	.panel-row.tree-row {
-		padding-left: calc(12px + var(--sidebar-interactive-icon-size) + var(--sidebar-interactive-gap));
-		color: var(--color-foreground-muted);
-	}
-
-	.panel-row.tree-row.active,
-	.panel-row.tree-row.active:hover {
-		background: var(--active-bg);
-		box-shadow: none;
-		color: var(--color-foreground);
-	}
-
 	.panel-door {
 		gap: var(--sidebar-interactive-gap);
 		color: var(--color-foreground);
@@ -1782,14 +1539,17 @@
 		gap: var(--sidebar-interactive-gap);
 		width: 100%;
 		height: var(--sidebar-interactive-height);
-		padding: 0 12px;
+		/* 10px, as in the rail, so a glyph keeps its place when the sidebar
+		   opens or closes (UnifiedSidebar). */
+		padding: 0 10px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: none;
 		cursor: pointer;
 		text-align: left;
 		font-size: var(--chrome-label-font-size);
-		color: var(--color-foreground);
+		/* A shade under full ink at rest, so the pointer can bring it up. */
+		color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
 		/* A drag starts from a row, so a press-and-move must not select its
 		   text instead, which WebKit tries first. */
 		user-select: none;
@@ -1802,17 +1562,29 @@
 			opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
+	/* Under the pointer a row's ink comes up to full and its icon fills in
+	   (AtlasIcon's `fillable`); the row you are on keeps it filled. There is
+	   no fill on the row itself: a box appearing on each row looked boxy,
+	   most of all in the narrow rail, where the icon is all there is. */
 	.panel-row:not(.stale-hover):hover {
-		background: var(--hover-bg);
+		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in);
 	}
 
-	/* Where you are: the page's own white, edged by a hairline, so the row
-	   is made of the same stuff as the card it opened. Hover stays a wash. */
+	.panel-row:is(:not(.stale-hover):hover, .active) :global(.glyph-solid) {
+		opacity: 1;
+	}
+
+	.panel-row:is(:not(.stale-hover):hover, .active) :global(.glyph-outline) {
+		opacity: 0;
+	}
+
+	/* Where you are: a flat tint inside the glass. A second pane of glass
+	   with its own rim and shadow would stack one surface on another. */
 	.panel-row.active,
 	.panel-row.active:hover {
-		background: var(--color-page);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		background: var(--lq-row-selected);
+		color: var(--color-foreground);
 	}
 
 	/* A pinned project with something held over it: the row takes the drop
@@ -1949,23 +1721,8 @@
 		flex-direction: column;
 	}
 
-	.row-glyph {
-		width: 16px;
-		height: 16px;
-		flex: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
 
-	.row-emoji {
-		font-size: 14px;
-		line-height: 1;
-	}
 
-	.row-kind {
-		display: flex;
-	}
 
 
 	.row-running {
@@ -2013,10 +1770,10 @@
 	.row-actions {
 		position: absolute;
 		top: 50%;
-		right: 6px;
+		right: var(--row-action-inset);
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 2px;
 		transform: translateY(-50%);
 		opacity: 0;
 		pointer-events: none;
@@ -2029,21 +1786,31 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
-	/* The last 48px of the row hold the controls: the title is clear up to
-	   20px before them and gone under them. */
+	/* Two controls take the last 57px of the row. The title fades out over
+	   20px and is gone 50px from the row's end, under the controls. */
 	.panel-row-has-actions:not(.stale-hover):is(:hover, :focus-within) .panel-row-text {
-		mask-image: linear-gradient(to left, transparent 42px, #000 62px);
+		mask-image: linear-gradient(to left, transparent 50px, #000 70px);
+	}
+
+	/* A control is as tall as the row allows: it sits 3px inside the row's
+	   edge and its corner runs parallel to the row's, so the hover fill reads
+	   as part of the row's outline and the target is as large as it can be. */
+	.panel-row,
+	.group-head {
+		--row-action-inset: 3px;
+		--row-action-size: calc(var(--sidebar-interactive-height) - 2 * var(--row-action-inset));
+		--row-action-radius: calc(var(--sidebar-interactive-radius) - var(--row-action-inset));
 	}
 
 	.row-action {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		width: var(--row-action-size);
+		height: var(--row-action-size);
 		padding: 0;
 		border: none;
-		border-radius: var(--radius-md);
+		border-radius: var(--row-action-radius);
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;

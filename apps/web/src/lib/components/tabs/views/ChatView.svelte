@@ -1068,7 +1068,7 @@
 	// not belong.
 	const suggestionAllowed = $derived(isEmpty && !isGhost && !inRoom);
 
-	/** Home is showing: the painting, the day's headline and the tiles. */
+	/** Home is showing: the day's headline and the tiles, on the painting. */
 	const showsHome = $derived(isEmpty && !isGhost && !threeBodyOpen && attachments.count === 0);
 	/**
 	 * The first home after the app opens comes in piece by piece (`.intro`
@@ -1868,7 +1868,7 @@
 						</button>
 					{/if}
 				</div>
-				<div class="page-container" class:is-empty={isEmpty} class:intro bind:clientWidth={pageWidth}>
+				<div class="page-container" class:is-empty={isEmpty} class:home={showsHome} class:intro bind:clientWidth={pageWidth}>
 					<!-- Messages area -->
 					<div
 						bind:this={scrollContainer}
@@ -2390,25 +2390,33 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && attachments.count === 0}
-						<!-- Home: the painting in color along the bottom, the day as
-						     a headline with the notes line above the composer, and the
-						     tiles under it. It yields to staged attachments, whose
-						     chips grow upward from the composer. -->
-						<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" transition:fade={{ duration: 500 }} />
+						<!-- Home: the day as a headline, the composer, and the tiles
+						     under it with the notes line on their top row, on the
+						     painting. On a
+						     computer the painting is the window's and the pane draws no
+						     paper while home shows; the phone has no window behind the
+						     page, so home draws it here. It yields to staged
+						     attachments, whose chips grow upward from the composer. -->
+						{#if mobileLayout.isMobile}
+							<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" transition:fade={{ duration: 500 }} />
+						{/if}
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />
 						</div>
 						<div class="home-tiles-wrap" out:fade={{ duration: 200 }}>
-							<HomeNotes
-								note={suggestionAllowed ? suggestion : null}
-								onShown={(n) => onSuggestion(n.id, "shown")}
-								onAsk={(n) => {
-									onSuggestion(n.id, "used");
-									handleChatSubmit(n.question);
-								}}
-								onDismiss={(n) => onSuggestion(n.id, "dismissed")}
-							/>
-							<HomeTiles currentChatId={conversationId} />
+							<HomeTiles currentChatId={conversationId}>
+								{#snippet lead()}
+									<HomeNotes
+										note={suggestionAllowed ? suggestion : null}
+										onShown={(n) => onSuggestion(n.id, "shown")}
+										onAsk={(n) => {
+											onSuggestion(n.id, "used");
+											handleChatSubmit(n.question);
+										}}
+										onDismiss={(n) => onSuggestion(n.id, "dismissed")}
+									/>
+								{/snippet}
+							</HomeTiles>
 						</div>
 					{/if}
 
@@ -2692,43 +2700,31 @@
 	}
 
 	/* ── Home ──
-	   The painting in color along the bottom of an empty chat, fading up into
-	   the page. Tiles sit under the centered composer. */
-	/* The painting is sized to the window, not the pane, and pinned to the
-	   pane's right edge, which is the window's. Opening the sidebar covers
-	   its left side instead of rescaling it, so the scene holds still. */
+	   The headline, the centered composer and the tiles under it, on the
+	   painting: the window's on a computer (routes/(app)/+layout.svelte),
+	   this one along the bottom of the page on the phone. */
 	.home-scene {
 		position: absolute;
+		left: 0;
 		right: 0;
 		bottom: 0;
-		width: 100vw;
-		max-width: none;
+		width: 100%;
 		height: min(42%, 380px);
 		object-fit: cover;
 		object-position: 70% 100%;
 		z-index: 0;
 		pointer-events: none;
-		-webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.65) 30%, #000 62%);
-		mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.65) 30%, #000 62%);
+		filter: var(--window-scene-filter);
+		-webkit-mask-image: var(--window-scene-mask);
+		mask-image: var(--window-scene-mask);
 	}
 
-	/* The nine dark themes dim the painting and invert the print. */
-	:global(:is([data-theme="lothlorien"], [data-theme="baker-street"], [data-theme="narnia"], [data-theme="canterbury"], [data-theme="borghese"], [data-theme="lyceum"], [data-theme="asgard"], [data-theme="agora"], [data-theme="shire"])) .home-scene {
-		filter: brightness(0.55) saturate(0.8);
-	}
-
-	/* The intro, about 1.2 s in all: the painting settles out of a slight
-	   zoom and haze (0 to 900 ms), the headline comes in as its letters close
-	   up (150 to 700), the composer rises 8 px (600 to 900), then the notes
-	   line, the switch, and the tiles 60 ms apart. `translate` rather than
-	   `transform`, so it never fights the composer's glide or a tile's hover.
-	   With reduced motion nothing here plays. */
+	/* The intro, about 1.1 s in all: the headline comes in as its letters
+	   close up (150 to 700 ms), the composer rises 8 px (600 to 900), then
+	   the row with the notes line and the switch, and the tiles 60 ms apart. `translate`
+	   rather than `transform`, so it never fights the composer's glide or a
+	   tile's hover. With reduced motion nothing here plays. */
 	@media (prefers-reduced-motion: no-preference) {
-		.page-container.intro .home-scene {
-			transform-origin: 70% 100%;
-			animation: intro-scene 900ms var(--ease-premium) backwards;
-		}
-
 		.page-container.intro .init-hero :global(.headline) {
 			animation: intro-headline 550ms var(--ease-premium) 150ms backwards;
 		}
@@ -2737,8 +2733,7 @@
 			animation: intro-rise 300ms var(--ease-premium) 600ms backwards;
 		}
 
-		.page-container.intro .home-tiles-wrap > :global(:not(.home-tiles)),
-		.page-container.intro .home-tiles-wrap :global(.layout-switch) {
+		.page-container.intro .home-tiles-wrap :global(.tiles-head) {
 			animation: intro-rise 260ms var(--ease-premium) 700ms backwards;
 		}
 
@@ -2753,13 +2748,6 @@
 
 		.page-container.intro .home-tiles-wrap :global(.cards > :nth-child(3)) {
 			animation: intro-rise 340ms var(--ease-premium) 920ms backwards;
-		}
-	}
-
-	@keyframes intro-scene {
-		from {
-			transform: scale(1.025);
-			filter: brightness(0.9) saturate(0.85);
 		}
 	}
 

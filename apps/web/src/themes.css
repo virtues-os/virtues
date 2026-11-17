@@ -157,6 +157,71 @@
 	--motion-state: 150ms;
 	--motion-enter: 180ms;
 	--motion-layout: 300ms;
+	/* Opening and closing the sidebar. The sidebar, the header's tab strips
+	   and the pane beside it all move on it, so they move as one. Opening
+	   leaves fast and lands long, so the panel arrives rather than slides;
+	   closing is shorter and gets out of the way. sidebarState sets
+	   `data-sidebar-motion` on the root before each change, which picks the
+	   pair. */
+	--motion-sidebar: 440ms;
+	--ease-sidebar: cubic-bezier(0.2, 1, 0.3, 1);
+	/* The sidebar's glass opens on a spring that starts as fast as the
+	   pane and runs about 5px past its edge into the gap before settling
+	   (UnifiedSidebar). The pane never overshoots. */
+	--ease-sidebar-glass: linear(0, 0.196, 0.39, 0.563, 0.705, 0.815, 0.896, 0.952, 0.988, 1.009, 1.02, 1.024, 1.024, 1.021, 1.018, 1.014, 1.01, 1.007, 1.004, 1.003, 1.001, 1, 1, 1, 1);
+	/* Glass springs: a pressed glass control comes back up a little past
+	   where it rests and settles, the one place the shell overshoots. Only
+	   for scale, never for a size that moves its neighbours. */
+	--ease-glass: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+	/* Liquid glass, for what floats over the painting: the ∴, the rail and
+	   the opened sidebar, the selected tab, the corner buttons and the home
+	   cards (`.lq` in app.css). A thin layer of the surface that lets the
+	   picture through, frosted and a little brighter, with a lit rim that is
+	   strongest along the top edge, a sheen across the top, and a soft lift.
+	   Selected glass is denser, so it reads as raised without a heavier
+	   shadow. Pages sit on paper, never on glass. */
+	--lq-fill: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-surface) 46%, transparent),
+		color-mix(in srgb, var(--color-surface) 24%, transparent));
+	--lq-fill-selected: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-surface) 94%, transparent),
+		color-mix(in srgb, var(--color-surface) 84%, transparent));
+	/* Regular glass, for surfaces that hold text: the sidebar and the home
+	   cards. Denser and more frosted than a control's clear glass, so a
+	   label stays readable where the painting is behind it (`.lq-regular`,
+	   app.css). */
+	--lq-fill-regular: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-surface) 76%, transparent),
+		color-mix(in srgb, var(--color-surface) 60%, transparent));
+	--lq-filter-regular: blur(28px) saturate(1.6) brightness(1.06);
+	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0) 22px);
+	/* The saturation lift is kept small: over the warm desk a larger one
+	   pulls the white of a selected tab toward cream. */
+	--lq-filter: blur(14px) saturate(1.3) brightness(1.04);
+	/* The glow inside the edge, and the edge itself: a 1.2px ring lit
+	   from the top left, brightest at that corner and the opposite one,
+	   nearly clear along the middle of each side. */
+	--lq-rim: inset 0 0 14px rgb(255 255 255 / 0.28);
+	--lq-specular: linear-gradient(135deg,
+		rgb(255 255 255 / 1) 0%,
+		rgb(255 255 255 / 0.35) 22%,
+		rgb(255 255 255 / 0.05) 50%,
+		rgb(255 255 255 / 0.3) 78%,
+		rgb(255 255 255 / 0.9) 100%);
+	--lq-lift: 0 0 0 0.5px rgb(26 32 48 / 0.1), 0 8px 20px -10px rgb(26 32 48 / 0.22);
+	--lq-lift-selected: 0 0 0 0.5px rgb(26 32 48 / 0.12), 0 2px 6px -2px rgb(26 32 48 / 0.16);
+	/* Glass you can press brightens under the pointer: a wash across the
+	   whole pane, and a glint of light where the pointer is (app.css). */
+	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.16);
+	--lq-glint: rgb(255 255 255 / 0.55);
+	/* Where you are inside glass: a flat tint, never a second pane of
+	   glass with its own rim and shadow. */
+	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+	/* The painting along the bottom of the window, behind everything,
+	   fading up into the desk. */
+	--window-scene-filter: none;
+	--window-scene-mask: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 0.7) 32%, #000 60%);
 
 	/* Drag and drop (agents/build/design.md, "Drag and drop"). One look
 	   everywhere: a line where a dragged thing will land between others, a
@@ -238,6 +303,13 @@
 	--md-cell-pad: 0.375rem 0.75rem;
 	--md-th-size: 0.8125rem;
 	--md-th-weight: 600;
+}
+
+/* Closing the sidebar: shorter, easing in and out, so it leaves without a
+   long landing (--motion-sidebar above is the opening). */
+:root[data-sidebar-motion="closing"] {
+	--motion-sidebar: 260ms;
+	--ease-sidebar: cubic-bezier(0.45, 0, 0.2, 1);
 }
 
 /* ===================================
@@ -336,10 +408,10 @@
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
 	--sidebar-interactive-radius: var(--radius-md);
-	--sidebar-interactive-gap: 8px;
+	--sidebar-interactive-gap: 10px;
 	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
 	--sidebar-interactive-icon-size-small: 14px;
-	--sidebar-interactive-height: 28px;
+	--sidebar-interactive-height: 34px;
 	/* Four registers instead of one. Every row used to be 28px / 13px / one
 	   weight / one colour, so pins read like destinations read like utilities —
 	   ten items all shouting at the same volume, which gives the eye nothing to
@@ -417,15 +489,22 @@
 	   floats over a page or the shell carries this and no other, at
 	   --card-radius. The chrome and the pane never carry one. */
 	--shadow-float: 0 4px 16px rgba(0, 0, 0, 0.15);
-	--chrome-row-h: 40px;
-	--chrome-tab-h: 28px;
-
-	/* How far the pane card is inset from the window: `m-3` (12px) plus its
-	   1px border. The sidebar is full-bleed, so without matching this its
-	   masthead sat 13px higher than the toolbar — equal heights, unequal
-	   centrelines, which is what you actually see across the seam. Equalising
-	   the heights alone did not fix the complaint. */
-	--pane-inset: 8px;
+	/* The window header: 34px glass controls with 10px of air above and
+	   below, so the panes start 54px down. The ∴ and the sidebar's rows
+	   are as tall as a control. The rail is wider than a control, 44px
+	   (RAIL_GLASS_PX in sidebarState), so its glyphs have room around
+	   them. */
+	--chrome-row-h: 54px;
+	--chrome-tab-h: 34px;
+	--rail-w: 44px;
+	/* Where the header's controls start: the air above a control. */
+	--chrome-control-top: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2);
+	/* Air between the window's edge and what floats on it, and between two
+	   floating things (the sidebar and a pane, two panes). Mirrored in
+	   sidebarState (DESK_GAP_PX, PANE_GAP_PX) and window-shell
+	   (SPLIT_GUTTER_PX). */
+	--window-air: 12px;
+	--pane-gap: 10px;
 }
 
 /* ===================================
@@ -1275,14 +1354,15 @@
 
 	/* Surface Colors - Charcoal with a faint cool cast toward the Nordic
 	   blue. Pure black made the desk glare against the cards. */
-	--background: #131416;
-	--surface: #17181a;
+	--background: #141415;
+	--surface: #181819;
 	--surface-elevated: #1e1f22;
 	/* Dark: a card is lighter than the desk it lies on, so the desk goes
-	   below the page rather than above it. --page is raised off --surface
-	   for the same reason. */
-	--page: #1c1d20;
-	--desk: #121315;
+	   below the page rather than above it. The desk and page are near
+	   neutral and 4 RGB units apart. A larger step, or more blue, made
+	   the pane look like a lighter slab. */
+	--page: #171718;
+	--desk: #131314;
 	--surface-overlay: #25262a;
 
 	/* Content Colors */
@@ -1574,6 +1654,34 @@
 	--illustration-filter: invert(1);
 	/* The interaction ramp's pigment (see :root): light on a dark ground. */
 	--wash-ink: #ffffff;
+
+	/* Glass on a dark ground: the surface thinned less, frosted without
+	   brightening, and a rim of faint light instead of white. */
+	--lq-fill: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-surface) 62%, transparent),
+		color-mix(in srgb, var(--color-surface) 44%, transparent));
+	--lq-fill-selected: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-foreground) 16%, var(--color-surface)),
+		color-mix(in srgb, var(--color-foreground) 11%, var(--color-surface)));
+	--lq-fill-regular: linear-gradient(180deg,
+		color-mix(in srgb, var(--color-surface) 86%, transparent),
+		color-mix(in srgb, var(--color-surface) 72%, transparent));
+	--lq-filter-regular: blur(28px) saturate(1.3) brightness(0.9);
+	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.07), rgb(255 255 255 / 0) 22px);
+	--lq-filter: blur(14px) saturate(1.4) brightness(0.92);
+	--lq-rim: inset 0 0 14px rgb(255 255 255 / 0.04);
+	--lq-specular: linear-gradient(135deg,
+		rgb(255 255 255 / 0.3) 0%,
+		rgb(255 255 255 / 0.1) 22%,
+		rgb(255 255 255 / 0.02) 50%,
+		rgb(255 255 255 / 0.08) 78%,
+		rgb(255 255 255 / 0.22) 100%);
+	--lq-lift: 0 0 0 0.5px rgb(0 0 0 / 0.5), 0 8px 24px -10px rgb(0 0 0 / 0.6);
+	--lq-lift-selected: 0 0 0 0.5px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.05);
+	--lq-glint: rgb(255 255 255 / 0.1);
+	--window-scene-filter: brightness(0.55) saturate(0.8);
 }
 
 /* Narnia draws its ruling in LIGHT lines, which the shared blend mode forbids.

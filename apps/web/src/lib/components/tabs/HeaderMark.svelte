@@ -3,19 +3,25 @@
 	 * The ∴ at the left of the window header: the app's mark, and the button
 	 * that shows and hides the sidebar (⌘B).
 	 *
+	 * It sits on the sidebar's glass, which reaches up into the header
+	 * (UnifiedSidebar). Closed, it is the top of the rail. Open, it widens
+	 * into the sidebar's first row: the ∴ on the column the rows' icons
+	 * stand on, and Virtues where their labels start. The window header
+	 * places it and gives it its width. Where nothing is behind it (the Mac
+	 * app's window buttons beside a closed rail) it is its own glass.
+	 *
 	 * Pointing at it turns the mark into its own sidebar glyph: the three
 	 * dots line up as a column, the list, and a hairline draws down beside
 	 * them, the edge of the panel the list lives in. No dot crosses another
-	 * on the way. While the sidebar is shown, the space between the dots and
-	 * the edge tints as well, so the glyph says which way the click goes.
+	 * on the way.
 	 *
-	 * What your server is doing and what needs you live in the status
-	 * capsule at the other end of the header (StatusCapsule), so the mark
-	 * never lights up or moves on its own. The app's opening scales the dots
+	 * The mark never lights up or moves on its own. The app's opening scales the dots
 	 * (`.header-mark .mark-dot`, routes/(app)/+layout.svelte); the hover
 	 * moves the groups around them, so the two never fight over a transform.
 	 */
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
+
+	let { width, standalone = false }: { width: number; standalone?: boolean } = $props();
 
 	const open = $derived(!sidebarState.collapsed);
 </script>
@@ -23,56 +29,113 @@
 <button
 	type="button"
 	class="header-mark"
+	class:lq={standalone}
 	class:sidebar-shown={open}
+	class:resizing={sidebarState.resizing}
+	style:width="{width}px"
 	onclick={() => sidebarState.toggle()}
 	aria-label={open ? 'Hide the sidebar' : 'Show the sidebar'}
 	aria-expanded={open}
-	data-tip={`${open ? 'Hide' : 'Show'} the sidebar`}
-	data-tip-key="mod+b"
+	data-tip={open ? undefined : 'Show the sidebar'}
+	data-tip-key={open ? undefined : 'mod+b'}
+	style:padding-left="{open ? 10 : (width - 16) / 2}px"
 >
 	<!-- The dots are drawn, not typed: the app icon's geometry (equilateral,
 	     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts), so
 	     the header, the chat and the Dock show one mark. -->
-	<svg class="mark" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
-		<rect class="panel" x="3.5" y="2" width="12.5" height="20" rx="3" />
+	<span class="mark-slot">
+	<svg class="mark" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
 		<path class="edge" d="M16 3.5V20.5" pathLength="1" />
 		<g class="move apex"><circle class="mark-dot apex" cx="12" cy="5" r="3" /></g>
 		<g class="move left"><circle class="mark-dot left" cx="4.5" cy="18" r="3" /></g>
 		<g class="move right"><circle class="mark-dot right" cx="19.5" cy="18" r="3" /></g>
 	</svg>
+	</span>
+	<span class="mark-label" aria-hidden="true">Virtues</span>
 </button>
 
 <style>
+	/* As tall as a tab and a sidebar row. Laid out like a row: the ∴, as large as a
+	   row's icon, then the name where a row's label starts. Closed it is as
+	   wide as a rail row, with the ∴ in the middle (the inset is set inline
+	   from the width). Its width and the inset ease on the sidebar's clock,
+	   so the ∴ moves with the icons below it. */
 	.header-mark {
-		display: grid;
-		place-items: center;
-		width: 28px;
-		height: 28px;
+		display: flex;
+		align-items: center;
+		gap: var(--sidebar-interactive-gap);
+		height: var(--chrome-tab-h);
 		flex: none;
 		padding: 0;
+		overflow: hidden;
 		border: none;
-		border-radius: var(--radius-md);
-		background: transparent;
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground);
+		white-space: nowrap;
 		cursor: pointer;
-		/* The scale's motion: hover in fast and out slow; a press sinks to
-		   94% and springs back (design.md, "The scale"). */
 		transition:
+			width var(--motion-sidebar) var(--ease-sidebar),
+			padding-left var(--motion-sidebar) var(--ease-sidebar),
+			border-radius var(--motion-sidebar) var(--ease-sidebar),
 			background-color var(--motion-hover-out) var(--ease-premium),
-			transform var(--motion-release) var(--ease-premium);
+			box-shadow var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-glass);
 	}
 
-	.header-mark:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in), var(--motion-release);
+	/* On the sidebar's glass it has no surface of its own. Standing alone
+	   it takes the glass's (`.lq`). */
+	.header-mark:not(.lq) {
+		background: transparent;
+		border-radius: var(--sidebar-interactive-radius);
 	}
 
-	.header-mark:active {
-		background: var(--press-bg);
-		transform: scale(0.94);
-		transition-duration: var(--motion-press);
+	.header-mark.resizing {
+		transition: none;
 	}
 
+	/* On the sidebar's glass it lights as a row does, by the glass's own
+	   light under the pointer (UnifiedSidebar). Its own glass brightens
+	   instead (`.lq`, app.css). */
+
+	/* The square sinks under a press and springs back. The open row does
+	   not: a full-width row that shrank would read as a wobble. */
+	.header-mark:not(.sidebar-shown):active {
+		transform: scale(0.92);
+		transition-duration: var(--motion-sidebar), var(--motion-sidebar), var(--motion-sidebar), var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
+	}
+
+	.mark-slot {
+		flex: none;
+		width: var(--sidebar-interactive-icon-size);
+		height: var(--sidebar-interactive-icon-size);
+		display: grid;
+		place-items: center;
+	}
+
+	/* The name, in the serif the app writes its titles in. It comes and
+	   goes with the sidebar's words (UnifiedSidebar): in after the sidebar
+	   is partly open, out before its edge reaches it. */
+	.mark-label {
+		font-family: var(--font-serif);
+		font-size: 16px;
+		line-height: 1;
+		letter-spacing: -0.005em;
+		opacity: 0;
+		transform: translateX(-4px);
+		transition:
+			opacity 100ms ease-in,
+			transform 100ms ease-in;
+	}
+
+	.sidebar-shown .mark-label {
+		opacity: 1;
+		transform: none;
+		transition:
+			opacity 240ms var(--ease-premium) 130ms,
+			transform 280ms var(--ease-premium) 130ms;
+	}
+
+	/* Inside the button's own shape, as on a sidebar row. */
 	.header-mark:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
@@ -121,8 +184,8 @@
 	.edge {
 		fill: none;
 		stroke: var(--color-foreground-muted);
-		/* 1.25px of ink on a 17px glyph: 1.25 × 24 / 17. */
-		stroke-width: 1.765;
+		/* 1.25px of ink on a 16px glyph: 1.25 × 24 / 16. */
+		stroke-width: 1.875;
 		stroke-linecap: round;
 		stroke-dasharray: 1;
 		stroke-dashoffset: 1;
@@ -139,23 +202,11 @@
 		transition-delay: 110ms;
 	}
 
-	/* The panel the list lives in, tinted while the sidebar is shown. */
-	.panel {
-		fill: currentColor;
-		opacity: 0;
-		transition: opacity var(--motion-state) var(--ease-premium);
-	}
-
-	.header-mark.sidebar-shown:is(:hover, :focus-visible) .panel {
-		opacity: 0.1;
-		transition: opacity var(--motion-sidebar) var(--ease-sidebar) 120ms;
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.header-mark,
+		.mark-label,
 		.move,
-		.edge,
-		.panel {
+		.edge {
 			transition: none !important;
 		}
 

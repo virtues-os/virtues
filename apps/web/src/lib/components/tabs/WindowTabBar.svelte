@@ -297,19 +297,22 @@
 			});
 		}
 
-		// Divider + Close actions
-		items.push({
-			id: "close",
-			label: "Close",
-			dividerBefore: true,
-			action: () => {
-				if (paneId) {
-					windowShellStore.closeTabInPane(tabId, paneId);
-				} else {
-					windowShellStore.closeTab(tabId);
-				}
-			},
-		});
+		// Divider + Close actions. The window's only tab, an empty new chat,
+		// has nothing to close to (canClose).
+		if (windowShellStore.canClose(tabId)) {
+			items.push({
+				id: "close",
+				label: "Close",
+				dividerBefore: true,
+				action: () => {
+					if (paneId) {
+						windowShellStore.closeTabInPane(tabId, paneId);
+					} else {
+						windowShellStore.closeTab(tabId);
+					}
+				},
+			});
+		}
 
 		// Close Others (only if more than 1 tab)
 		if (tabs.length > 1) {
@@ -668,6 +671,8 @@
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
+				class:lq={tab.id === activeTabId}
+				class:lq-selected={tab.id === activeTabId}
 				class:only={dndItems.length === 1}
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
@@ -688,6 +693,7 @@
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
 				data-tip={tab.id !== renamingTabId ? identity.title : ""}
+				data-tip-clipped
 				role="button"
 				tabindex="0"
 			>
@@ -746,12 +752,12 @@
 							class:flipping={showPaneHint && tabOrdinal <= 9}
 							use:fadeWhenClipped={identity.title}
 						>
-							<span class="tab-label-text">{identity.title}</span>
+							<span class="tab-label-text" data-tip-text>{identity.title}</span>
 							<span class="tab-label-hint" aria-hidden="true">{modKeyWord} + {tabOrdinal}</span>
 						</span>
 					{/if}
 				{/if}
-				{#if !tab.pinned && tab.id !== renamingTabId}
+				{#if !tab.pinned && tab.id !== renamingTabId && windowShellStore.canClose(tab.id)}
 					<button
 						class="tab-close"
 						onclick={(e) => handleTabClose(e, tab.id)}
@@ -787,13 +793,12 @@
 		container-name: tabbar;
 		display: flex;
 		gap: 4px;
-		/* The first tab starts on the card's left edge, so the strip lines up
-		   with the card below it. The tabs keep the row's 6px of air above
-		   them and run down to the card. */
-		padding: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2) 8px 0 0;
+		/* The first tab starts on the pane's left edge, so the strip lines
+		   up with the pane below it, and the tabs sit on the row's centre
+		   line, level with the ∴ and the corner. The strip is on the
+		   painting and paints nothing. */
+		padding: 0 8px 0 0;
 		height: var(--chrome-row-h);
-		/* The + and the tabs' labels share one centre line,
-		   the middle of a tab. The strip is on the desk and paints nothing. */
 		align-items: center;
 		background: transparent;
 		flex-shrink: 0;
@@ -803,10 +808,8 @@
 
 	.tabs-scroll {
 		display: flex;
-		align-items: flex-start;
-		/* One radius between tabs: the active tab's flared corner fills the
-		   gap exactly, so it never reaches a neighbour's hover pill. */
-		gap: var(--card-radius);
+		align-items: center;
+		gap: 4px;
 		overflow-x: auto;
 		/* Only as wide as its tabs, so the + sits right after the last one,
 		   where the next tab will appear (Brave, Safari). It shrinks and
@@ -814,18 +817,15 @@
 		flex: 0 1 auto;
 		min-width: 0;
 		scrollbar-width: none;
-		/* A scroller clips on both axes, and the active tab draws its flared
-		   corners one radius past its sides and into the card. The padding
-		   is that room, and the negative margin gives it back to the layout. */
+		/* A scroller clips on both axes, and the selected tab's glass casts a
+		   soft lift past its edges. The padding is that room, and the
+		   negative margin gives it back to the layout. */
 		align-self: stretch;
-		padding: 0 var(--card-radius) var(--card-radius);
-		margin: 0 calc(-1 * var(--card-radius)) calc(-1 * var(--card-radius));
-		/* A tab scrolled into view stops clear of the strip's edge, with
-		   room for its flared corners. */
-		scroll-padding-inline: var(--card-radius);
-		/* The room below reaches into the card. Only the tabs take the
-		   pointer, so the card's top edge stays clickable and the gaps
-		   between tabs still move the window. */
+		padding: 0 4px;
+		margin: 0 -4px;
+		scroll-padding-inline: 4px;
+		/* Only the tabs take the pointer, so the gaps between tabs still move
+		   the window. */
 		pointer-events: none;
 	}
 
@@ -837,23 +837,20 @@
 		display: none;
 	}
 
-	/* A browser tab. It stands on the card below it, rounded at the top and
-	   square at the bottom, and the active one opens into its card. The
-	   desk is already a step darker than the cards, so the strip needs no
-	   recess of its own. The border is transparent until the tab is active,
-	   so every tab has the same box. */
+	/* A tab is a pill on the painting. The one you are on is glass
+	   (`.lq.lq-selected`, app.css); the others are their icon and label,
+	   with a wash under the pointer. */
 	.tab {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 		padding: 0 12px;
 		position: relative;
-		isolation: isolate;
-		height: 100%;
-		border: 1px solid transparent;
-		border-bottom: none;
-		border-radius: var(--card-radius) var(--card-radius) 0 0;
-		background: transparent;
+		height: var(--chrome-tab-h);
+		border: none;
+		border-radius: var(--radius-lg);
+		/* No background of its own: the tab you are on takes the glass's
+		   (`.lq`), which a background here would override. */
 		color: var(--color-foreground-muted);
 		/* The sidebar rows' size, so the header and the column read as one. */
 		font-size: 13px;
@@ -865,130 +862,62 @@
 		max-width: 200px;
 		min-width: 36px;
 		flex-shrink: 1;
-		/* Switching tabs is instant, as in a browser: the fill, the edge, the
-		   flares and the ink change in one frame. Fading the fill while the
-		   edge and corners snapped showed the parts of the tab separately.
-		   Only the hover pill moves (below). Opening and closing a tab are
-		   transitions (unfold, foldAway), so the tabs already open when the
-		   window loads do not animate in. */
+		/* Switching tabs moves the glass at once, as in a browser. Only the
+		   hover wash fades. Opening and closing a tab are transitions
+		   (unfold, foldAway), so the tabs already open when the window loads
+		   do not animate in. */
+		transition:
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			box-shadow var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-glass);
 	}
 
 	.tab:hover {
 		color: var(--color-foreground);
 	}
 
-	/* A tab you are not on lights as the scale's 32px pill, centred on its
-	   label, rather than as a tab shape. It is not part of the card yet. */
-	.tab:not(.active)::before {
-		content: "";
-		position: absolute;
-		z-index: -1;
-		top: 50%;
-		left: 0;
-		right: 0;
-		height: var(--chrome-tab-h);
-		translate: 0 -50%;
-		border-radius: var(--card-radius);
-		/* The pill fades its color, not its opacity. This pseudo-element is
-		   the flared corner while the tab is active, and an opacity fade ran
-		   whenever a tab stopped being active: a ghost pill flashed on the
-		   tab you just left. Nothing the flare paints is a background. */
-		background: transparent;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	.tab:not(.active):hover {
+		background-color: var(--hover-bg);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
-	.tab:not(.active):hover::before {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-
-	/* Rows and tabs take the press fill (design.md, "Grays"). */
-	.tab:not(.active):active::before {
-		background: var(--press-bg);
+	/* Rows and tabs take the press fill (design.md, "Grays"). The glass of
+	   the tab you are on sinks a little instead, and springs back. */
+	.tab:not(.active):active {
+		background-color: var(--press-bg);
 		transition-duration: var(--motion-press);
 	}
 
-	/* The keyboard's ring follows the shape the pointer would light: the
-	   pill on a tab you are not on, the tab itself on the active one. */
+	.tab.active:active {
+		transform: scale(0.97);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
+	}
+
 	.tab:focus-visible {
-		outline: none;
-	}
-
-	.tab:not(.active):focus-visible::before {
-		/* design-ok: the focus ring on the pill's shape, not depth */
-		box-shadow: inset 0 0 0 2px var(--color-primary);
-	}
-
-	.tab.active:focus-visible {
 		outline: 2px solid var(--color-primary);
-		outline-offset: -3px;
+		outline-offset: -2px;
 	}
 
-	/* The active tab is the top of its card: the page's color, the card's
-	   edge on three sides, and full ink. Never marked by weight: a bolder
-	   label is a wider one, and every tab to its right moved when you
-	   switched. It runs 1px further down to paint over the card's top edge,
-	   so the two read as one surface, and sits above its neighbours so its
-	   flared corners do too. */
+	/* The tab you are on: full ink on glass. Never marked by weight: a
+	   bolder label is a wider one, and every tab to its right moved when you
+	   switched. */
 	.tab.active {
-		z-index: 1;
 		/* The tab you are on keeps its full width in a crowded strip; the
 		   others compact to their icons and then scroll. Squeezed to its
 		   minimum, it lost its label and its × ran into the next tab. */
 		flex-shrink: 0;
-		height: calc(100% + 1px);
-		padding-bottom: 1px;
-		background: var(--color-page);
-		border-color: var(--card-edge);
 		color: var(--color-foreground);
+		/* The glass settles onto the tab you switch to: it grows in from a
+		   little smaller and springs to size, once, on the switch. */
+		animation: tab-glass-in 280ms var(--ease-glass);
 	}
 
-	/* The flared corners, where the tab's sides curve out into the card's
-	   top edge. Each is a one-radius square whose rounded corner is the desk
-	   (the curve's inside) with the card's edge drawn along it. Its page
-	   colored shadow, clipped to the square, fills the rest. Offsets are from
-	   inside the tab's border, so the square's edge lands on the tab's. */
-	.tab.active::before,
-	.tab.active::after {
-		content: "";
-		position: absolute;
-		bottom: 0;
-		width: var(--card-radius);
-		height: var(--card-radius);
-		border-bottom: 1px solid var(--card-edge);
-		/* design-ok: the flare's page fill, clipped to its square, not depth */
-		box-shadow: 0 0 0 var(--card-radius) var(--color-page);
-		clip-path: inset(0);
-		pointer-events: none;
-	}
-
-	.tab.active::before {
-		left: calc(-1 * var(--card-radius));
-		border-right: 1px solid var(--card-edge);
-		border-bottom-right-radius: var(--card-radius);
-	}
-
-	.tab.active::after {
-		right: calc(-1 * var(--card-radius));
-		border-left: 1px solid var(--card-edge);
-		border-bottom-left-radius: var(--card-radius);
-	}
-
-	/* The first tab on the card's own left edge has no corner to flare
-	   into: its side runs straight down into the card's side, and the
-	   square covers the card's rounded corner below it. The header marks a
-	   strip whose first tab sits on that edge (WindowHeader). */
-	:global(.strip.flush) .tab.active:first-child::before {
-		left: -1px;
-		bottom: calc(1px - var(--card-radius));
-		border: none;
-		border-left: 1px solid var(--card-edge);
-		border-radius: 0;
-		/* Filled by an inset shadow, not a background, for the reason the
-		   hover pill gives: a background here would fade out on the next tab
-		   switch. */
-		/* design-ok: a fill that must not transition, not depth */
-		box-shadow: inset 0 0 0 var(--card-radius) var(--color-page);
+	@keyframes tab-glass-in {
+		from {
+			scale: 0.92;
+			opacity: 0.4;
+		}
 	}
 
 	/* A closing tab takes no pointer, so the tab gliding in under it does.
@@ -1024,7 +953,7 @@
 	:global(.tab.tab-lifted) {
 		background: var(--color-page) !important;
 		border-color: transparent !important;
-		border-radius: var(--card-radius) !important;
+		border-radius: var(--radius-lg) !important;
 		color: var(--color-foreground) !important;
 		opacity: 1 !important;
 		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
@@ -1036,9 +965,7 @@
 
 	/* Nothing on a tab in the air can be clicked, and the label gets the
 	   close button's room in the copy's fixed width. */
-	:global(.tab.tab-lifted .tab-close),
-	:global(.tab.tab-lifted)::before,
-	:global(.tab.tab-lifted)::after {
+	:global(.tab.tab-lifted .tab-close) {
 		display: none !important;
 	}
 
@@ -1212,10 +1139,17 @@
 		.tab-label-text,
 		.tab-label-hint,
 		.tab,
-		.tab::before,
 		.tab-close,
 		.new-tab-btn {
 			transition: none;
+		}
+
+		.tab.active:active {
+			transform: none;
+		}
+
+		.tab.active {
+			animation: none;
 		}
 
 		.tab-unread {
@@ -1229,9 +1163,7 @@
 
 	/* The label's own face and size, so the title does not move or change
 	   size when it becomes editable. The field shows as a wash around the
-	   text, drawn as a spread shadow so it takes no room. The tab keeps its
-	   own fill: tinting the whole tab left its flared corners the page's
-	   color. */
+	   text, drawn as a spread shadow so it takes no room. */
 	.tab-rename-input {
 		flex: 1;
 		min-width: 60px;
@@ -1312,11 +1244,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 28px;
-		height: 28px;
+		width: var(--chrome-tab-h);
+		height: var(--chrome-tab-h);
 		padding: 0;
 		border: none;
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-lg);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 16px;
@@ -1356,12 +1288,6 @@
 		color: var(--color-foreground);
 	}
 
-	/* The + starts where the last tab's flared corner ends: the strip's
-	   4px gap and 4px more make the one radius the corner takes. */
-	.new-tab-btn {
-		margin-left: 4px;
-	}
-
 	/* The slot a dragged tab will take. The library keeps the tab's own
 	   width open there and hides it; the slot shows as the drop tint, and
 	   moves along the strip as the neighbours slide aside. */
@@ -1375,14 +1301,11 @@
 		visibility: hidden;
 	}
 
-	/* The slot is a place, not a tab: no edge, no flared corners, no
-	   hover pill, even when the tab in your hand was the active one. */
+	/* The slot is a place, not a tab: no glass, even when the tab in your
+	   hand was the one you were on. */
 	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal]) {
 		border-color: transparent !important;
-	}
-
-	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal])::before,
-	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal])::after {
-		display: none !important;
+		box-shadow: none !important;
+		backdrop-filter: none !important;
 	}
 </style>

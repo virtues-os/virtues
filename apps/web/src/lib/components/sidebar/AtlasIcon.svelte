@@ -72,6 +72,28 @@
 	};
 
 	/**
+	 * The filled drawing of a glyph, for the sidebar's rows: a row's icon
+	 * fills in under the pointer and stays filled on the row you are on, the
+	 * way a selected symbol fills on a Mac. Only the glyphs the sidebar
+	 * shows have one.
+	 */
+	export const SOLID_GLYPHS: Record<string, string> = {
+		chats: 'mynaui:chat-solid',
+		'new-chat': 'mynaui:chat-plus-solid',
+		pages: 'mynaui:file-text-solid',
+		projects: 'mynaui:folder-solid',
+		tasks: 'mynaui:check-square-solid',
+		applets: 'mynaui:sparkles-solid',
+		wiki: 'mynaui:globe-solid',
+		bookmarks: 'mynaui:bookmark-solid',
+		calendar: 'mynaui:calendar-solid',
+		drive: 'mynaui:archive-solid',
+		setup: 'mynaui:flag-solid',
+		day: 'mynaui:sunrise-solid',
+		settings: 'mynaui:cog-solid',
+	};
+
+	/**
 	 * The size of a glyph on the sidebar's rows and in the window header.
 	 */
 	export const SHELL_GLYPH_PX = 16;
@@ -98,9 +120,15 @@
 		 * the sidebar — the phone drawer — and there the host styles them.
 		 */
 		bare?: boolean;
+		/**
+		 * Also draw the glyph's filled version (`SOLID_GLYPHS`), hidden. The
+		 * row it sits in shows it, by revealing `.glyph-solid` and hiding
+		 * `.glyph-outline` (the sidebar's rows, HomePanel).
+		 */
+		fillable?: boolean;
 	}
 
-	let { name, size = 16, bare = false, stroke }: Props = $props();
+	let { name, size = 16, bare = false, stroke, fillable = false }: Props = $props();
 
 	/** 1.25px of ink at any size: the box is 24 units wide. */
 	const LINE_PX = 1.25;
@@ -118,6 +146,12 @@
 		const icon = (hit ?? GLYPHS.pages).slice('mynaui:'.length) as keyof typeof myna.icons;
 		return (myna.icons[icon]?.body ?? '').replace(/stroke-width="[\d.]+"/g, `stroke-width="${strokeWidth}"`);
 	});
+
+	const solidBody = $derived.by(() => {
+		const solid = fillable ? SOLID_GLYPHS[name] : undefined;
+		if (!solid) return null;
+		return myna.icons[solid.slice('mynaui:'.length) as keyof typeof myna.icons]?.body ?? null;
+	});
 </script>
 
 <svg
@@ -127,13 +161,37 @@
 	viewBox="0 0 24 24"
 	aria-hidden="true"
 >
-	<!-- eslint-disable-next-line svelte/no-at-html-tags — static glyph table above, no user input -->
-	{@html body}
+	{#if solidBody}
+		<!-- eslint-disable svelte/no-at-html-tags — static glyph tables above, no user input -->
+		<g class="glyph-outline">{@html body}</g>
+		<g class="glyph-solid">{@html solidBody}</g>
+		<!-- eslint-enable svelte/no-at-html-tags -->
+	{:else}
+		<!-- eslint-disable-next-line svelte/no-at-html-tags — static glyph table above, no user input -->
+		{@html body}
+	{/if}
 </svg>
 
 <style>
 	.atlas-icon {
 		flex-shrink: 0;
 		display: block;
+	}
+
+	/* The two drawings cross-fade, so the swap reads as the glyph filling. */
+	.glyph-outline,
+	.glyph-solid {
+		transition: opacity 120ms var(--ease-premium);
+	}
+
+	.glyph-solid {
+		opacity: 0;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.glyph-outline,
+		.glyph-solid {
+			transition: none;
+		}
 	}
 </style>

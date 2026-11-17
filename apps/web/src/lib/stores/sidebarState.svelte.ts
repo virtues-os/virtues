@@ -29,19 +29,25 @@ const OLD_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = SIDEBAR_MIN_WIDTH - 32;
 
 /**
- * The desk gap between the window's left edge and the sidebar. The pane has
- * none: it runs to the window's right and bottom edges and meets the sidebar
- * and the other pane edge to edge.
+ * Air between the window's edge and what floats on it: the ∴, the sidebar
+ * and the panes all stand this far in (themes.css, --window-air).
  */
-export const DESK_GAP_PX = 8;
+export const DESK_GAP_PX = 12;
 export const SIDEBAR_INSET = DESK_GAP_PX;
+/** Air between the sidebar and the pane beside it (themes.css, --pane-gap). */
+export const PANE_GAP_PX = 10;
 
 /**
- * The sidebar's width when closed to its glyphs: the desk gap, the panel
- * body's 4px, a 40px row (12px, the glyph, 12px), and the desk gap again
- * on the pane side. The glyphs sit where they sit in the open sidebar.
+ * The rail, the sidebar closed to its glyphs: a glass column 44px wide
+ * (themes.css, --rail-w), so each glyph has 10px of air on either side of
+ * it. It is wider than a tab is tall: the header stays low and the rail
+ * does not look pinched.
  */
-export const RAIL_WIDTH = SIDEBAR_INSET + 4 + 40 + DESK_GAP_PX;
+export const RAIL_GLASS_PX = 44;
+/** A header control's height and a tab's (themes.css, --chrome-tab-h). */
+export const CHROME_TAB_PX = 34;
+/** The aside's width with the sidebar closed: the air, the rail, the gap. */
+export const RAIL_WIDTH = SIDEBAR_INSET + RAIL_GLASS_PX + PANE_GAP_PX;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
@@ -76,6 +82,12 @@ export const sidebarState = {
 		return collapsed;
 	},
 	set collapsed(val: boolean) {
+		// Opening and closing run on different clocks (themes.css). The
+		// root says which before the state changes, so every part of the
+		// shell that moves with the sidebar picks the same one.
+		if (typeof document !== "undefined" && val !== collapsed) {
+			document.documentElement.dataset.sidebarMotion = val ? "closing" : "opening";
+		}
 		collapsed = val;
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem(STORAGE_KEY, String(val));
@@ -107,12 +119,11 @@ export const sidebarState = {
 	},
 
 	/**
-	 * Where the pane starts, in px from the window's left edge: the rail's
-	 * edge with the sidebar closed, and the sidebar's edge with it open. The
-	 * pane meets both with no gap. The window header aligns the left pane's
-	 * tabs to this.
+	 * Where the pane starts, in px from the window's left edge: one gap past
+	 * the rail with the sidebar closed, and one gap past the sidebar with it
+	 * open. The window header aligns the left pane's tabs to this.
 	 */
 	get cardLeft() {
-		return collapsed ? RAIL_WIDTH : SIDEBAR_INSET + width;
+		return collapsed ? RAIL_WIDTH : SIDEBAR_INSET + width + PANE_GAP_PX;
 	},
 };

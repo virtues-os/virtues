@@ -73,11 +73,11 @@ const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
- * The gap between the two panes in split view. The panes meet edge to edge,
- * divided by the right pane's border. SplitContainer lays the panes out with
- * it and the window header lines their tab strips up with it.
+ * The gap between the two panes in split view, where the painting shows
+ * between two cards (themes.css, --pane-gap). SplitContainer lays the panes
+ * out with it and the window header lines their tab strips up with it.
  */
-export const SPLIT_GUTTER_PX = 0;
+export const SPLIT_GUTTER_PX = 10;
 
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
@@ -974,10 +974,22 @@ class WindowShellStore {
 		return tab.id;
 	}
 
+	/**
+	 * Whether closing a tab changes anything. The window always holds a tab,
+	 * and closing its last one opens a new chat, so the last tab, when it is
+	 * already an empty new chat, has nothing to close to. It shows no ✕, and
+	 * ⌘W leaves it be, instead of closing it and opening the same thing.
+	 */
+	canClose(tabId: string): boolean {
+		const pane = this.findPaneForTab(tabId);
+		if (!pane || this.isSplit || pane.tabs.length !== 1) return true;
+		return !this.isNewChatRoute(pane.tabs[0].route);
+	}
+
 	/** Close a tab. `forget` leaves it out of ⌘⇧T, for a thing that was deleted. */
 	closeTab(tabId: string, options?: { forget?: boolean }): void {
 		const pane = this.findPaneForTab(tabId);
-		if (!pane) return;
+		if (!pane || !this.canClose(tabId)) return;
 
 		const tabIndex = pane.tabs.findIndex(t => t.id === tabId);
 		if (!options?.forget && tabIndex !== -1) this.rememberClosed(pane.tabs[tabIndex], pane.id, tabIndex);
