@@ -49,8 +49,8 @@ export function crumbMenuItems(
 	if (menu.kind === 'project') {
 		const members = recentRows({ pinned: true }).filter(
 			(r) =>
-				(r.kind === 'chat' && r.session.project_id === menu.id) ||
-				(r.kind === 'page' && r.page.project_id === menu.id),
+				(r.kind === 'chat' && r.session.thread_id === menu.id) ||
+				(r.kind === 'page' && r.page.threads.some((t) => t.id === menu.id)),
 		);
 		return withFooter(members.slice(0, LIST_ROWS).map(recordRow), [
 			{ id: 'open', label: 'Open project', icon: 'atlas:projects', action: () => open(`/project/${menu.id}`) },

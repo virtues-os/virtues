@@ -10,15 +10,17 @@
  *
  * Typed, the order is:
  *   - an address gets Open, first;
+ *   - a day ("yesterday", "tuesday", "oct 5") gets that day, next;
  *   - a question gets Ask, next;
  *   - a query that starts a command's name ("new", "go") gets Commands;
- *   - chats, pages, projects and applets whose names match;
+ *   - chats, pages, threads and applets whose names match;
+ *   - people and places whose names match;
  *   - Commands and Ask, if they did not come first;
  *   - matches inside your records, last, because they arrive from the box
  *     after the rest and rows appearing above the selection would move it.
  *
- * A leading `#chats`, `#pages`, `#projects`, `#applets` or `#commands`
- * shows that kind only.
+ * A leading `#chats`, `#pages`, `#threads`, `#applets` or `#commands`
+ * shows that kind only. `#projects` still works.
  */
 import type { LocalSearchHit } from '$lib/api/client';
 import { matchRank } from '$lib/search/match';
@@ -30,6 +32,8 @@ import { visits } from '$lib/stores/visits.svelte';
 import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recents.svelte';
 import { parseRef } from '$lib/utils/refRoutes';
 import { isUntitled } from '$lib/refs/identity.svelte';
+import { namedDays, type NamedDay } from '$lib/search/dates';
+import { matchEntities, type EntityRow } from '$lib/search/entities.svelte';
 
 export interface Command {
 	id: string;
@@ -46,6 +50,8 @@ export type SearchRow =
 	| { kind: 'ask'; query: string }
 	| { kind: 'command'; command: Command }
 	| { kind: 'record'; record: RecentRow }
+	| { kind: 'day'; day: NamedDay }
+	| { kind: 'entity'; entity: EntityRow }
 	| { kind: 'content'; hit: LocalSearchHit };
 
 export interface SearchGroup {
@@ -60,6 +66,7 @@ const SCOPES: Record<string, Scope> = {
 	chat: 'chat', chats: 'chat',
 	page: 'page', pages: 'page',
 	project: 'project', projects: 'project',
+	thread: 'project', threads: 'project',
 	applet: 'applet', applets: 'applet',
 	command: 'command', commands: 'command',
 	action: 'command', actions: 'command',
@@ -71,6 +78,7 @@ const HERE_ROWS = 3;
 const MATCH_ROWS = 6;
 const SCOPED_ROWS = 25;
 const COMMAND_ROWS = 4;
+const ENTITY_ROWS = 3;
 
 /** The `#scope` a query starts with, and the text left to match. An unknown
  *  `#foo` is searched as written. */
@@ -132,13 +140,13 @@ function projectAt(route: string): string | null {
 	if (!ref) return null;
 	if (ref.kind === 'project') return ref.id;
 	if (ref.kind === 'chat') return chatSessions.projectOf(ref.id);
-	if (ref.kind === 'page') return pagesStore.pages.find((p) => p.id === ref.id)?.project_id ?? null;
+	if (ref.kind === 'page') return pagesStore.pages.find((p) => p.id === ref.id)?.threads[0]?.id ?? null;
 	return null;
 }
 
 function projectOfRow(row: RecentRow): string | null {
-	if (row.kind === 'chat') return row.session.project_id ?? null;
-	if (row.kind === 'page') return row.page.project_id;
+	if (row.kind === 'chat') return row.session.thread_id ?? null;
+	if (row.kind === 'page') return row.page.threads[0]?.id ?? null;
 	return null;
 }
 
@@ -193,6 +201,8 @@ export function searchGroups(input: {
 	const ask: SearchGroup = { label: null, rows: [{ kind: 'ask', query: text }] };
 
 	if (url) groups.push({ label: null, rows: [{ kind: 'open', url }] });
+	const days = url ? [] : namedDays(text);
+	if (days.length) groups.push({ label: null, rows: days.map((day) => ({ kind: 'day', day })) });
 	if (question) groups.push(ask);
 
 	const commands = commandsMatching(input.commands, text, COMMAND_ROWS);
@@ -204,6 +214,9 @@ export function searchGroups(input: {
 
 	const records = matching(recentRows({ pinned: true }), text, MATCH_ROWS);
 	if (records.length) groups.push({ label: null, rows: records.map((record) => ({ kind: 'record', record })) });
+
+	const people = matchEntities(text, ENTITY_ROWS);
+	if (people.length) groups.push({ label: null, rows: people.map((entity) => ({ kind: 'entity', entity })) });
 
 	if (!commands.leading && commandGroup.rows.length) groups.push(commandGroup);
 	if (!question) groups.push(ask);
@@ -230,6 +243,46 @@ const ROOMS: Record<string, { route: string; noun: string; glyph: string }> = {
 /** The glyph for a content hit: its view's, else the one for records. */
 export function contentGlyph(hit: LocalSearchHit): string {
 	return ROOMS[hit.ontology]?.glyph ?? 'atlas:sources';
+}
+
+const RECORD_NOUN: Record<RecentKind, string> = { chat: 'Chat', page: 'Page', project: 'Thread', applet: 'Applet' };
+
+/** `content_bookmark` → "Bookmark": the kind as a noun, without the table's prefix. */
+function contentNoun(hit: LocalSearchHit): string {
+	const noun = ROOMS[hit.ontology]?.noun ?? hit.ontology.replace(/^[a-z]+_/, '').replaceAll('_', ' ');
+	return noun.charAt(0).toUpperCase() + noun.slice(1);
+}
+
+/** What a row is, as the noun drawn at its right edge. Null for rows that say it in their text. */
+export function rowNoun(row: SearchRow): string | null {
+	switch (row.kind) {
+		case 'record':
+			return RECORD_NOUN[row.record.kind];
+		case 'day':
+			return 'Day';
+		case 'entity':
+			return row.entity.kind === 'person' ? 'Person' : 'Place';
+		case 'content':
+			return contentNoun(row.hit);
+		default:
+			return null;
+	}
+}
+
+/** Where a row opens, for rows that open a view. */
+export function rowRoute(row: SearchRow): string | null {
+	switch (row.kind) {
+		case 'record':
+			return row.record.url;
+		case 'day':
+			return `/day/day_${row.day.date}`;
+		case 'entity':
+			return row.entity.url;
+		case 'content':
+			return contentTarget(row.hit).route;
+		default:
+			return null;
+	}
 }
 
 /**

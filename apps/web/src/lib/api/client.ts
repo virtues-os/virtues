@@ -1776,7 +1776,7 @@ export async function purgeDriveFile(fileId: string): Promise<void> {
 // Recently deleted — chats, pages and projects (`api::trash` on the box)
 // ============================================================================
 
-export type TrashKind = 'chat' | 'page' | 'project';
+export type TrashKind = 'chat' | 'page' | 'thread';
 
 export interface TrashItem {
 	kind: TrashKind;
@@ -1812,7 +1812,7 @@ export function emptyTrash(): Promise<{ deleted_count: number }> {
 // Visits — the frecency log behind ⌘K (`api::visits` on the box)
 // ============================================================================
 
-export type VisitKind = 'chat' | 'page' | 'project' | 'applet';
+export type VisitKind = 'chat' | 'page' | 'thread' | 'applet';
 
 export interface Frecency {
 	kind: VisitKind;
@@ -2038,7 +2038,7 @@ export function updateChat(
 		title?: string;
 		icon?: string | null;
 		icon_color?: string | null;
-		projectId?: string | null;
+		threadId?: string | null;
 	}
 ): Promise<{
 	conversation_id: string;
@@ -2064,7 +2064,7 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 // and takes more than one step. It ends finished or dropped, and can sit under
 // a thing. It gathers entities, chats, and pages as URL-native members and
 // carries an icon, a color and a brief (`instructions`).
-// A chat lives in at most one Project (see `updateChat`'s `projectId`).
+// A chat lives in at most one thread (see `updateChat`'s `threadId`).
 // =============================================================================
 
 /** Core Project row (no counts). Returned by create/update. */
@@ -2139,7 +2139,7 @@ export interface ProjectGraph {
 	edges: ProjectGraphEdge[];
 }
 
-/** GET /api/projects/:id — a Project plus its ordered members. */
+/** GET /api/threads/:id — a Project plus its ordered members. */
 /** A chat filed in a project, as the project's own detail lists it. */
 export interface ProjectChat {
 	id: string;
@@ -2155,38 +2155,38 @@ export interface ProjectDetail extends Project {
 	chats?: ProjectChat[];
 }
 
-/** GET /api/projects — all Projects with counts. */
+/** GET /api/threads — all Projects with counts. */
 export async function listProjects(opts?: {
 	includeArchived?: boolean;
 	/** Only the projects holding this member url (a page asking where it is filed). */
 	member?: string;
-}): Promise<{ projects: ProjectSummary[] }> {
-	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
+}): Promise<{ threads: ProjectSummary[] }> {
+	return apiGet<{ threads: ProjectSummary[] }>('/threads', {
 		include_archived: opts?.includeArchived ? 'true' : undefined,
 		member: opts?.member,
 	});
 }
 
 /**
- * POST /api/projects/:id/archive — end a project as finished or dropped.
+ * POST /api/threads/:id/archive — end a project as finished or dropped.
  * Reversible; no confirm needed. Sent again for an ended project, it changes
  * only how it ended.
  */
 export function archiveProject(id: string, outcome: ProjectOutcome): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`, { outcome });
+	return apiSend<void>('POST', `/threads/${encodeURIComponent(id)}/archive`, { outcome });
 }
 
-/** POST /api/projects/:id/unarchive — reopen it. */
+/** POST /api/threads/:id/unarchive — reopen it. */
 export function unarchiveProject(id: string): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/unarchive`);
+	return apiSend<void>('POST', `/threads/${encodeURIComponent(id)}/unarchive`);
 }
 
-/** GET /api/projects/:id — a Project with its ordered members. */
+/** GET /api/threads/:id — a Project with its ordered members. */
 export function getProject(id: string): Promise<ProjectDetail> {
-	return apiGet<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
+	return apiGet<ProjectDetail>(`/threads/${encodeURIComponent(id)}`);
 }
 
-/** POST /api/projects — create a Project. */
+/** POST /api/threads — create a Project. */
 export function createProject(body: {
 	name: string;
 	icon?: string | null;
@@ -2194,11 +2194,11 @@ export function createProject(body: {
 	/** Start it under this thing. */
 	thing_id?: string | null;
 }): Promise<Project> {
-	return apiSend<Project>('POST', '/projects', body);
+	return apiSend<Project>('POST', '/threads', body);
 }
 
 /**
- * PUT /api/projects/:id — update a Project. For the nullable fields
+ * PUT /api/threads/:id — update a Project. For the nullable fields
  * (`icon`/`accent_color`/`instructions`/`thing_id`): omit the key to leave
  * unchanged, send `null` to clear, send a value to set.
  */
@@ -2213,12 +2213,12 @@ export function updateProject(
 		thing_id?: string | null;
 	}
 ): Promise<Project> {
-	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
+	return apiSend<Project>('PUT', `/threads/${encodeURIComponent(id)}`, patch);
 }
 
-/** DELETE /api/projects/:id */
+/** DELETE /api/threads/:id */
 export async function deleteProject(id: string): Promise<void> {
-	await apiSend('DELETE', `/projects/${encodeURIComponent(id)}`);
+	await apiSend('DELETE', `/threads/${encodeURIComponent(id)}`);
 }
 
 // =============================================================================
@@ -2246,42 +2246,42 @@ export interface ViewEntity {
 // no separate GET.)
 // =============================================================================
 
-/** POST /api/projects/:id/items — add a member URL to a Project. */
+/** POST /api/threads/:id/items — add a member URL to a Project. */
 export function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
-	return apiSend<ProjectItem>('POST', `/projects/${encodeURIComponent(projectId)}/items`, {
+	return apiSend<ProjectItem>('POST', `/threads/${encodeURIComponent(projectId)}/items`, {
 		url: sanitizeUrl(url),
 	});
 }
 
-/** DELETE /api/projects/:id/items — remove a member URL from a Project. */
+/** DELETE /api/threads/:id/items — remove a member URL from a Project. */
 export async function removeProjectItem(projectId: string, url: string): Promise<void> {
-	await apiSend('DELETE', `/projects/${encodeURIComponent(projectId)}/items`, { url });
+	await apiSend('DELETE', `/threads/${encodeURIComponent(projectId)}/items`, { url });
 }
 
-/** PUT /api/projects/:id/items/reorder — set the member order by URL. */
+/** PUT /api/threads/:id/items/reorder — set the member order by URL. */
 export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
-	await apiSend('PUT', `/projects/${encodeURIComponent(projectId)}/items/reorder`, { urls });
+	await apiSend('PUT', `/threads/${encodeURIComponent(projectId)}/items/reorder`, { urls });
 }
 
-/** PUT /api/projects/:id/items/role — set what a member is to the project. */
+/** PUT /api/threads/:id/items/role — set what a member is to the project. */
 export function setProjectItemRole(
 	projectId: string,
 	url: string,
 	role: ProjectItemRole
 ): Promise<ProjectItem> {
-	return apiSend<ProjectItem>('PUT', `/projects/${encodeURIComponent(projectId)}/items/role`, {
+	return apiSend<ProjectItem>('PUT', `/threads/${encodeURIComponent(projectId)}/items/role`, {
 		url,
 		role,
 	});
 }
 
 /**
- * GET /api/projects/:id/graph — entities referenced across the members.
+ * GET /api/threads/:id/graph — entities referenced across the members.
  * Built only from things explicitly filed or linked (`[@ref]`); nothing is
  * inferred, so an entity merely mentioned inside a PDF will not appear.
  */
 export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
-	return apiGet<ProjectGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
+	return apiGet<ProjectGraph>(`/threads/${encodeURIComponent(projectId)}/graph`);
 }
 
 // =============================================================================
@@ -2301,7 +2301,7 @@ export interface Page {
 	title: string;
 	/** Markdown either way: for a block page, the export of its tree. */
 	content: string;
-	project_id: string | null;
+	thread_id: string | null;
 	icon: string | null;
 	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
 	icon_color: string | null;
@@ -2337,7 +2337,10 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	project_id: string | null;
+	/** The first line of text after the title, plain. Empty when the page has no text. */
+	excerpt: string;
+	/** The open threads that hold this page. A page can be in several. */
+	threads: { id: string; name: string }[];
 	icon: string | null;
 	icon_color: string | null;
 	cover_url: string | null;
@@ -2372,8 +2375,8 @@ export interface Task {
 	due_on: string | null;
 	/** A time, only when one was given. */
 	due_at: string | null;
-	project_id: string | null;
-	/** The thing it sits under. A task has one parent at most: a project or a thing. */
+	thread_id: string | null;
+	/** The thing it sits under. A task has one parent at most: a thread or a thing. */
 	thing_id?: string | null;
 	/**
 	 * It recurs every `recur_every` `recur_unit`s, counted from the day it is
@@ -2425,7 +2428,7 @@ export interface NewTask {
 	assignee?: TaskActor;
 	due_on?: string | null;
 	due_at?: string | null;
-	project_id?: string | null;
+	thread_id?: string | null;
 	thing_id?: string | null;
 	recur_every?: number | null;
 	recur_unit?: RecurUnit | null;
@@ -2445,7 +2448,7 @@ export type TaskPatch = Partial<
 		| 'status'
 		| 'due_on'
 		| 'due_at'
-		| 'project_id'
+		| 'thread_id'
 		| 'thing_id'
 		| 'recur_every'
 		| 'recur_unit'
@@ -2455,7 +2458,7 @@ export type TaskPatch = Partial<
 
 export function listTasks(
 	status: 'open' | 'closed' | 'all' = 'open',
-	filter: { assignee?: TaskActor; project_id?: string; thing_id?: string } = {},
+	filter: { assignee?: TaskActor; thread_id?: string; thing_id?: string } = {},
 ): Promise<Task[]> {
 	return apiGet('/tasks', { status, ...filter });
 }
@@ -2630,8 +2633,8 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
-	return apiGet<PageListResponse>('/pages', { limit, offset, project_id });
+export function listPages(limit?: number, offset?: number): Promise<PageListResponse> {
+	return apiGet<PageListResponse>('/pages', { limit, offset });
 }
 
 /**
@@ -2647,10 +2650,10 @@ export function getPage(id: string): Promise<Page> {
 export function createPage(
 	title: string,
 	content: string = '',
-	project_id: string | null = null,
+	thread_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
-	return apiSend<Page>('POST', '/pages', { title, content, projectId: project_id, ...options });
+	return apiSend<Page>('POST', '/pages', { title, content, threadId: thread_id, ...options });
 }
 
 /**
@@ -2661,7 +2664,7 @@ export function updatePage(
 	updates: {
 		title?: string;
 		content?: string;
-		project_id?: string | null;
+		thread_id?: string | null;
 		icon?: string | null;
 		icon_color?: string | null;
 		cover_url?: string | null;
