@@ -22,6 +22,7 @@
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
+	import { usePageActions } from '$lib/stores/paneActions.svelte';
 	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
 	import NewAppletSheet from './NewAppletSheet.svelte';
@@ -37,6 +38,10 @@
 	// Yours. A built-in applet that needs you (a backup with no drive) marks
 	// Settings instead, and Settings > Applets lists it first.
 	const shown = $derived(appletsStore.mine);
+	// On the desktop the title is in the tab's action toolbar and these sit
+	// at its end; the phone keeps both in the header.
+	const toolbar = usePageActions(() => headerActions);
+
 	const problems = $derived(shown.filter((a) => needsYou(a)));
 	const rest = $derived(
 		shown
@@ -164,18 +169,22 @@
 	</li>
 {/snippet}
 
+{#snippet headerActions()}
+	<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
+	<Button variant="primary" size="sm" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>
+		New applet
+	</Button>
+{/snippet}
+
 <section class="applets-panel">
 	<header class="section-header">
 		<div>
-			<h2>Applets</h2>
+			{#if !toolbar.inToolbar}<h2>Applets</h2>{/if}
 			<p class="subtitle">Ask Virtues to do something for you, on a schedule or when something happens.</p>
 		</div>
-		<div class="header-actions">
-			<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
-			<Button variant="primary" size="sm" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>
-				New applet
-			</Button>
-		</div>
+		{#if !toolbar.inToolbar}
+			<div class="header-actions">{@render headerActions()}</div>
+		{/if}
 	</header>
 
 	{#if err}
@@ -242,6 +251,9 @@
 		margin: 8px 0 0;
 		font-size: 15px;
 		color: var(--color-foreground-muted);
+	}
+	.subtitle:first-child {
+		margin-top: 0;
 	}
 	.header-actions {
 		display: flex;
