@@ -1,13 +1,15 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { motion } from "$lib/stores/motion.svelte";
 	import { onDestroy, onMount } from "svelte";
-	import { Spring, prefersReducedMotion } from "svelte/motion";
+	import { Spring } from "svelte/motion";
 	import { fly } from "svelte/transition";
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";
 	import type { RefSearchResult, SkillSummary, SuggestedQuestion } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { reachability } from "$lib/stores/reachability.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
@@ -162,7 +164,7 @@
 	// The tray's height follows its content, so opening, closing and moving
 	// between views are all one height transition.
 	let trayContentHeight = $state(0);
-	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 280, easing: quintOut });
+	const viewIn = $derived({ y: 6, duration: motion.reduced ? 0 : 280, easing: quintOut });
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
@@ -648,6 +650,15 @@
 					</button>
 				{/if}
 
+				<!-- Said inside the box because sending is where being offline bites.
+				     The phone has its own banner under the header (MobileShell). -->
+				{#if reachability.unreachable && !mobileLayout.isMobile}
+					<span class="offline-note" role="status" title="Messages won't send until your server answers again.">
+						<Icon icon="mynaui:wifi-off" width="13" style="color: inherit" />
+						<span>Can't reach your server</span>
+					</span>
+				{/if}
+
 				<span class="toolbar-spacer"></span>
 
 				{#if showMic}
@@ -947,6 +958,16 @@
 
 	.toolbar-spacer {
 		flex: 1;
+	}
+
+	.offline-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: 0.25rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
 	}
 
 

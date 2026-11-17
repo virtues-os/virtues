@@ -2,9 +2,8 @@
 	ComposerTray.svelte
 
 	What sits on top of the chat composer: the drop hint while a file is
-	dragged over the chat, the staged attachments, a note while the server
-	can't be reached, the banner when the model cannot read one of them, and
-	the messages queued behind a running turn.
+	dragged over the chat, the staged attachments, the banner when the model
+	cannot read one of them, and the messages queued behind a running turn.
 
 	Renders no wrapper of its own on purpose. The drop hint is positioned
 	against the composer wrapper that contains this tray (ChatView's
@@ -14,8 +13,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { formatFileSize, type Attachment } from "$lib/components/chat/state/attachments.svelte";
 	import type { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
-	import { reachability } from "$lib/stores/reachability.svelte";
-	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let {
 		dragActive,
@@ -81,14 +78,6 @@
 				</button>
 			</div>
 		{/each}
-	</div>
-{/if}
-<!-- Said here because sending is where being offline bites. The phone has
-     its own banner under the header (MobileShell), so this is desktop only. -->
-{#if reachability.unreachable && !mobileLayout.isMobile}
-	<div class="offline-note" role="status" title="Messages won't send until your server answers again.">
-		<Icon icon="mynaui:wifi-off" width="13" />
-		<span>Can't reach server</span>
 	</div>
 {/if}
 {#if capabilityIssue}
@@ -247,20 +236,6 @@
 
 	/* A small centered pill: the send button is already disabled, so this
 	   only has to name the reason. The full sentence is in the tooltip. */
-	.offline-note {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		width: fit-content;
-		margin: 0 auto 0.5rem;
-		padding: 0.25rem 0.625rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-full);
-		background: var(--color-surface-elevated);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-
 	.capability-banner {
 		display: flex;
 		align-items: center;
