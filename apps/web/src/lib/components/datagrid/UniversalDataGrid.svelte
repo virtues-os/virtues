@@ -2023,6 +2023,7 @@
 		align-items: baseline;
 		gap: 0.75rem;
 		padding-bottom: 0.5rem;
+		margin-bottom: 0.25rem;
 		border-bottom: 1px solid var(--color-border);
 	}
 	/* The chevron hangs in the margin and shows on hover, so a group header
@@ -2063,17 +2064,22 @@
 		margin: 0;
 		padding: 0;
 	}
+	/* One rule per group, under its heading; rows are set apart by space and
+	   a fill under the pointer, not a line each. */
 	.list-row {
 		display: block;
 		width: 100%;
-		padding: 0.875rem 0.25rem;
+		padding: 0.75rem 0.5rem;
 		border: 0;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+		border-radius: var(--radius-md);
 		background: none;
 		font: inherit;
 		text-align: left;
 		color: inherit;
 		cursor: pointer;
+	}
+	.list-row:hover {
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 	.list-row:focus-visible {
 		outline: 2px solid var(--color-primary);
