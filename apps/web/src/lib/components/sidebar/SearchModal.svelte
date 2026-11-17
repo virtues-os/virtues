@@ -12,16 +12,18 @@
 	 * measures against. The window blurs and fades into a fine dot screen,
 	 * clear around the card and denser toward the edges.
 	 *
-	 * The card and the veil come up on one clock and go on a shorter one.
-	 * The veil fades by opacity over a blur that never animates, since
-	 * animating `backdrop-filter` itself repaints the whole window per frame.
+	 * It opens like a camera pulling focus: the window behind goes soft as
+	 * the card comes sharp out of a blur, settling from a little larger than
+	 * its size. Closing pulls focus back to the page, faster than it came.
+	 * The blur radius itself animates, which repaints the window each frame
+	 * for those few hundred milliseconds; a fade between sharp and blurred
+	 * reads as a dissolve, not a change of focus.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import SearchList from "$lib/components/search/SearchList.svelte";
 	import SearchPreview from "$lib/components/search/SearchPreview.svelte";
-	import { fade } from "svelte/transition";
-	import { cubicIn, expoOut } from "svelte/easing";
+	import { cubicIn, cubicOut, expoOut } from "svelte/easing";
 	import { search } from "$lib/stores/search.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { SearchRow } from "$lib/search/results";
@@ -33,8 +35,11 @@
 
 	let { open = false, onClose }: Props = $props();
 
-	const IN_MS = 160;
-	const OUT_MS = 90;
+	const FOCUS_MS = 290;
+	const RELEASE_MS = 210;
+	const CARD_OUT_MS = 145;
+	/** The window's blur when search is up, in px. */
+	const VEIL_BLUR = 10;
 
 	let query = $state("");
 	let mode = $state<"search" | "theme">("search");
@@ -69,22 +74,44 @@
 
 	const still = () => reducedMotion();
 
-	/** Rises a few pixels into place as it grows to full size. */
+	/** The phone and reduced transparency draw the veil without a blur (see the styles), so the outro must not add one. */
+	const flat = () => window.matchMedia("(hover: none), (prefers-reduced-transparency: reduce)").matches;
+
+	const veilAt = (e: number) => {
+		if (flat()) return `opacity: ${e}`;
+		const filter = `blur(${VEIL_BLUR * e}px) saturate(${1 - 0.1 * e})`;
+		return `opacity: ${e}; backdrop-filter: ${filter}; -webkit-backdrop-filter: ${filter}`;
+	};
+
+	/** The window goes out of focus. */
+	function veilIn(_node: HTMLElement) {
+		if (still()) return { duration: 160, css: (t: number) => `opacity: ${t}` };
+		return { duration: FOCUS_MS + 15, easing: expoOut, css: (t: number) => veilAt(t) };
+	}
+
+	/** The window comes back into focus. Svelte runs an outro from t = 1 down to 0. */
+	function veilOut(_node: HTMLElement) {
+		if (still()) return { duration: 120, css: (t: number) => `opacity: ${t}` };
+		return { duration: RELEASE_MS, easing: cubicOut, css: (t: number) => veilAt(t) };
+	}
+
+	/** The card comes sharp out of a blur, settling from 104% to its size. */
 	function appear(_node: HTMLElement) {
+		if (still()) return { duration: 160, css: (t: number) => `opacity: ${t}` };
 		return {
-			duration: IN_MS,
+			duration: FOCUS_MS,
 			easing: expoOut,
-			css: (t: number) =>
-				still() ? `opacity: ${t}` : `opacity: ${t}; transform: translateY(${(1 - t) * 6}px) scale(${0.97 + 0.03 * t})`,
+			css: (t: number) => `opacity: ${t}; filter: blur(${(1 - t) * 10}px); transform: scale(${1.04 - 0.04 * t})`,
 		};
 	}
 
-	/** Shrinks a little as it fades, faster than it came. */
+	/** The card blurs and swells a little as it fades. */
 	function leave(_node: HTMLElement) {
+		if (still()) return { duration: 120, css: (t: number) => `opacity: ${t}` };
 		return {
-			duration: OUT_MS,
+			duration: CARD_OUT_MS,
 			easing: cubicIn,
-			css: (t: number) => (still() ? `opacity: ${t}` : `opacity: ${t}; transform: scale(${0.98 + 0.02 * t})`),
+			css: (t: number) => `opacity: ${t}; filter: blur(${(1 - t) * 8}px); transform: scale(${1.03 - 0.03 * t})`,
 		};
 	}
 </script>
@@ -94,8 +121,8 @@
 	<div
 		class="backdrop"
 		onclick={(e) => e.target === e.currentTarget && onClose()}
-		in:fade={{ duration: IN_MS, easing: expoOut }}
-		out:fade={{ duration: OUT_MS, easing: cubicIn }}
+		in:veilIn
+		out:veilOut
 	>
 		<div class="card" class:has-preview={mode === "search" && !!selected} role="dialog" aria-modal="true" aria-label="Search" data-search in:appear out:leave>
 			<div class="field">
@@ -121,7 +148,6 @@
 			</div>
 			<div class="footer" aria-hidden="true">
 				<span><kbd>↵</kbd>{enterLabel}</span>
-				{#if mode === "search"}<span><kbd>Tab</kbd>Ask</span>{/if}
 				<span><kbd>↑</kbd><kbd>↓</kbd>Move</span>
 				<span class="end"><kbd>esc</kbd>{mode === "theme" ? "Back" : "Close"}</span>
 			</div>

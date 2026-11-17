@@ -353,7 +353,6 @@
 			<div class="kind"><Icon icon="atlas:new-chat" width="14" />Ask</div>
 			<h2>Ask Virtues</h2>
 			<p class="reading">Virtues answers “{preview.query}” in a new chat, from your days, pages, chats and sources.</p>
-			<div class="meta below">Press <kbd>Tab</kbd> from any row to ask.</div>
 		{:else if preview.kind === "open"}
 			<div class="kind"><Icon icon="mynaui:globe" width="14" />Address</div>
 			<h2 class="url">{preview.url.replace(/^https?:\/\//i, "")}</h2>

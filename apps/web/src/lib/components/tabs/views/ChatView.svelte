@@ -900,6 +900,19 @@
 		};
 	});
 
+	// An ask that reuses this new chat's tab after it mounted (asking from
+	// Home or ⌘K while an empty new chat is on screen) is claimed here. The
+	// mount above claims it first when the ask opened this view.
+	$effect(() => {
+		void pendingPrompt.asks;
+		if (!active || isLoading || !isNewChat(tab.route)) return;
+		const text = untrack(() => pendingPrompt.take());
+		if (!text) return;
+		const seeded = untrack(() => pendingPrompt.takeProject());
+		if (seeded) untrack(() => projectStore.setDraft(conversationId, seeded));
+		untrack(() => handleChatSubmit(text));
+	});
+
 	// Release chat instance on destroy
 	onDestroy(() => {
 		if (currentChatConversationId) {

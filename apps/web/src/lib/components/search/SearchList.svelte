@@ -239,14 +239,9 @@
 			e.preventDefault();
 			if (mode === "theme") saveTheme(shownThemes[selectedIndex]);
 			else if (rows[selectedIndex]) run(rows[selectedIndex]);
-		} else if (e.key === "Tab" && mode === "search") {
-			// Tab asks from anywhere in the list, so asking never depends on
-			// which row is selected. Its default would move focus out of the
-			// field and strand search.
+		} else if (e.key === "Tab") {
+			// Its default would move focus out of the field and strand search.
 			e.preventDefault();
-			if (!parsed.text || parsed.scope) return;
-			askVirtues(parsed.text);
-			onClose();
 		}
 	}
 
