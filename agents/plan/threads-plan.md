@@ -44,6 +44,13 @@ Each item is the owner's call, with the date and his words where they matter.
   habit thread. A thread's why stays a sentence on that thread.
 - **The new chat carries insights** (2026-11-17). Home shows the one or two
   notes that matter now; the Threads door keeps every note on what it is about.
+- **A thread is a folder first** (2026-11-17). He asked for "a 'magnet off'
+  style of primitive to be and act more as a 'folder' to which you can group
+  chats and pages manually", "less about auto thread resolution", and answered
+  "Yes, add it" to "Only what you add" as the default. Each thread has one
+  setting, What goes in: "Only what you add" (the default) or "Also what your
+  server files", under which records it is sure of are added and the rest
+  become filing questions. Tasks keep their homes either way.
 
 ## What the app has today
 
@@ -55,7 +62,15 @@ rename were uncommitted that day.
   `outcome` (`finished` or `dropped`) and `thing_id` (0078). There is no column
   for Active or Backlog.
 - `app_thread_items`: an item is a `url` with a `role` (`library`, `pin`,
-  `manuscript`) and `added_by` (`user` or `magnet`).
+  `manuscript`) and `added_by` (`user` or `magnet`). Items arrive only by hand
+  today: `add_thread_item` in `api/threads.rs` inserts them with role
+  `library`. `app_threads.auto_add_materials` (default false) is still in the
+  schema, and no code reads it.
+- Adding to a thread by hand already works under the old name. Dropping a
+  recent row or a tab on a pinned project's row in the sidebar files it there
+  (`HomePanel.svelte`, `fileIntoProject`); a tab's menu offers the projects
+  (`projectMenuItems` in `utils/projectActions.ts`); a page has "Add to
+  project…" (`PageToolbar.svelte`), and a chat has "Move to project".
 - `app_tasks`: `thread_id` or `thing_id`, never both
   (`app_tasks_one_parent_check`, 0078). There is no column for a person, place
   or organization, and no way to link a task to a second thread or subject. One
@@ -151,6 +166,40 @@ the desk tone.
   "6 h this week, 6 h 30 m ahead" for anyone who wants the number.
 - A quiet day stays blank. Habits show time, never days in a row.
 
+### Adding to a thread
+
+What exists today stays, renamed: drop a chat, page, tab or recent row on a
+pinned thread in the sidebar, or choose "Add to thread…" from a tab's, chat's
+or page's menu and pick the thread. The thread page adds a third way: its
+Materials list takes a drop, as does the row of a thread in the Threads door.
+Each follows design.md's drag rules: only a place that takes the drop lights,
+and a drop that worked stays where it landed.
+
+### The detail pages
+
+Each opens from a row and has the same frame: the path ("Threads / Chapter
+four"), the main column, and a side column of properties.
+
+- **A thread's page.** Its icon and name, where it stands in one sentence
+  ("Drafted by your server" with Edit), any note with "Why this?", its tasks,
+  and the thread as a vertical line: dates on the left, a typed node for each
+  record, solid down to a dotted Today mark, dashed after it, undated tasks
+  last. The side column holds status, started, the thing it sits under, this
+  week in small dots, What goes in, and Materials: the chats, pages and files
+  added to it, with Add and a place to drop them. "Finish the thread" and "Drop
+  it" end it.
+- **A task's page.** Its ring and title, why it exists in one sentence, any
+  note, "Where it came from" (the source record, with a voicemail's player and
+  transcript), the owner's notes, and its history from `app_task_events`, each
+  line signed by who did it. The side column holds the home with Move, what it
+  is also about with Add, due, repeats, who it is for, and the reminder.
+- **An insight's page.** What it is about, the sentence as its title, when it
+  leaves, and its actions. "Why your server raised it" states the rule in one
+  line and draws the evidence, such as the two overlapping calendar entries on
+  an afternoon's timeline. Then what acting changes, its history, and in the
+  side column how it was found ("a rule that compares your calendar entries; a
+  model wrote the sentence") and "Fewer like this".
+
 ### Home
 
 The notes line keeps today's behaviour (one note at a time, its action, "Not
@@ -168,14 +217,18 @@ starts. Read `.claude/rules/migrations.md` first.
    one-parent check to all five parents. Add `app_task_links (task_id, kind,
    ref_id)` for "also about", with `kind` in thread, person, place, org, thing.
    Add `status` to `app_threads` (`active` or `backlog`, default `active`).
+   What goes in is stored in `auto_add_materials`, whose default of false
+   already means "Only what you add".
    The migration header says what a rollback to an older release breaks.
 2. **Homes in the API.** Tasks take and return their home and links. A
    thread's detail returns its own tasks and the tasks that are also about it.
    `/api/threads` arrives with thread field names, and `/api/projects` stays as
    an alias until released phone apps no longer call it.
 3. **The Threads door.** Replace `ProjectsListView` and `ProjectDetailView`
-   with the four views and the preview column. Move `TaskList` onto the new
-   row. Statuses come from slice 1.
+   with the four views, the preview column, and the thread, task and insight
+   pages. Move `TaskList` onto the new row. Statuses come from slice 1. Rename
+   "Add to project…" and "Move to project" to "Add to thread…" in the tab,
+   chat and page menus, and let Materials and thread rows take a drop.
 4. **The week.** One endpoint returns, per thread and per day, minutes done and
    minutes ahead, plus the day's time in no thread. The first version counts
    only what can be counted without a model: calendar events and dated tasks
@@ -214,6 +267,10 @@ Each has my pick. None is decided.
 5. **When the old routes go.** Pick: keep `/api/projects` until no released
    phone app calls it, following
    [version-compat-plan.md](version-compat-plan.md).
+6. **The name of the What goes in column.** Keep `auto_add_materials` or
+   rename it with the next change to `app_threads`. Pick: rename it to
+   `files_records` in slice 1, since the old name describes the magnet that was
+   removed.
 
 ## How to test
 
