@@ -48,7 +48,7 @@
 
 	function isBlank(page: PageSummary): boolean {
 		const title = page.title.trim();
-		return page.excerpt === "" && (title === "" || title === "Untitled");
+		return !page.excerpt && (title === "" || title === "Untitled");
 	}
 
 	/** A blank page shows its first line as its name instead of "Untitled". */
@@ -60,7 +60,7 @@
 
 	function displayExcerpt(page: PageSummary): string {
 		const title = page.title.trim();
-		return title && title !== "Untitled" ? page.excerpt : "";
+		return title && title !== "Untitled" ? (page.excerpt ?? "") : "";
 	}
 
 	// Blank drafts stay out of the list. They are still in search and in
@@ -70,7 +70,7 @@
 		return pagesStore.pages.filter((p) => {
 			if (isBlank(p)) return false;
 			if (!q) return true;
-			return p.title.toLowerCase().includes(q) || p.excerpt.toLowerCase().includes(q);
+			return p.title.toLowerCase().includes(q) || (p.excerpt ?? "").toLowerCase().includes(q);
 		});
 	});
 
@@ -111,8 +111,11 @@
 		}
 		const loose: PageSummary[] = [];
 		for (const p of visible) {
-			if (p.threads.length === 0) loose.push(p);
-			for (const t of p.threads) add(t.id, t.name, t.id, p);
+			// A server older than this app sends no `threads`; its pages are
+			// listed as not in a thread instead of the list failing.
+			const threads = p.threads ?? [];
+			if (threads.length === 0) loose.push(p);
+			for (const t of threads) add(t.id, t.name, t.id, p);
 		}
 		const list = [...out.values()];
 		if (loose.length) list.push({ key: "none", name: "Not in a thread", threadId: null, pages: loose });
@@ -150,7 +153,7 @@
 
 	function openThread(g: Group, e?: MouseEvent) {
 		if (!g.threadId) return;
-		windowShellStore.openTabFromRoute(`/project/${g.threadId}`, {
+		windowShellStore.openTabFromRoute(`/thread/${g.threadId}`, {
 			forceNew: !!(e && (e.metaKey || e.ctrlKey)),
 			label: g.name,
 			preferEmptyPane: true,
