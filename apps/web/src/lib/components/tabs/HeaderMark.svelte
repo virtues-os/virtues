@@ -127,6 +127,23 @@
 		box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
 	}
 
+	/* The glint where the pointer is, as on glass buttons (app.css). The
+	   root layout keeps --lq-x and --lq-y on this button. */
+	.mark-glass::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit; /* design-ok: takes its element's radius */
+		background: radial-gradient(circle at var(--lq-x, 50%) var(--lq-y, 0%), var(--lq-glint), transparent 65%);
+		opacity: 0;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.standalone:hover .mark-glass::after {
+		opacity: 1;
+		transition-duration: var(--motion-hover-in);
+	}
+
 	.mark-slot,
 	.mark-label {
 		position: relative;

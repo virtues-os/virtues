@@ -183,7 +183,10 @@
 	// box is read inside the frame, before the write, so a frame lays out at
 	// most once.
 	onMount(() => {
-		const GLINTS = ':is(button, [role="button"]).lq';
+		// The ∴ beside the Mac app's window buttons draws its glass on a layer
+		// inside it (HeaderMark), so it is named here; the layer inherits the
+		// place from the button.
+		const GLINTS = ':is(button, [role="button"]).lq, .header-mark.standalone';
 		let glass: HTMLElement | null = null;
 		let x = 0;
 		let y = 0;
