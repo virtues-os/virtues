@@ -15,6 +15,12 @@
 	import * as stack from "./marks/stack.js";
 	import * as share from "./marks/share.js";
 	import * as waterfall from "./marks/waterfall.js";
+	import * as ridges from "./marks/ridges.js";
+	import * as band from "./marks/band.js";
+	import * as loupe from "./marks/loupe.js";
+	import * as spread from "./marks/spread.js";
+	import * as cloud from "./marks/cloud.js";
+	import * as area from "./marks/area.js";
 	import type { KitMark, ShowOutput } from "./show";
 
 	interface Props {
@@ -34,6 +40,12 @@
 		stack,
 		share,
 		waterfall,
+		ridgeline: ridges,
+		diurnal: band,
+		actogram: loupe,
+		dotplot: spread,
+		scatter: cloud,
+		area,
 	};
 
 	let el: HTMLDivElement;

@@ -41,6 +41,7 @@ pub const PURPOSES: &[ChartPurpose] = &[
     ChartPurpose { id: "usual_range", story: "how a measure sits against its own usual range" },
     ChartPurpose { id: "compare_groups", story: "one measure across a few groups or categories" },
     ChartPurpose { id: "part_to_whole", story: "how a total divides into its parts" },
+    ChartPurpose { id: "relationship", story: "whether two measures move together, or when in the week something happens" },
     ChartPurpose { id: "daily_rhythm", story: "how days are made up, across many days" },
     ChartPurpose { id: "events", story: "what happened when, item by item" },
     ChartPurpose { id: "place", story: "where things are or happened" },
@@ -55,7 +56,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Cumulative comparison",
         kind: "chart",
         purposes: &["change_over_time"],
-        line: "this period's running total against the last; step, then the two totals; give step_kind and unit",
+        line: "this period's running total against the last: step, then the two totals; give step_kind and unit",
         max_rows: 31,
     },
     ChartMark {
@@ -83,11 +84,59 @@ pub const MARKS: &[ChartMark] = &[
         max_rows: 600,
     },
     ChartMark {
+        mark: "ridgeline",
+        name: "Ridgeline plot",
+        kind: "chart",
+        purposes: &["daily_rhythm"],
+        line: "day, hour (0-24) or minute, then the value",
+        max_rows: 1200,
+    },
+    ChartMark {
+        mark: "diurnal",
+        name: "Diurnal profile",
+        kind: "chart",
+        purposes: &["daily_rhythm"],
+        line: "hour (0-23), days (weekdays or weekends) and share (0-1)",
+        max_rows: 48,
+    },
+    ChartMark {
+        mark: "actogram",
+        name: "Actogram",
+        kind: "chart",
+        purposes: &["daily_rhythm"],
+        line: "day, started_at and ended_at",
+        max_rows: 400,
+    },
+    ChartMark {
+        mark: "dotplot",
+        name: "Dot plot",
+        kind: "chart",
+        purposes: &["usual_range"],
+        line: "one value per record, an optional label first",
+        max_rows: 400,
+    },
+    ChartMark {
+        mark: "scatter",
+        name: "Scatter plot",
+        kind: "chart",
+        purposes: &["relationship"],
+        line: "a date or label, then two numbers, or one column of times; give finding",
+        max_rows: 400,
+    },
+    ChartMark {
+        mark: "area",
+        name: "Stacked area chart",
+        kind: "chart",
+        purposes: &["change_over_time"],
+        line: "a line's columns, stacked; only when named",
+        max_rows: 199,
+    },
+    ChartMark {
         mark: "multiples",
         name: "Small multiples",
         kind: "chart",
         purposes: &["compare_groups"],
-        line: "panel, x and value; one small chart per panel, 2-12 panels",
+        line: "panel, x and value, 2-12 panels",
         max_rows: 400,
     },
     ChartMark {
@@ -95,7 +144,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Dumbbell plot",
         kind: "chart",
         purposes: &["compare_groups"],
-        line: "a category, then exactly two numbers for two moments, earlier first",
+        line: "a category, then two numbers for two moments",
         max_rows: 20,
     },
     ChartMark {
@@ -103,15 +152,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Sorted bar list",
         kind: "chart",
         purposes: &["compare_groups"],
-        line: "a label, then a value, largest first, up to 20 rows; never to rank people",
-        max_rows: 20,
-    },
-    ChartMark {
-        mark: "waterfall",
-        name: "Waterfall chart",
-        kind: "chart",
-        purposes: &["part_to_whole"],
-        line: "a label, then an amount that adds or takes away; the first row may be the start",
+        line: "a label, then a value, largest first; never to rank people",
         max_rows: 20,
     },
     ChartMark {
@@ -119,15 +160,23 @@ pub const MARKS: &[ChartMark] = &[
         name: "100% bar",
         kind: "chart",
         purposes: &["part_to_whole"],
-        line: "a label, then a positive value, 2-8 parts of one whole",
+        line: "a label, then a value, 2-8 parts of one whole",
         max_rows: 8,
+    },
+    ChartMark {
+        mark: "waterfall",
+        name: "Waterfall chart",
+        kind: "chart",
+        purposes: &["part_to_whole"],
+        line: "a label, then an amount that adds or takes away",
+        max_rows: 20,
     },
     ChartMark {
         mark: "stack",
         name: "Stacked bar chart",
         kind: "chart",
         purposes: &["part_to_whole"],
-        line: "x, then 2-5 part columns stacked per period",
+        line: "x, then 2-5 parts",
         max_rows: 199,
     },
     ChartMark {
@@ -203,7 +252,7 @@ pub fn purpose_catalog() -> String {
     for p in PURPOSES {
         out.push_str(&format!("\n{}: {}.", p.id, p.story));
         for m in marks_for(p.id) {
-            out.push_str(&format!(" {} ({}): {}.", m.name, m.mark, m.line));
+            out.push_str(&format!(" {}: {}.", m.mark, m.line));
         }
     }
     out

@@ -186,7 +186,7 @@ executor that takes the mark's `max_rows + 1` as its limit: a crate-internal
    `purpose` and the picker for those marks. This ships on its own and
    changes nothing the owner sees.
 2. **Built.** `query_for_show` and per-mark row caps.
-3. **Two batches built**: baseline, cumulative, interrupted and states; then multiples, dumbbell, list, waterfall, share and stack. Port marks in batches: the client component, the show.rs shape branch, the
+3. **Three batches built**: baseline, cumulative, interrupted and states; then multiples, dumbbell, list, waterfall, share and stack; then ridgeline, diurnal, actogram, dotplot, scatter and area. Port marks in batches: the client component, the show.rs shape branch, the
    table row and the picker row together, in one change per batch. Start with
    the marks the model will reach for most: `baseline`, `cumulative`,
    `interrupted` and `states`.

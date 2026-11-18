@@ -22,6 +22,12 @@ export const KIT_MARKS = [
 	"stack",
 	"share",
 	"waterfall",
+	"ridgeline",
+	"diurnal",
+	"actogram",
+	"dotplot",
+	"scatter",
+	"area",
 ] as const;
 export type KitMark = (typeof KIT_MARKS)[number];
 
@@ -42,6 +48,8 @@ export interface ShowOutput {
 	/** interrupted only */
 	split_at?: string;
 	split_label?: string;
+	/** scatter only: one sentence on what lines up */
+	finding?: string;
 	columns?: string[];
 	rows?: Row[];
 	row_count?: number;

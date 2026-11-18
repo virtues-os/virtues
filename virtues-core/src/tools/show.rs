@@ -49,6 +49,9 @@ struct ShowArgs {
     step_kind: Option<String>,
     #[serde(default)]
     unit: Option<String>,
+    /// scatter: one sentence on what lines up, from rows already read.
+    #[serde(default)]
+    finding: Option<String>,
 }
 
 /// The call fields a chart mark reads beyond its rows, trimmed.
@@ -58,11 +61,13 @@ struct ChartFields {
     split_label: Option<String>,
     step_kind: Option<String>,
     unit: Option<String>,
+    finding: Option<String>,
 }
 
 const MAX_STATES: usize = 6;
 const MAX_UNIT_CHARS: usize = 12;
 const MAX_SPLIT_LABEL_CHARS: usize = 60;
+const MAX_FINDING_CHARS: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -133,6 +138,7 @@ pub async fn execute(
         split_label: trimmed(&args.split_label),
         step_kind: trimmed(&args.step_kind),
         unit: trimmed(&args.unit),
+        finding: trimmed(&args.finding),
     };
     let kind = match trimmed(&args.kind) {
         // A mark's name given as the kind (`kind: "share"`) is read as that
@@ -206,11 +212,16 @@ pub async fn execute(
         _ => candidates[0],
     };
     let (columns, rows) = mark_columns(drawn.mark, columns, rows);
-    // Three chart marks have rows `shape`'s bar and line checks don't fit.
+    // These chart marks have rows `shape`'s bar and line checks don't fit.
     let mut shaped = match drawn.mark {
         "states" => shape_states(drawn.max_rows, &columns, rows)?,
         "multiples" => shape_multiples(drawn.max_rows, &columns, rows)?,
         "stack" => shape_stack(drawn.max_rows, &columns, rows)?,
+        "ridgeline" => shape_ridgeline(drawn.max_rows, &columns, rows)?,
+        "diurnal" => shape_diurnal(drawn.max_rows, &columns, rows)?,
+        "actogram" => shape_actogram(drawn.max_rows, &columns, rows)?,
+        "dotplot" => shape_dotplot(drawn.max_rows, &columns, rows)?,
+        "scatter" => shape_scatter(drawn.max_rows, &columns, rows)?,
         _ => shape(kind, drawn.max_rows, &columns, rows)?,
     };
     if kind == Kind::Chart {
@@ -320,12 +331,17 @@ fn pick_chart_mark(
     let bar = chart_marks::mark("bar").expect("bar is a chart mark");
     let Some(p) = purpose else { return bar };
     let marks: Vec<_> = chart_marks::marks_for(p.id).filter(|m| m.kind == "chart").collect();
-    // The purpose's only mark is drawn even when its columns are off, so its
-    // own refusal names the fix; bar would draw something the call didn't ask for.
-    if let [only] = marks.as_slice() {
-        return only;
+    if let Some(m) = marks.iter().find(|m| chart_fits(m.mark, fields, columns, rows)) {
+        return m;
     }
-    marks.into_iter().find(|m| chart_fits(m.mark, fields, columns, rows)).unwrap_or(bar)
+    // When nothing fits: bar if it serves the purpose, else the purpose's
+    // first mark, so its own refusal names the fix rather than a bar chart
+    // drawing something the call didn't ask for.
+    if marks.iter().any(|m| m.mark == "bar") {
+        bar
+    } else {
+        marks.first().copied().unwrap_or(bar)
+    }
 }
 
 fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Value]) -> bool {
@@ -347,6 +363,18 @@ fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Valu
             columns.len() == 2 && (2..=8).contains(&rows.len()) && values_of(rows, &columns[1]).all(|v| v >= 0.0)
         }
         "stack" => columns.len() >= 3,
+        "ridgeline" => {
+            columns.len() == 3
+                && has_column(mark, "day", columns)
+                && columns.iter().any(|c| c == "hour" || c == "minute")
+        }
+        "diurnal" => ["hour", "days", "share"].iter().all(|c| columns.iter().any(|have| have == *c)),
+        "actogram" => ["day", "started_at", "ended_at"].iter().all(|c| has_column(mark, c, columns)),
+        "dotplot" => (1..=2).contains(&columns.len()),
+        // The weekly-rhythm form and every shape it takes are its own refusal's to explain.
+        "scatter" => true,
+        // Same rows as a line; drawn only when the call names it.
+        "area" => false,
         // A line runs over real time: every value in the first column is a
         // time or a date, and at least one is there.
         "line" => columns.first().is_some_and(|x| {
@@ -370,6 +398,10 @@ const MARK_ALIASES: &[(&str, &str, &[&str])] = &[
     ("states", "end", &["ended_at"]),
     ("states", "state", &["what", "place", "label"]),
     ("multiples", "panel", &["group"]),
+    ("ridgeline", "day", &["date", "night"]),
+    ("actogram", "day", &["night", "date"]),
+    ("actogram", "started_at", &["asleep_at", "start"]),
+    ("actogram", "ended_at", &["woke_at", "end"]),
 ];
 
 fn has_column(mark: &str, want: &str, columns: &[String]) -> bool {
@@ -471,6 +503,14 @@ fn check_mark(mark: &str, fields: &ChartFields, columns: &[String], out: &mut Ma
             }
             out.insert("split_at".into(), json!(at));
             out.insert("split_label".into(), json!(label));
+        }
+        "scatter" => {
+            if let Some(f) = &fields.finding {
+                if f.chars().count() > MAX_FINDING_CHARS {
+                    return Err(invalid(format!("finding is one sentence, at most {MAX_FINDING_CHARS} characters")));
+                }
+                out.insert("finding".into(), json!(f));
+            }
         }
         "dumbbell" if columns.len() != 3 => {
             return Err(invalid(format!(
@@ -600,6 +640,161 @@ fn shape_stack(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Res
         numeric_column(&mut rows, part, "a part")?;
         if values_of(&rows, part).any(|v| v < 0.0) {
             return Err(invalid(format!("\"{part}\" goes below zero, and a stacked part can't; draw it as a bar or a line")));
+        }
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// A ridgeline plot's rows: the day, the position in it (hour 0-24, or
+/// minute since the row began), and the value, a number of zero or more or a
+/// sleep stage name. Pure.
+fn shape_ridgeline(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("a ridgeline plot draws at most {max_rows} points; bin the positions wider")));
+    }
+    if columns.len() != 3 || !(columns[1] == "hour" || columns[1] == "minute") {
+        return Err(invalid(format!(
+            "a ridgeline plot is the day, then hour (0 to 24) or minute, then the value; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    numeric_column(&mut rows, &columns[1], "the position")?;
+    if columns[1] == "hour" && values_of(&rows, "hour").any(|h| !(0.0..=24.0).contains(&h)) {
+        return Err(invalid("hour runs from 0 to 24 (6.5 is 6:30)"));
+    }
+    // A numeric string becomes a number; a stage name stays text.
+    for row in rows.iter_mut() {
+        if let Some(v) = row.get_mut(&columns[2]) {
+            if let Some(n) = v.as_str().and_then(|s| s.trim().parse::<f64>().ok()) {
+                *v = json!(n);
+            }
+        }
+    }
+    if rows.iter().any(|r| r[&columns[2]].as_f64().is_some_and(|v| v < 0.0)) {
+        return Err(invalid(format!("\"{}\" goes below zero, and a ridge can't", columns[2])));
+    }
+    let mut days: Vec<String> = Vec::new();
+    for row in &rows {
+        let d = row[&columns[0]].to_string();
+        if !days.contains(&d) {
+            days.push(d);
+        }
+    }
+    if days.len() > 100 {
+        return Err(invalid(format!("a ridgeline plot stacks at most 100 days, and this query has {}", days.len())));
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// A diurnal profile's rows: hour (0-23), days (weekdays or weekends) and
+/// share (0-1). Pure.
+fn shape_diurnal(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("a diurnal profile has at most {max_rows} rows, one per hour of each kind of day")));
+    }
+    if let Some(missing) = ["hour", "days", "share"].iter().find(|c| !columns.iter().any(|have| have == *c)) {
+        return Err(invalid(format!(
+            "a diurnal profile needs hour, days and share columns; {missing} is missing from {}",
+            columns.join(", ")
+        )));
+    }
+    numeric_column(&mut rows, "hour", "hour")?;
+    numeric_column(&mut rows, "share", "share")?;
+    for row in &rows {
+        if !row["hour"].as_f64().is_some_and(|h| h.fract() == 0.0 && (0.0..=23.0).contains(&h)) {
+            return Err(invalid(format!("hour is a whole number from 0 to 23, and one row's is {}", row["hour"])));
+        }
+        if !row["share"].as_f64().is_some_and(|s| (0.0..=1.0).contains(&s)) {
+            return Err(invalid(format!("share runs from 0 to 1, and one row's is {}", row["share"])));
+        }
+        if !row["days"].as_str().is_some_and(|d| d.eq_ignore_ascii_case("weekdays") || d.eq_ignore_ascii_case("weekends")) {
+            return Err(invalid(format!("days is weekdays or weekends, and one row's is {}", row["days"])));
+        }
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// An actogram's rows: the day, then started_at and ended_at of its interval.
+/// A day whose interval breaks has one row per stretch. Pure.
+fn shape_actogram(max_rows: usize, columns: &[String], rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("an actogram draws at most {max_rows} stretches; narrow the window")));
+    }
+    if let Some(missing) = ["day", "started_at", "ended_at"].iter().find(|c| !columns.iter().any(|have| have == *c)) {
+        return Err(invalid(format!(
+            "an actogram needs day, started_at and ended_at (night, asleep_at and woke_at work too); \
+             {missing} is missing from {}",
+            columns.join(", ")
+        )));
+    }
+    for row in &rows {
+        for c in ["started_at", "ended_at"] {
+            if !row[c].as_str().is_some_and(is_time) {
+                return Err(invalid(format!("{c} must be a timestamp, and one row's is {}", row[c])));
+            }
+        }
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// A dot plot's rows: one value per record (a number, a duration or a time
+/// of day), with an optional first column naming each record. Pure.
+fn shape_dotplot(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if !(3..=max_rows).contains(&rows.len()) {
+        return Err(invalid(format!(
+            "a dot plot draws 3 to {max_rows} records, one dot each; this query has {}. Don't aggregate them",
+            rows.len()
+        )));
+    }
+    let Some(value) = columns.last().filter(|_| columns.len() <= 2) else {
+        return Err(invalid(format!(
+            "a dot plot is one value column, with an optional label first; this query has {} columns",
+            columns.len()
+        )));
+    };
+    // A number, or text the client reads as a duration or a clock time.
+    for row in rows.iter_mut() {
+        match row.get_mut(value.as_str()) {
+            Some(v @ Value::String(_)) => {
+                if let Some(n) = v.as_str().and_then(|s| s.trim().parse::<f64>().ok()) {
+                    *v = json!(n);
+                }
+            }
+            Some(Value::Number(_) | Value::Null) | None => {}
+            Some(other) => {
+                return Err(invalid(format!("\"{value}\" must be a number, a duration or a time of day, not {other}")))
+            }
+        }
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// A scatter plot's rows, in either form: a date or label then two numbers
+/// (or two numbers alone), or one column of times for a weekly rhythm. Pure.
+fn shape_scatter(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if !(3..=max_rows).contains(&rows.len()) {
+        return Err(invalid(format!("a scatter plot draws 3 to {max_rows} points; this query has {}", rows.len())));
+    }
+    match columns.len() {
+        1 => {
+            if !rows.iter().all(|r| r[&columns[0]].as_str().is_some_and(is_time)) {
+                return Err(invalid("a weekly rhythm is one column of times; every row needs a timestamp"));
+            }
+        }
+        2 | 3 => {
+            for measure in &columns[columns.len() - 2..] {
+                numeric_column(&mut rows, measure, "a measure")?;
+            }
+        }
+        n => {
+            return Err(invalid(format!(
+                "a scatter plot is a date or label then two numbers, or one column of times; this query has {n} columns"
+            )))
         }
     }
     Ok(chart_out(columns, rows))
@@ -1156,7 +1351,7 @@ mod tests {
     fn a_purpose_with_one_mark_draws_it_so_its_refusal_names_the_fix() {
         let rows = vec![json!({ "Week": "2026-09-01", "Hours": 7 })];
         let none = ChartFields::default();
-        assert_eq!(pick_chart_mark(purpose("usual_range"), &none, &cols(&["Week", "Hours"]), &rows).mark, "baseline");
+        assert_eq!(pick_chart_mark(purpose("relationship"), &none, &cols(&["Week", "Hours"]), &rows).mark, "scatter");
         assert_eq!(pick_chart_mark(purpose("before_and_after"), &none, &cols(&["Week", "Hours"]), &rows).mark, "interrupted");
         assert_eq!(pick_chart_mark(purpose("daily_rhythm"), &none, &cols(&["Week", "Hours"]), &rows).mark, "states");
     }
@@ -1286,5 +1481,72 @@ mod tests {
         let three = vec![json!({ "Kind": "Food", "A": 1, "B": 2 }), json!({ "Kind": "Travel", "A": 1, "B": 2 })];
         assert!(err(checked("list", &ChartFields::default(), &["Kind", "A", "B"], three.clone())).contains("sorted bar list is a label"));
         assert!(checked("dumbbell", &ChartFields::default(), &["Kind", "A", "B"], three).is_ok());
+    }
+
+    #[test]
+    fn daily_rhythm_picks_each_mark_by_its_columns() {
+        let p = purpose("daily_rhythm");
+        let none = ChartFields::default();
+        let r = vec![json!({})];
+        let pick = |c: &[&str]| pick_chart_mark(p, &none, &cols(c), &r).mark;
+        assert_eq!(pick(&["day", "start", "end", "state"]), "states");
+        assert_eq!(pick(&["date", "hour", "Steps"]), "ridgeline");
+        assert_eq!(pick(&["hour", "days", "share"]), "diurnal");
+        assert_eq!(pick(&["night", "asleep_at", "woke_at"]), "actogram");
+    }
+
+    #[test]
+    fn usual_range_draws_a_dot_plot_without_a_usual_range() {
+        let p = purpose("usual_range");
+        let none = ChartFields::default();
+        let r = vec![json!({ "Night": "2026-09-01", "Bedtime": "23:10" })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Night", "Bedtime"]), &r).mark, "dotplot");
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Day", "Rest", "usual_low", "usual_high"]), &r).mark, "baseline");
+    }
+
+    #[test]
+    fn area_is_drawn_only_when_named() {
+        let dated = vec![json!({ "Week": "2026-09-07", "Steps": 4100 })];
+        assert_eq!(pick_chart_mark(purpose("change_over_time"), &ChartFields::default(), &cols(&["Week", "Steps"]), &dated).mark, "line");
+    }
+
+    #[test]
+    fn the_rhythm_shapes_check_their_rows() {
+        let ridge = |h: Value, v: Value| json!({ "day": "2026-09-01", "hour": h, "Steps": v });
+        assert!(shape_ridgeline(1200, &cols(&["day", "hour", "Steps"]), vec![ridge(json!(6.5), json!("120"))]).is_ok());
+        assert!(err(shape_ridgeline(1200, &cols(&["day", "hour", "Steps"]), vec![ridge(json!(25), json!(1))])).contains("0 to 24"));
+        assert!(err(shape_ridgeline(1200, &cols(&["day", "hour", "Steps"]), vec![ridge(json!(3), json!("-4"))])).contains("below zero"));
+        assert!(shape_ridgeline(1200, &cols(&["day", "hour", "Stage"]), vec![ridge(json!(3), json!("REM"))]).is_ok());
+
+        let band = |h: Value, d: &str, s: Value| json!({ "hour": h, "days": d, "share": s });
+        assert!(shape_diurnal(48, &cols(&["hour", "days", "share"]), vec![band(json!(18), "Weekdays", json!(0.8))]).is_ok());
+        assert!(err(shape_diurnal(48, &cols(&["hour", "days", "share"]), vec![band(json!(18), "Mondays", json!(0.8))])).contains("weekdays or weekends"));
+        assert!(err(shape_diurnal(48, &cols(&["hour", "days", "share"]), vec![band(json!(24), "weekends", json!(0.8))])).contains("0 to 23"));
+
+        let (columns, rows) = mark_columns(
+            "actogram",
+            cols(&["night", "asleep_at", "woke_at"]),
+            vec![json!({ "night": "2026-09-02", "asleep_at": "2026-09-01 23:05:00", "woke_at": "2026-09-02 07:10:00" })],
+        );
+        let out = shape_actogram(400, &columns, rows).unwrap();
+        assert_eq!(out["columns"], json!(["day", "started_at", "ended_at"]));
+    }
+
+    #[test]
+    fn a_dot_plot_and_a_scatter_need_three_records_and_their_forms() {
+        let rec = |v: Value| json!({ "Night": "2026-09-01", "Bedtime": v });
+        let three = vec![rec(json!("23:10")), rec(json!("23:40")), rec(json!("0.5"))];
+        let out = shape_dotplot(400, &cols(&["Night", "Bedtime"]), three).unwrap();
+        assert_eq!(out["rows"][2]["Bedtime"], json!(0.5));
+        assert!(err(shape_dotplot(400, &cols(&["Night", "Bedtime"]), vec![rec(json!(1)), rec(json!(2))])).contains("3 to 400"));
+
+        let pair = |a: Value, b: Value| json!({ "Day": "2026-09-01", "Rowing": a, "Sleep": b });
+        let pairs = vec![pair(json!(60), json!("7.2")), pair(json!(0), json!(7.9)), pair(json!(90), json!(6.8))];
+        assert!(shape_scatter(400, &cols(&["Day", "Rowing", "Sleep"]), pairs).is_ok());
+        let times = vec![json!({ "at": "2026-09-01 12:10:00" }), json!({ "at": "2026-09-02 12:20:00" }), json!({ "at": "Lunch" })];
+        assert!(err(shape_scatter(400, &cols(&["at"]), times)).contains("one column of times"));
+        let mut out = Map::new();
+        let long = fields(|f| f.finding = Some("x".repeat(241)));
+        assert!(err(check_mark("scatter", &long, &cols(&["at"]), &mut out).map(|_| Map::new())).contains("finding"));
     }
 }
