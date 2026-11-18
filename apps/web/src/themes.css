@@ -73,6 +73,7 @@
 	--color-border: var(--border);
 	--color-border-subtle: var(--border-subtle);
 	--color-border-strong: var(--border-strong);
+	--color-border-field: var(--border-field);
 	--color-border-focus: var(--border-focus);
 
 	/* Selection/Highlight Colors */
@@ -408,6 +409,10 @@
 	--border: #E7E7E9;
 	--border-subtle: #F1F1F3;
 	--border-strong: #D4D4D8;
+	/* A text field's edge at rest: the line that shows where a field is, so
+	   it holds 3:1 against the page (WCAG 1.4.11). The hairline above is
+	   decoration and holds no minimum. */
+	--border-field: #8F8A82;
 	--border-focus: #0A84FF;
 
 	/* Selection/Highlight - A soft wash of the one accent */
@@ -596,6 +601,7 @@
 	--border: #E3E1DD;
 	--border-subtle: #EFEEEB;
 	--border-strong: #D4D1CC;
+	--border-field: #8F8A82; /* 3.4:1 on the page */
 	--border-focus: #1D4572;
 
 	/* Selection/Highlight - A yellow highlighter, warmed toward gold. Not the
@@ -676,6 +682,7 @@
 	--border: #2e3034;
 	--border-subtle: #242528;
 	--border-strong: #3e4045;
+	--border-field: #66686e; /* 3.2:1 on the page */
 	--border-focus: #88C0D0;
 
 	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read

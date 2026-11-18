@@ -21,7 +21,7 @@
 		{ fg: '--success', bg: '--page', where: 'Success text', need: 4.5 },
 		{ fg: '--warning', bg: '--page', where: 'Warning text', need: 4.5 },
 		{ fg: '--error', bg: '--page', where: 'Error text', need: 4.5 },
-		{ fg: '--border-strong', bg: '--page', where: "An input's edge at rest (shape, 3:1)", need: 3 },
+		{ fg: '--border-field', bg: '--page', where: "A text field's edge at rest (shape, 3:1)", need: 3 },
 		// A hairline is decoration: separation comes from tone (design.md,
 		// "Elevation"), so it is measured and held to no minimum.
 		{ fg: '--border', bg: '--page', where: 'A hairline (decorative, no minimum)', need: 0 }

@@ -189,13 +189,13 @@
 		/* Fixed: a list toolbar swaps this row for selection controls, and
 		   it must not change height when it does. */
 		height: 34px;
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-border-field);
 		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 		transition: border-color 0.25s ease;
 	}
 	.search-field:hover:not(:focus-within) {
-		border-color: var(--color-border-strong);
+		border-color: color-mix(in srgb, var(--color-border-field) 70%, var(--color-foreground));
 	}
 	.search-field:focus-within {
 		border-color: var(--color-primary);

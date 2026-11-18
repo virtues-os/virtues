@@ -7,7 +7,7 @@
 	const GROUPS: { name: string; tokens: string[] }[] = [
 		{ name: 'Grounds', tokens: ['--desk', '--page', '--surface', '--surface-elevated'] },
 		{ name: 'Ink', tokens: ['--foreground', '--foreground-muted', '--foreground-subtle'] },
-		{ name: 'Lines', tokens: ['--border', '--border-strong'] },
+		{ name: 'Lines', tokens: ['--border', '--border-strong', '--border-field'] },
 		{ name: 'Accent', tokens: ['--primary', '--secondary'] },
 		{ name: 'Status', tokens: ['--success', '--warning', '--error', '--info'] }
 	];

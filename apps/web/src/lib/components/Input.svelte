@@ -417,7 +417,7 @@
 		font-size: 15px;
 		color: var(--color-foreground);
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-border-field);
 		border-radius: var(--radius-lg);
 		outline: none;
 		transition: border-color 0.25s ease;
@@ -469,7 +469,7 @@
 			.error
 		):not(.warning)
 		.input-field {
-		border-color: var(--color-border-strong);
+		border-color: color-mix(in srgb, var(--color-border-field) 70%, var(--color-foreground));
 	}
 
 	/* Focus state */
@@ -481,7 +481,7 @@
 	.input-wrapper.delight.saved:not(.focused):not(.error) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-success) 30%
 		);
 	}
@@ -490,7 +490,7 @@
 	.input-wrapper.warning:not(.focused):not(.error) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-warning) 30%
 		);
 	}
@@ -499,7 +499,7 @@
 	.input-wrapper.error:not(.focused) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 50%,
+			var(--color-border-field) 50%,
 			var(--color-error) 50%
 		);
 		animation: shake 0.4s ease-out;
@@ -515,7 +515,7 @@
 	.input-wrapper.error.focused .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 50%,
+			var(--color-border-field) 50%,
 			var(--color-error) 50%
 		);
 	}

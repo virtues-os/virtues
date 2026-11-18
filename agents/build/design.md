@@ -99,7 +99,8 @@ inside `themes.css` only.
 | Page | `--page` | `#FFFFFF` | A card: the pane you work in. |
 | Ink | `--color-foreground` | `#1A2030` | Text. |
 | Muted, subtle | `--color-foreground-muted`, `--color-foreground-subtle` | | Secondary text, captions. Three inks, no others. |
-| Hairline | `--color-border` | `#E3E1DD` | A framed block's edge. |
+| Hairline | `--color-border` | `#E3E1DD` | A framed block's edge. Decoration, held to no contrast minimum. |
+| Field edge | `--color-border-field` | `#8F8A82` | A text field's edge at rest (Input, Textarea, SearchField). It shows where a field is, so it holds 3:1 against the page in both themes. |
 | Accent | `--color-primary` | `#1D4572` | Means *now* or *pressable*. |
 | Filled action | `--color-secondary` | `#9A2B2E` | The single primary Button on a page. |
 | Status | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | | A state a person can act on. |

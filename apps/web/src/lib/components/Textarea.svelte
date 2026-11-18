@@ -366,7 +366,7 @@
 		line-height: 1.5;
 		color: var(--color-foreground);
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-border-field);
 		border-radius: var(--radius-lg);
 		outline: none;
 		transition: border-color 0.25s ease;
@@ -405,7 +405,7 @@
 			.error
 		):not(.warning)
 		.textarea-field {
-		border-color: var(--color-border-strong);
+		border-color: color-mix(in srgb, var(--color-border-field) 70%, var(--color-foreground));
 	}
 
 	/* Focus state */
@@ -417,7 +417,7 @@
 	.textarea-wrapper.delight.saved:not(.focused):not(.error) .textarea-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-success) 30%
 		);
 	}
@@ -426,7 +426,7 @@
 	.textarea-wrapper.warning:not(.focused):not(.error) .textarea-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-warning) 30%
 		);
 	}
@@ -435,7 +435,7 @@
 	.textarea-wrapper.error:not(.focused) .textarea-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 50%,
+			var(--color-border-field) 50%,
 			var(--color-error) 50%
 		);
 		animation: shake 0.4s ease-out;
