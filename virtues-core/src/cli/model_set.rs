@@ -18,10 +18,12 @@
 //! owner didn't choose. Going back is the owner's call, and one command:
 //! [`use_recommended`].
 //!
-//! A Dragon moves off its NPU the same way: the recommended model starts on
-//! its CPU as the next endpoint while `virtues-qnnd` keeps serving search, and
-//! the box joins the recommended setup. When the swap is done,
-//! [`settle_finished_change`] retires `virtues-qnnd`. Its NPU runtime depends on
+//! A Dragon moves off its NPU the same way, when its owner runs
+//! `virtues configure-inference --recommended` ([`use_recommended`]): the
+//! recommended model starts on its CPU as the next endpoint while
+//! `virtues-qnnd` keeps serving search, and the box joins the recommended
+//! setup. When the swap is done, [`settle_finished_change`] retires
+//! `virtues-qnnd`. Its NPU runtime depends on
 //! Qualcomm and Radxa packages that change under it, and Virtues no longer
 //! maintains that stack.
 //!
@@ -216,8 +218,12 @@ async fn stage_next(target: &Path) -> Result<(), String> {
 /// Never fails an upgrade; a step that can't run says so and tries again on
 /// the next one.
 pub(crate) async fn start_recommended_change() {
+    // A Dragon on its NPU moves only when its owner runs
+    // `virtues configure-inference --recommended` ([`use_recommended`]), so
+    // that the first boxes to move are ones someone is watching.
+    // TODO(2026-11-18): start the move here, by calling `use_recommended`'s
+    // staging and setup edit, once a first Dragon has moved and settled.
     if on_npu_setup() && !on_recommended_setup() {
-        move_off_npu().await;
         return;
     }
     if !on_recommended_setup() {
@@ -245,26 +251,6 @@ pub(crate) async fn start_recommended_change() {
     match stage_next(&target).await {
         Ok(()) => ui::ok("search will switch to the new model once its index is built"),
         Err(e) => ui::warn(&format!("{e}. The next update tries again.")),
-    }
-}
-
-/// Start moving a Dragon's search from `virtues-qnnd` on the NPU to the
-/// recommended model on its CPU. Search keeps using the NPU until the new index
-/// is built; on a Dragon whose NPU stopped working, the swap comes as soon as
-/// the little that was indexed is rebuilt. The box joins the recommended setup
-/// now, so that [`settle_finished_change`] finishes the move.
-async fn move_off_npu() {
-    ui::step(&format!(
-        "moving search from the NPU to {EMBED_GGUF} on this machine's CPU (search keeps working while it rebuilds)…"
-    ));
-    let target = models_dir().join(EMBED_GGUF);
-    if let Err(e) = stage_next(&target).await {
-        ui::warn(&format!("{e}. The next update tries again."));
-        return;
-    }
-    match box_env::edit(&box_env::path(), &[("VIRTUES_INFERENCE", "bundled".to_string())], &[]) {
-        Ok(_) => ui::ok("search will switch to the CPU model once its index is built"),
-        Err(e) => ui::warn(&format!("couldn't set VIRTUES_INFERENCE=bundled: {e}. The next update tries again.")),
     }
 }
 
@@ -487,6 +473,7 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
         return Ok(());
     }
 
+    let from_npu = on_npu_setup();
     ui::step(&format!("starting {EMBED_GGUF} on this machine's CPU…"));
     stage_next(&target).await.map_err(crate::Error::Other)?;
     box_env::edit(&box_env::path(), &[("VIRTUES_INFERENCE", "bundled".to_string())], &[])?;
@@ -494,8 +481,14 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
     println!();
     ui::ok(&format!("{EMBED_GGUF} is running on this machine's CPU"));
     println!("     Search keeps using {current} while your index is rebuilt for it,");
-    println!("     then switches. Settings → Search shows how far along it is. After the");
-    println!("     switch, you can stop your own server; updates keep this model current.");
+    println!("     then switches. Settings → Search shows how far along it is.");
+    if from_npu {
+        println!("     On a small server this takes days. After the switch, the nightly");
+        println!("     update retires virtues-qnnd; updates keep this model current.");
+    } else {
+        println!("     After the switch, you can stop your own server; updates keep this");
+        println!("     model current.");
+    }
     Ok(())
 }
 

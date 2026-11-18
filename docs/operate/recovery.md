@@ -78,8 +78,8 @@ sudo journalctl -u virtues -n 200 --no-pager
 ## The pieces
 
 Besides the main service, a server runs an inference sidecar. A Radxa Dragon
-set up to use its NPU runs a different daemon until its first automatic update
-moves search to the CPU:
+set up to use its NPU runs a different daemon until its search moves to the
+CPU (`sudo virtues configure-inference --recommended`):
 
 | Unit | What it is |
 |---|---|

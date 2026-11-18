@@ -77,9 +77,11 @@ reads embedding settings from there through `box_env::var`), and then, under
 `search_index_meta.rescore_pending`, forgets the old event embeddings and
 rescores every day. Settings → Search shows the progress.
 
-**A Dragon on its NPU moves to the bundled setup.** The nightly
-`virtues auto-update` (the new binary; the upgrade that first carries a change
-is run by the old one) starts the recommended model as `virtues-embed-next` and
+**A Dragon on its NPU moves to the bundled setup** when its owner runs
+`sudo virtues configure-inference --recommended` (or re-runs the installer,
+which ends with that). For now nothing starts it automatically, so the first
+boxes to move are ones someone watches (`start_recommended_change` has a dated
+TODO). The command starts the recommended model as `virtues-embed-next` and
 sets `VIRTUES_INFERENCE=bundled`, while `virtues-qnnd` keeps serving search.
 The settle after the swap retires `virtues-qnnd` and its settings before the
 new model takes `:18181`. A Dragon's sidecar unit is always written fresh with

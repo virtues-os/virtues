@@ -17,7 +17,7 @@ from is decided once, at install (`InferenceMode`), and there are three answers:
 
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
-| **Dragon** (older installs only) | the Radxa Dragon Q6A | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, until the box's first nightly update moves it to Bundled ([model-migration.md](model-migration.md)). The installer no longer offers it: a Dragon detected from its device tree gets Bundled without a question, paced for a board with no fan (two threads on cores 4 to 6, `CPUWeight=20`) | no longer chosen |
+| **Dragon** (older installs only) | the Radxa Dragon Q6A | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, until its owner moves it to Bundled with `virtues configure-inference --recommended` ([model-migration.md](model-migration.md)). The installer no longer offers it: a Dragon detected from its device tree gets Bundled without a question, paced for a board with no fan (two threads on cores 4 to 6, `CPUWeight=20`) | no longer chosen |
 | **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 

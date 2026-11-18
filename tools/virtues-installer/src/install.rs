@@ -293,11 +293,12 @@ pub fn npu_still_serving() -> bool {
     Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }
 
-/// Start moving a Dragon's search from the NPU to the CPU, the way its nightly
-/// update would: `virtues configure-inference --recommended` starts the model
-/// beside `virtues-qnnd`, and the server retires qnnd once the new index is
-/// live (`cli::model_set` in core). Never fails the install; the nightly
-/// update starts it if this can't.
+/// Start moving a Dragon's search from the NPU to the CPU: `virtues
+/// configure-inference --recommended` starts the model beside `virtues-qnnd`,
+/// and the server retires qnnd once the new index is live (`cli::model_set` in
+/// core). Re-running the installer is the owner asking for it, the same as
+/// running that command, which is the only other way a Dragon moves for now.
+/// Never fails the install.
 pub async fn move_off_npu(cfg: &InstallConfig) {
     let mut cmd = Command::new(cfg.binary_path());
     cmd.args(["configure-inference", "--recommended"]);
@@ -306,11 +307,11 @@ pub async fn move_off_npu(cfg: &InstallConfig) {
             ui::ok("Search is moving from the NPU to the CPU; it keeps using the NPU until the new index is built")
         }
         Ok(o) => ui::warn(&format!(
-            "Couldn't start moving search to the CPU ({}); the next automatic update tries again",
+            "Couldn't start moving search to the CPU ({}). Try again with: sudo virtues configure-inference --recommended",
             String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("no error output").trim()
         )),
         Err(e) => ui::warn(&format!(
-            "Couldn't start moving search to the CPU ({e}); the next automatic update tries again"
+            "Couldn't start moving search to the CPU ({e}). Try again with: sudo virtues configure-inference --recommended"
         )),
     }
 }

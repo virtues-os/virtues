@@ -100,5 +100,5 @@ hangs, so a Dragon runs search on its CPU.
 Most NPUs need their vendor's runtime instead of llama.cpp. Any server works if it
 offers an OpenAI-style `/v1/embeddings` endpoint on your machine or network:
 run the same model there, then do step 4 with its URL. A Radxa Dragon runs
-search on its CPU. One set up to use its NPU moves search to the CPU on its
-first automatic update.
+search on its CPU. One set up to use its NPU moves search to the CPU with
+`sudo virtues configure-inference --recommended`.

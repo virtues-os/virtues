@@ -12,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** | `virtues` binary (+ the `virtues-embed` llama-server sidecar; a Dragon installed before search moved to its CPU runs `virtues-qnnd` until its first nightly update) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
+| **Home box** | `virtues` binary (+ the `virtues-embed` llama-server sidecar; a Dragon installed before search moved to its CPU runs `virtues-qnnd` until its owner moves it) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
