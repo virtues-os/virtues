@@ -612,7 +612,7 @@ gap is open work.
 
 | Primitive | Job | Today | Decided |
 |---|---|---|---|
-| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `danger` destroys something and is never also primary. | `--radius-md`; 32, 40, 48px. 73 files, beside about 485 hand-styled `<button>`s. | One control height, 34px. |
+| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `danger` destroys something and is never also primary; it is red ink and an edge at rest and fills only under the pointer, so it never looks like the primary. | `--radius-md`; 32, 40, 48px. 73 files, beside about 485 hand-styled `<button>`s. | One control height, 34px. |
 | `IconButton` | A button with no words. `label` is required and feeds `aria-label` and `title`. | 20, 24, 28, 44px; ghost, secondary, danger. 35 files. | 20px nested, 34px control, 44px touch. |
 | `TextAction` | A button with no box: a quiet link in `--color-primary`. `inline` keeps `font: inherit` mid-sentence. | 33 files. | Kept. |
 | `Input`, `Textarea` | Text fields with label, help and validation. | 12 and 3 files, beside about 100 raw fields. | Input at 34px. |

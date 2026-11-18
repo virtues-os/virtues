@@ -17,11 +17,14 @@
 		{ fg: '--foreground', bg: '--desk', where: 'Text on the desk', need: 4.5 },
 		{ fg: '--primary', bg: '--page', where: 'Links and pressable ink', need: 4.5 },
 		{ fg: '--surface', bg: '--secondary', where: 'The primary Button label on claret', need: 4.5 },
-		{ fg: '--surface', bg: '--error', where: 'The danger Button label', need: 4.5 },
+		{ fg: '--surface', bg: '--error', where: 'The danger Button label under the pointer', need: 4.5 },
 		{ fg: '--success', bg: '--page', where: 'Success text', need: 4.5 },
 		{ fg: '--warning', bg: '--page', where: 'Warning text', need: 4.5 },
 		{ fg: '--error', bg: '--page', where: 'Error text', need: 4.5 },
-		{ fg: '--border', bg: '--page', where: 'A hairline (shape, 3:1)', need: 3 }
+		{ fg: '--border-strong', bg: '--page', where: "An input's edge at rest (shape, 3:1)", need: 3 },
+		// A hairline is decoration: separation comes from tone (design.md,
+		// "Elevation"), so it is measured and held to no minimum.
+		{ fg: '--border', bg: '--page', where: 'A hairline (decorative, no minimum)', need: 0 }
 	];
 
 	const names = [...new Set(PAIRS.flatMap((p) => [p.fg, p.bg]))];

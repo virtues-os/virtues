@@ -579,9 +579,13 @@
 	/* Status Colors - Hunter green + goldenrod + claret */
 	--success: #2E6B43;
 	--success-subtle: #E3EDE5;
-	--warning: #B07514;
+	/* 5.6:1 on white and 4.7:1 on --warning-subtle, so warning text and the
+	   warning Badge both clear AA. */
+	--warning: #8F5E0C;
 	--warning-subtle: #F6ECD6;
-	--error: #9A2B2E;
+	/* A clear red, apart from claret (--secondary): an error must not look
+	   like the page's filled action. 6.6:1 on white. */
+	--error: #B42318;
 	--error-subtle: #F6E3E2;
 	--info: #1E4E8C;
 	--info-subtle: #E5EBF5;
@@ -638,7 +642,8 @@
 	/* Content Colors */
 	--foreground: #D4D4D4;
 	--foreground-muted: #898989;
-	--foreground-subtle: #6b6b6b;
+	/* 4.66:1 on the page: the lightest ink that still clears AA for text. */
+	--foreground-subtle: #828282;
 	--foreground-disabled: #525252;
 
 	/* Interactive Colors - Nordic blue */

@@ -22,7 +22,8 @@
 	 *   primary    the one action the page is for. Claret. At most one per page.
 	 *   secondary  a real action that is not the point of the page.
 	 *   ghost      a control in chrome; nothing on the desk may out-shout the page.
-	 *   danger     destroys something. Never also the primary.
+	 *   danger     destroys something. Never also the primary. Red ink and an
+	 *              edge at rest; it fills only under the pointer.
 	 *
 	 * The ramp (`--hover-bg` / `--active-bg`) is a foreground mix, never a
 	 * surface token — `--surface-elevated` against `--surface` is a 4% step
@@ -242,17 +243,25 @@
 		background: var(--press-bg);
 	}
 
+	/* Danger is drawn, not filled, until you point at it: the one filled
+	   button on a page is the action the page is for (design.md,
+	   "Primitives"), and a destructive one must not look like it at rest. */
 	.v-btn[data-variant="danger"] {
-		background: var(--color-error);
-		color: var(--color-surface);
+		background: var(--color-surface);
+		border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+		color: var(--color-error);
 	}
 
 	.v-btn[data-variant="danger"]:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-error) 88%, black);
+		background: var(--color-error);
+		border-color: var(--color-error);
+		color: var(--color-surface);
 	}
 
 	.v-btn[data-variant="danger"]:active:not(:disabled) {
-		background: color-mix(in srgb, var(--color-error) 78%, black);
+		background: color-mix(in srgb, var(--color-error) 85%, black);
+		border-color: transparent;
+		color: var(--color-surface);
 	}
 
 	/* Keep the information, drop the travel (StateBlock.svelte does the same).
