@@ -107,6 +107,10 @@ pub async fn run(cli: Config) -> Result<()> {
     // (context binaries + tokenizers + virtues-qnnd.service). Bundled → the
     // portable CPU llama-server sidecars. Manual → nothing (the user's endpoints
     // were validated above).
+    //
+    // TODO(2026-11-18): migrate a Dragon install to Bundled. An installed Dragon
+    // now moves off the NPU on its first nightly update (cli/model_set.rs
+    // `move_off_npu`), so a new one sets up virtues-qnnd only to retire it.
     match &inference {
         InferenceMode::Dragon => install::install_qnn(&cfg).await?,
         InferenceMode::Bundled => install::install_inference(&cfg).await?,

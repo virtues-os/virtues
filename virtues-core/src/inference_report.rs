@@ -93,6 +93,16 @@ pub(crate) fn is_dragon_profile() -> bool {
         || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }
 
+/// Is this machine a Radxa Dragon Q6A, by its device tree? A question about the
+/// board, not the inference setup: a Dragon keeps being one after its search
+/// moves from the NPU to the CPU, and its embedding sidecar runs gently there
+/// (`cli::model_set::embed_unit`), because it has no fan.
+pub(crate) fn is_dragon_board() -> bool {
+    std::fs::read("/proc/device-tree/compatible")
+        .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a" || s == b"qcom,qcm6490"))
+        .unwrap_or(false)
+}
+
 fn qnn_models_dir() -> PathBuf {
     std::env::var("VIRTUES_QNND_MODELS_DIR")
         .ok()

@@ -16,8 +16,14 @@
 //! nothing here touches it, not even when that server stops answering: it may
 //! be rebooting, and a quiet switch would rebuild the index for a model the
 //! owner didn't choose. Going back is the owner's call, and one command:
-//! [`use_recommended`]. Nor is a Dragon touched; its NPU models are compiled
-//! for the board.
+//! [`use_recommended`].
+//!
+//! A Dragon moves off its NPU the same way: the recommended model starts on
+//! its CPU as the next endpoint while `virtues-qnnd` keeps serving search, and
+//! the box joins the recommended setup. When the swap is done,
+//! [`settle_finished_change`] retires `virtues-qnnd`. Its NPU runtime depends on
+//! Qualcomm and Radxa packages that change under it, and Virtues no longer
+//! maintains that stack.
 //!
 //! Runs as root, from `virtues upgrade`, the nightly `virtues auto-update`, and
 //! `virtues configure-inference --recommended`.
@@ -37,6 +43,7 @@ const UNITS: &str = "/etc/systemd/system";
 const EMBED: &str = "virtues-embed";
 const NEXT: &str = "virtues-embed-next";
 const RERANK: &str = "virtues-rerank";
+const QNND: &str = "virtues-qnnd";
 /// The model the retired reranker sidecar loaded.
 const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 const EMBED_URL: &str = "http://127.0.0.1:18181";
@@ -48,6 +55,14 @@ fn unit_path(unit: &str) -> PathBuf {
 
 fn on_recommended_setup() -> bool {
     box_env::get("VIRTUES_INFERENCE").as_deref() == Some("bundled")
+}
+
+/// A Dragon still on its NPU setup. Read from the box env file as well as the
+/// process: this runs from root CLI contexts that don't load it, and a Dragon
+/// whose installer couldn't set up `virtues-qnnd` has no unit file to go by.
+fn on_npu_setup() -> bool {
+    box_env::get("VIRTUES_INFERENCE").as_deref() == Some("dragon")
+        || crate::inference_report::is_dragon_profile()
 }
 
 fn models_dir() -> PathBuf {
@@ -196,7 +211,11 @@ async fn stage_next(target: &Path) -> Result<(), String> {
 /// Never fails an upgrade; a step that can't run says so and tries again on
 /// the next one.
 pub(crate) async fn start_recommended_change() {
-    if !on_recommended_setup() || crate::inference_report::is_dragon_profile() {
+    if on_npu_setup() && !on_recommended_setup() {
+        move_off_npu().await;
+        return;
+    }
+    if !on_recommended_setup() {
         return;
     }
     retire_reranker();
@@ -221,6 +240,40 @@ pub(crate) async fn start_recommended_change() {
     match stage_next(&target).await {
         Ok(()) => ui::ok("search will switch to the new model once its index is built"),
         Err(e) => ui::warn(&format!("{e}. The next update tries again.")),
+    }
+}
+
+/// Start moving a Dragon's search from `virtues-qnnd` on the NPU to the
+/// recommended model on its CPU. Search keeps using the NPU until the new index
+/// is built; on a Dragon whose NPU stopped working, the swap comes as soon as
+/// the little that was indexed is rebuilt. The box joins the recommended setup
+/// now, so that [`settle_finished_change`] finishes the move.
+async fn move_off_npu() {
+    ui::step(&format!(
+        "moving search from the NPU to {EMBED_GGUF} on this machine's CPU (search keeps working while it rebuilds)…"
+    ));
+    let target = models_dir().join(EMBED_GGUF);
+    if let Err(e) = stage_next(&target).await {
+        ui::warn(&format!("{e}. The next update tries again."));
+        return;
+    }
+    match box_env::edit(&box_env::path(), &[("VIRTUES_INFERENCE", "bundled".to_string())], &[]) {
+        Ok(_) => ui::ok("search will switch to the CPU model once its index is built"),
+        Err(e) => ui::warn(&format!("couldn't set VIRTUES_INFERENCE=bundled: {e}. The next update tries again.")),
+    }
+}
+
+/// Stop and remove a Dragon's NPU daemon once search runs on the CPU, with the
+/// settings that pointed at it. Its model files stay, which costs a few MB and
+/// keeps them for anyone who wants to look.
+fn retire_qnnd() {
+    if !unit_path(QNND).exists() {
+        return;
+    }
+    ui::step("retiring virtues-qnnd (search now runs on this machine's CPU)…");
+    remove_unit(QNND);
+    if let Err(e) = box_env::edit(&box_env::path(), &[], &["VIRTUES_QNND_MODELS_DIR", "VIRTUES_RERANK_URL"]) {
+        ui::warn(&format!("couldn't remove the NPU settings from the box env: {e}"));
     }
 }
 
@@ -268,6 +321,9 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     let embed_unit = std::fs::read_to_string(unit_path(EMBED)).ok();
     let old_model = embed_unit.as_deref().and_then(unit_model);
 
+    // A Dragon's NPU daemon holds :18181 until now. Search has used :18183
+    // since the swap, so nothing is reading from it.
+    retire_qnnd();
     ui::step("moving the new search model onto its usual port…");
     let body = match &embed_unit {
         Some(text) => retarget_unit(text, &new_model, 18181),
@@ -327,10 +383,29 @@ fn embed_unit_for(model: &Path) -> String {
 }
 
 /// The embedding sidecar's unit, for a box that never had one (installed on
-/// its own server). Must match the installer's `EMBED_UNIT_TEMPLATE`
-/// (tools/virtues-installer/src/install.rs), which documents the flags; a box
-/// that has the unit keeps its own and only the model and port change.
+/// its own server, or a Dragon moving off its NPU). Must match the installer's
+/// `EMBED_UNIT_TEMPLATE` (tools/virtues-installer/src/install.rs), which
+/// documents the flags; a box that has the unit keeps its own and only the
+/// model and port change.
 fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
+    embed_unit_on(llama_server, model, port, crate::inference_report::is_dragon_board())
+}
+
+/// [`embed_unit`] for a board that is, or isn't, a Dragon.
+///
+/// A Dragon has no fan. Measured on one with EmbeddingGemma 2: four threads
+/// held the CPU at its 90 °C throttle point within 30 seconds, while two held
+/// it near 75 °C at two thirds of the speed, and using the four slow cores as
+/// well made it slower. So there the sidecar runs two threads on the fast
+/// cores (4 to 6), at low priority, so the server, Postgres and chat come
+/// first. It keeps one slot: a second didn't shorten a search's wait behind
+/// indexing, which the indexer's request sizing does (`search::indexer`).
+fn embed_unit_on(llama_server: &Path, model: &Path, port: u16, dragon: bool) -> String {
+    let (threads, pacing) = if dragon {
+        (DRAGON_FLAGS, "Nice=10\nCPUWeight=20\nCPUAffinity=4 5 6\n")
+    } else {
+        ("", "")
+    };
     format!(
         "[Unit]\n\
          Description=Virtues embedding sidecar (llama-server, {stem})\n\
@@ -343,9 +418,10 @@ fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
          Type=simple\n\
          User=virtues\n\
          Group=virtues\n\
-         ExecStart={bin} --embedding --pooling mean -m {model} --host 127.0.0.1 --port {port} -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0\n\
+         ExecStart={bin} --embedding --pooling mean -m {model} --host 127.0.0.1 --port {port} -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0{threads}\n\
          Restart=on-failure\n\
          RestartSec=5\n\
+         {pacing}\
          \n\
          NoNewPrivileges=true\n\
          ProtectSystem=strict\n\
@@ -366,6 +442,9 @@ fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
     )
 }
 
+/// The llama-server flags a Dragon adds (see [`embed_unit_on`]).
+const DRAGON_FLAGS: &str = " -t 2";
+
 /// `virtues configure-inference --recommended`: go back from the owner's own
 /// server to the recommended setup. Starts the recommended model on this
 /// machine's CPU as the next endpoint, the way an update does, so search keeps
@@ -379,13 +458,6 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
         return Err(crate::Error::Other(
             "going back to the recommended setup starts a system service; run it with sudo: \
              sudo virtues configure-inference --recommended"
-                .into(),
-        ));
-    }
-    if crate::inference_report::is_dragon_profile() {
-        return Err(crate::Error::Other(
-            "this server's search runs on its NPU, which the installer sets up. To go back to \
-             it, re-run the installer."
                 .into(),
         ));
     }
@@ -491,6 +563,18 @@ mod tests {
         assert_eq!(unit_model(unit).as_deref(), Some(Path::new("/m/old.gguf")));
         assert_eq!(unit_model(&next).as_deref(), Some(model));
         assert!(next.contains("--port=18183"), "{next}");
+    }
+
+    #[test]
+    fn a_dragon_runs_its_sidecar_on_two_fast_cores_at_low_priority() {
+        let model = Path::new("/var/lib/virtues/models/embeddinggemma-2-Q8_0.gguf");
+        let bin = Path::new("/usr/local/bin/llama-server");
+        let dragon = embed_unit_on(bin, model, 18183, true);
+        assert!(dragon.contains(" -np 1 --cache-ram 0 -ngl 0 -t 2\n"), "{dragon}");
+        assert!(dragon.contains("\nNice=10\nCPUWeight=20\nCPUAffinity=4 5 6\n"), "{dragon}");
+        assert_eq!(unit_model(&dragon).as_deref(), Some(model));
+        let other = embed_unit_on(bin, model, 18183, false);
+        assert!(!other.contains(" -t ") && !other.contains("CPUAffinity"), "{other}");
     }
 
     #[test]

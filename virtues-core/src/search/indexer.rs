@@ -12,6 +12,8 @@ use std::collections::HashMap;
 
 use super::embedder::get_embedder;
 
+mod thermal;
+
 /// Maximum records to process per ontology per batch (memory bound — rows are
 /// held in memory while their chunks embed).
 const BATCH_SIZE: i64 = 500;
@@ -174,7 +176,8 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
 /// until a short batch signals the backlog is empty (or [`MAX_DRAIN_DURATION`]
 /// trips). One invocation therefore drains an entire onboarding backlog in
 /// hours instead of trickling `BATCH_SIZE` records per 15-minute cron tick.
-/// No sleep between batches — the embed sidecar is the natural rate limiter.
+/// No sleep between batches: the embed sidecar sets the pace, except that
+/// `embed_all` waits while the CPU is near its throttle point (`thermal`).
 pub(crate) async fn drain(pool: &PgPool, _lock: &IndexerLock) -> Result<u64> {
     let embedder = get_embedder().await?;
 
@@ -460,8 +463,34 @@ async fn evict_out_of_scope(
 ///
 /// 32 is a deliberate middle: large enough that per-request overhead disappears,
 /// small enough that a single oversized input cannot fail a huge group, and that
-/// the sidecar's memory stays bounded on a box with no GPU.
+/// the sidecar's memory stays bounded on a box with no GPU. It is the ceiling;
+/// a slow machine sends fewer (see [`TARGET_REQUEST`]).
 const EMBED_BATCH: usize = 32;
+
+/// The longest one embedding request should take.
+///
+/// A search embeds its query on the same server, which answers requests in
+/// order, so a search waits behind the indexing request in flight. Measured on
+/// a Radxa Dragon Q6A at two CPU threads, a 32-chunk request took about 37 s,
+/// and so did every search sent meanwhile; a second server slot didn't help,
+/// because one request queues all its chunks at once. So each request is sized
+/// from how long the last one took per chunk, to finish in about this long.
+const TARGET_REQUEST: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The group size the last request's timing called for. Process-wide, so the
+/// next call starts from what this machine has shown it can do.
+static GROUP_SIZE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(EMBED_BATCH);
+
+/// How many chunks the next request should carry, after `n` chunks took
+/// `took`: as many as fit in [`TARGET_REQUEST`] at that pace, between 1 and
+/// [`EMBED_BATCH`].
+fn next_group_size(n: usize, took: std::time::Duration) -> usize {
+    if n == 0 || took.is_zero() {
+        return EMBED_BATCH;
+    }
+    let per_chunk = took.as_secs_f64() / n as f64;
+    ((TARGET_REQUEST.as_secs_f64() / per_chunk) as usize).clamp(1, EMBED_BATCH)
+}
 
 /// Embed every chunk, in groups, preserving order.
 ///
@@ -476,9 +505,19 @@ pub(super) async fn embed_all(
 ) -> Vec<Option<Vec<f32>>> {
     let mut out: Vec<Option<Vec<f32>>> = Vec::with_capacity(texts.len());
 
-    for group in texts.chunks(EMBED_BATCH) {
+    let mut start = 0;
+    while start < texts.len() {
+        // Indexing and a model change both embed through here, back to back.
+        thermal::wait_until_cool().await;
+        let size = GROUP_SIZE.load(std::sync::atomic::Ordering::Relaxed).clamp(1, EMBED_BATCH);
+        let group = &texts[start..(start + size).min(texts.len())];
+        start += group.len();
+        let sent = std::time::Instant::now();
         match embedder.embed_batch_async(group.to_vec()).await {
-            Ok(vs) if vs.len() == group.len() => out.extend(vs.into_iter().map(Some)),
+            Ok(vs) if vs.len() == group.len() => {
+                GROUP_SIZE.store(next_group_size(group.len(), sent.elapsed()), std::sync::atomic::Ordering::Relaxed);
+                out.extend(vs.into_iter().map(Some))
+            }
             // A short/long response means the endpoint is not honouring input
             // order or count. Trust nothing about the mapping; redo it singly.
             Ok(vs) => {
@@ -1300,5 +1339,22 @@ pub(crate) mod geometry_tests {
         .fetch_all(pool)
         .await
         .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod group_size_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_fast_machine_keeps_full_groups_and_a_slow_one_sends_a_few() {
+        // A desktop: 32 chunks in half a second.
+        assert_eq!(next_group_size(32, Duration::from_millis(500)), EMBED_BATCH);
+        // The Dragon at two threads: 32 chunks in 37 s, about 1.16 s each.
+        assert_eq!(next_group_size(32, Duration::from_secs(37)), 2);
+        // Slower than the target for one chunk still sends one.
+        assert_eq!(next_group_size(1, Duration::from_secs(9)), 1);
+        assert_eq!(next_group_size(0, Duration::ZERO), EMBED_BATCH);
     }
 }

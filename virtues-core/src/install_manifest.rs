@@ -109,17 +109,19 @@ pub fn load_from(path: &Path) -> Option<InstallManifest> {
 /// upgrade and for uninstall.
 ///
 /// The manifest says what the installer set up, but upgrades change it since:
-/// the reranker is retired on the recommended setup, and a search model change
-/// runs `virtues-embed-next` until it finishes (`cli::model_set`). So the list
-/// is the manifest's units plus that one, kept to those whose unit file exists.
-/// Boxes installed before the manifest carried them get the probe alone.
+/// the reranker is retired on the recommended setup, a search model change
+/// runs `virtues-embed-next` until it finishes, and a Dragon trades
+/// `virtues-qnnd` for `virtues-embed` (`cli::model_set`). So the list is the
+/// manifest's units plus every sidecar Virtues can install, kept to those
+/// whose unit file exists.
 pub fn sidecar_units() -> Vec<String> {
-    let probe = ["virtues-embed", "virtues-rerank", "virtues-qnnd"].map(str::to_string);
-    let mut units: Vec<String> = match get().as_ref() {
-        Some(m) if !m.sidecars.is_empty() => m.sidecars.clone(),
-        _ => probe.to_vec(),
-    };
-    units.push("virtues-embed-next".to_string());
+    let known = ["virtues-embed", "virtues-rerank", "virtues-qnnd", "virtues-embed-next"];
+    let mut units: Vec<String> = get().as_ref().map(|m| m.sidecars.clone()).unwrap_or_default();
+    for u in known {
+        if !units.iter().any(|x| x == u) {
+            units.push(u.to_string());
+        }
+    }
     units.retain(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists());
     units
 }

@@ -64,6 +64,11 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
         Err(e) => tracing::warn!("attention: credential expiry unreadable: {e}"),
     }
 
+    match crate::search::next_index::status(db.pool()).await {
+        Ok(change) => search_rebuild_items(&mut items, change.map(|c| c.model)),
+        Err(e) => tracing::warn!("attention: search model change unreadable: {e}"),
+    }
+
     match failed_applets(db).await {
         Ok(rows) => failed_applet_items(&mut items, rows),
         Err(e) => tracing::warn!("attention: applet runs unreadable: {e}"),
@@ -122,6 +127,22 @@ async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
         *cache = Some((std::time::Instant::now(), items.clone()));
     }
     items
+}
+
+/// While search moves to another model, a line saying so. It informs rather
+/// than warns: search keeps working on the old model until the new index is
+/// built, which on a small server takes days. No count or percentage here;
+/// Settings → Search has the numbers for anyone who wants them. Keyed by the
+/// model, so the Mac app notifies once per change.
+fn search_rebuild_items(items: &mut Vec<AttentionItem>, model: Option<String>) {
+    let Some(model) = model else { return };
+    items.push(AttentionItem {
+        key: format!("search_rebuild:{model}"),
+        kind: "search",
+        title: "Your server is updating search".into(),
+        body: "Search keeps working while it finishes. On a small server this can take a few days.".into(),
+        route: "/virtues/search".into(),
+    });
 }
 
 /// `(applet id, name, error)` for each applet that is on and whose latest
@@ -777,6 +798,18 @@ mod tests {
         let db = Database::from_pool(pool);
         let ids: Vec<String> = expiring_sources(&db).await.unwrap().into_iter().map(|r| r.0).collect();
         assert_eq!(ids, ["cred_soon"]);
+    }
+
+    #[test]
+    fn a_search_model_change_is_one_quiet_line_until_it_finishes() {
+        let mut items = vec![];
+        search_rebuild_items(&mut items, None);
+        assert!(items.is_empty());
+        search_rebuild_items(&mut items, Some("embeddinggemma-2".into()));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "search_rebuild:embeddinggemma-2");
+        assert_eq!(items[0].route, "/virtues/search");
+        assert!(!items[0].body.chars().any(|c| c.is_ascii_digit()), "no counts: {}", items[0].body);
     }
 
     #[test]
