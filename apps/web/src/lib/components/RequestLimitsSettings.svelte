@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * What the assistant may spend on requests it works in the background
 	 * (Tasks): one limit for a single run and one for all runs in a day.
@@ -11,7 +12,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	type Key = 'request_run_limit_micros' | 'request_day_limit_micros';
 

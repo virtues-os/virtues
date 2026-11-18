@@ -33,6 +33,7 @@
 	back shows both names as they were left.
 -->
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { onMount, tick } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { useShowing, mayTakeFocus } from "../showing";
@@ -67,7 +68,7 @@
 
 	const trimmed = $derived(text.trim());
 	const changed = $derived(trimmed !== original.trim());
-	const placeholder = $derived(beat === 1 ? "Ari" : "Your name");
+	const placeholder = $derived(beat === 1 ? DEFAULT_ASSISTANT_NAME : "Your name");
 	const goLabel = $derived(
 		beat === 1
 			? !trimmed
@@ -143,7 +144,7 @@
 
 	/**
 	 * THE FIRST CLICK ON AN UNTOUCHED NAME SELECTS ALL OF IT, so typing
-	 * replaces it (and vanishes it). A click on "Ari" always lands mid-word,
+	 * replaces it (and vanishes it). A click on the given name always lands mid-word,
 	 * where `onKey` reads a collapsed caret as editing and inserts: renaming
 	 * produced "ANickri" (2026-09-28). The rename field's usual manners: one
 	 * click selects the name, and every click after places the caret.

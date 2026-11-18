@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * The owner's notes on how the assistant should talk to them. They sit
 	 * beneath the assistant's own character in the prompt, and where the two
@@ -21,7 +22,7 @@
 
 	let {
 		notes = $bindable(''),
-		assistantName = 'Ari',
+		assistantName = DEFAULT_ASSISTANT_NAME,
 		disabled = false,
 	}: {
 		/** The saved notes. Changes only once the server has them. */

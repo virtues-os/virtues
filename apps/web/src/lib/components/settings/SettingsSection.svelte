@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * One section of Settings on its own page: a link back to Settings, the
 	 * title, one sentence, then its rows (`lib/settings`, agents/plan/settings
@@ -44,7 +45,7 @@
 
 	// The assistant's name goes into titles and help on every page; its
 	// notes only on its own.
-	let name = $state('Ari');
+	let name = $state(DEFAULT_ASSISTANT_NAME);
 	let styleNotes = $state('');
 	let assistant = $state<'loading' | 'ready' | 'error'>('loading');
 
@@ -52,7 +53,7 @@
 		assistant = 'loading';
 		try {
 			const p = await getAssistantProfile<{ assistant_name?: string | null; style_notes?: string | null }>();
-			name = p.assistant_name?.trim() || 'Ari';
+			name = p.assistant_name?.trim() || DEFAULT_ASSISTANT_NAME;
 			styleNotes = p.style_notes ?? '';
 			assistant = 'ready';
 		} catch {

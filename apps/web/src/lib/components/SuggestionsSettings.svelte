@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Suggested questions turn the built-in applet that writes them on or off
 	 * (`applets/suggested_questions`), which is also what the server checks
@@ -9,7 +10,7 @@
 	import Switch from '$lib/components/settings/Switch.svelte';
 	import { getApplet, patchApplet, ApiError } from '$lib/api/client';
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	const APPLET_ID = 'applet_suggested_questions';
 

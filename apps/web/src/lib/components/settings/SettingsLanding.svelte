@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Settings' landing page: the question, the search field, a site map with
 	 * a button for every page, one line each for your assistant, your profile
@@ -19,11 +20,11 @@
 	import { LANDING, matchSettings, settingPlace, titleOf, type LandingLink, type Setting } from '$lib/settings';
 	import { openSetting, openSettingsPage } from '$lib/settings/focus';
 
-	let name = $state('Ari');
+	let name = $state(DEFAULT_ASSISTANT_NAME);
 
 	onMount(() => {
 		void getAssistantProfile<{ assistant_name?: string | null }>()
-			.then((p) => (name = p.assistant_name?.trim() || 'Ari'))
+			.then((p) => (name = p.assistant_name?.trim() || DEFAULT_ASSISTANT_NAME))
 			.catch(() => {
 				// The default name stands in; nothing on this page saves it.
 			});

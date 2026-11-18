@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	// By path, not the `$lib` barrel, which the component tests cannot load.
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import { updateAssistantProfile } from '$lib/api/client';
 
 	/** The server's own fallback (`assistant_profile::get_assistant_name`). */
-	const DEFAULT_NAME = 'Ari';
+	const DEFAULT_NAME = DEFAULT_ASSISTANT_NAME;
 	/** The name goes into every prompt ("You are {name}"), and the server sets no limit. */
 	const MAX_CHARS = 100;
 

@@ -195,6 +195,6 @@ describe('RulesSettings', () => {
 		flushSync();
 		await vi.waitFor(() => expect(text()).toContain("Your server couldn't load the rules."));
 		expect(target.querySelector('.add')).toBeNull();
-		expect(text()).toContain('Ari follows these in chat');
+		expect(text()).toContain('Virtues follows these in chat');
 	});
 });

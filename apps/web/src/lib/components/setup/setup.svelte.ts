@@ -31,6 +31,7 @@ import {
 	type StreamHealth,
 	type GettingStartedStepId,
 } from '$lib/api/client';
+import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 import type { Device, DevicesResponse } from '$lib/devices/shared';
 import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 import { prePair } from './prepair.svelte';
@@ -170,7 +171,7 @@ function readIntro(): number {
 
 class SetupStore {
 	profile = $state<Profile | null>(null);
-	assistantName = $state('Ari');
+	assistantName = $state(DEFAULT_ASSISTANT_NAME);
 	streams = $state<StreamHealth[]>([]);
 	devices = $state<Device[]>([]);
 	loaded = $state(false);
@@ -215,7 +216,7 @@ class SetupStore {
 				gettingStarted.refresh(),
 			]);
 			if (profile.status === 'fulfilled') this.profile = profile.value;
-			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || 'Ari';
+			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || DEFAULT_ASSISTANT_NAME;
 			if (streams.status === 'fulfilled') this.streams = streams.value;
 			if (devices.status === 'fulfilled') this.devices = devices.value.devices ?? [];
 			this.loaded = true;

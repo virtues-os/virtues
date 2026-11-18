@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Every Settings page has the same top: a link back, the title, one
 	 * sentence. Section pages (SettingsSection) and the pages a row opens
@@ -12,7 +13,7 @@
 		title,
 		lede,
 		back = { route: '/virtues', label: 'Settings' },
-		assistantName = 'Ari',
+		assistantName = DEFAULT_ASSISTANT_NAME,
 		width = 'reading',
 		actions,
 		children,

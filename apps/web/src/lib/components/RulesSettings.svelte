@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * The rules in force (`wiki_rules`, active): what chat never raises
 	 * (`avoid`) and what it holds the person to (`defend`), also read by the
@@ -37,7 +38,7 @@
 	};
 	const UNDO_MS = 6000;
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	let rows = $state<Row[]>([]);
 	let phase = $state<'loading' | 'ready' | 'error'>('loading');

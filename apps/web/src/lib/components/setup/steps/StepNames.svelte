@@ -1,6 +1,6 @@
 <!--
 	Names, the step after the server. One exchange and one place: its name, then yours ("And
-	what should Ari call you?"), then home on the city chart.
+	what should Virtues call you?"), then home on the city chart.
 
 	Three beats, one dot. The names are one conversation — the assistant is
 	named first so the question about you can be asked in its name — and

@@ -574,7 +574,7 @@ fn graduated_line(state: &GettingStartedState) -> String {
 
 /// What a step says once it is settled — done or set aside. Two names and
 /// only two: "your server" is the box, "your assistant" is who you talk to
-/// (Ari, unless renamed). "AI" survives in the step's title and the
+/// (Virtues, unless renamed). "AI" survives in the step's title and the
 /// subscription's pitch; "the model", "it can think", and the rest are out.
 fn settled_line(s: &Step) -> String {
     match (s.id, s.status) {

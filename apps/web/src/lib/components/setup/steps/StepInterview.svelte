@@ -590,7 +590,7 @@
 
 	/* THE QUESTION IS THE PAGE, on the center line like every step: the
 	   assistant's question set large in the serif, as Names asks "And what
-	   should Ari call you?", and the answer written on the paper under it,
+	   should Virtues call you?", and the answer written on the paper under it,
 	   not typed into a form (2026-09-28: it was the one left-aligned step,
 	   a small question over a bordered box). */
 	.sheet {

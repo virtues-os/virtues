@@ -990,7 +990,9 @@ async fn build_system_prompt(
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
-    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
+    let assistant_name = get_assistant_name(pool)
+        .await
+        .unwrap_or_else(|_| crate::api::assistant_profile::DEFAULT_ASSISTANT_NAME.to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
     // The narrative interview is a different room entirely: no tools, no

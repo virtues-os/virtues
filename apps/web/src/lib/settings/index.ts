@@ -23,6 +23,10 @@
  */
 import { matchRank } from '$lib/search/match';
 
+/** The assistant's name until you give it one, as the server has it
+ *  (`assistant_profile::DEFAULT_ASSISTANT_NAME`). */
+export const DEFAULT_ASSISTANT_NAME = 'Virtues';
+
 export type SectionId = 'you' | 'assistant' | 'data' | 'appearance' | 'billing' | 'server';
 
 export interface Section {

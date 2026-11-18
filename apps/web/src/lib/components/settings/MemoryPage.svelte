@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Settings → the assistant → What it remembers: the notes list on a page
 	 * of its own, because it grows (the rule in lib/settings: a list opens
@@ -10,12 +11,12 @@
 	import { getAssistantProfile } from '$lib/api/client';
 	import { findSetting, titleOf } from '$lib/settings';
 
-	let name = $state('Ari');
+	let name = $state(DEFAULT_ASSISTANT_NAME);
 
 	onMount(async () => {
 		try {
 			const p = await getAssistantProfile<{ assistant_name?: string | null }>();
-			name = p.assistant_name?.trim() || 'Ari';
+			name = p.assistant_name?.trim() || DEFAULT_ASSISTANT_NAME;
 		} catch {
 			// The default reads fine; the list below reports its own load error.
 		}

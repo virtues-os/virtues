@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Memory: the notes the assistant keeps across chats. Every live note
 	 * rides in the chat system prompt (chat.rs, the `memory` block), so the
@@ -23,8 +24,8 @@
 	import { inComposition } from '$lib/utils/ime';
 	import { displayNote, LANE_CAP, LANES, orderNotes } from '$lib/utils/memoryNote';
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
-	const name = $derived(assistantName?.trim() || 'Ari');
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
+	const name = $derived(assistantName?.trim() || DEFAULT_ASSISTANT_NAME);
 
 	const uid = $props.id();
 

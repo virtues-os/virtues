@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Models, on the Assistant page: one select per role.
 	 *
@@ -14,7 +15,7 @@
 
 	// Every section on the Assistant page takes the assistant's name. This
 	// one's copy has no use for it yet.
-	let { assistantName = "Ari" }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	/** The Recommended option's value. No model id is empty, and it saves
 	 *  as a JSON `null`. */
