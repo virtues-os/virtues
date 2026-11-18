@@ -79,6 +79,10 @@
 		windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true });
 	}
 
+	function openInsight(n: Note) {
+		windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: n.text, focusExisting: true });
+	}
+
 	// ── the week ───────────────────────────────────────────────────────────
 	let weekStart = $state<string | null>(null);
 	let week = $state<Week | null>(null);
@@ -472,7 +476,7 @@
 							<li class="ins">
 								<span class="mark" aria-hidden="true"></span>
 								<div class="ins-body">
-									<p class="ins-text">{n.text}</p>
+									<button class="ins-text" onclick={() => openInsight(n)}>{n.text}</button>
 									<p class="ins-meta">
 										<Icon icon={n.subjects[0]?.startsWith('/task/') ? 'mynaui:circle' : THREAD_ICON} width="14" />
 										<span class="ins-about">{n.about}</span>
@@ -635,6 +639,7 @@
 						<p class="note-text"><span class="mark" aria-hidden="true"></span>{n.text}</p>
 						<div class="note-acts">
 							<Button variant="secondary" size="sm" onclick={() => runNote(n)}>{n.action}</Button>
+							<TextAction onclick={() => openInsight(n)}>Why this?</TextAction>
 							<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
 						</div>
 					</div>
@@ -778,10 +783,20 @@
 		min-width: 0;
 	}
 	.ins-text {
+		display: block;
 		margin: 0;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
 		font-size: 14px;
 		line-height: 20px;
 		color: var(--color-foreground);
+		text-align: left;
+		cursor: pointer;
+	}
+	.ins-text:hover {
+		color: var(--color-primary);
 	}
 	.ins-meta {
 		display: flex;

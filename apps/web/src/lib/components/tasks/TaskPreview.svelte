@@ -61,6 +61,11 @@
 			<Button variant="secondary" size="sm" onclick={() => windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true })}>
 				{n.action}
 			</Button>
+			<TextAction
+				onclick={() =>
+					windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: n.text, focusExisting: true })}
+				>Why this?</TextAction
+			>
 			<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
 		</div>
 	</div>

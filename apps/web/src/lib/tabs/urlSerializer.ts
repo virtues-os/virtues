@@ -25,6 +25,7 @@ const KNOWN_TYPES: TabType[] = [
 	'thing',
 	'thread',
 	'task',
+	'insight',
 	'bookmarks',
 	'passwords',
 	'day',

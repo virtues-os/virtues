@@ -37,6 +37,7 @@ const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/Ap
 const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
 const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
+const DesignView: ViewLoader = () => import('$lib/components/tabs/views/DesignView.svelte');
 const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView.svelte');
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
@@ -46,6 +47,7 @@ const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/
 const ThreadsView: ViewLoader = () => import('$lib/components/tabs/views/ThreadsView.svelte');
 const ThreadView: ViewLoader = () => import('$lib/components/tabs/views/ThreadView.svelte');
 const TaskView: ViewLoader = () => import('$lib/components/tabs/views/TaskView.svelte');
+const InsightView: ViewLoader = () => import('$lib/components/tabs/views/InsightView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
@@ -506,6 +508,27 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// INSIGHT: /insight/{key}, one note's page. It sits under the Threads
+	// door. A note's key holds colons, so the route carries it encoded.
+	// ========================================================================
+	insight: {
+		match: (path) => /^\/insight\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'insight',
+			label: 'Insight',
+			icon: 'mynaui:sparkles',
+			entityId: path.match(/^\/insight\/([^/]+)$/)?.[1],
+		}),
+		serialize: (id) => (id ? `insight_${id}` : 'insight'),
+		deserialize: (serialized) =>
+			serialized.startsWith('insight_') ? `/insight/${serialized.slice(8)}` : '/threads?view=insights',
+		icon: 'mynaui:sparkles',
+		defaultLabel: 'Insight',
+		component: InsightView,
+		detailComponent: InsightView,
+	},
+
+	// ========================================================================
 	// TASK: /task/{id}, one task's page. It sits under the Threads door.
 	// ========================================================================
 	task: {
@@ -947,6 +970,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// DESIGN: /design. The design system, agents/build/design.md rendered
+	// with live specimens. No door opens it; it is reached by its address.
+	// ========================================================================
+	design: {
+		match: (path) => path === '/design',
+		parse: () => ({ type: 'design', label: 'Design system', icon: 'mynaui:swatches' }),
+		serialize: () => 'design',
+		deserialize: () => '/design',
+		icon: 'mynaui:swatches',
+		defaultLabel: 'Design system',
+		component: DesignView,
+	},
+
+	// ========================================================================
 	// SETTINGS NAMESPACE: /virtues[/{section}[/{sub}]]
 	// One room (SettingsView) — You, Assistant, Connections, Billing, Box,
 	// Developer — as a two-level route-driven sub-nav. Legacy flat pages
@@ -1023,6 +1060,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
 		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
+		'design', // The design system: /design
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /
@@ -1034,6 +1072,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'thing',
 		'thread',
 		'task',
+		'insight',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices
 		// that BOTH have to be listed here. An entry in `tabRegistry` alone is

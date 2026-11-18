@@ -53,7 +53,7 @@ export interface CrumbPath {
 /** A door in the sidebar and the routes that sit under it. */
 const DOORS: { prefixes: string[]; root: Crumb; glyph: string }[] = [
 	{ prefixes: ['/page'], root: { label: 'Pages', route: '/page', menu: { kind: 'pages' } }, glyph: 'pages' },
-	{ prefixes: ['/threads', '/thread', '/task'], root: threadsCrumb(), glyph: 'projects' },
+	{ prefixes: ['/threads', '/thread', '/task', '/insight'], root: threadsCrumb(), glyph: 'projects' },
 	{ prefixes: ['/applets', '/applet'], root: { label: 'Applets', route: '/applets', menu: { kind: 'applets' } }, glyph: 'applets' },
 ];
 

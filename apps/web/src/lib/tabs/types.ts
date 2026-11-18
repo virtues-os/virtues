@@ -20,6 +20,7 @@ export type TabType =
 	| 'thing' // Wiki things: /thing/thing_{id}
 	| 'thread' // Threads: the door at /threads, a thread at /thread/{id}
 	| 'task' // One task's page: /task/{id}
+	| 'insight' // One note's page: /insight/{key}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'passwords' // Saved logins, in Drive: /passwords
@@ -39,6 +40,8 @@ export type TabType =
 	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// The Timeline: one day on a map
 	| 'timeline' // Timeline: /timeline
+	// The design system: agents/build/design.md with live specimens
+	| 'design' // /design
 	// System namespace
 	| 'browser' // The in-app browser, beside the current view (Mac): /browser?url=…
 	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}

@@ -1154,6 +1154,37 @@ export interface Note {
 	/** The one thing to do about it, and where. */
 	action: string;
 	action_route: string;
+	/** When its moment passes and it leaves on its own. */
+	until: string;
+}
+
+/** A calendar entry a note rests on, with the thread it is filed in. */
+export interface NoteEvent {
+	id: string;
+	title: string;
+	started_at: string;
+	ended_at: string;
+	thread_id: string;
+	thread_name: string;
+	thread_icon: string | null;
+	thread_color: string | null;
+}
+
+/** One note and what it rests on, for its page (`GET /api/notes/:key`). */
+export interface NoteDetail extends Note {
+	is_dismissed: boolean;
+	/** "A calendar clash", "No time set aside". */
+	kind_label: string;
+	/** Why it was raised, in one sentence. */
+	why: string;
+	/** How it was found. */
+	found_by: string;
+	events: NoteEvent[];
+	task: { id: string; title: string; due_on: string; thread_id: string; thread_name: string } | null;
+}
+
+export function getNote(key: string): Promise<NoteDetail> {
+	return apiGet<NoteDetail>(`/notes/${encodeURIComponent(key)}`);
 }
 
 export function getNotes(): Promise<Note[]> {
@@ -1371,6 +1402,8 @@ export interface Profile {
 	home_timezone?: string | null;
 	/** The units the owner reads in (Settings · Profile). */
 	units?: 'us' | 'metric';
+	/** Days audio recordings are kept (30, 90, 365); null keeps them forever. */
+	keep_recordings_days?: number | null;
 	home_place_id?: string | null;
 	/** Which wiki_people row is the owner (migration 0080). */
 	self_person_id?: string | null;
@@ -3048,6 +3081,21 @@ export function getCapabilities(): Promise<Capability[]> {
 /** Turn one on or off. Returns them all. */
 export function setCapability(id: Capability['id'], on: boolean): Promise<Capability[]> {
 	return apiSend<Capability[]>('PUT', `/settings/capabilities/${id}`, { on });
+}
+
+/** One kind of record the assistant may read, as the owner switched it (`api/model_access.rs`). */
+export interface ReadingKind {
+	id: 'messages' | 'email' | 'recordings' | 'calendar' | 'health' | 'cycle' | 'location' | 'money' | 'browsing' | 'documents';
+	on: boolean;
+}
+
+export function getReading(): Promise<ReadingKind[]> {
+	return apiGet<ReadingKind[]>('/settings/reading');
+}
+
+/** Let the assistant read a kind of record, or stop it. Returns them all. */
+export function setReading(id: ReadingKind['id'], on: boolean): Promise<ReadingKind[]> {
+	return apiSend<ReadingKind[]>('PUT', `/settings/reading/${id}`, { on });
 }
 
 /** A sample reply in the style notes being typed (`api/style_preview.rs`). */
