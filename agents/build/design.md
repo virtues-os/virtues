@@ -694,9 +694,6 @@ gap is open work.
 | `EmptyState`, `LoadingState`, `ErrorState` | What a page shows when there is nothing yet. | Built on `StateBlock`; used in 1, 3 and 3 files, beside 26 hand-made empty states and the spinner icon placed by hand in 31. | Kept, and used. |
 | `Page` | The page frame and its width. | About 20 files. | Kept. |
 
-Dead code to delete: `floating/Dropdown`, `floating/Tooltip`,
-`floating/composites/Select` and `UniversalPicker` have no users.
-
 ### What they look like
 
 ```specimen Button
