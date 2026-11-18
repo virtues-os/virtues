@@ -1296,13 +1296,12 @@
 	   text, drawn as a spread shadow so it takes no room. */
 	/* Renaming: the tab is the field (app.css). It outranks the glass of
 	   the tab you are on and the hover wash. */
-	/* The × keeps its space while you type, so the tab keeps its width,
-	   but it can't be seen or pressed. */
+	/* The × can't be seen or pressed while you type. */
 	.tab.renaming .tab-close {
 		visibility: hidden;
 	}
 
-	/* The field takes the label's room, so the hidden × stays at the end. */
+	/* The field takes the label's room. */
 	.tab.renaming .rename-sizer {
 		flex: 1;
 	}
@@ -1327,7 +1326,13 @@
 
 
 
+	/* The × sits over the end of the tab rather than beside the title, so
+	   a tab whose × is hidden gives its title the full width. While the ×
+	   shows, the title stops short of it and fades before it. */
 	.tab-close {
+		position: absolute;
+		top: calc(50% - 10px);
+		right: 8px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1352,6 +1357,16 @@
 	.tab:hover .tab-close,
 	.tab.active:not(.only) .tab-close {
 		opacity: 1;
+	}
+
+	.tab:hover .tab-label,
+	.tab.active:not(.only) .tab-label {
+		margin-right: 20px;
+	}
+
+	/* A compact tab shows its icon and, on hover, its × beside it. */
+	.tab-bar.compact .tab:not(.active) .tab-close {
+		position: static;
 	}
 
 	/* Neutral, not red. Red is for destructive-with-consequence; closing a tab

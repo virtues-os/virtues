@@ -116,8 +116,8 @@ or a second filled button, and it never marks where work ran.
 
 ### Accent
 
-The person picks the accent in Settings, Appearance, from six swatches: Navy
-(the default), Indigo, Violet, Plum, Teal and Graphite (`ACCENTS` in
+The person picks the accent in Settings, Appearance, from six swatches: Blue
+(the default), Indigo, Purple, Pink, Teal and Graphite (`ACCENTS` in
 `lib/utils/theme.ts`). It is saved on the profile beside the theme
 (`ui_preferences.accent`), cached for the pre-paint in `app.html`, and set as
 `data-accent` on `<html>`.

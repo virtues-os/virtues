@@ -526,35 +526,37 @@
    ACCENT
    The swatches a person picks from (Settings, Appearance, Accent), each
    tuned once for Light and once for Dark so links and the filled button's
-   label clear AA on the page in both: at least 6.9:1 in Light and 7.8:1 in
-   Dark. No red, green or amber, which mean danger, success and warning.
-   Navy is the default. Each is also a plain [data-accent] rule, so a swatch
-   in the picker can show its own color.
+   label clear AA (4.5:1) on the page in both: at least 4.7:1 in Light and
+   7.4:1 in Dark. Clear, saturated hues people recognize by name. No red,
+   green or amber, which mean danger, success and warning; pink leans toward
+   magenta so it stays apart from Dark's rose error. Blue is the default.
+   Each is also a plain [data-accent] rule, so a swatch in the picker can
+   show its own color.
    =================================== */
 :root,
-[data-accent="navy"] {
-	--accent-light: #1D4572;
-	--accent-dark: #88C0D0;
+[data-accent="blue"] {
+	--accent-light: #1F63D6;
+	--accent-dark: #6CA6FF;
 }
 [data-accent="indigo"] {
-	--accent-light: #3B47A8;
-	--accent-dark: #9DA6F2;
+	--accent-light: #4F46E5;
+	--accent-dark: #9EA2FF;
 }
-[data-accent="violet"] {
-	--accent-light: #5B3A9E;
-	--accent-dark: #B7A2EE;
+[data-accent="purple"] {
+	--accent-light: #8B3FD9;
+	--accent-dark: #C59BFF;
 }
-[data-accent="plum"] {
-	--accent-light: #7A2E66;
-	--accent-dark: #E2A1CB;
+[data-accent="pink"] {
+	--accent-light: #C4227A;
+	--accent-dark: #F590CC;
 }
 [data-accent="teal"] {
-	--accent-light: #0E6466;
-	--accent-dark: #6FC4BD;
+	--accent-light: #0B7F7A;
+	--accent-dark: #4FD1C5;
 }
 [data-accent="graphite"] {
-	--accent-light: #3A3F4A;
-	--accent-dark: #C5CAD3;
+	--accent-light: #52525B;
+	--accent-dark: #C8C9CE;
 }
 
 /* ===================================

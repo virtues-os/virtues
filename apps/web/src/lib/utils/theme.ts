@@ -230,7 +230,8 @@ export function getThemeDisplayName(choice: ThemeChoice): string {
 	return DISPLAY_NAMES[choice];
 }
 
-/** Preview colours for the theme cards. */
+/** Preview colors for the theme cards. The accent is the chosen swatch's
+ * tuning for each theme, so the cards follow the Accent setting. */
 export const themePreviewColors: Record<
 	Theme,
 	{
@@ -248,7 +249,7 @@ export const themePreviewColors: Record<
 		surfaceElevated: '#F4F3F0',
 		foreground: '#1A2030',
 		foregroundMuted: '#3E4459',
-		primary: '#1D4572'
+		primary: 'var(--accent-light)'
 	},
 	asgard: {
 		background: '#0E0E0F',
@@ -256,7 +257,7 @@ export const themePreviewColors: Record<
 		surfaceElevated: '#1B1C1F',
 		foreground: '#EDEDEF',
 		foregroundMuted: '#A1A2A8',
-		primary: '#88C0D0'
+		primary: 'var(--accent-dark)'
 	}
 };
 
@@ -273,16 +274,16 @@ export const themeMetadata: Record<ThemeChoice, { icon: string; description: str
 // profile beside the theme (`ui_preferences.accent`), cached for app.html's
 // pre-paint, and set as `data-accent` on <html>.
 
-export type Accent = 'navy' | 'indigo' | 'violet' | 'plum' | 'teal' | 'graphite';
+export type Accent = 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
 
-export const DEFAULT_ACCENT: Accent = 'navy';
+export const DEFAULT_ACCENT: Accent = 'blue';
 
 /** Every swatch, in the order the picker shows them. */
 export const ACCENTS: readonly { id: Accent; name: string }[] = [
-	{ id: 'navy', name: 'Navy' },
+	{ id: 'blue', name: 'Blue' },
 	{ id: 'indigo', name: 'Indigo' },
-	{ id: 'violet', name: 'Violet' },
-	{ id: 'plum', name: 'Plum' },
+	{ id: 'purple', name: 'Purple' },
+	{ id: 'pink', name: 'Pink' },
 	{ id: 'teal', name: 'Teal' },
 	{ id: 'graphite', name: 'Graphite' }
 ];
