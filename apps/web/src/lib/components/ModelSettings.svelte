@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Models, on the Assistant page: one native select per role.
+	 * Models, on the Assistant page: one select per role.
 	 *
 	 * A select, not a searchable picker: each role offers a handful of
 	 * models. Comparing the whole catalog is the page this section links to
@@ -8,6 +8,7 @@
 	 */
 	import { onMount } from "svelte";
 	import { Button } from "$lib";
+	import Select from "$lib/components/Select.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { modelSlots, type SlotConfig } from "$lib/stores/modelSlots.svelte";
 
@@ -46,13 +47,21 @@
 			: id;
 	}
 
-	/** After the save settles, the select is set from the store. A save that
-	 *  fails within the same tick rolls the store back to the value it had,
-	 *  so Svelte sees no change and would leave the person's pick on screen. */
-	async function onChange(slot: SlotConfig, select: HTMLSelectElement) {
-		const value = select.value;
-		await modelSlots.choose(slot, value === RECOMMENDED ? null : value);
-		select.value = modelSlots.chosen[slot.key] ?? RECOMMENDED;
+	/** The select shows the store, so a save that fails and rolls the
+	 *  store back shows the value it went back to. */
+	function onChange(slot: SlotConfig, value: string) {
+		void modelSlots.choose(slot, value === RECOMMENDED ? null : value);
+	}
+
+	/** One role's options: Recommended, the suggestions, and a pinned model
+	 *  no suggestion offers. */
+	function optionsFor(slot: SlotConfig) {
+		const own = ownChoice(slot);
+		return [
+			{ value: RECOMMENDED, label: recommendedLabel(slot) },
+			...modelSlots.suggestedFor(slot).map((m) => ({ value: m.model_id, label: m.display_name, group: "Suggested" })),
+			...(own ? [{ value: own, label: modelSlots.nameOf(own), group: "Your choice" }] : []),
+		];
 	}
 
 	function openCatalog() {
@@ -83,8 +92,6 @@
 	{:else}
 		<div class="roles">
 			{#each roles as slot (slot.key)}
-				{@const own = ownChoice(slot)}
-				{@const suggested = modelSlots.suggestedFor(slot)}
 				{@const saveError = modelSlots.saveErrors[slot.key]}
 				<div class="role">
 					<div class="role-words">
@@ -93,26 +100,16 @@
 							<span class="role-caption" id="model-role-{slot.key}-caption">{slot.caption}</span>
 						{/if}
 					</div>
-					<select
-						id="model-role-{slot.key}"
-						aria-describedby={slot.caption ? `model-role-${slot.key}-caption` : undefined}
-						value={modelSlots.chosen[slot.key] ?? RECOMMENDED}
-						onchange={(e) => onChange(slot, e.currentTarget)}
-					>
-						<option value={RECOMMENDED}>{recommendedLabel(slot)}</option>
-						{#if suggested.length}
-							<optgroup label="Suggested">
-								{#each suggested as m (m.model_id)}
-									<option value={m.model_id}>{m.display_name}</option>
-								{/each}
-							</optgroup>
-						{/if}
-						{#if own}
-							<optgroup label="Your choice">
-								<option value={own}>{modelSlots.nameOf(own)}</option>
-							</optgroup>
-						{/if}
-					</select>
+					<div class="role-select">
+						<Select
+							id="model-role-{slot.key}"
+							describedby={slot.caption ? `model-role-${slot.key}-caption` : undefined}
+							block
+							value={modelSlots.chosen[slot.key] ?? RECOMMENDED}
+							options={optionsFor(slot)}
+							onchange={(v) => onChange(slot, v)}
+						/>
+					</div>
 					{#if saveError}
 						<p class="role-error" role="alert">{saveError.message}</p>
 					{/if}
@@ -183,26 +180,11 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* DisplayView's face picker, at 14px: a model name is read, not scanned. */
-	select {
-		font: inherit;
-		font-size: 14px;
-		height: 40px;
-		padding: 0 12px;
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-border);
-		background: var(--color-surface);
-		color: var(--color-foreground);
-		/* One width for every role, so the selects line up as a column. */
+	/* One width for every role, so the selects line up as a column. */
+	.role-select {
 		width: 20rem;
 		max-width: 100%;
 		min-width: 0;
-	}
-
-	@media (pointer: coarse) {
-		select {
-			height: 44px;
-		}
 	}
 
 	.role-error {
@@ -217,7 +199,7 @@
 			flex-direction: column;
 			align-items: stretch;
 		}
-		select {
+		.role-select {
 			width: 100%;
 		}
 		.role-error {

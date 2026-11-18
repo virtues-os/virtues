@@ -9,7 +9,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
-	import Choice from '$lib/components/settings/Choice.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { units } from '$lib/stores/units.svelte';
 	import type { Units } from '$lib/utils/units';
 	import { getProfile, updateProfile, type Profile } from '$lib/api/client';
@@ -118,7 +118,7 @@
 		</div>
 	</SettingRow>
 	<SettingRow id="units" label={label('units')} help={unitsError ?? `For distances, weights and temperatures, here and in what ${assistantName} writes.`} forId="profile-units">
-		<Choice id="profile-units" value={units.current} options={UNITS} disabled={phase !== 'ready'} onchange={chooseUnits} />
+		<Select id="profile-units" value={units.current} options={UNITS} disabled={phase !== 'ready'} onchange={chooseUnits} />
 	</SettingRow>
 {/if}
 

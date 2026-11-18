@@ -13,6 +13,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Input from '$lib/components/Input.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { getNarrativeRules, saveNarrativeRules, type NarrativeRule } from '$lib/api/client';
 
 	type Kind = NarrativeRule['kind'];
@@ -44,6 +45,7 @@
 	let editingKey = $state<number | null>(null);
 	let editDraft = $state('');
 	let addKind = $state<Kind>('avoid');
+	const KINDS = (['avoid', 'defend'] as const).map((value) => ({ value, label: KIND_LABEL[value] }));
 	let addText = $state('');
 	let listEl = $state<HTMLElement>();
 	let addEl = $state<HTMLElement>();
@@ -302,10 +304,13 @@
 		{/if}
 
 		<div class="add" bind:this={addEl}>
-			<select bind:value={addKind} aria-label="Kind of rule" disabled={!ready}>
-				<option value="avoid">{KIND_LABEL.avoid}</option>
-				<option value="defend">{KIND_LABEL.defend}</option>
-			</select>
+			<Select
+				value={addKind}
+				options={KINDS}
+				label="Kind of rule"
+				disabled={!ready}
+				onchange={(k) => (addKind = k)}
+			/>
 			<label class="add-text">
 				<span class="sr-only">Rule</span>
 				<Input
@@ -405,23 +410,6 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px;
-	}
-
-	.add select {
-		height: 40px;
-		padding: 0 12px;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-	}
-
-	@media (pointer: coarse) {
-		.add select {
-			height: 44px;
-		}
 	}
 
 	.add-text {

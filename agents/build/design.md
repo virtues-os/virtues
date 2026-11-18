@@ -686,7 +686,7 @@ gap is open work.
 | `IconButton` | A button with no words. `label` is required and feeds `aria-label` and `title`. | `nested` 20px, `control` 34px (the default), `touch` 44px; ghost, secondary, danger. 35 files. | Kept. |
 | `TextAction` | A button with no box: a quiet link in `--color-primary`. `inline` keeps `font: inherit` mid-sentence. | 33 files. | Kept. |
 | `Input`, `Textarea` | Text fields with label, help and validation. | 34px, 44px on touch; 14px text, 16px on touch. 12 and 3 files, beside about 100 raw fields. | Kept; the raw fields move onto them. |
-| `Switch`, `Choice` | A toggle and a select. | Live under `settings/`. Choice is 34px on the field edge. | Promote to `lib/components`. |
+| `Switch`, `Select` | A toggle and a choice among named options. | `Select` (`lib/components`) is 34px on the field edge and opens a menu of `MenuItem` rows on `lib/floating`, with keyboard, typeahead and groups; `variant="bare"` sits in a sentence or an underlined form. No native `<select>` is left: it draws the operating system's menu, which ignores the theme. `Switch` lives under `settings/`. | Promote `Switch` to `lib/components`. |
 | Checkbox | A box you tick. | None: `TaskCheck`, `TaskCard` and `ReviewAsk` each build `role=checkbox`, beside about 10 native ones. | Add one. |
 | Segmented control | Two to five exclusive choices in a row. | Six separate builds (ContextViewPanel, DayPage, TimelineScrubber, DisplaySettingsPopover, IconPicker, ThreadsView). | Add one. |
 | Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, `timeline/Pill`, and `.chip` in 13 files. | One Chip. |

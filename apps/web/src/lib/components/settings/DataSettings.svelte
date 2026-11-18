@@ -6,7 +6,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import SettingRow from './SettingRow.svelte';
-	import Choice from './Choice.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { getProfile, updateProfile } from '$lib/api/client';
 
 	type Keep = 'forever' | '365' | '90' | '30';
@@ -62,7 +62,7 @@
 	</div>
 {:else}
 	<SettingRow id="keep-recordings" label="Keep recordings" help={keepHelp} forId="keep-recordings-choice">
-		<Choice id="keep-recordings-choice" value={keep} options={KEEP} disabled={phase !== 'ready'} onchange={chooseKeep} />
+		<Select id="keep-recordings-choice" value={keep} options={KEEP} disabled={phase !== 'ready'} onchange={chooseKeep} />
 	</SettingRow>
 {/if}
 

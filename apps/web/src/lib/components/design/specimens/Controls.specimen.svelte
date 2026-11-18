@@ -7,7 +7,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Input from '$lib/components/Input.svelte';
-	import Choice from '$lib/components/settings/Choice.svelte';
+	import Select from '$lib/components/Select.svelte';
 
 	let query = $state('');
 	let range = $state<'week' | 'month'>('week');
@@ -20,7 +20,7 @@
 <div class="band">
 	<div class="row">
 		<div class="field"><Input bind:value={query} placeholder="Filter pages" delight={false} /></div>
-		<Choice value={range} options={RANGES} label="Range" onchange={(v) => (range = v)} />
+		<Select value={range} options={RANGES} label="Range" onchange={(v) => (range = v)} />
 		<Button variant="secondary">Export</Button>
 		<Button>Save</Button>
 		<IconButton icon="mynaui:dots" label="More" variant="secondary" />

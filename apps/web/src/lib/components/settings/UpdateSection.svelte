@@ -16,7 +16,7 @@
 	 */
 	import { onMount, onDestroy } from 'svelte';
 	import Switch from './Switch.svelte';
-	import Choice from './Choice.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import {
@@ -327,7 +327,7 @@
 				     decision. -->
 				<div class="channel-picker">
 					{#key channelKey}
-						<Choice id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
+						<Select id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
 					{/key}
 					{#if status.channel === 'prerelease'}
 						<span class="risk">

@@ -35,6 +35,7 @@
 	import { CITIES, cityForZone, type City } from "../cities";
 	import { Globe } from "../globe";
 	import StepFrame from "../StepFrame.svelte";
+	import Select from "$lib/components/Select.svelte";
 
 	let { eyebrow, onnext, onback }: { eyebrow?: string; onnext: () => void; onback?: () => void } = $props();
 
@@ -148,6 +149,11 @@
 	const inBand = $derived(
 		ZONES.filter((z) => z.offset === offset).sort((a, b) => leafOf(a.zone).localeCompare(leafOf(b.zone))),
 	);
+	/** The zones at this offset, and the chosen one if it is not among them. */
+	const zoneOptions = $derived([
+		...inBand.map((z) => ({ value: z.zone, label: `${leafOf(z.zone)} · ${formatOffset(z.offset)}` })),
+		...(inBand.some((z) => z.zone === zone) ? [] : [{ value: zone, label: leafOf(zone) }]),
+	]);
 
 	// The clock there, so the choice can be checked against a watch.
 	let now = $state(new Date());
@@ -397,22 +403,16 @@
 		</div>
 
 		<div class="meta">
-			<label class="zone">
-				<span class="zone-text">{zoneName(zone)} · {formatOffset(offset)}</span>
-				<Icon icon="mynaui:chevron-down" width="14" />
-				<select
-					aria-label="Time zone"
+			<span class="zone">
+				<Select
+					variant="bare"
+					label="Time zone"
 					value={zone}
-					onchange={(e) => (zone = (e.currentTarget as HTMLSelectElement).value)}
-				>
-					{#each inBand as z (z.zone)}
-						<option value={z.zone}>{leafOf(z.zone)} · {formatOffset(z.offset)}</option>
-					{/each}
-					{#if !inBand.some((z) => z.zone === zone)}
-						<option value={zone}>{leafOf(zone)}</option>
-					{/if}
-				</select>
-			</label>
+					options={zoneOptions}
+					display="{zoneName(zone)} · {formatOffset(offset)}"
+					onchange={(z) => (zone = z)}
+				/>
+			</span>
 			{#if clock}
 				<span class="sep" aria-hidden="true">·</span>
 				<time class="clock">{clock}</time>
@@ -559,24 +559,12 @@
 		color: var(--color-foreground-muted);
 	}
 	.zone {
-		position: relative;
 		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		cursor: pointer;
 		transition: color var(--m-quick) ease;
 	}
 	.zone:hover,
 	.zone:focus-within {
 		color: var(--color-foreground);
-	}
-	.zone select {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		opacity: 0;
-		cursor: pointer;
-		font: inherit;
 	}
 	.sep {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));

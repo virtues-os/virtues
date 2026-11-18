@@ -10,6 +10,7 @@
 <script lang="ts">
 	import { tick } from "svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
+	import Select from "$lib/components/Select.svelte";
 	import { LANGUAGE_CHOICES, OTHER_LANGUAGE, languageLabel, typedLanguage } from "$lib/document/languages";
 	import { inComposition } from "$lib/utils/ime";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
@@ -29,17 +30,19 @@
 	/** A language is being typed, after Other… was chosen. */
 	let typing = $state(false);
 	let typed = $state("");
-	let picker = $state<HTMLSelectElement | null>(null);
+	let picker = $state<Select<string> | null>(null);
+	const languageOptions = $derived([
+		...choices.map(([value, label]) => ({ value, label })),
+		{ value: OTHER_LANGUAGE, label: "Other…" },
+	]);
 
-	function choose(e: Event) {
-		const select = e.currentTarget as HTMLSelectElement;
-		if (select.value === OTHER_LANGUAGE) {
-			select.value = language;
+	function choose(next: string) {
+		if (next === OTHER_LANGUAGE) {
 			typed = language;
 			typing = true;
 			return;
 		}
-		view.setAttrs({ language: select.value || null });
+		view.setAttrs({ language: next || null });
 	}
 
 	/** Write the language typed, once. */
@@ -105,12 +108,9 @@
 			autocapitalize="off"
 		/>
 	{:else if view.editable}
-		<select bind:this={picker} class="doc-code-language" value={language} onchange={choose} aria-label="Language">
-			{#each choices as [value, label] (value)}
-				<option {value}>{label}</option>
-			{/each}
-			<option value={OTHER_LANGUAGE}>Other…</option>
-		</select>
+		<span class="doc-code-language">
+			<Select bind:this={picker} variant="bare" value={language} options={languageOptions} label="Language" onchange={choose} />
+		</span>
 	{:else}
 		<span class="prose-code-lang">{languageLabel(language) || "Plain text"}</span>
 	{/if}
@@ -138,7 +138,7 @@
 
 	/* A thumb's 44pt, inside the picker and the field (design.md, "Primitives"). */
 	@media (pointer: coarse) {
-		select.doc-code-language {
+		span.doc-code-language :global(.v-select) {
 			min-height: 44px;
 		}
 

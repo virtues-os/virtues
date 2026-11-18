@@ -6,7 +6,7 @@
 	 * are kept in this browser.
 	 */
 	import SettingRow from './SettingRow.svelte';
-	import Choice from './Choice.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import Switch from './Switch.svelte';
 	import { pageDisplay, type FontMode, type TextSize } from '$lib/stores/pageDisplay.svelte';
 	import { motion } from '$lib/stores/motion.svelte';
@@ -44,15 +44,15 @@
 </script>
 
 <SettingRow id="glass" label={title('glass')} help="How much of the painting shows through the sidebar, tabs and buttons. None makes them solid." forId="glass-choice">
-	<Choice id="glass-choice" value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
+	<Select id="glass-choice" value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
 </SettingRow>
 
 <SettingRow id="reading-font" label={title('reading-font')} help="The typeface your pages are set in. A page's Aa menu changes it too." forId="reading-font-choice">
-	<Choice id="reading-font-choice" value={pageDisplay.fontMode} options={FONTS} onchange={(v) => pageDisplay.setFontMode(v)} />
+	<Select id="reading-font-choice" value={pageDisplay.fontMode} options={FONTS} onchange={(v) => pageDisplay.setFontMode(v)} />
 </SettingRow>
 
 <SettingRow id="text-size" label={title('text-size')} help="How large text is on your pages." forId="text-size-choice">
-	<Choice id="text-size-choice" value={pageDisplay.textSize} options={SIZES} onchange={(v) => pageDisplay.setTextSize(v)} />
+	<Select id="text-size-choice" value={pageDisplay.textSize} options={SIZES} onchange={(v) => pageDisplay.setTextSize(v)} />
 </SettingRow>
 
 <SettingRow id="reduce-motion" label={title('reduce-motion')} help={motionHelp}>

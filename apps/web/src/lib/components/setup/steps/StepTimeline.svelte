@@ -57,6 +57,7 @@
 	import { setup } from '../setup.svelte';
 	import { SAMPLE, SAMPLE_SPAN, SEED_AGE } from '../chapterExample';
 	import ChapterExample from '../ChapterExample.svelte';
+	import Select from '$lib/components/Select.svelte';
 
 	// `onskip` sets the step aside (Setup records it); without one, skipping
 	// just moves on.
@@ -220,6 +221,7 @@
 		'January', 'February', 'March', 'April', 'May', 'June',
 		'July', 'August', 'September', 'October', 'November', 'December',
 	];
+	const MONTH_OPTIONS = MONTHS.map((label, i) => ({ value: i + 1, label }));
 
 	let birthYearText = $state('');
 	let birthMonth = $state(1);
@@ -1062,11 +1064,7 @@
 		<div class="under" in:rise={{ delay: M.quick }}>
 			<fieldset class="birth inline" class:nudged>
 				<legend>Born</legend>
-				<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
-					{#each MONTHS as m, i}
-						<option value={i + 1}>{m}</option>
-					{/each}
-				</select></span>
+				<span class="month"><Select variant="bare" value={birthMonth} options={MONTH_OPTIONS} label="Birth month" onchange={(m) => (birthMonth = m)} /></span>
 				<input
 					class="birth-year"
 					type="text"
@@ -1100,11 +1098,7 @@
 		<div class="rows" in:rise={{ delay: M.quick }}>
 			<fieldset class="birth birth-row" class:nudged>
 				<legend>Born</legend>
-				<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
-					{#each MONTHS as m, i}
-						<option value={i + 1}>{m}</option>
-					{/each}
-				</select></span>
+				<span class="month"><Select variant="bare" value={birthMonth} options={MONTH_OPTIONS} label="Birth month" onchange={(m) => (birthMonth = m)} /></span>
 				<input
 					class="birth-year"
 					type="text"
@@ -1679,7 +1673,8 @@
 		letter-spacing: 0.04em;
 		color: var(--color-foreground-muted);
 	}
-	.birth select,
+	/* `.month` adds the weight to win over Select's own bare reset. */
+	.birth .month :global(.v-select),
 	.birth input {
 		margin: 0;
 		padding: 0 0 4px;
@@ -1695,32 +1690,12 @@
 		appearance: none;
 		-webkit-appearance: none;
 	}
-	.birth select {
-		padding-right: 16px;
-		cursor: pointer;
-	}
-	/* A menu should look like one: a small chevron in the ink of the field */
-	.month {
-		position: relative;
-	}
-	.month::after {
-		content: '';
-		position: absolute;
-		right: 4px;
-		top: 50%;
-		width: 5px;
-		height: 5px;
-		margin-top: -6px;
-		border-right: 1.5px solid var(--color-foreground-muted);
-		border-bottom: 1.5px solid var(--color-foreground-muted);
-		transform: rotate(45deg);
-		pointer-events: none;
-	}
 	.birth-year {
 		width: 4.2ch;
 		font-variant-numeric: tabular-nums;
 	}
-	.birth select:focus,
+	.birth .month :global(.v-select:focus-visible),
+	.birth .month :global(.v-select.open),
 	.birth input:focus,
 	.birth-year:placeholder-shown {
 		border-bottom-color: var(--color-primary);

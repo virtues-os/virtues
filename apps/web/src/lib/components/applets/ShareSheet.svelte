@@ -15,6 +15,7 @@
 	 */
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import {
 		previewPublication,
@@ -380,14 +381,10 @@
 			{/if}
 
 			<section class="create">
-				<label class="expiry">
-					<span class="label">Link works for</span>
-					<select id="share-expiry" bind:value={expiry}>
-						{#each EXPIRY_CHOICES as c (c.value)}
-							<option value={c.value}>{c.label}</option>
-						{/each}
-					</select>
-				</label>
+				<div class="expiry">
+					<label class="label" for="share-expiry">Link works for</label>
+					<Select id="share-expiry" value={expiry} options={EXPIRY_CHOICES} onchange={(v) => (expiry = v)} />
+				</div>
 				<Button variant="primary" icon="mynaui:link" disabled={busy} onclick={create}>
 					{links.length ? 'Create another link' : 'Create link'}
 				</Button>
@@ -544,15 +541,6 @@
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted);
-	}
-	select {
-		font: inherit;
-		font-size: 0.875rem;
-		padding: 0.4rem 0.5rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-surface);
-		color: var(--color-foreground);
 	}
 	.hint {
 		margin: 0;
