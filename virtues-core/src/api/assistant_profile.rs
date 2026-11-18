@@ -18,7 +18,7 @@ use sqlx::PgPool;
 /// into `None`, so `{"standard_model_id": null}` was silently a no-op and a pinned
 /// slot could never be un-pinned. That is exactly what "Virtues default" needs
 /// to write — see `ModelSettings.svelte`.
-fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
+pub(crate) fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,

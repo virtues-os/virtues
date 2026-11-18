@@ -73,9 +73,14 @@
 	let previewError = $state<string | null>(null);
 	/** The notes the shown sample was written for. */
 	let previewedFor = $state<string | null>(null);
+	/** Bumped by Try again, to ask for the same notes once more. */
+	let retries = $state(0);
+	/** Only the first sample is asked for at once; after that, after a pause. */
+	let asked = false;
 
 	$effect(() => {
 		if (!previewOpen) return;
+		void retries;
 		const text = draft.trim();
 		if (text === previewedFor) return;
 		const controller = new AbortController();
@@ -92,7 +97,8 @@
 			} finally {
 				previewing = false;
 			}
-		}, previewedFor === null ? 0 : 1200);
+		}, asked ? 1200 : 0);
+		asked = true;
 		return () => {
 			clearTimeout(timer);
 			controller.abort();
@@ -147,6 +153,9 @@
 			<p class="sample-q">“{preview?.question ?? 'How did this week go?'}”</p>
 			{#if previewError}
 				<p class="field-error">{previewError}</p>
+				<div>
+					<Button variant="secondary" size="sm" onclick={() => { previewedFor = null; retries += 1; }}>Try again</Button>
+				</div>
 			{:else if preview}
 				<p class="sample-reply" class:stale={previewing}>{preview.reply}</p>
 			{:else}

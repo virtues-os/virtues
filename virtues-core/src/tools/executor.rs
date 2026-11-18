@@ -465,13 +465,16 @@ impl ToolExecutor {
         tracing::info!(tool = tool_name, "Executing tool");
 
         // A tool the owner turned off in Settings (api::capabilities). Chat
-        // does not offer it; this refuses it for a model that names it anyway
-        // and for every other caller (applet runs, subagents, MCP).
-        let off = crate::api::capabilities::off_capability(&self._pool, tool_name)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        if let Some(capability) = off {
-            return Err(ToolError::NotEnabled(crate::api::capabilities::refusal(capability)));
+        // does not offer it; this refuses it for a model that names it anyway,
+        // in applet runs and subagents too. The owner's own CLI and MCP agents
+        // (`context.console`) are not the assistant, so the switches leave them be.
+        if !context.console {
+            let off = crate::api::capabilities::off_capability(&self._pool, tool_name, &arguments)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            if let Some(capability) = off {
+                return Err(ToolError::NotEnabled(crate::api::capabilities::refusal(capability)));
+            }
         }
 
         // Tool-based write permissions: destructive/outbound tools require an explicit

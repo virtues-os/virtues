@@ -535,7 +535,7 @@ export function getSearchStatus(): Promise<SearchStatus> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Box updates (Settings → Box)
+// Server updates (Settings → Updates and network)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A release already downloaded, verified and preflighted on the box. */
@@ -3050,7 +3050,8 @@ export function draftSettings(text: string): Promise<SettingsDraft> {
 }
 
 /** Save drafted changes the owner accepted, recorded as the assistant's. */
-export function applySettingsDraft(changes: { field: string; new_value: unknown }[]): Promise<{ ok: boolean }> {
+/** `old_value` is what the draft said the setting held; the server refuses the draft if it no longer does. */
+export function applySettingsDraft(changes: { field: string; new_value: unknown; old_value?: unknown }[]): Promise<{ ok: boolean }> {
 	return apiSend<{ ok: boolean }>('POST', '/settings/draft/apply', { changes });
 }
 

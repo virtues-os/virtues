@@ -52,7 +52,8 @@
 		applying = true;
 		error = null;
 		try {
-			await applySettingsDraft(draft.changes.map((c) => ({ field: c.field, new_value: c.new_value })));
+			// The old values let the server refuse a draft that went stale.
+			await applySettingsDraft(draft.changes.map((c) => ({ field: c.field, new_value: c.new_value, old_value: c.old_value })));
 			onapplied();
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : "Your server couldn't apply that. Nothing was changed.";

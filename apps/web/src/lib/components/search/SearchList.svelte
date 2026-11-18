@@ -24,7 +24,8 @@
 	import { canBrowserPane } from "$lib/tauri/bridge";
 	import { getAssistantProfile } from "$lib/api/client";
 	import { motion } from "$lib/stores/motion.svelte";
-	import { titleOf } from "$lib/settings";
+	import { settingPlace, titleOf } from "$lib/settings";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { openSettingInTab } from "$lib/settings/focus";
 	import {
 		commandsFromMenu,
@@ -35,7 +36,6 @@
 		rowNoun,
 		rowRoute,
 		searchGroups,
-		settingPlace,
 		type Command,
 		type SearchRow,
 	} from "$lib/search/results";
@@ -134,7 +134,7 @@
 	const commands = $derived<Command[]>([
 		...commandsFromMenu(newTabMenuItems(undefined, { browser: browserAvailable })),
 		{ id: "go-sources", label: "Go to Sources", icon: "atlas:sources", run: () => void windowShellStore.openTabFromRoute("/sources") },
-		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", shortcut: "⌘ ,", run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }) },
+		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", shortcut: shortcuts.format("mod+,"), run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }) },
 		// The terminal left Settings' list; this is its door.
 		{ id: "open-terminal", label: "Open a terminal on your server", icon: "atlas:terminal", run: () => void windowShellStore.openTabFromRoute("/virtues/developer/terminal", { label: "Terminal" }) },
 		{ id: "change-theme", label: "Change theme", icon: "mynaui:swatches", run: enterThemeMode, keepOpen: true },
@@ -230,7 +230,8 @@
 				// Two settings work right here; the rest open on their page.
 				if (row.setting.id === "theme") return enterThemeMode();
 				if (row.setting.id === "reduce-motion") {
-					motion.set(motion.setting === "reduce" ? "device" : "reduce");
+					// The device already keeps the app still; there is nothing to switch.
+					if (!motion.device) motion.set(motion.setting === "reduce" ? "device" : "reduce");
 					return;
 				}
 				openSettingInTab(row.setting.id, assistantName ?? "");

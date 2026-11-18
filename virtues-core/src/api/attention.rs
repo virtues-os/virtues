@@ -265,25 +265,26 @@ fn disk_items(items: &mut Vec<AttentionItem>, free: Option<u64>) {
     });
 }
 
-fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option<i64>) {
+fn backup_items(items: &mut Vec<AttentionItem>, state: &str, _age_seconds: Option<i64>) {
     let (title, body) = match state {
         "none" => (
             "Your server has no backup".to_string(),
-            "Everything is on one disk. Open System to add a backup drive.".to_string(),
+            "Everything is on one disk. Open Backup to set up a drive.".to_string(),
         ),
         "never" => (
             "Your server hasn't backed up to the drive yet".to_string(),
-            "Your server hasn't finished a backup to it. Open System to check the drive.".to_string(),
+            "Your server hasn't finished a backup to it. Open Backup to check the drive.".to_string(),
         ),
         "failing" => (
             "Backups are failing".to_string(),
-            "Your server couldn't finish its last backup. Open System to see why.".to_string(),
+            "Your server couldn't finish its last backup. Open Backup to see why.".to_string(),
         ),
         "stale" => {
-            let days = age_seconds.unwrap_or(0) / 86_400;
+            // No day count: a number that grows each day is an overdue alarm,
+            // and the Backup page has the date for anyone who wants it.
             (
-                format!("Your last backup is {days} days old"),
-                "Plug in your backup drive, then open System to see the last backup."
+                "Your last backup is out of date".to_string(),
+                "Plug in your backup drive. Open Backup to see when it last ran."
                     .to_string(),
             )
         }
@@ -294,7 +295,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
         kind: "backup",
         title,
         body,
-        route: "/virtues/system".into(),
+        route: "/virtues/backup".into(),
     });
 }
 
@@ -581,7 +582,7 @@ mod tests {
         }
         let keys: Vec<_> = items.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, ["backup:none", "backup:never", "backup:failing", "backup:stale"]);
-        assert_eq!(items[3].title, "Your last backup is 4 days old");
+        assert_eq!(items[3].title, "Your last backup is out of date");
     }
 
     #[test]

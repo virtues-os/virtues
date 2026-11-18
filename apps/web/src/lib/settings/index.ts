@@ -191,6 +191,22 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	},
 ];
 
+/**
+ * The page a setting lives on, as Settings names it: its section's page
+ * ("Billing"), else the landing group that links to it ("Your server"), else
+ * Settings itself (Start over, at the landing page's foot).
+ */
+export function settingPlace(setting: Setting, assistantName?: string | null): string {
+	if (setting.route === '/virtues') return 'Settings';
+	const section = SECTIONS.find((s) => s.id === setting.section);
+	if (section?.route && (setting.route === section.route || setting.route.startsWith(`${section.route}/`))) {
+		return titleOf(section.title, assistantName);
+	}
+	const group = LANDING.find((g) => g.links.some((l) => l.route === setting.route));
+	if (group) return group.title;
+	return section ? titleOf(section.title, assistantName) : 'Settings';
+}
+
 /** The section whose page is `route`, if any. */
 export function sectionAt(route: string): Section | undefined {
 	return SECTIONS.find((s) => s.route === route);

@@ -1149,6 +1149,18 @@ class WindowShellStore {
 		}
 	}
 
+	/**
+	 * Point one tab at another route in place, re-resolving what kind of tab
+	 * it is: the redirect for a route that moved to a different view (an old
+	 * Settings route that is now Sources). It replaces the tab's current
+	 * history slot, so Back skips the old route, and it acts on that tab
+	 * whichever pane has focus.
+	 */
+	retarget(tabId: string, route: string, label?: string): void {
+		const { effectiveRoute, fields } = this.identityFromRoute(route, label);
+		this.updateTab(tabId, { ...fields, route: effectiveRoute });
+	}
+
 	togglePin(tabId: string): void {
 		const pane = this.findPaneForTab(tabId);
 		if (!pane) return;

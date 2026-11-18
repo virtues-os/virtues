@@ -184,6 +184,14 @@
 		}
 	}
 
+	/** The backup row's words for each state (`api/backup_status.rs`). */
+	function backupLine(state: string, secs: number | null): string {
+		if (state === "none") return "No backup drive yet";
+		if (state === "never") return "No backup has finished yet";
+		if (state === "failing") return "Backups are failing";
+		return `Last backup ${backupAge(secs)}`;
+	}
+
 	/** "4 hours", "9 days" — the only figure this surface really carries. */
 	function backupAge(secs: number | null): string {
 		if (secs === null) return "never";
@@ -557,7 +565,7 @@
 			<section class="chapter">
 				<h2 class="settings-label">Backup</h2>
 				<button type="button" class="backup-link" onclick={() => windowShellStore.navigate('/virtues/backup', { label: 'Settings · Backup' })}>
-					<span>{backup.state === "none" ? "No backup drive yet" : `Last backup ${backupAge(backup.age_seconds)}`}</span>
+					<span class:warn={backup.state !== "ok"}>{backupLine(backup.state, backup.age_seconds)}</span>
 					<span class="open">Open</span>
 				</button>
 			</section>
@@ -898,6 +906,10 @@
 		text-align: left;
 		color: var(--color-foreground);
 		cursor: pointer;
+	}
+
+	.backup-link .warn {
+		color: var(--warning);
 	}
 
 	.backup-link .open {

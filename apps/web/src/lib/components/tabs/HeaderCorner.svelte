@@ -8,7 +8,7 @@
 	 * toolbar, where it would read as a search of that page. Sources opens
 	 * where your data comes from: its overview, catalog, activity, streams and
 	 * Query. It carries no dot or badge, even when a source stops: a stopped
-	 * source shows on the Sources page and in Settings' Changed lately.
+	 * source shows on the Sources page and under Needs you in Settings.
 	 * Settings opens
 	 * the Settings page, every setting on one scroll. It is something you
 	 * open now and then, so it sits in the corner rather

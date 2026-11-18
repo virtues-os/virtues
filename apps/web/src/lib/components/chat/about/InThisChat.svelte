@@ -459,6 +459,14 @@
 		opacity: 0.8;
 	}
 
+	/* Keep the information, drop the travel: the chevron is simply there or not. */
+	@media (prefers-reduced-motion: reduce) {
+		.group-head .chev,
+		.group-head.folded .chev {
+			transition: none;
+		}
+	}
+
 	.group-head.folded .chev {
 		transform: rotate(-90deg);
 	}

@@ -566,7 +566,7 @@ fn graduated_line(state: &GettingStartedState) -> String {
         None if sources.is_some() => {
             "From tomorrow morning, your server writes up each day it has enough of, mostly from your messages and recordings."
         }
-        None => "Connect something in Settings whenever you like, and the pages begin the next morning.",
+        None => "Connect something in Sources whenever you like, and the pages begin the next morning.",
     });
     out.push_str(" This room stays here for anything about the setup.");
     out
@@ -580,7 +580,7 @@ fn settled_line(s: &Step) -> String {
     match (s.id, s.status) {
         ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can still show you its record, but your assistant can't answer until you connect AI in Settings.".into(),
         ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Your name and birth date are in Settings whenever you want them, or say the word here and this step comes back.".into(),
-        ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Settings whenever you want them.".into(),
+        ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Sources whenever you want them.".into(),
         ("interview", StepStatus::Skipped) => "You set your story aside for now. The interview is waiting here whenever you want it.".into(),
         ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to your own models. Your assistant can answer now.".into(),
         ("connect_ai", _) => "Your server is connected to your Virtues subscription. Your assistant can answer now.".into(),

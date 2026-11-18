@@ -27,7 +27,7 @@
 
 	// Streams moved to Sources; an old link or bookmark lands there.
 	$effect(() => {
-		if (tab.route === "/storage/streams") windowShellStore.navigate("/sources/streams", { label: "Sources · Streams" });
+		if (tab.route === "/storage/streams") windowShellStore.retarget(tab.id, "/sources/streams", "Sources · Streams");
 	});
 
 	// The legacy `/trash` route lands on Recently deleted, and a folder path

@@ -18,12 +18,16 @@
 	import DraftCard from './DraftCard.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
 	import { isAppleKeyboard } from '$lib/utils/platform';
-	import { LANDING, SECTIONS, matchSettings, titleOf, type Setting } from '$lib/settings';
-	import { openSetting, openSettingsPage } from '$lib/settings/focus';
+	import { LANDING, matchSettings, settingPlace, titleOf, type Setting } from '$lib/settings';
+	import { openSetting, openSettingsPage, takePendingSetting } from '$lib/settings/focus';
+	import { lightUp } from '$lib/utils/lit';
 
 	let name = $state('Ari');
 
 	onMount(async () => {
+		// Opened for Start over (from ⌘K): it sits at the foot of this page.
+		const pending = takePendingSetting();
+		if (pending) void tick().then(() => findRow(pending));
 		try {
 			const p = await getAssistantProfile<{ assistant_name?: string | null }>();
 			name = p.assistant_name?.trim() || 'Ari';
@@ -32,6 +36,20 @@
 		}
 	});
 
+	/** Scrolls to a row on this page and lights it once. The tab restores its
+	 *  own scroll position as the route settles, so it checks once more and
+	 *  scrolls again, at once, if the row has moved off screen. */
+	function findRow(settingId: string) {
+		const el = document.getElementById(`setting-${settingId}`);
+		if (!el) return;
+		el.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
+		lightUp(el);
+		setTimeout(() => {
+			const box = el.getBoundingClientRect();
+			if (box.top < 0 || box.bottom > window.innerHeight) el.scrollIntoView({ block: 'center' });
+		}, 650);
+	}
+
 	const spoken = $derived(name.charAt(0).toUpperCase() + name.slice(1));
 
 	// ─── Search ────────────────────────────────────────────────────────────
@@ -39,22 +57,16 @@
 	let picked = $state(-1);
 	const typing = $derived(query.trim().length > 0);
 
-	/** Matches grouped by the section they live in, the best match's group first. */
+	/** Matches grouped by the page each opens on, the best match's group first. */
 	const groups = $derived.by(() => {
 		if (!typing) return [];
-		const order: string[] = [];
-		const bySection = new Map<string, Setting[]>();
+		const byPlace = new Map<string, Setting[]>();
 		for (const setting of matchSettings(query, spoken)) {
-			if (!bySection.has(setting.section)) {
-				bySection.set(setting.section, []);
-				order.push(setting.section);
-			}
-			bySection.get(setting.section)!.push(setting);
+			const place = settingPlace(setting, spoken);
+			if (!byPlace.has(place)) byPlace.set(place, []);
+			byPlace.get(place)!.push(setting);
 		}
-		return order.map((sectionId) => ({
-			title: titleOf(SECTIONS.find((s) => s.id === sectionId)?.title ?? '', spoken),
-			settings: bySection.get(sectionId)!,
-		}));
+		return [...byPlace].map(([title, settings]) => ({ title, settings }));
 	});
 	const results = $derived(groups.flatMap((g) => g.settings));
 
@@ -67,9 +79,7 @@
 		// Start over is on this page, at its foot.
 		if (setting.route === '/virtues') {
 			query = '';
-			void tick().then(() =>
-				document.getElementById(`setting-${setting.id}`)?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' }),
-			);
+			void tick().then(() => findRow(setting.id));
 			return;
 		}
 		openSetting(setting.id, spoken);
@@ -129,7 +139,11 @@
 			bind:value={query}
 			placeholder="Find a setting, or say what you want changed"
 			aria-label="Search settings"
-			aria-controls="settings-results"
+			role="combobox"
+			aria-expanded={typing && !draftText}
+			aria-controls={typing && !draftText ? 'settings-results' : undefined}
+			aria-activedescendant={picked >= 0 ? `settings-result-${picked}` : undefined}
+			aria-autocomplete="list"
 			autocomplete="off"
 			spellcheck="false"
 			onkeydown={onSearchKey}
@@ -149,25 +163,29 @@
 		{/key}
 	{:else if typing}
 		<div id="settings-results" class="results" role="listbox" aria-label="Matching settings">
-			{#each groups as group (group.title)}
-				<p class="label">{group.title}</p>
-				{#each group.settings as setting (setting.id)}
-					{@const index = results.indexOf(setting)}
-					<button
-						type="button"
-						class="result"
-						class:picked={index === picked}
-						role="option"
-						aria-selected={index === picked}
-						onmouseenter={() => (picked = index)}
-						onclick={() => open(setting)}
-					>
-						<span>{titleOf(setting.title, spoken)}</span>
-						<span class="go" aria-hidden="true">
-							<svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" /></svg>
-						</span>
-					</button>
-				{/each}
+			{#each groups as group, gi (group.title)}
+				<div role="group" aria-labelledby="settings-group-{gi}">
+					<p class="label" id="settings-group-{gi}">{group.title}</p>
+					{#each group.settings as setting (setting.id)}
+						{@const index = results.indexOf(setting)}
+						<button
+							type="button"
+							class="result"
+							class:picked={index === picked}
+							id="settings-result-{index}"
+							role="option"
+							aria-selected={index === picked}
+							tabindex="-1"
+							onmouseenter={() => (picked = index)}
+							onclick={() => open(setting)}
+						>
+							<span>{titleOf(setting.title, spoken)}</span>
+							<span class="go" aria-hidden="true">
+								<svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" /></svg>
+							</span>
+						</button>
+					{/each}
+				</div>
 			{:else}
 				<p class="nothing">No setting matches “{query.trim()}”. Press Return to ask {spoken}.</p>
 			{/each}
@@ -277,7 +295,7 @@
 		margin-top: 28px;
 	}
 
-	.results .label:not(:first-child) {
+	.results [role='group'] + [role='group'] .label {
 		margin-top: 24px;
 	}
 

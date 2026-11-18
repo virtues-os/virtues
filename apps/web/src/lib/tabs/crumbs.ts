@@ -94,18 +94,20 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		return { glyph: door.glyph, crumbs };
 	}
 
+	// Settings' landing page, where every Settings page is linked.
+	if (path === '/virtues') return { glyph: 'settings', crumbs: [{ label: 'Settings' }] };
 	const settingsRow = rowForRoute(SETTINGS_MODE, path);
 	if (settingsRow) {
-		const root: Crumb = { label: 'Settings', route: SETTINGS_MODE.rows[0].href, menu: { kind: 'mode', mode: 'settings' } };
+		const root: Crumb = { label: 'Settings', route: '/virtues', menu: { kind: 'mode', mode: 'settings' } };
 		const crumbs = inRow(root, settingsRow, path, title);
-		// The section heading sits between Settings and the row (Sources /
-		// Catalog), linked to the heading's first row.
+		// The landing page's heading sits between Settings and the page
+		// (Settings / Your server / Devices), linked to the landing page,
+		// where that heading's links are.
 		const group = settingsRow.group;
-		const first = SETTINGS_MODE.rows.find((r) => r.group === group);
-		if (group && first && group !== settingsRow.label) {
+		if (group && group !== settingsRow.label) {
 			crumbs.splice(1, 0, {
 				label: group,
-				route: first.href === path ? undefined : first.href,
+				route: '/virtues',
 				menu: { kind: 'mode', mode: 'settings', group },
 			});
 		}

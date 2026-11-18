@@ -1,5 +1,5 @@
 <!--
-	Settings > Assistant > All models (`/virtues/assistant/models`).
+	Settings › the assistant's page › Compare all models (`/virtues/assistant/models`).
 
 	The catalog has its own page because it is a table of a few hundred rows,
 	and the Assistant page is a form. The Models section there links here.

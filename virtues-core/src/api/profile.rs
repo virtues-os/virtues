@@ -16,7 +16,9 @@ pub struct UpdateProfileRequest {
     pub preferred_name: Option<String>,
     /// Parsed by serde from `"YYYY-MM-DD"` (what an HTML date input submits);
     /// bound as a real DATE — a String bind fails Postgres's type check.
-    pub birth_date: Option<chrono::NaiveDate>,
+    /// Doubly optional: absent leaves it, `null` clears it.
+    #[serde(default, deserialize_with = "crate::api::assistant_profile::double_option")]
+    pub birth_date: Option<Option<chrono::NaiveDate>>,
     // Physical/Biometric
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,
@@ -79,10 +81,19 @@ pub async fn get_profile(db: &PgPool) -> Result<UserProfile> {
     Ok(profile)
 }
 
+/// A text value to store: trimmed, and NULL when nothing is left.
+fn cleared(v: &str) -> Option<&str> {
+    let v = v.trim();
+    (!v.is_empty()).then_some(v)
+}
+
 /// Update the user's profile
 ///
-/// Only updates fields that are present in the request (not None).
-/// Returns the updated profile.
+/// Only updates fields that are present in the request (not None). The text
+/// fields Settings edits (names, work, employer, time zone) take an empty
+/// string as "clear it" and store NULL, the way `home_city` does; birth date
+/// takes `null`. Returns the updated profile.
+
 pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Result<UserProfile> {
     // Build dynamic UPDATE with positional pg placeholders ($1, $2, …).
     let mut set_clauses: Vec<String> = Vec::new();
@@ -130,12 +141,12 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
 
     // Bind in the same order as set_clauses
     if let Some(ref v) = request.full_name {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.preferred_name {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
-    if let Some(ref v) = request.birth_date {
+    if let Some(v) = request.birth_date {
         query_builder = query_builder.bind(v);
     }
     if let Some(v) = request.height_cm {
@@ -148,10 +159,10 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.occupation {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.employer {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.home_place_id {
         query_builder = query_builder.bind(v);
@@ -171,7 +182,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.home_timezone {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.getting_started_dismissed {
         query_builder = query_builder.bind(v);
@@ -286,7 +297,7 @@ mod tests {
         let d = chrono::NaiveDate::from_ymd_opt(1990, 1, 15).unwrap();
         let updated = update_profile(
             &pool,
-            UpdateProfileRequest { birth_date: Some(d), ..Default::default() },
+            UpdateProfileRequest { birth_date: Some(Some(d)), ..Default::default() },
         )
         .await
         .expect("update with a birth date");

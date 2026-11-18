@@ -9,7 +9,6 @@
 	 * scrolls to that setting's row and lights it once (`settings/focus`).
 	 */
 	import { onMount, tick } from 'svelte';
-	import { invalidate } from '$app/navigation';
 	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { lightUp } from '$lib/utils/lit';
 	import Button from '$lib/components/Button.svelte';
@@ -28,7 +27,7 @@
 	import BillingSettings from './BillingSettings.svelte';
 	import AppearanceSettings from './AppearanceSettings.svelte';
 	import CapabilitiesSettings from './CapabilitiesSettings.svelte';
-	import { getAssistantProfile, updateProfile } from '$lib/api/client';
+	import { getAssistantProfile } from '$lib/api/client';
 	import { getTheme, setTheme, type Theme } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
 	import { openSettingsPage, takePendingSetting } from '$lib/settings/focus';
@@ -62,50 +61,48 @@
 
 	let theme = $state<Theme>(getTheme());
 
-	async function chooseTheme(next: Theme) {
+	// `setTheme` applies it and saves it in the assistant profile's
+	// `ui_preferences`, which is where the app reads it and where Changed
+	// lately records it.
+	function chooseTheme(next: Theme) {
 		theme = next;
-		setTheme(next);
-		try {
-			await updateProfile({ theme: next });
-			invalidate('/api/profile');
-		} catch {
-			// The theme is already applied here; the next save or load corrects
-			// the server's copy.
-		}
+		void setTheme(next);
 	}
-
-	let lit = $state<string | null>(null);
 
 	onMount(() => {
 		void loadAssistant();
 		const settingId = takePendingSetting();
 		if (!settingId) return;
-		// Rows load their values after the page mounts, and the tab restores
-		// its own scroll position once the route settles. Scroll after a beat,
-		// then once more, at once, if the row still isn't on screen.
-		const row = () => document.getElementById(`setting-${settingId}`);
-		const first = setTimeout(async () => {
+		// Some rows draw only once their values load, and the tab restores its
+		// own scroll position once the route settles. Wait for the row, then
+		// scroll to it, and once more, at once, if it still isn't on screen.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const started = Date.now();
+		const find = async () => {
 			await tick();
-			row()?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
-			lit = settingId;
-		}, 250);
-		const again = setTimeout(() => {
-			const box = row()?.getBoundingClientRect();
-			if (box && (box.top < 0 || box.bottom > window.innerHeight)) row()?.scrollIntoView({ block: 'center' });
-		}, 900);
-		return () => {
-			clearTimeout(first);
-			clearTimeout(again);
+			const el = target(settingId);
+			if (!el) {
+				if (Date.now() - started < 3000) timer = setTimeout(find, 150);
+				return;
+			}
+			el.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
+			lightUp(el);
+			timer = setTimeout(() => {
+				const box = el.getBoundingClientRect();
+				if (box.top < 0 || box.bottom > window.innerHeight) el.scrollIntoView({ block: 'center' });
+			}, 650);
 		};
+		timer = setTimeout(find, 250);
+		return () => clearTimeout(timer);
 	});
 
-	// Lights the row the page arrived for, once (the class is added to the
-	// row's own element, which lives in a child component).
-	$effect(() => {
-		if (!lit) return;
-		const el = document.getElementById(`setting-${lit}`);
-		if (el) lightUp(el);
-	});
+	/** The element to scroll to and light: the setting's row, or for a setting
+	 *  that shares a block with others (an empty marker inside it), the block. */
+	function target(settingId: string): HTMLElement | null {
+		const el = document.getElementById(`setting-${settingId}`);
+		if (!el) return null;
+		return el.offsetHeight > 0 ? el : (el.closest<HTMLElement>('.block') ?? el.parentElement);
+	}
 </script>
 
 <div class="page">
@@ -149,7 +146,7 @@
 			<BillingSettings />
 			<div class="block" id="setting-limit-run"><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
 			<LinkRow id="byo-ai" label={title('byo-ai')} help="Send AI calls to your own provider and key instead of paying through Virtues." href="/virtues/billing/byo" />
-			<LinkRow id="ai-cost" label={title('ai-cost')} help="This month, day by day, each kind of work, and every call." href="/virtues/billing/cost" />
+			<LinkRow id="ai-cost" label={title('ai-cost')} help="The last two weeks day by day, each kind of work, and every call." href="/virtues/billing/cost" />
 		{:else if id === 'server'}
 			<div class="block" id="setting-updates"><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>
 			<div class="block" id="setting-reach"><NetworkSection /></div>

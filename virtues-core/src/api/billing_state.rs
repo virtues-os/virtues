@@ -157,6 +157,17 @@ pub async fn set_auto_topup_handler(
          SET auto_topup_enabled = FALSE \
          WHERE id = '00000000-0000-0000-0000-000000000001'"
     };
+    // For Changed lately: record only a real change. Unreadable, it is not recorded.
+    let before: Option<bool> = match sqlx::query_scalar::<_, bool>("SELECT auto_topup_enabled FROM app_user_profile LIMIT 1")
+        .fetch_one(&pool)
+        .await
+    {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!("changed lately: auto top-up unreadable before save: {e}");
+            None
+        }
+    };
     // A failed write must say so: the page shows the switch in the state
     // the server answers with, and this is money.
     if let Err(e) = sqlx::query(q).execute(&pool).await {
@@ -166,6 +177,8 @@ pub async fn set_auto_topup_handler(
             Json(json!({"error": "Your server couldn't save auto top-up. Try again."})),
         );
     }
-    crate::api::settings_changes::record(&pool, "auto-top-up", "auto_topup_enabled", &json!(!req.enabled), &json!(req.enabled)).await;
+    if before.is_some_and(|was| was != req.enabled) {
+        crate::api::settings_changes::record(&pool, "auto-top-up", "auto_topup_enabled", &json!(!req.enabled), &json!(req.enabled)).await;
+    }
     (StatusCode::OK, Json(json!({"ok": true, "enabled": req.enabled})))
 }

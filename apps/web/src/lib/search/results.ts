@@ -35,7 +35,7 @@ import { parseRef } from '$lib/utils/refRoutes';
 import { isUntitled } from '$lib/refs/identity.svelte';
 import { namedDays, type NamedDay } from '$lib/search/dates';
 import { matchEntities, type EntityRow } from '$lib/search/entities.svelte';
-import { SETTINGS, SECTIONS, titleOf, type Setting } from '$lib/settings';
+import { SETTINGS, titleOf, type Setting } from '$lib/settings';
 
 export interface Command {
 	id: string;
@@ -145,12 +145,6 @@ function settingsMatching(text: string, assistantName: string | null, minRank: n
 		.map((x) => x.setting);
 }
 
-/** The page a setting lives on, as Settings names it: "Billing". */
-export function settingPlace(setting: Setting, assistantName: string | null): string {
-	const section = SECTIONS.find((s) => s.id === setting.section);
-	return section ? titleOf(section.title, assistantName) : 'Settings';
-}
-
 function commandsMatching(commands: Command[], text: string, limit: number): { rows: Command[]; leading: boolean } {
 	const ranked = commands
 		.map((command) => ({ command, rank: matchRank(command.label, text) }))
@@ -213,7 +207,8 @@ export function searchGroups(input: {
 	const name = input.assistantName ?? null;
 
 	if (scope === 'setting') {
-		const rows = text ? settingsMatching(text, name, 1, SCOPED_ROWS) : SETTINGS.slice(0, SCOPED_ROWS);
+		// Every setting: the list is short enough to read whole.
+		const rows = text ? settingsMatching(text, name, 1, SETTINGS.length) : [...SETTINGS];
 		return [{ label: 'Settings', rows: rows.map((setting) => ({ kind: 'setting', setting })) }];
 	}
 

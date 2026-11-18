@@ -46,9 +46,12 @@
 
 	onMount(load);
 
+	// Clearing a field saves it empty: the server stores an empty text field
+	// as nothing, and takes `null` to clear the birth date.
 	async function save(field: Field, value: string | number) {
 		const text = String(value ?? '').trim();
-		await updateProfile({ [field]: text || null } as Partial<Profile>);
+		const stored = field === 'birth_date' ? text || null : text;
+		await updateProfile({ [field]: stored } as Partial<Profile>);
 		invalidate('/api/profile');
 	}
 
@@ -88,9 +91,9 @@
 			<Input id="profile-employer" placeholder="Add" bind:value={values.employer} autocomplete="organization" disabled={phase !== 'ready'} autoSave onSave={(v) => save('employer', v)} />
 		</div>
 	</SettingRow>
-	<SettingRow id="home" label={label('home')} help="Your time zone, like America/Chicago. Your days are counted in it." forId="profile-home">
+	<SettingRow id="home" label={label('home')} help="Your time zone, like Europe/Lisbon. Your days are counted in it." forId="profile-home">
 		<div class="field">
-			<Input id="profile-home" bind:value={values.home_timezone} placeholder="America/Chicago" disabled={phase !== 'ready'} autoSave onSave={(v) => save('home_timezone', v)} />
+			<Input id="profile-home" bind:value={values.home_timezone} placeholder="Europe/Lisbon" disabled={phase !== 'ready'} autoSave onSave={(v) => save('home_timezone', v)} />
 		</div>
 	</SettingRow>
 {/if}

@@ -125,7 +125,7 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task, run_limit:
         let said = outcome.message.unwrap_or_default();
         let result = format!(
             "{said}\n\nI stopped here because this request reached its spending limit of {} for one run. \
-             Reply to let me continue, or raise the limit in Settings under Assistant.",
+             Reply to let me continue, or raise the limit in Settings under Billing.",
             format_usd(run_limit)
         );
         tasks::finish_request_run(pool, &task.id, result.trim(), &writer).await?;

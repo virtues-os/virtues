@@ -1,8 +1,8 @@
 // Settings in search: the #settings scope lists them, and the page each lives
 // on is named the way Settings names it.
 import { describe, expect, it } from 'vitest';
-import { findSetting } from '$lib/settings';
-import { parseQuery, rowNoun, searchGroups, settingPlace } from './results';
+import { SETTINGS, findSetting, settingPlace } from '$lib/settings';
+import { parseQuery, rowNoun, searchGroups } from './results';
 
 const scoped = (query: string) => searchGroups({ query, here: null, commands: [], content: [], assistantName: 'Iris' });
 
@@ -16,7 +16,7 @@ describe('#settings', () => {
 	it('lists every setting when nothing follows it', () => {
 		const [group] = scoped('#settings');
 		expect(group.label).toBe('Settings');
-		expect(group.rows.length).toBeGreaterThan(10);
+		expect(group.rows.length).toBe(SETTINGS.length);
 		expect(group.rows.every((r) => r.kind === 'setting')).toBe(true);
 	});
 
@@ -39,5 +39,9 @@ describe('settingPlace', () => {
 		expect(settingPlace(findSetting('limit-day')!, 'Iris')).toBe('Billing');
 		expect(settingPlace(findSetting('style')!, 'Iris')).toBe('Iris');
 		expect(settingPlace(findSetting('occupation')!, null)).toBe('Profile');
+		expect(settingPlace(findSetting('devices')!, 'Iris')).toBe('Your server');
+		expect(settingPlace(findSetting('memory')!, 'Iris')).toBe('Your data');
+		expect(settingPlace(findSetting('ai-cost')!, 'Iris')).toBe('Billing');
+		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Settings');
 	});
 });

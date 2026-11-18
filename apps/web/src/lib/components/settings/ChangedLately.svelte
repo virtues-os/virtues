@@ -10,6 +10,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openSetting } from '$lib/settings/focus';
+	import { loadThemeFromDB } from '$lib/utils/theme';
 	import {
 		getSettingsChanges,
 		undoSettingsChange,
@@ -69,6 +70,8 @@
 		undoing = change.id;
 		try {
 			await undoSettingsChange(id);
+			// The theme is applied in this window, so an undone theme is put on now.
+			if (change.setting_id === 'theme') await loadThemeFromDB();
 			await load();
 		} catch (e) {
 			toast.error(e instanceof ApiError ? e.message : "Your server couldn't undo that change. Try again.");

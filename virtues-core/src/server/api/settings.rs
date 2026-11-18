@@ -87,6 +87,8 @@ pub fn routes() -> Router<AppState> {
         // What the assistant can do: one switch per capability.
         .route("/api/settings/capabilities", get(list_capabilities_handler))
         .route("/api/settings/capabilities/:id", put(set_capability_handler))
+        // A sample reply in the style notes being typed.
+        .route("/api/settings/style-preview", post(style_preview_handler))
         // Models API
         .route("/api/models", get(list_models_handler))
         .route(
@@ -314,6 +316,7 @@ pub async fn update_assistant_profile_handler(
     if let (Some(before), Ok(after)) = (&before, &result) {
         if let Ok(after) = serde_json::to_value(after) {
             crate::api::settings_changes::record_diff(pool, before, &after, crate::api::settings_changes::ASSISTANT_FIELDS).await;
+            crate::api::settings_changes::record_theme(pool, before, &after).await;
         }
     }
     api_response(result)
@@ -372,6 +375,16 @@ pub async fn set_capability_handler(
     Json(body): Json<SetCapabilityBody>,
 ) -> Response {
     api_response(crate::api::capabilities::set(state.db.pool(), &id, body.on).await)
+}
+
+#[derive(Deserialize)]
+pub struct StylePreviewBody {
+    notes: String,
+}
+
+/// POST /api/settings/style-preview — a sample reply in these notes' style. Saves nothing.
+pub async fn style_preview_handler(State(state): State<AppState>, Json(body): Json<StylePreviewBody>) -> Response {
+    api_response(crate::api::style_preview::preview(state.db.pool(), &body.notes).await)
 }
 
 /// POST /api/settings/changes/:id/undo — write a change's old value back.
@@ -807,17 +820,17 @@ pub async fn set_channel_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::updates::SetChannelRequest>,
 ) -> Response {
-    let before = crate::api::updates::channel_name();
-    let (asked_channel, asked_auto) = (request.channel.is_some(), request.auto_update);
+    // Read both before and after the call, not from its result: the channel
+    // can change even when the auto-install part then fails.
+    let (channel_before, auto_before) = (crate::api::updates::channel_name(), crate::cli::auto_update::enabled());
     let result = crate::api::updates::set_channel(request);
-    if let Ok(after) = &result {
-        let pool = state.db.pool();
-        if asked_channel && after.channel != before {
-            crate::api::settings_changes::record(pool, "update-channel", "update_channel", &serde_json::json!(before), &serde_json::json!(after.channel)).await;
-        }
-        if let Some(on) = asked_auto {
-            crate::api::settings_changes::record(pool, "auto-install", "auto_update", &serde_json::json!(!on), &serde_json::json!(on)).await;
-        }
+    let (channel_after, auto_after) = (crate::api::updates::channel_name(), crate::cli::auto_update::enabled());
+    let pool = state.db.pool();
+    if channel_after != channel_before {
+        crate::api::settings_changes::record(pool, "update-channel", "update_channel", &serde_json::json!(channel_before), &serde_json::json!(channel_after)).await;
+    }
+    if auto_after != auto_before {
+        crate::api::settings_changes::record(pool, "auto-install", "auto_update", &serde_json::json!(auto_before), &serde_json::json!(auto_after)).await;
     }
     api_response(result)
 }

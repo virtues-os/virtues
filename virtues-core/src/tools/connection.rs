@@ -1002,7 +1002,7 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     let Some(connection) = connected.iter().find(|c| c.id == name || c.name.to_lowercase() == name) else {
         let list: Vec<String> = connected.iter().map(|c| c.id.clone()).collect();
         return ToolResult::error(if list.is_empty() {
-            "No services are connected. The owner can connect one in Settings.".to_string()
+            "No services are connected. The owner can connect one in Sources.".to_string()
         } else {
             format!("`{name}` is not connected. Connected: {}.", list.join(", "))
         });

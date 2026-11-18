@@ -10,7 +10,13 @@
 //! Two places enforce a switch. The chat leaves an off tool out of the tools
 //! it offers the model ([`without_off`]), so the model does not try it. The
 //! tool executor refuses one a model names anyway ([`off_capability`]),
-//! which also covers applet runs, subagents and `/api/mcp`.
+//! which also covers applet runs and subagents. Calls from an agent the owner
+//! runs in their own session (a CLI verb or `/api/mcp`, `ToolContext::console`)
+//! are the owner's own, so the switches do not apply to them.
+//!
+//! "Make and change applets" stops only the changes: creating, editing and
+//! deleting. Listing applets, checking one and running one stay available,
+//! so the `applet` tool stays offered and the executor refuses the changes.
 
 use std::collections::HashSet;
 
@@ -96,12 +102,23 @@ pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<CapabilityStat
 /// for Changed lately with only those tools in it (field `enabled_tools`),
 /// so undoing it later puts back these switches and leaves the others as
 /// they are then. Settings' switches and Undo both come through here.
+///
+/// The read and the write share a row lock, so two switches flipped at once
+/// (two tabs, or a switch and an Undo) both land.
 pub async fn apply(pool: &PgPool, switches: &Value) -> Result<Value> {
-    let before = enabled_tools(pool).await?;
+    let mut tx = pool.begin().await?;
+    let (before,): (Value,) =
+        sqlx::query_as("SELECT enabled_tools FROM app_assistant_profile LIMIT 1 FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(format!("reading what the assistant can do: {e}")))?;
     let after = merged(&before, switches);
-    let request: crate::api::assistant_profile::UpdateAssistantProfileRequest =
-        serde_json::from_value(serde_json::json!({ "enabled_tools": after }))?;
-    crate::api::assistant_profile::update_assistant_profile(pool, request).await?;
+    sqlx::query("UPDATE app_assistant_profile SET enabled_tools = $1, updated_at = now()")
+        .bind(&after)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("saving what the assistant can do: {e}")))?;
+    tx.commit().await?;
     let (old, new) = (subset(&before, switches), subset(&after, switches));
     if old != new {
         crate::api::settings_changes::record(pool, "capabilities", "enabled_tools", &old, &new)
@@ -122,7 +139,7 @@ fn merged(stored: &Value, switches: &Value) -> Value {
 }
 
 /// `stored`'s value for each of `switches`' tools, a missing key read as on.
-fn subset(stored: &Value, switches: &Value) -> Value {
+pub(crate) fn subset(stored: &Value, switches: &Value) -> Value {
     let keys = switches
         .as_object()
         .map(|m| m.keys().cloned().collect::<Vec<_>>())
@@ -137,22 +154,34 @@ fn subset(stored: &Value, switches: &Value) -> Value {
     )
 }
 
-/// The capability that turns `tool` off, when the owner has turned it off.
-/// Reads the profile only for tools a switch covers.
-pub async fn off_capability(pool: &PgPool, tool: &str) -> Result<Option<&'static str>> {
+/// Whether an `applet` call changes an applet (create, edit, delete) rather
+/// than reading or running one.
+fn changes_an_applet(arguments: &Value) -> bool {
+    !crate::tools::applet_management::is_read(arguments)
+        && crate::tools::applet_management::action(arguments) != Some("run")
+}
+
+/// The capability that turns this call off, when the owner has turned it
+/// off. Reads the profile only for calls a switch covers.
+pub async fn off_capability(pool: &PgPool, tool: &str, arguments: &Value) -> Result<Option<&'static str>> {
     let Some((id, _)) = capabilities()
         .into_iter()
         .find(|(_, tools)| tools.contains(&tool))
     else {
         return Ok(None);
     };
+    if tool == "applet" && !changes_an_applet(arguments) {
+        return Ok(None);
+    }
     let off = off_tools(&enabled_tools(pool).await?);
     Ok(off.contains(tool).then_some(id))
 }
 
 /// `tools` (LLM function definitions) without the ones the owner turned off.
 pub async fn without_off(pool: &PgPool, tools: Vec<Value>) -> Result<Vec<Value>> {
-    let off = off_tools(&enabled_tools(pool).await?);
+    let mut off = off_tools(&enabled_tools(pool).await?);
+    // Listing and running applets stay on; the executor refuses the changes.
+    off.remove("applet");
     if off.is_empty() {
         return Ok(tools);
     }
@@ -171,7 +200,7 @@ pub fn refusal(capability: &str) -> String {
     let what = match capability {
         "web_search" => "searching the web",
         "browser" => "using the browser",
-        "applets" => "making and changing applets",
+        "applets" => "making and changing applets (listing and running them still works)",
         "pages" => "writing pages",
         other => other,
     };
@@ -215,16 +244,16 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn an_off_capability_is_refused_left_out_and_recorded(pool: PgPool) {
-        assert_eq!(off_capability(&pool, "web_search").await.unwrap(), None);
+        assert_eq!(off_capability(&pool, "web_search", &json!({})).await.unwrap(), None);
 
         let states = set(&pool, "web_search", false).await.unwrap();
         assert!(!states.iter().find(|c| c.id == "web_search").unwrap().on);
         assert_eq!(
-            off_capability(&pool, "web_search").await.unwrap(),
+            off_capability(&pool, "web_search", &json!({})).await.unwrap(),
             Some("web_search")
         );
         assert_eq!(
-            off_capability(&pool, "sql_query").await.unwrap(),
+            off_capability(&pool, "sql_query", &json!({})).await.unwrap(),
             None,
             "a tool no switch covers is never off"
         );
@@ -263,11 +292,24 @@ mod tests {
         crate::api::settings_changes::undo(&pool, first)
             .await
             .unwrap();
-        assert_eq!(off_capability(&pool, "web_search").await.unwrap(), None);
+        assert_eq!(off_capability(&pool, "web_search", &json!({})).await.unwrap(), None);
         assert_eq!(
-            off_capability(&pool, "edit_page").await.unwrap(),
+            off_capability(&pool, "edit_page", &json!({})).await.unwrap(),
             Some("pages")
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_applets_switch_stops_changes_and_leaves_reads_and_runs(pool: PgPool) {
+        set(&pool, "applets", false).await.unwrap();
+        for read in ["list", "get", "run"] {
+            assert_eq!(off_capability(&pool, "applet", &json!({ "action": read })).await.unwrap(), None, "{read}");
+        }
+        for change in ["edit", "delete"] {
+            assert_eq!(off_capability(&pool, "applet", &json!({ "action": change })).await.unwrap(), Some("applets"), "{change}");
+        }
+        let offered = without_off(&pool, vec![json!({ "function": { "name": "applet" } })]).await.unwrap();
+        assert_eq!(offered.len(), 1, "the tool stays offered for reads and runs");
     }
 
     #[test]

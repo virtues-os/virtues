@@ -36,8 +36,15 @@ pub const PROFILE_FIELDS: &[(&str, &str)] = &[
     ("occupation", "occupation"),
     ("employer", "employer"),
     ("home_timezone", "home"),
-    ("theme", "theme"),
 ];
+
+/// The theme lives in the assistant profile's `ui_preferences` (what
+/// `loadThemeFromDB` reads), so it is recorded under this path rather than as
+/// a top-level field.
+pub const THEME_FIELD: &str = "ui_preferences.theme";
+
+/// Profile text fields: cleared with an empty string (`profile::update_profile`).
+const PROFILE_TEXT_FIELDS: &[&str] = &["full_name", "preferred_name", "occupation", "employer", "home_timezone"];
 
 /// The stored assistant-profile fields that are settings.
 pub const ASSISTANT_FIELDS: &[(&str, &str)] = &[
@@ -49,14 +56,29 @@ pub const ASSISTANT_FIELDS: &[(&str, &str)] = &[
     ("image_model_id", "models"),
     ("request_run_limit_micros", "limit-run"),
     ("request_day_limit_micros", "limit-day"),
-    // What the assistant can do (api::capabilities), one jsonb of tool switches.
-    ("enabled_tools", "capabilities"),
 ];
 
-/// Model slots store NULL for "the Virtues default", which an update can
-/// write back; the other fields treat a missing value as "leave it", so a
-/// change from nothing can't be undone to nothing.
-const NULLABLE_FIELDS: &[&str] = &["lite_model_id", "standard_model_id", "deep_model_id", "image_model_id"];
+/// What the assistant can do: rows hold only the tools one switch changed
+/// (`api::capabilities::apply`), so this field is recorded there, not diffed
+/// whole from a profile save.
+const CAPABILITIES_FIELD: &str = "enabled_tools";
+
+/// Fields an undo may set back to nothing: model slots store NULL for "the
+/// Virtues default", and the profile's text fields and birth date can be
+/// cleared. The others treat a missing value as "leave it", so a change from
+/// nothing can't be undone to nothing.
+const NULLABLE_FIELDS: &[&str] = &[
+    "lite_model_id",
+    "standard_model_id",
+    "deep_model_id",
+    "image_model_id",
+    "full_name",
+    "preferred_name",
+    "occupation",
+    "employer",
+    "home_timezone",
+    "birth_date",
+];
 
 /// How far back the list reaches, and how many changes it shows.
 const LATELY_DAYS: i64 = 30;
@@ -149,8 +171,49 @@ pub struct Lately {
 
 /// Whether an undo can write `old_value` back to `field`.
 fn undoable(field: &str, old_value: &Value) -> bool {
+    if field == CAPABILITIES_FIELD || field == THEME_FIELD {
+        return old_value.is_object() || old_value.is_string();
+    }
     let known = PROFILE_FIELDS.iter().chain(ASSISTANT_FIELDS).any(|&(f, _)| f == field);
     known && (!old_value.is_null() || NULLABLE_FIELDS.contains(&field))
+}
+
+/// The theme a profile value holds, as recorded.
+fn theme_of(profile: &Value) -> Value {
+    profile.get("ui_preferences").and_then(|p| p.get("theme")).cloned().unwrap_or(Value::Null)
+}
+
+/// Records a theme change from an assistant-profile save (`ui_preferences`).
+pub async fn record_theme(pool: &PgPool, before: &Value, after: &Value) {
+    record_theme_by(pool, "owner", before, after).await;
+}
+
+async fn record_theme_by(pool: &PgPool, actor: &str, before: &Value, after: &Value) {
+    let (old, new) = (theme_of(before), theme_of(after));
+    if old != new && new.is_string() {
+        record_by(pool, actor, "theme", THEME_FIELD, &old, &new).await;
+    }
+}
+
+/// What `field` holds now, in the form a change row records it.
+async fn current_value(pool: &PgPool, field: &str, recorded_new: &Value) -> Result<Value> {
+    if field == CAPABILITIES_FIELD {
+        let (stored,): (Value,) = sqlx::query_as("SELECT enabled_tools FROM app_assistant_profile LIMIT 1")
+            .fetch_one(pool)
+            .await?;
+        // Only the tools the row names; a missing key reads as on.
+        return Ok(crate::api::capabilities::subset(&stored, recorded_new));
+    }
+    if field == THEME_FIELD {
+        let profile = serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?;
+        return Ok(theme_of(&profile));
+    }
+    let profile = if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
+        serde_json::to_value(crate::api::profile::get_profile(pool).await?)?
+    } else {
+        serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?
+    };
+    Ok(profile.get(field).cloned().unwrap_or(Value::Null))
 }
 
 pub async fn lately(db: &Database) -> Result<Lately> {
@@ -225,27 +288,70 @@ pub async fn lately(db: &Database) -> Result<Lately> {
 
 /// Write a change's old value back and mark the change undone.
 pub async fn undo(pool: &PgPool, id: i64) -> Result<()> {
-    let row: Option<(String, Option<Value>, Option<DateTime<Utc>>)> =
-        sqlx::query_as("SELECT field, old_value, undone_at FROM app_settings_changes WHERE id = $1")
+    let row: Option<(String, Option<Value>, Option<Value>, Option<DateTime<Utc>>)> =
+        sqlx::query_as("SELECT field, old_value, new_value, undone_at FROM app_settings_changes WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
-    let Some((field, old_value, undone_at)) = row else {
+    let Some((field, old_value, new_value, undone_at)) = row else {
         return Err(Error::NotFound(format!("no settings change {id}")));
     };
     if undone_at.is_some() {
-        return Err(Error::InvalidInput("that change was already undone".into()));
+        return Err(Error::InvalidInput("That change was already undone.".into()));
     }
     let old_value = old_value.unwrap_or(Value::Null);
+    let new_value = new_value.unwrap_or(Value::Null);
     if !undoable(&field, &old_value) {
-        return Err(Error::InvalidInput("that change can't be undone from here".into()));
+        return Err(Error::InvalidInput("That change can't be undone from here.".into()));
+    }
+    // Writing the old value back over a later change would lose it silently.
+    if current_value(pool, &field, &new_value).await? != new_value {
+        return Err(Error::InvalidInput(
+            "That setting has changed again since. Change it on its page instead.".into(),
+        ));
+    }
+    // Claim the row first, so two taps or two devices undo it once.
+    let claimed = sqlx::query("UPDATE app_settings_changes SET undone_at = now() WHERE id = $1 AND undone_at IS NULL")
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if claimed == 0 {
+        return Err(Error::InvalidInput("That change was already undone.".into()));
     }
 
-    let patch = json!({ field.as_str(): old_value });
-    if field == "enabled_tools" {
+    let written = write_back(pool, &field, old_value).await;
+    if written.is_err() {
+        // Nothing was put back, so the change is still live and still undoable.
+        sqlx::query("UPDATE app_settings_changes SET undone_at = NULL WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    written
+}
+
+/// Writes `old_value` back to `field` and records the write as a change of its own.
+async fn write_back(pool: &PgPool, field: &str, old_value: Value) -> Result<()> {
+    if field == CAPABILITIES_FIELD {
         // A capability change holds only its own tools; put those back.
         crate::api::capabilities::apply(pool, &old_value).await?;
-    } else if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
+        return Ok(());
+    }
+    if field == THEME_FIELD {
+        let before = serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?;
+        let mut prefs = before.get("ui_preferences").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
+        prefs["theme"] = old_value;
+        let request: crate::api::assistant_profile::UpdateAssistantProfileRequest =
+            serde_json::from_value(json!({ "ui_preferences": prefs }))?;
+        let after = crate::api::assistant_profile::update_assistant_profile(pool, request).await?;
+        record_theme(pool, &before, &serde_json::to_value(after)?).await;
+        return Ok(());
+    }
+    // A cleared text field goes back as "", which the profile update stores as NULL.
+    let value = if old_value.is_null() && PROFILE_TEXT_FIELDS.contains(&field) { json!("") } else { old_value };
+    let patch = json!({ field: value });
+    if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
         let before = serde_json::to_value(crate::api::profile::get_profile(pool).await?)?;
         let after = crate::api::profile::update_profile(pool, serde_json::from_value(patch)?).await?;
         record_diff(pool, &before, &serde_json::to_value(after)?, PROFILE_FIELDS).await;
@@ -254,11 +360,6 @@ pub async fn undo(pool: &PgPool, id: i64) -> Result<()> {
         let after = crate::api::assistant_profile::update_assistant_profile(pool, serde_json::from_value(patch)?).await?;
         record_diff(pool, &before, &serde_json::to_value(after)?, ASSISTANT_FIELDS).await;
     }
-
-    sqlx::query("UPDATE app_settings_changes SET undone_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await?;
     Ok(())
 }
 
@@ -410,7 +511,7 @@ fn draft_prompt(current: &Value) -> String {
         };
         let what = match kind {
             DraftKind::Text(max) => format!("text, up to {max} characters"),
-            DraftKind::TimeZone => "an IANA time zone name, like America/Chicago".to_string(),
+            DraftKind::TimeZone => "an IANA time zone name, like Europe/Lisbon".to_string(),
             DraftKind::Dollars => "a number of dollars".to_string(),
         };
         lines.push(format!("- {field} ({what}): {shown}"));
@@ -448,14 +549,26 @@ pub async fn draft(pool: &PgPool, text: &str) -> Result<Draft> {
 pub struct ApplyChange {
     pub field: String,
     pub new_value: Value,
+    /// What the draft said the setting held. When it no longer does, the
+    /// draft is stale and applying it would overwrite a newer change.
+    #[serde(default)]
+    pub old_value: Option<Value>,
 }
 
 /// Save drafted changes the owner accepted, checked again, and record them
 /// as the assistant's.
 pub async fn apply_draft(pool: &PgPool, changes: Vec<ApplyChange>) -> Result<()> {
+    let current = current_values(pool).await?;
     let mut profile = serde_json::Map::new();
     let mut assistant = serde_json::Map::new();
     for c in changes {
+        if let Some(old) = &c.old_value {
+            if current.get(&c.field).unwrap_or(&Value::Null) != old {
+                return Err(Error::InvalidInput(
+                    "A setting changed after this was drafted. Nothing was changed; ask again.".into(),
+                ));
+            }
+        }
         let Some((field, _, _, on_profile)) = draft_spec(&c.field) else {
             return Err(Error::InvalidInput(format!("{} can't be changed from a draft", c.field)));
         };
@@ -468,15 +581,50 @@ pub async fn apply_draft(pool: &PgPool, changes: Vec<ApplyChange>) -> Result<()>
             assistant.insert(field.into(), value);
         }
     }
-    if !profile.is_empty() {
+    // The two halves live in two tables. The profile goes first; if the
+    // assistant half then fails, the profile half is put back, so a failed
+    // Apply changes nothing, as the card says.
+    let profile_saved = if profile.is_empty() {
+        None
+    } else {
         let before = serde_json::to_value(crate::api::profile::get_profile(pool).await?)?;
+        let fields: Vec<String> = profile.keys().cloned().collect();
         let after = crate::api::profile::update_profile(pool, serde_json::from_value(Value::Object(profile))?).await?;
-        record_diff_by(pool, "assistant", &before, &serde_json::to_value(after)?, PROFILE_FIELDS).await;
-    }
+        Some((before, serde_json::to_value(after)?, fields))
+    };
     if !assistant.is_empty() {
         let before = serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?;
-        let after = crate::api::assistant_profile::update_assistant_profile(pool, serde_json::from_value(Value::Object(assistant))?).await?;
-        record_diff_by(pool, "assistant", &before, &serde_json::to_value(after)?, ASSISTANT_FIELDS).await;
+        let saved = async {
+            let request = serde_json::from_value(Value::Object(assistant))?;
+            crate::api::assistant_profile::update_assistant_profile(pool, request).await
+        }
+        .await;
+        match saved {
+            Ok(after) => record_diff_by(pool, "assistant", &before, &serde_json::to_value(after)?, ASSISTANT_FIELDS).await,
+            Err(e) => {
+                if let Some((profile_before, _, fields)) = &profile_saved {
+                    let restore: serde_json::Map<String, Value> = fields
+                        .iter()
+                        .map(|f| {
+                            let v = profile_before.get(f).cloned().unwrap_or(Value::Null);
+                            let v = if v.is_null() && PROFILE_TEXT_FIELDS.contains(&f.as_str()) { json!("") } else { v };
+                            (f.clone(), v)
+                        })
+                        .collect();
+                    if let Err(undo) = async {
+                        crate::api::profile::update_profile(pool, serde_json::from_value(Value::Object(restore))?).await
+                    }
+                    .await
+                    {
+                        tracing::warn!("apply draft: couldn't put the profile half back: {undo}");
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+    if let Some((before, after, _)) = &profile_saved {
+        record_diff_by(pool, "assistant", before, after, PROFILE_FIELDS).await;
     }
     Ok(())
 }
@@ -519,7 +667,7 @@ mod tests {
         assert_eq!(stored_value("request_run_limit_micros", &json!(1_500_000), false), Some(json!(1_500_000)));
         assert_eq!(stored_value("assistant_name", &json!("  "), true), None);
         assert_eq!(stored_value("assistant_name", &json!("x".repeat(101)), true), None);
-        assert_eq!(stored_value("home_timezone", &json!("America/Chicago"), true), Some(json!("America/Chicago")));
+        assert_eq!(stored_value("home_timezone", &json!("Europe/Lisbon"), true), Some(json!("Europe/Lisbon")));
         assert_eq!(stored_value("sidebar_doors", &json!("x"), true), None);
     }
 
@@ -533,16 +681,16 @@ mod tests {
 
     #[test]
     fn diff_lists_only_tracked_fields_that_changed() {
-        let before = json!({ "theme": "oxford", "full_name": "Nick", "sidebar_doors": null });
-        let after = json!({ "theme": "pemberley", "full_name": "Nick", "sidebar_doors": { "order": [] } });
+        let before = json!({ "employer": "Fieldwork", "full_name": "Nick", "sidebar_doors": null });
+        let after = json!({ "employer": "Northwind", "full_name": "Nick", "sidebar_doors": { "order": [] } });
         let changes = diff_fields(&before, &after, PROFILE_FIELDS);
         assert_eq!(
             changes,
             vec![FieldChange {
-                setting_id: "theme",
-                field: "theme",
-                old_value: json!("oxford"),
-                new_value: json!("pemberley"),
+                setting_id: "employer",
+                field: "employer",
+                old_value: json!("Fieldwork"),
+                new_value: json!("Northwind"),
             }]
         );
     }
@@ -564,10 +712,44 @@ mod tests {
     }
 
     #[test]
-    fn undo_needs_a_value_to_write_back_except_for_model_slots() {
-        assert!(undoable("theme", &json!("oxford")));
-        assert!(!undoable("theme", &Value::Null));
+    fn undo_needs_a_value_to_write_back_except_for_clearable_fields() {
+        assert!(undoable(THEME_FIELD, &json!("oxford")));
+        assert!(!undoable(THEME_FIELD, &Value::Null));
         assert!(undoable("standard_model_id", &Value::Null));
+        assert!(undoable("employer", &Value::Null), "a profile text field can go back to empty");
+        assert!(!undoable("assistant_name", &Value::Null));
         assert!(!undoable("sidebar_doors", &json!({})));
+    }
+
+    #[test]
+    fn the_theme_is_read_from_ui_preferences() {
+        assert_eq!(theme_of(&json!({ "ui_preferences": { "theme": "asgard" } })), json!("asgard"));
+        assert_eq!(theme_of(&json!({ "ui_preferences": null })), Value::Null);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn undo_refuses_when_the_setting_changed_again_and_runs_once(pool: PgPool) {
+        // Two limit changes in a row; undoing the first would lose the second.
+        record(&pool, "limit-day", "request_day_limit_micros", &json!(1_000_000), &json!(2_000_000)).await;
+        record(&pool, "limit-day", "request_day_limit_micros", &json!(2_000_000), &json!(3_000_000)).await;
+        sqlx::query("UPDATE app_assistant_profile SET request_day_limit_micros = 3000000").execute(&pool).await.unwrap();
+        let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM app_settings_changes ORDER BY id").fetch_all(&pool).await.unwrap();
+
+        assert!(undo(&pool, ids[0]).await.is_err(), "the older change is no longer what is stored");
+        undo(&pool, ids[1]).await.expect("the newest change undoes");
+        assert!(undo(&pool, ids[1]).await.is_err(), "a second undo of the same row is refused");
+        let stored: Option<i64> =
+            sqlx::query_scalar("SELECT request_day_limit_micros FROM app_assistant_profile").fetch_one(&pool).await.unwrap();
+        assert_eq!(stored, Some(2_000_000));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_cleared_profile_field_undoes_back_to_its_value_and_clears_again(pool: PgPool) {
+        sqlx::query("UPDATE app_user_profile SET employer = NULL").execute(&pool).await.unwrap();
+        record(&pool, "employer", "employer", &json!("Northwind"), &Value::Null).await;
+        let id: i64 = sqlx::query_scalar("SELECT id FROM app_settings_changes").fetch_one(&pool).await.unwrap();
+        undo(&pool, id).await.expect("undo restores the value");
+        let stored: Option<String> = sqlx::query_scalar("SELECT employer FROM app_user_profile").fetch_one(&pool).await.unwrap();
+        assert_eq!(stored.as_deref(), Some("Northwind"));
     }
 }

@@ -157,8 +157,8 @@
                             an edit here would break what it reads.
                         </p>
                         <p class="mt-2">
-                            To keep data of your own, make your own database in
-                            the <strong>Terminal</strong> tab.
+                            To keep data of your own, make your own database in a
+                            terminal: press ⌘K and choose <strong>Open a terminal on your server</strong>.
                         </p>
                     </div>
                 </div>

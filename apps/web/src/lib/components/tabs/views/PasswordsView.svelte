@@ -4,8 +4,8 @@
 	 *
 	 * The list carries site, label and username. A password and its notes are
 	 * fetched when you open a login, and nothing the assistant can call reads
-	 * them (`api/passwords.rs`). API keys for applets and the sources'
-	 * sign-ins are in Settings → Keys (`KeysView`).
+	 * them (`api/passwords.rs`). API keys for applets are in Settings → Keys
+	 * (`KeysView`).
 	 *
 	 * A login the server's key cannot open comes back `unreadable`, with its
 	 * site and label only. Opening one says what happened and offers Remove,

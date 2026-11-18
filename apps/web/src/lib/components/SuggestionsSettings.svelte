@@ -7,7 +7,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Switch from '$lib/components/settings/Switch.svelte';
-	import { getApplet, patchApplet } from '$lib/api/client';
+	import { getApplet, patchApplet, ApiError } from '$lib/api/client';
 
 	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
 
@@ -19,16 +19,22 @@
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
-	onMount(async () => {
+	let loadError = $state(false);
+
+	async function load() {
+		loadError = false;
 		try {
 			enabled = (await getApplet(APPLET_ID)).enabled;
 			loaded = true;
-		} catch {
+		} catch (e) {
 			// A server older than suggestions has no such applet, so there is
-			// nothing to switch.
-			missing = true;
+			// nothing to switch. Any other failure is said, with Try again.
+			if (e instanceof ApiError && e.status === 404) missing = true;
+			else loadError = true;
 		}
-	});
+	}
+
+	onMount(load);
 
 	async function toggle() {
 		saving = true;
@@ -55,7 +61,9 @@
 			</div>
 			<Switch checked={enabled} label="Suggested questions" disabled={!loaded || saving} onchange={() => toggle()} />
 		</div>
-		{#if error}
+		{#if loadError}
+			<p class="error">Your server couldn't read this setting. <button type="button" class="again" onclick={load}>Try again</button></p>
+		{:else if error}
 			<p class="error">{error}</p>
 		{/if}
 	</section>
@@ -81,5 +89,14 @@
 		margin: 8px 0 0;
 		font-size: 12px;
 		color: var(--color-error);
+	}
+
+	.again {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
 	}
 </style>

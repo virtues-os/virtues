@@ -45,8 +45,15 @@
 	let restart = $state<{ phase: 'going' | 'back'; error?: string; detail?: string } | null>(null);
 	let applyError = $state<string | null>(null);
 	let watchTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Set when the page goes away, so a poll already waiting on the server
+	 *  does not schedule another (or reload whatever page you are on). */
+	let destroyed = false;
+	let channelError = $state<string | null>(null);
+	/** Bumped when a switch fails, so the menu redraws on the channel that held. */
+	let channelKey = $state(0);
 
 	onDestroy(() => {
+		destroyed = true;
 		if (watchTimer) clearTimeout(watchTimer);
 	});
 
@@ -94,11 +101,14 @@
 	async function switchChannel(channel: 'stable' | 'prerelease') {
 		if (switching || status?.channel === channel) return;
 		switching = true;
+		channelError = null;
 		try {
 			await setUpdateChannel(channel);
 			await check();
 		} catch (err) {
 			console.error('[updates] channel switch failed:', err);
+			channelError = "Your server couldn't change which updates it takes. It's still on the one shown. Try again.";
+			channelKey += 1;
 		} finally {
 			switching = false;
 		}
@@ -204,7 +214,9 @@
 		};
 
 		const poll = async () => {
+			if (destroyed) return;
 			const now = await probe();
+			if (destroyed) return;
 			const alive = !!now?.ok;
 			// Older servers send no stamp; for them, coming back is all there is.
 			const moved = before === null || (!!now?.build && now.build !== before);
@@ -318,7 +330,9 @@
 				     deliberate reach, which is the honest shape of this
 				     decision. -->
 				<div class="channel-picker">
-					<Choice id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
+					{#key channelKey}
+						<Choice id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
+					{/key}
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
 							<Icon icon="mynaui:danger-triangle" width="13" />
@@ -326,6 +340,7 @@
 						</span>
 					{/if}
 				</div>
+				{#if channelError}<p class="state error">{channelError}</p>{/if}
 			</dd>
 		</dl>
 
@@ -367,7 +382,7 @@
 			     leaves a box unpatched. -->
 			<p class="state error">
 				<Icon icon="mynaui:danger-circle" width="14" />
-				Couldn't check for updates — {status.check_error}
+				Couldn't check for updates: {status.check_error}
 			</p>
 		{:else if status.running_ahead}
 			<!-- Neither "up to date" nor "update available" is true here, and
@@ -432,9 +447,9 @@
 
 		{#if aheadOfStable}
 			<p class="note">
-				On Staging you're usually ahead of the last stable release. Switching
-				back to Main stops new prereleases; it doesn't move your server backwards,
-				so nothing changes until stable catches up.
+				Early updates usually put your server ahead of the last released one.
+				Switching back to Released stops early updates. Your server stays on
+				the version it has until a released one catches up.
 			</p>
 		{/if}
 	{:else if !loading}

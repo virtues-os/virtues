@@ -25,6 +25,8 @@ model provider.
 | Transcription | **the audio itself**, not a transcript |
 | Image generation | the prompt, and any image supplied to edit |
 | An applet with an `agent` prompt | whatever that applet was written to read |
+| Settings: a drafted change (Return in the search field) | what the owner typed, and the current values of the settings it may change: names, work, employer, time zone, the assistant's name and style notes, the two spending limits |
+| Settings: a sample reply ("How {name} talks to you") | the owner's display name, the assistant's name, and the style notes in the field, saved or not; the week it answers about is invented, so no record goes out |
 
 Hosted path: box → `api.virtues.com` → the AI gateway → the model's provider.
 Two parties besides the provider handle the request in the clear. The provider

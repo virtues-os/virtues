@@ -18,30 +18,20 @@
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
 	  Server       /virtues/server         — updates, and reaching it from away
-	  Keys         /virtues/keys           — sign-ins and the named keys applets use
+	  Keys         /virtues/keys           — the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
-	  Network      /virtues/network        — which network the box is on
-	  Software     /virtues/software       — release, track, update, artifacts
-	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
+	  Devices      /virtues/devices        — paired devices, and Unpair
+	               /virtues/devices/server — the server's own page: its release
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
 	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
-	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
-	picker, an update installer, an 8-chapter telemetry console and a
-	revoke-every-device button on a single scroll — a reading, two settings and
-	a detonator sharing one scrollbar — and the console's own "Network &
-	Devices" and "About" chapters answered questions the two sections above
-	them had already answered differently. Splitting it by subject is what
-	removes the duplication; it was never really one room.
-
-	There is no "Sign out" — auth is the device's proven iroh key, not a server
-	session. The destructive action is Unpair, and it lives next to the thing it
-	destroys (Devices) — which is also why "Start over", the plural of Unpair,
-	moved there out of Box.
+	There is no "Sign out": auth is the device's proven iroh key, not a server
+	session. The destructive actions are Unpair, beside the device it removes,
+	and Start over, at the foot of the landing page, which unpairs everything.
 
 	Legacy flat/nested routes (/virtues/account, /virtues/connections/*,
 	/virtues/box/devices, /virtues/developer/console, …) self-heal on mount.
@@ -72,8 +62,8 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Old routes → their home in the flattened room. Rewritten in place so the
-	// sub-nav underline and the content both land on the canonical section.
+	// Old routes → where each lives now. Rewritten in place, so the tab's
+	// history keeps only the current route.
 	const LEGACY_ROUTES: Record<string, string> = {
 		'/virtues/you': '/virtues/profile',
 		'/virtues/account': '/virtues/profile',
@@ -127,9 +117,9 @@
 		'/virtues/developer/activity': '/virtues/devices',
 	};
 
-	// Sources left Settings for its own door, so these can't be rewritten in
-	// place the way the others are — `/sources` is a different tab type, and
-	// only `navigate` re-resolves that through the registry.
+	// Sources left Settings for its own door. `/sources` is a different tab
+	// type, so these go through `retarget`, which re-resolves the type and
+	// replaces this tab's history slot in place.
 	const SOURCES_ALIASES = [
 		'/virtues/sources',
 		'/virtues/connections/sources',
@@ -138,27 +128,27 @@
 	];
 
 	// Streams and SQL are sections of Sources now (Streams, Query). Their old
-	// doors land there, a different tab type, so they go through `navigate`
-	// like Sources' aliases. Terminal keeps its route; ⌘K opens it.
+	// doors land there through `retarget`, like Sources' aliases. Terminal
+	// keeps its route; ⌘K opens it.
 	const STREAMS_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
 	const QUERY_ALIASES = ['/virtues/developer', '/virtues/developer/sql', '/virtues/developer/console', '/virtues/sql'];
 
 	$effect(() => {
 		// Services the assistant can act in are rows in the Sources catalog.
 		if (tab.route === '/virtues/connections') {
-			windowShellStore.navigate('/sources/catalog', { label: 'Sources · Catalog' });
+			windowShellStore.retarget(tab.id, '/sources/catalog', 'Sources · Catalog');
 			return;
 		}
 		if (SOURCES_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/sources', { label: 'Sources' });
+			windowShellStore.retarget(tab.id, '/sources', 'Sources');
 			return;
 		}
 		if (STREAMS_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/sources/streams', { label: 'Sources · Streams' });
+			windowShellStore.retarget(tab.id, '/sources/streams', 'Sources · Streams');
 			return;
 		}
 		if (QUERY_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/sources/query', { label: 'Sources · Query' });
+			windowShellStore.retarget(tab.id, '/sources/query', 'Sources · Query');
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];

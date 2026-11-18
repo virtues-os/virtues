@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Settings → System → Network: the relay switch. Whether this server keeps
+	 * Settings → Updates and network: the relay switch. Whether this server keeps
 	 * a rendezvous on the Virtues relay, so devices find it away from home, and
 	 * which relay that is. The server's own network connection is the owner's
 	 * to manage on that machine.

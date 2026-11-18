@@ -19,7 +19,8 @@
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { recentRows } from "$lib/sidebar/recents.svelte";
 	import { formatDate } from "$lib/utils/dateUtils";
-	import { contentGlyph, previewOf, projectOfRow, rowNoun, settingPlace, type SearchRow } from "$lib/search/results";
+	import { contentGlyph, previewOf, projectOfRow, rowNoun, type SearchRow } from "$lib/search/results";
+	import { settingPlace } from "$lib/settings";
 
 	interface Props {
 		row: SearchRow | null;

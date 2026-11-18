@@ -65,11 +65,8 @@ export interface SidebarMode {
 }
 
 /**
- * Settings' pages under two headings, for the crumbs on those pages:
- *
- *   ACCOUNT — you, your assistant, what AI costs you.
- *   SERVER — the machine, its search, the devices paired to it, shared links
- *     and applets.
+ * Settings' pages under the landing page's three headings (LANDING in
+ * lib/settings), for the crumbs on those pages: You, Your data, Your server.
  */
 // TODO(2026-11-17): migrate the crumbs off these rows. Settings' pages are
 // listed in lib/settings (its landing links to each) and Sources is its own
@@ -82,76 +79,28 @@ export const SETTINGS_MODE: SidebarMode = {
 		// "Profile", not "You": the wiki has the other "You", the narrative
 		// identity, and two rows with one label in two rooms is a question the
 		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/profile', group: 'Account' },
-		{
-			id: 'assistant',
-			label: 'Assistant',
-			icon: 'mynaui:sparkles',
-			glyph: 'assistant',
-			href: '/virtues/assistant',
-			group: 'Account',
-		},
-		{
-			id: 'appearance',
-			label: 'Appearance',
-			icon: 'mynaui:sun',
-			href: '/virtues/appearance',
-			group: 'Account',
-		},
+		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/profile', group: 'You' },
+		{ id: 'assistant', label: 'Assistant', icon: 'mynaui:sparkles', glyph: 'assistant', href: '/virtues/assistant', group: 'You' },
+		{ id: 'appearance', label: 'Appearance', icon: 'mynaui:sun', href: '/virtues/appearance', group: 'You' },
 		// Subscription, balance and limits; what AI has cost is its sub-page.
-		{
-			id: 'billing',
-			label: 'Billing',
-			icon: 'mynaui:credit-card',
-			glyph: 'billing',
-			href: '/virtues/billing',
-			group: 'Account',
-		},
-		// The secrets the server keeps: sources' sign-ins and the named keys
-		// applets use. Values show only when asked for.
-		{
-			id: 'keys',
-			label: 'Keys',
-			icon: 'mynaui:key',
-			glyph: 'keys',
-			href: '/virtues/keys',
-			group: 'Account',
-		},
-		{ id: 'server', label: 'Updates and network', icon: 'mynaui:refresh', href: '/virtues/server', group: 'Server' },
+		{ id: 'billing', label: 'Billing', icon: 'mynaui:credit-card', glyph: 'billing', href: '/virtues/billing', group: 'You' },
+		// The named keys applets use. Values show only when asked for.
+		{ id: 'keys', label: 'Keys', icon: 'mynaui:key', glyph: 'keys', href: '/virtues/keys', group: 'Your data' },
+		// Every link the owner has shared, live or ended.
+		{ id: 'shared', label: 'Shared links', icon: 'mynaui:share', glyph: 'shared', href: '/virtues/shared', group: 'Your data' },
+		{ id: 'backup', label: 'Backup', icon: 'mynaui:archive', href: '/virtues/backup', group: 'Your data' },
+		{ id: 'server', label: 'Updates and network', icon: 'mynaui:refresh', href: '/virtues/server', group: 'Your server' },
 		// The machine itself, measured.
-		{ id: 'system', label: 'System', icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Server' },
+		{ id: 'system', label: "How it's doing", icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Your server' },
 		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
-		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Server' },
+		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Your server' },
 		// Every participant, the server first: the release it runs is a fact
 		// about a device.
-		{
-			id: 'devices',
-			label: 'Devices',
-			icon: 'mynaui:mobile',
-			glyph: 'devices',
-			href: '/virtues/devices',
-			group: 'Server',
-		},
-		// Every link the owner has shared, live or ended, with revoke.
-		{
-			id: 'shared',
-			label: 'Shared links',
-			icon: 'mynaui:share',
-			glyph: 'shared',
-			href: '/virtues/shared',
-			group: 'Server',
-		},
+		{ id: 'devices', label: 'Devices', icon: 'mynaui:mobile', glyph: 'devices', href: '/virtues/devices', group: 'Your server' },
 		// Every applet on the server, built-in ones included: when each runs and
 		// how its runs went. The Applets page in Home is where you use them;
 		// this is where you check them.
-		{
-			id: 'applets',
-			label: 'Applets',
-			icon: 'atlas:applets',
-			glyph: 'applets',
-			href: '/virtues/applets',
-			group: 'Server',
-		},
+		{ id: 'applets', label: 'Applets', icon: 'atlas:applets', glyph: 'applets', href: '/virtues/applets', group: 'Your server' },
 	],
 };
 

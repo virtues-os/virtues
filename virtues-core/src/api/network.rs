@@ -23,20 +23,21 @@ use crate::server::AppState;
 /// consults it only when no stored config exists, so on any linked box the env
 /// var is inert — see `relay::resolve_relay_url`.
 pub async fn relay_status_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let stored = crate::virtues_api::relay::load(state.db.pool())
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.relay_url);
-    let disabled = stored.as_deref().is_some_and(|s| {
-        matches!(s.to_ascii_lowercase().as_str(), "off" | "none" | "disabled")
-    });
+    // absent-ok: an unreadable config reads as the default, on, which is
+    // also what the relay itself falls back to.
+    let enabled = relay_enabled(state.db.pool()).await.unwrap_or(true);
     Json(serde_json::json!({
-        "enabled": !disabled,
+        "enabled": enabled,
         "relay_url": crate::relay::box_relay_url(),
         "default_url": crate::relay::DEFAULT_RELAY_URL,
         "homed": crate::relay::is_relay_registered(),
     }))
+}
+
+/// The switch state: off only when the stored config carries the off word.
+async fn relay_enabled(pool: &sqlx::PgPool) -> crate::error::Result<bool> {
+    let stored = crate::virtues_api::relay::load(pool).await?.map(|c| c.relay_url);
+    Ok(!stored.as_deref().is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "off" | "none" | "disabled")))
 }
 
 #[derive(Deserialize)]
@@ -55,6 +56,8 @@ pub async fn relay_toggle_handler(
     State(state): State<AppState>,
     Json(body): Json<RelayToggleBody>,
 ) -> impl IntoResponse {
+    // For Changed lately: record only a real change. Unreadable, it is not recorded.
+    let before = relay_enabled(state.db.pool()).await.ok();
     let res = if body.enabled {
         crate::secrets::delete(state.db.pool(), crate::secrets::Kind::Box, crate::virtues_api::relay::BOX_SECRET_KEY).await
     } else {
@@ -73,13 +76,15 @@ pub async fn relay_toggle_handler(
             .into_response();
     }
     crate::relay::request_rebind();
-    crate::api::settings_changes::record(
-        state.db.pool(),
-        "reach",
-        "relay_enabled",
-        &serde_json::json!(!body.enabled),
-        &serde_json::json!(body.enabled),
-    )
-    .await;
+    if before.is_some_and(|was| was != body.enabled) {
+        crate::api::settings_changes::record(
+            state.db.pool(),
+            "reach",
+            "relay_enabled",
+            &serde_json::json!(!body.enabled),
+            &serde_json::json!(body.enabled),
+        )
+        .await;
+    }
     Json(serde_json::json!({ "ok": true, "enabled": body.enabled })).into_response()
 }
