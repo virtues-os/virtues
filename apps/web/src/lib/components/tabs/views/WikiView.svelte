@@ -58,6 +58,8 @@
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 	import WikiFront from '$lib/components/wiki/WikiFront.svelte';
 	import ListRow from '$lib/components/datagrid/ListRow.svelte';
+	import PersonPicture from '$lib/components/wiki/PersonPicture.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -151,6 +153,8 @@
 		id: string;
 		name: string;
 		entityType: 'person' | 'place' | 'org';
+		/** A person's picture, usually their contact photo. Places and orgs have none. */
+		picture: string | null;
 		subtitle: string | null;
 		route: string;
 		refCount: number;
@@ -194,6 +198,7 @@
 					id: p.id,
 					name: p.name,
 					entityType: 'person',
+					picture: p.picture,
 					subtitle: p.relationship_category,
 					route: `/person/${p.id}`,
 					refCount: p.ref_count ?? 0,
@@ -203,6 +208,7 @@
 					id: p.id,
 					name: p.name,
 					entityType: 'place',
+					picture: null,
 					subtitle: p.category || p.address,
 					route: `/place/${p.id}`,
 					refCount: p.ref_count ?? 0,
@@ -212,6 +218,7 @@
 					id: o.id,
 					name: o.name,
 					entityType: 'org',
+					picture: null,
 					subtitle: o.organization_type || o.relationship_type,
 					route: `/org/${o.id}`,
 					refCount: o.ref_count ?? 0,
@@ -563,12 +570,22 @@
 						{/snippet}
 
 						{#snippet listRow(entity: UnifiedEntity)}
+							<!-- A person shows their face, or their initials without one,
+							     the same as on their page. Places and orgs keep a glyph. -->
 							<ListRow
 								icon={typeConfig[entity.entityType].icon}
 								title={entity.name}
 								line={detailLine(entity)}
 								note={entity.isSelf ? 'You' : null}
-							/>
+							>
+								{#snippet lead()}
+									{#if entity.entityType === 'person'}
+										<span class="row-picture"><PersonPicture name={entity.name} picture={entity.picture} size={28} /></span>
+									{:else}
+										<Icon icon={typeConfig[entity.entityType].icon} width="16" />
+									{/if}
+								{/snippet}
+							</ListRow>
 						{/snippet}
 					</UniversalDataGrid>
 				{/key}
@@ -593,6 +610,13 @@
 </div>
 
 <style>
+	/* ListRow sets its glyph 0.25rem down to sit on the name's first line; a
+	   28px picture is taller than that line, so it moves up to center on it. */
+	.row-picture {
+		display: block;
+		margin-top: -0.375rem;
+	}
+
 	.wiki-view {
 		display: flex;
 		flex-direction: column;

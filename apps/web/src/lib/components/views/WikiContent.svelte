@@ -42,6 +42,13 @@
 		| { kind: "thing"; page: ThingDetailApi };
 
 	interface Props {
+		/**
+		 * What kind of page this is, from the route's first segment: person,
+		 * place, org, thing, day or year. The route decides, not the id's
+		 * prefix, because ids don't all carry their kind (a seeded person can be
+		 * `demo_…`).
+		 */
+		kind: string | undefined;
 		/** The entity ID to display (e.g., person_abc123, day_2026-01-25) */
 		entityId?: string;
 		/** Whether this content is currently active/visible */
@@ -50,7 +57,7 @@
 		onLabelChange?: (label: string) => void;
 	}
 
-	let { entityId = "", active = true, onLabelChange }: Props = $props();
+	let { kind, entityId = "", active = true, onLabelChange }: Props = $props();
 
 	let loading = $state(true);
 	/** The spinner waits, so a page that loads quickly never flashes one. */
@@ -71,11 +78,12 @@
 		onLabelChange?.(label);
 	}
 
-	// Extract the type and identifier from an entity ID
+	// The route's kind, and the id with that kind's prefix taken off (a day's
+	// date from `day_2026-01-25`).
 	function parseId(id: string): { type: string; identifier: string } | null {
-		const match = id.match(/^([a-z]+)_(.+)$/);
-		if (!match) return null;
-		return { type: match[1], identifier: match[2] };
+		if (!kind) return null;
+		const prefix = `${kind}_`;
+		return { type: kind, identifier: id.startsWith(prefix) ? id.slice(prefix.length) : id };
 	}
 
 	// Load wiki page data

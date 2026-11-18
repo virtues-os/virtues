@@ -52,8 +52,10 @@
 		align-items: flex-start;
 		gap: 0.875rem;
 	}
+	/* At least the 16px glyph wide; a `lead` such as a person's picture may be wider. */
 	.row-icon {
-		flex: 0 0 16px;
+		flex: 0 0 auto;
+		min-width: 16px;
 		margin-top: 0.25rem;
 		color: var(--color-foreground-muted);
 	}
