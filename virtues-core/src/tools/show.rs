@@ -66,6 +66,10 @@ struct ShowArgs {
     /// density: the stretch the minutes cover, in a few words.
     #[serde(default)]
     period: Option<String>,
+    /// numbers: for a figure that stands for a series, its column and the
+    /// SELECT of the rows it summarizes.
+    #[serde(default)]
+    series: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// The call fields a chart mark reads beyond its rows, trimmed.
@@ -90,6 +94,8 @@ const MAX_PERIOD_CHARS: usize = 40;
 const MAX_MODE_CHARS: usize = 24;
 const MAX_ALIGNED_EVENTS: usize = 40;
 const MAX_LANES: usize = 12;
+/// A figure's series has as many rows as a chart.
+const MAX_SERIES_ROWS: usize = 199;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -274,6 +280,58 @@ pub async fn execute(
     if matches!(drawn.mark, "swimlanes" | "lollipop") {
         let today = crate::timezone::owner_rfc3339(chrono::Utc::now(), timezone);
         shaped.insert("as_of".into(), json!(today.get(..10).unwrap_or(&today)));
+    }
+    match (kind, args.series) {
+        (Kind::Numbers, Some(series)) if !series.is_empty() => {
+            let figures = shaped
+                .get("columns")
+                .and_then(Value::as_array)
+                .map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let mut drawn_series = Map::new();
+            for (column, series_sql) in series {
+                if !figures.contains(&column) {
+                    return Err(invalid(format!(
+                        "series names \"{column}\", which the figures query does not return; its keys are the figure columns: {}",
+                        figures.join(", ")
+                    )));
+                }
+                let result = sql_query
+                    .query_for_show(series_sql.trim(), MAX_SERIES_ROWS as u32 + 1, timezone, schema)
+                    .await?;
+                if result.data.get("truncated").is_some() {
+                    return Err(invalid(format!(
+                        "series \"{column}\" is too large to carry; aggregate it (GROUP BY a day or a week)"
+                    )));
+                }
+                let cols: Vec<String> = result.data["columns"]
+                    .as_array()
+                    .map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                let rows: Vec<Value> = result.data["rows"].as_array().cloned().unwrap_or_default();
+                drawn_series.insert(column.clone(), Value::Object(shape_series(&column, &cols, rows)?));
+            }
+            shaped.insert("series".into(), Value::Object(drawn_series));
+            // The figures and every series reach the model in one result.
+            if serde_json::to_vec(&shaped).map_or(0, |b| b.len()) > super::sql_query::MAX_RESULT_BYTES {
+                return Err(invalid(
+                    "the series are too large to carry together; give each fewer rows (a month by day, a year by week)",
+                ));
+            }
+        }
+        (Kind::Numbers, _) if drawn.mark == "spark" => {
+            return Err(invalid(
+                "mark spark draws each figure's series as a sparkline; add series, which maps each figure's \
+                 column to the SELECT of the rows it summarizes",
+            ))
+        }
+        (Kind::Numbers, _) | (_, None) => {}
+        (_, Some(_)) => {
+            return Err(invalid(
+                "series belongs to numbers (in_sentence or spark): it maps a figure's column to the SELECT of \
+                 the rows that figure summarizes",
+            ))
+        }
     }
     shaped.insert("title".into(), json!(title));
     if let Some(p) = purpose {
@@ -1153,6 +1211,42 @@ fn shape_density(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> R
         return Err(invalid("no place has minutes; filter out rows where it is null"));
     }
     Ok(figure_out(Kind::Map, columns, rows))
+}
+
+/// A figure's series: the x axis first, one value, and figure, the figure's
+/// level on the rows it summarizes and null on the rows shown around them.
+/// Pure.
+fn shape_series(name: &str, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > MAX_SERIES_ROWS {
+        return Err(invalid(format!(
+            "series \"{name}\" draws at most {MAX_SERIES_ROWS} rows; aggregate to fewer (GROUP BY a week)"
+        )));
+    }
+    if rows.len() < 2 {
+        return Err(invalid(format!("series \"{name}\" needs at least two rows; one value belongs in the sentence")));
+    }
+    let figure = columns.iter().position(|c| c == "figure");
+    if columns.len() != 3 || figure.is_none_or(|i| i == 0) {
+        return Err(invalid(format!(
+            "series \"{name}\" is the x axis as its first column, one numeric column, and figure; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    let value = columns[1..].iter().find(|c| *c != "figure").expect("three columns, one of them figure");
+    numeric_column(&mut rows, value, "a series value")?;
+    numeric_column(&mut rows, "figure", "a series' figure")?;
+    if rows.iter().all(|r| r["figure"].is_null()) {
+        return Err(invalid(format!(
+            "series \"{name}\": figure is null in every row, so the figure stands for no row. Set it to the \
+             figure's level on the rows it summarizes"
+        )));
+    }
+    let mut out = Map::new();
+    out.insert("columns".into(), json!(columns));
+    out.insert("row_count".into(), json!(rows.len()));
+    out.insert("rows".into(), Value::Array(rows));
+    Ok(out)
 }
 
 /// lat and lon as numbers in range, the rows outside it left out.
@@ -2079,6 +2173,45 @@ mod tests {
         assert_eq!((out["row_count"].as_u64(), out["rows"][0]["minutes"].as_f64()), (Some(1), Some(120.0)));
         check_mark("density", &fields(|f| f.period = Some("in September".into())), &columns, &mut out).unwrap();
         assert_eq!(out["period"], json!("in September"));
+    }
+
+    #[test]
+    fn a_series_is_the_x_axis_a_value_and_its_figure() {
+        let r = |d: &str, v: Value, f: Value| json!({ "Night": d, "Hours": v, "figure": f });
+        let rows = vec![r("2026-09-01", json!("7.5"), Value::Null), r("2026-09-02", json!(6.9), json!(7.2))];
+        let out = shape_series("Average", &cols(&["Night", "Hours", "figure"]), rows).unwrap();
+        assert_eq!((out["rows"][0]["Hours"].as_f64(), out["row_count"].as_u64()), (Some(7.5), Some(2)));
+        let no_figure = vec![r("2026-09-01", json!(7.5), Value::Null), r("2026-09-02", json!(6.9), Value::Null)];
+        assert!(err(shape_series("Average", &cols(&["Night", "Hours", "figure"]), no_figure)).contains("null in every row"));
+        let one = vec![r("2026-09-01", json!(7.5), json!(7.5))];
+        assert!(err(shape_series("Average", &cols(&["Night", "Hours", "figure"]), one)).contains("at least two rows"));
+        let two = vec![json!({ "Night": "2026-09-01", "Hours": 7 }), json!({ "Night": "2026-09-02", "Hours": 7 })];
+        assert!(err(shape_series("Average", &cols(&["Night", "Hours"]), two)).contains("and figure"));
+    }
+
+    #[sqlx::test]
+    async fn numbers_carry_a_series_per_figure_and_spark_needs_one(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(std::sync::Arc::new(pool));
+        let figure = r#"SELECT 7.2 AS "Average night""#;
+        let nights = r#"SELECT d::date AS "Night", h AS "Hours", f AS figure FROM (VALUES ('2026-09-01', 7.5, 7.2), ('2026-09-02', 6.9, 7.2)) v(d, h, f)"#;
+        let out = execute(&tool, json!({ "chart": "in_sentence", "sql": figure, "series": { "Average night": nights } }), None, None)
+            .await
+            .unwrap()
+            .data;
+        assert_eq!(out["series"]["Average night"]["row_count"], json!(2), "{out}");
+        let out = execute(&tool, json!({ "chart": "spark", "sql": figure, "series": { "Average night": nights } }), None, None)
+            .await
+            .unwrap()
+            .data;
+        assert_eq!((out["kind"].as_str(), out["mark"].as_str()), (Some("numbers"), Some("spark")), "{out}");
+        let Err(ToolError::InvalidParameters(m)) = execute(&tool, json!({ "chart": "spark", "sql": figure }), None, None).await else { panic!() };
+        assert!(m.contains("add series"), "{m}");
+        let Err(ToolError::InvalidParameters(m)) =
+            execute(&tool, json!({ "chart": "in_sentence", "sql": figure, "series": { "Total": nights } }), None, None).await
+        else {
+            panic!()
+        };
+        assert!(m.contains("figure columns: Average night"), "{m}");
     }
 
     #[test]

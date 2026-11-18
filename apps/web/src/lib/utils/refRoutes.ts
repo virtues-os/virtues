@@ -111,17 +111,19 @@ export function parseEntityRoute(route: string): string | null {
 
 // `/chat/{chat}/tool/{call}`: the whole result of one tool call, the rows
 // behind a computed figure. The box attaches it to every sql_query and
-// show result, and it opens in a tab of its own (QueryView).
-const TOOL_REF = /^\/chat\/([^/?#]+)\/tool\/([^/?#]+)$/;
+// show result, and it opens in a tab of its own (QueryView). `#n` names the
+// series behind the call's nth figure (a `show` of numbers with series).
+const TOOL_REF = /^\/chat\/([^/?#]+)\/tool\/([^/?#]+)(?:#(\d))?$/;
 
-/** A query ref's chat and call, or null for any other link. */
-export function parseToolRef(url: string): { chatId: string; callId: string } | null {
+/** A query ref's chat and call, and the figure it names, or null for any other link. */
+export function parseToolRef(url: string): { chatId: string; callId: string; figure?: number } | null {
 	const m = TOOL_REF.exec(url);
-	return m ? { chatId: m[1], callId: m[2] } : null;
+	if (!m) return null;
+	return m[3] ? { chatId: m[1], callId: m[2], figure: Number(m[3]) } : { chatId: m[1], callId: m[2] };
 }
 
 export type LinkTarget =
-	| { kind: 'query'; callId: string }
+	| { kind: 'query'; callId: string; figure?: number }
 	| { kind: 'entity' }
 	| { kind: 'external' }
 	| { kind: 'other' }
@@ -133,8 +135,8 @@ export type LinkTarget =
  */
 export function linkTarget(url: string | null | undefined): LinkTarget {
 	if (!url) return { kind: 'none' };
-	const callId = parseToolRef(url)?.callId;
-	if (callId) return { kind: 'query', callId };
+	const tool = parseToolRef(url);
+	if (tool) return tool.figure ? { kind: 'query', callId: tool.callId, figure: tool.figure } : { kind: 'query', callId: tool.callId };
 	if (parseEntityRoute(url) !== null) return { kind: 'entity' };
 	if (/^https?:\/\//.test(url)) return { kind: 'external' };
 	return { kind: 'other' };

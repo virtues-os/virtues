@@ -264,7 +264,15 @@ pub const MARKS: &[ChartMark] = &[
         name: "Numbers",
         kind: "numbers",
         purposes: &["in_sentence"],
-        line: "one row of 1-4 columns, each a figure",
+        line: "one row of 1-4 figures; optional series",
+        max_rows: 1,
+    },
+    ChartMark {
+        mark: "spark",
+        name: "Sparkline",
+        kind: "numbers",
+        purposes: &["in_sentence"],
+        line: "numbers with series, as sparklines",
         max_rows: 1,
     },
     ChartMark {

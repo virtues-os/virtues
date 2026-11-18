@@ -801,7 +801,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// /chat/<chat>/tool/<call> — the rows one query returned, which a chat
 		// answer's figure links to. Matched before `chat`, whose own routes
 		// stop at the chat id.
-		match: (path) => /^\/chat\/[^/]+\/tool\/[^/]+$/.test(path),
+		match: (path) => /^\/chat\/[^/]+\/tool\/[^/#]+(#\d)?$/.test(path),
 		parse: (path) => ({
 			type: 'query',
 			label: 'Query',

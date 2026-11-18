@@ -806,7 +806,7 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
 ///
 /// Was 256 KiB until 2026-09-25. A real box sent one 130 KB result through
 /// five steps of one turn, then replayed it into the rest of that chat.
-const MAX_RESULT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_RESULT_BYTES: usize = 64 * 1024;
 
 /// Convert Postgres rows to JSON array. `timestamptz` values are written on
 /// the owner's clock in `zone` (see [`crate::timezone::owner_rfc3339`]).

@@ -46,7 +46,7 @@ export interface ShowOutput {
 	kind: ShowKind;
 	title?: string | null;
 	/** The marks are virtues_registry::chart_marks::MARKS. A plain map or timeline carries none. */
-	mark?: "bar" | "line" | KitMark;
+	mark?: "bar" | "line" | "spark" | KitMark;
 	/** The purpose the call gave, when it gave one. */
 	purpose?: string;
 	/** cumulative only */
@@ -65,6 +65,8 @@ export interface ShowOutput {
 	days?: number;
 	/** density only: the stretch the minutes cover */
 	period?: string;
+	/** numbers only: the rows behind each figure that has them, by the figure's column. */
+	series?: Record<string, { columns: string[]; rows: Row[]; row_count: number; ref?: string }>;
 	columns?: string[];
 	rows?: Row[];
 	row_count?: number;

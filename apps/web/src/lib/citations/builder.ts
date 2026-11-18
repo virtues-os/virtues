@@ -67,7 +67,20 @@ export function queryResult(output: unknown, input?: unknown): QueryResult | nul
 	const count = Math.max(returned, typeof o.row_count === 'number' ? o.row_count : 0, rows.length);
 
 	const sql = (input as { sql?: unknown } | undefined)?.sql;
-	return { columns, rows, count, more: count > rows.length || o.more === true, sql: typeof sql === 'string' ? sql : undefined };
+	const result: QueryResult = { columns, rows, count, more: count > rows.length || o.more === true, sql: typeof sql === 'string' ? sql : undefined };
+
+	// A figure's series is a result of its own, run from its own SELECT.
+	if (o.series && typeof o.series === 'object') {
+		const asked = ((input as { series?: Record<string, unknown> } | undefined)?.series ?? {}) as Record<string, unknown>;
+		const series: Record<string, QueryResult> = {};
+		for (const [column, body] of Object.entries(o.series as Record<string, unknown>)) {
+			const s = queryResult(body, { sql: asked[column] });
+			if (s) series[column] = s;
+		}
+		if (Object.keys(series).length) result.series = series;
+		if (o.mark === 'spark') result.spark = true;
+	}
+	return result;
 }
 
 /**

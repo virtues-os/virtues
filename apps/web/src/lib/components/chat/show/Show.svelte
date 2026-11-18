@@ -18,6 +18,7 @@
 	import ShowMap from "./ShowMap.svelte";
 	import ShowTimeline from "./ShowTimeline.svelte";
 	import ShowChoices from "./ShowChoices.svelte";
+	import ShowSeries from "./ShowSeries.svelte";
 
 	interface Props {
 		part: { state?: string; input?: Record<string, unknown>; output?: unknown };
@@ -45,15 +46,23 @@
 	// reply doesn't jump, and choices draw no placeholder at all.
 	function kindOfCall(input: Record<string, unknown> | undefined): string | undefined {
 		const chart = input?.chart ?? input?.purpose;
+		// Figures with series stay in the sentence, so nothing holds space here.
+		if (input?.series && typeof input.series === "object") return "series";
 		if (typeof input?.kind === "string") return input.kind;
 		if (chart === "choices") return "choices";
 		if (chart === "in_sentence" || chart === "numbers") return "numbers";
 		return undefined;
 	}
 	const kind = $derived(out?.kind ?? kindOfCall(part.input as Record<string, unknown> | undefined));
+	// Figures that carry their rows open from the sentence; when none of them
+	// can be found there, the plain row of figures is drawn here instead.
+	let unplaced = $state(false);
+	const inSentence = $derived(!!out && out.kind === "numbers" && !!out.series && Object.keys(out.series).length > 0 && !unplaced);
 </script>
 
-{#if out || (drawing && kind !== "choices")}
+{#if out && inSentence}
+	<ShowSeries {out} {working} {onOpenRows} onUnplaced={() => (unplaced = true)} />
+{:else if out || (drawing && kind !== "choices" && kind !== "series")}
 	<figure class="show" class:choices={kind === "choices"} aria-busy={drawing}>
 		{#if title && kind !== "choices"}
 			<figcaption class="title">{title}</figcaption>

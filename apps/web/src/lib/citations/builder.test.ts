@@ -114,3 +114,18 @@ describe('records by route', () => {
 		expect([...ctx.byRoute.keys()]).toEqual(['/record/app_page/page_one']);
 	});
 });
+
+describe('queryResult with series', () => {
+	it('keeps the rows behind each figure, and spark', () => {
+		const output = {
+			kind: 'numbers',
+			mark: 'spark',
+			columns: ['Average night'],
+			rows: [{ 'Average night': 7.2 }],
+			series: { 'Average night': { columns: ['Night', 'Hours', 'figure'], rows: [{ Night: '2026-09-01', Hours: 7.5, figure: 7.2 }], row_count: 1 } },
+		};
+		const q = queryResult(output, { series: { 'Average night': 'SELECT 1' } });
+		expect(q?.series?.['Average night']).toMatchObject({ columns: ['Night', 'Hours', 'figure'], count: 1, sql: 'SELECT 1' });
+		expect(q?.spark).toBe(true);
+	});
+});

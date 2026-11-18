@@ -54,7 +54,10 @@
 			.then((data) => {
 				const turns = deduplicateMessages(data.messages ?? []).map((m) => toUiMessage(m, new Map())) as StoredTurn[];
 				const call = findToolCall(turns, route);
-				const result = call ? queryResult(call.output, call.input) : null;
+				const whole = call ? queryResult(call.output, call.input) : null;
+				// `#n` opens the rows behind the call's nth figure.
+				const figureColumn = ref.figure ? whole?.columns[ref.figure - 1] : undefined;
+				const result = (figureColumn && whole?.series?.[figureColumn]) || whole;
 				if (!call || !result) {
 					error = "The chat this link points to doesn't have this query any more. Ask the question again to run it.";
 					return;

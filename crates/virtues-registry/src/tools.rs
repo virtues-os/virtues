@@ -424,6 +424,11 @@ fn show_tool() -> ToolConfig {
                 "event_label": { "type": "string", "description": "aligned only: the event at zero in a few words, such as Payday" },
                 "days": { "type": "integer", "minimum": 7, "maximum": 92, "description": "lollipop only: the window in days; default 30" },
                 "period": { "type": "string", "description": "density only: the stretch the minutes cover, such as in October" },
+                "series": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "in_sentence or spark: when a figure stands for a series (an average, a total, a change between two periods), map its column to a SELECT of the rows behind it: the x axis, the value aliased as the owner reads it, and figure (the figure's level on the rows it summarizes, null on the rows around them). Nothing is drawn where you call: quote each figure in your sentence and link only the figure itself, such as [0.8 a day](its series ref)"
+                },
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },
