@@ -40,8 +40,8 @@ describe('settingPlace', () => {
 		expect(settingPlace(findSetting('style')!, 'Iris')).toBe('Iris');
 		expect(settingPlace(findSetting('occupation')!, null)).toBe('Profile');
 		expect(settingPlace(findSetting('devices')!, 'Iris')).toBe('Your server');
-		expect(settingPlace(findSetting('memory')!, 'Iris')).toBe('Your data');
+		expect(settingPlace(findSetting('memory')!, 'Iris')).toBe('Assistant');
 		expect(settingPlace(findSetting('ai-cost')!, 'Iris')).toBe('Billing');
-		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Settings');
+		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Updates and network');
 	});
 });

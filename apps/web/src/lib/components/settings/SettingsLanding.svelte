@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
-	 * Settings' landing page (agents/plan/settings-search-plan.md): the
-	 * question, the search field, what needs you and what changed lately,
-	 * then a link to every page (`LANDING` in lib/settings).
+	 * Settings' landing page: the question, the search field, what changed
+	 * lately, and at the foot a site map with a button for every page, one
+	 * line each for the assistant, you and your server (`LANDING` in
+	 * lib/settings). It fits on one screen.
 	 *
 	 * Typing lists the matching settings from every page in place of the
 	 * rest, grouped by the page each lives on. ↑ and ↓ pick one and Return
@@ -10,45 +11,34 @@
 	 * draft the change (DraftCard); Esc closes the draft, then clears the
 	 * field.
 	 */
-	import { onMount, tick } from 'svelte';
-	import { reducedMotion } from '$lib/stores/motion.svelte';
-	import ReopenSection from './ReopenSection.svelte';
-	import IntroductionSection from './IntroductionSection.svelte';
+	import { onMount } from 'svelte';
 	import ChangedLately from './ChangedLately.svelte';
 	import DraftCard from './DraftCard.svelte';
 	import SearchField from '$lib/components/SearchField.svelte';
-	import { getAssistantProfile } from '$lib/api/client';
-	import { isAppleKeyboard } from '$lib/utils/platform';
-	import { LANDING, matchSettings, settingPlace, titleOf, type Setting } from '$lib/settings';
-	import { openSetting, openSettingsPage, takePendingSetting } from '$lib/settings/focus';
-	import { lightUp } from '$lib/utils/lit';
+	import { getAssistantProfile, getProfile } from '$lib/api/client';
+	import { LANDING, matchSettings, settingPlace, titleOf, type LandingLink, type Setting } from '$lib/settings';
+	import { openSetting, openSettingsPage } from '$lib/settings/focus';
 
 	let name = $state('Ari');
+	/** Your name heads your line of the site map; "You" until it loads, or if none is set. */
+	let yourName = $state('You');
 
-	onMount(async () => {
-		// Opened for Start over (from ⌘K): it sits at the foot of this page.
-		const pending = takePendingSetting();
-		if (pending) void tick().then(() => findRow(pending));
-		try {
-			const p = await getAssistantProfile<{ assistant_name?: string | null }>();
-			name = p.assistant_name?.trim() || 'Ari';
-		} catch {
-			// The default name stands in; nothing on this page saves it.
-		}
+	onMount(() => {
+		void getAssistantProfile<{ assistant_name?: string | null }>()
+			.then((p) => (name = p.assistant_name?.trim() || 'Ari'))
+			.catch(() => {
+				// The default name stands in; nothing on this page saves it.
+			});
+		void getProfile()
+			.then((p) => (yourName = p.full_name?.trim() || p.preferred_name?.trim() || 'You'))
+			.catch(() => {
+				// "You" stands in; the line's links work the same.
+			});
 	});
 
-	/** Scrolls to a row on this page and lights it once. The tab restores its
-	 *  own scroll position as the route settles, so it checks once more and
-	 *  scrolls again, at once, if the row has moved off screen. */
-	function findRow(settingId: string) {
-		const el = document.getElementById(`setting-${settingId}`);
-		if (!el) return;
-		el.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
-		lightUp(el);
-		setTimeout(() => {
-			const box = el.getBoundingClientRect();
-			if (box.top < 0 || box.bottom > window.innerHeight) el.scrollIntoView({ block: 'center' });
-		}, 650);
+	function openLink(link: LandingLink) {
+		if (link.setting) openSetting(link.setting, spoken);
+		else openSettingsPage(link.route, spoken);
 	}
 
 	const spoken = $derived(name.charAt(0).toUpperCase() + name.slice(1));
@@ -77,12 +67,6 @@
 	});
 
 	function open(setting: Setting) {
-		// Start over is on this page, at its foot.
-		if (setting.route === '/virtues') {
-			query = '';
-			void tick().then(() => findRow(setting.id));
-			return;
-		}
 		openSetting(setting.id, spoken);
 	}
 
@@ -131,8 +115,9 @@
 
 <div class="page">
 	<h1>What do you want to change?</h1>
-	<!-- ⌘ , opens Settings from anywhere (the shortcut lives with the
-	     others in UnifiedSidebar); once you type, Esc clears. -->
+	<!-- Once you type, Esc clears. The wrapper keeps the field its own
+	     height in this column. -->
+	<div class="search">
 	<SearchField
 		bind:value={query}
 		size="lg"
@@ -146,9 +131,10 @@
 		onkeydown={onSearchKey}
 	>
 		{#snippet trailing()}
-			{#if typing}<kbd>Esc</kbd>{:else}<kbd>{isAppleKeyboard ? '⌘ ,' : 'Ctrl ,'}</kbd>{/if}
+			{#if typing}<kbd>Esc</kbd>{/if}
 		{/snippet}
 	</SearchField>
+	</div>
 
 	{#if typing && !draftText}
 		<p class="hint">↑ ↓ to pick a setting, and Return to open it. Or write what you want, like “keep answers short”, and Return asks {spoken} to draft it.</p>
@@ -192,45 +178,50 @@
 	{#if !typing && !draftText}
 		{#key version}<ChangedLately assistantName={spoken} />{/key}
 
-		<div class="groups">
+		<footer class="map">
 			{#each LANDING as group (group.title)}
-				<nav aria-label={group.title}>
-					<h2 class="label">{group.title}</h2>
-					{#each group.links as link (link.route)}
-						<a
-							href={link.route}
-							onclick={(e) => {
-								e.preventDefault();
-								openSettingsPage(link.route, spoken);
-							}}
-						>
-							<span class="link">{titleOf(link.label, spoken)}</span>
-							<span class="blurb">{link.blurb}</span>
-						</a>
-					{/each}
+				<nav aria-label={group.title === 'You' ? yourName : group.title}>
+					<h2>{group.title === 'You' ? yourName : group.title}</h2>
+					<div class="buttons">
+						{#each group.links as link (link.label)}
+							<a
+								href={link.route}
+								onclick={(e) => {
+									e.preventDefault();
+									openLink(link);
+								}}
+							>{link.label}</a>
+						{/each}
+					</div>
 				</nav>
 			{/each}
-		</div>
-
-		<footer class="foot">
-			<div id="setting-start-over"><ReopenSection /></div>
-			<IntroductionSection />
 		</footer>
 	{/if}
 </div>
 
 <style>
+	/* The site map sits at the foot of the screen; a short window lets it
+	   follow the list instead. */
 	.page {
-		max-width: var(--page-reading);
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		min-height: 100%;
+		/* Wider than reading width so each line of the site map fits on one row. */
+		max-width: 680px;
 		margin: 0 auto;
-		padding: 40px 32px 96px;
+		padding: 44px 32px 32px;
 	}
 
 	h1 {
-		font-size: 2.5rem;
+		font-size: 2rem;
 		font-weight: 400;
-		line-height: 1.1;
-		margin: 0 0 20px;
+		line-height: 1.2;
+		margin: 0 0 14px;
+	}
+
+	.search {
+		display: flex;
 	}
 
 	kbd {
@@ -298,62 +289,68 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.groups {
+	.map {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-top: auto;
+		padding-top: 48px;
+	}
+
+	.map nav {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 32px;
-		margin-top: 40px;
+		grid-template-columns: 104px minmax(0, 1fr);
+		align-items: start;
 	}
 
 	/* An h2 for the outline, drawn as the small label the other lists use. */
-	.groups .label {
-		margin-bottom: 8px;
+	.map h2 {
+		margin: 0;
+		padding-top: 4px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 400;
 		letter-spacing: normal;
+		color: var(--color-foreground-subtle);
 	}
 
-	.groups a {
-		display: block;
-		padding: 8px 0;
+	.buttons {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.buttons a {
+		display: inline-flex;
+		align-items: center;
+		height: 26px;
+		padding: 0 10px;
+		border-radius: var(--radius-md);
+		background: var(--color-surface-elevated);
+		font-size: 13px;
+		line-height: 1;
 		text-decoration: none;
 		color: var(--color-foreground);
+		transition: background var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.link {
-		display: block;
-		font-size: 15px;
-		transition: color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.groups a:hover .link {
-		color: var(--color-primary);
+	.buttons a:hover {
+		background: color-mix(in srgb, var(--wash-ink) 8%, var(--color-surface-elevated));
 		transition-duration: var(--motion-hover-in);
 	}
 
-	.blurb {
-		display: block;
-		margin-top: 2px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	/* Start over draws its own rule above it. */
-	.foot {
-		margin-top: 48px;
-		display: flex;
-		flex-direction: column;
-		gap: 28px;
-	}
-
 	@media (max-width: 640px) {
-		.groups {
+		.map nav {
 			grid-template-columns: minmax(0, 1fr);
-			gap: 24px;
+			gap: 6px;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.link {
+		.buttons a {
 			transition: none;
 		}
 	}

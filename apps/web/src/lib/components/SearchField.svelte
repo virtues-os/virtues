@@ -129,7 +129,7 @@
 </script>
 
 <div class="search-field doc-caret-host" class:lg={size === 'lg'}>
-	<Icon icon="mynaui:search" width={size === 'lg' ? '20' : '16'} class="search-field-icon" />
+	<Icon icon="mynaui:search" width={size === 'lg' ? '18' : '16'} class="search-field-icon" />
 	<input
 		{...rest}
 		type="text"
@@ -259,17 +259,17 @@
 	}
 	/* The large size: a page whose field is the point of the page. */
 	.search-field.lg {
-		height: 52px;
+		height: 44px;
 	}
 	.search-field.lg :global(.search-field-icon) {
-		left: 1rem;
+		left: 0.875rem;
 	}
 	.search-field.lg .search-field-input {
-		padding: 0 4.5rem 0 3rem;
-		font-size: 1rem;
+		padding: 0 4rem 0 2.75rem;
+		font-size: 0.9375rem;
 	}
 	.search-field.lg .search-field-mirror {
-		font-size: 1rem;
+		font-size: 0.9375rem;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.search-field {

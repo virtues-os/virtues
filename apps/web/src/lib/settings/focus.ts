@@ -21,10 +21,9 @@ export function settingsLabel(route: string, assistantName: string): string {
 	return page ? `Settings · ${titleOf(page.title, assistantName)}` : 'Settings';
 }
 
-/** A section page, or the landing page (Start over sits at its foot): pages
- *  that find the row on arrival. A page of its own holds no rows to find. */
+/** A section page finds the row on arrival. A page of its own holds no rows to find. */
 function litOnArrival(route: string): boolean {
-	return route === '/virtues' || !!sectionAt(route);
+	return !!sectionAt(route);
 }
 
 /** Go to a Settings page, by route. */
@@ -48,7 +47,7 @@ export function openSettingInTab(id: string, assistantName: string): void {
 	void windowShellStore.openTabFromRoute(setting.route, { label: settingsLabel(setting.route, assistantName), focusExisting: true });
 }
 
-/** The row a section page or the landing page should light on arrival, once. */
+/** The row a section page should light on arrival, once. */
 export function takePendingSetting(): string | null {
 	const asked = pending;
 	pending = null;

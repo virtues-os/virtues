@@ -1,11 +1,10 @@
-//! "Changed lately" on the Settings page: what the owner changed, the devices
-//! they paired, and what needs them now, served at
+//! "Changed lately" on the Settings page: what the owner changed and the
+//! devices they paired in the last four weeks, served at
 //! `GET /api/settings/changes`, with `POST /api/settings/changes/:id/undo`.
 //!
 //! The settings endpoints write `app_settings_changes` after a save, one row
 //! per setting whose stored value changed ([`record_diff`], [`record`]).
-//! Pairings come from `app_auth_event` and what needs the owner from
-//! `api::attention`; both are read where they live, not copied here.
+//! Pairings are read from `app_auth_event` where they live, not copied here.
 //!
 //! An undo writes the old value back through the same update the page uses,
 //! so the undo is recorded as a change of its own, and marks the original
@@ -23,7 +22,6 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use crate::api::attention::AttentionItem;
 use crate::database::Database;
 use crate::error::{Error, Result};
 
@@ -87,9 +85,11 @@ const NULLABLE_FIELDS: &[&str] = &[
     "keep_recordings_days",
 ];
 
-/// How far back the list reaches, and how many changes it shows.
-const LATELY_DAYS: i64 = 30;
-const LATELY_LIMIT: i64 = 12;
+/// How far back Changed lately reaches: the four weeks its chart draws, one
+/// dot per change. The limit only bounds a runaway table; four weeks of
+/// changes made by hand stay far under it.
+const LATELY_DAYS: i64 = 28;
+const LATELY_LIMIT: i64 = 500;
 
 /// One setting a save changed: (setting id, field, old, new).
 #[derive(Debug, Clone, PartialEq)]
@@ -180,8 +180,6 @@ pub struct ChangeItem {
 
 #[derive(Debug, Serialize)]
 pub struct Lately {
-    /// What needs the owner now, most urgent first (`api::attention`).
-    pub needs_you: Vec<AttentionItem>,
     /// Changes and pairings, newest first.
     pub changes: Vec<ChangeItem>,
 }
@@ -306,17 +304,7 @@ pub async fn lately(db: &Database) -> Result<Lately> {
     changes.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
     changes.truncate(LATELY_LIMIT as usize);
 
-    // What needs the owner is read where it lives; a failure there must not
-    // hide the changes.
-    let needs_you = match crate::api::attention::attention(db).await {
-        Ok(items) => items,
-        Err(e) => {
-            tracing::warn!("settings changes: attention unreadable: {e}");
-            Vec::new()
-        }
-    };
-
-    Ok(Lately { needs_you, changes })
+    Ok(Lately { changes })
 }
 
 /// Write a change's old value back and mark the change undone.

@@ -1,5 +1,6 @@
 <!--
-  Settings, at the foot of the landing page: run the introduction again.
+  Settings, at the foot of the Updates and network page: run the
+  introduction again.
 
   It deletes nothing, so it runs in one click. Getting started's steps are
   derived from rows on every read, so a step that is done comes back as done;

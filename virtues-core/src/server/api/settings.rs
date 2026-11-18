@@ -331,7 +331,7 @@ pub async fn update_assistant_profile_handler(
 // Changed lately
 // =============================================================================
 
-/// GET /api/settings/changes — what changed lately and what needs the owner.
+/// GET /api/settings/changes — the settings changed and devices paired in the last four weeks.
 pub async fn settings_changes_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::settings_changes::lately(&state.db).await)
 }
@@ -650,7 +650,14 @@ pub async fn subscribe_billing_handler(State(pool): State<sqlx::PgPool>) -> Resp
 /// entries: [{ ts, micros, kind, real_micros }] }`, or a clean `{error}`
 /// (never a 500) when not linked / the proxy is unreachable.
 pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
+    // Fully local dev presents `VIRTUES_API_KEY` verbatim (virtues_api::client)
+    // and reports itself subscribed (api::subscription), so it counts as linked
+    // here too.
+    let dev_key = crate::middleware::auth::is_dev()
+        && std::env::var("VIRTUES_API_KEY").is_ok_and(|k| !k.is_empty());
+    // absent-ok: a vault read that fails is treated as not linked, which shows
+    // the connect prompt instead of a balance; the handler never 500s.
+    if !dev_key && !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
             StatusCode::OK,
             Json(serde_json::json!({ "unlinked": true, "error": "Connect your Virtues account to see your balance." })),

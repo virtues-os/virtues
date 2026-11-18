@@ -117,7 +117,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'server-health', title: 'How your server is doing', section: 'server', kind: 'page', words: ['system', 'storage', 'disk', 'memory', 'cpu', 'health'], route: '/virtues/system' },
 	{ id: 'devices', title: 'Devices', section: 'server', kind: 'page', words: ['phone', 'iphone', 'mac', 'paired', 'unpair'], route: '/virtues/devices' },
 	{ id: 'pair-device', title: 'Pair a device', section: 'server', kind: 'action', words: ['add device', 'connect', 'new phone'], route: '/virtues/devices' },
-	{ id: 'start-over', title: 'Start over', section: 'server', kind: 'action', words: ['reset', 'unpair everything', 'setup again'], route: '/virtues', destructive: true },
+	{ id: 'start-over', title: 'Start over', section: 'server', kind: 'action', words: ['reset', 'unpair everything', 'setup again'], route: '/virtues/server', destructive: true },
 ];
 
 /** The assistant's name in a title or lede, or "your assistant" where none
@@ -155,43 +155,48 @@ export function matchSettings(query: string, assistantName?: string | null): Set
 		.map((x) => x.setting);
 }
 
-/** One link on the landing page: a section's page, or a page of its own. */
+/** One link in the landing page's site map. */
 export interface LandingLink {
-	/** `{name}` is the assistant's name. */
 	label: string;
-	/** What is inside, in a few words. */
-	blurb: string;
+	/** The page it opens. */
 	route: string;
+	/** A row on that page to light when it opens, for a link that names one
+	 *  part of a section page (Voice is a row on the assistant's page). */
+	setting?: string;
 }
 
-/** The landing page's three groups of links, left to right. */
+/**
+ * The landing page's site map, one line per party: the assistant, you, and
+ * your server. The landing page shows your name in place of "You".
+ */
 export const LANDING: readonly { title: string; links: readonly LandingLink[] }[] = [
 	{
-		title: 'You',
+		title: 'Assistant',
 		links: [
-			{ label: 'Profile', blurb: 'Name, birthday, where you live', route: '/virtues/profile' },
-			{ label: '{name}', blurb: 'How it talks, what it can do', route: '/virtues/assistant' },
-			{ label: 'Appearance', blurb: 'Theme, reading font, motion', route: '/virtues/appearance' },
-			{ label: 'Billing', blurb: 'Subscription, limits, AI cost', route: '/virtues/billing' },
+			{ label: 'Voice', route: '/virtues/assistant', setting: 'style' },
+			{ label: 'Data access', route: '/virtues/data' },
+			{ label: 'Memory', route: '/virtues/assistant/memory' },
+			{ label: 'Tools and models', route: '/virtues/assistant', setting: 'capabilities' },
+			{ label: 'Spending limits', route: '/virtues/billing', setting: 'limit-run' },
 		],
 	},
 	{
-		title: 'Your data',
+		title: 'You',
 		links: [
-			{ label: 'What {name} may read', blurb: 'Records it sees, recordings, a full copy', route: '/virtues/data' },
-			{ label: 'What {name} remembers', blurb: 'Notes from your chats', route: '/virtues/assistant/memory' },
-			{ label: 'Keys', blurb: 'What your applets sign in with', route: '/virtues/keys' },
-			{ label: 'Shared links', blurb: "Everything you've shared", route: '/virtues/shared' },
-			{ label: 'Backup', blurb: 'A drive, every night, and restoring', route: '/virtues/backup' },
+			{ label: 'Profile', route: '/virtues/profile' },
+			{ label: 'Appearance', route: '/virtues/appearance' },
+			{ label: 'Billing', route: '/virtues/billing' },
 		],
 	},
 	{
 		title: 'Your server',
 		links: [
-			{ label: 'Updates and network', blurb: 'Updates, reaching it from away', route: '/virtues/server' },
-			{ label: 'Devices', blurb: 'Everything paired with it', route: '/virtues/devices' },
-			{ label: "How it's doing", blurb: 'Storage, memory, the last day', route: '/virtues/system' },
-			{ label: 'Search', blurb: 'Where search runs', route: '/virtues/search' },
+			{ label: 'Status', route: '/virtues/system' },
+			{ label: 'Devices', route: '/virtues/devices' },
+			{ label: 'Updates and network', route: '/virtues/server' },
+			{ label: 'Backup', route: '/virtues/backup' },
+			{ label: 'Keys', route: '/virtues/keys' },
+			{ label: 'Shared links', route: '/virtues/shared' },
 		],
 	},
 ];
@@ -199,10 +204,9 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 /**
  * The page a setting lives on, as Settings names it: its section's page
  * ("Billing"), else the landing group that links to it ("Your server"), else
- * Settings itself (Start over, at the landing page's foot).
+ * Settings itself.
  */
 export function settingPlace(setting: Setting, assistantName?: string | null): string {
-	if (setting.route === '/virtues') return 'Settings';
 	const section = SECTIONS.find((s) => s.id === setting.section);
 	if (section?.route && (setting.route === section.route || setting.route.startsWith(`${section.route}/`))) {
 		return titleOf(section.title, assistantName);

@@ -22,6 +22,8 @@
 	import RequestLimitsSettings from '$lib/components/RequestLimitsSettings.svelte';
 	import UpdateSection from './UpdateSection.svelte';
 	import NetworkSection from './NetworkSection.svelte';
+	import ReopenSection from './ReopenSection.svelte';
+	import IntroductionSection from './IntroductionSection.svelte';
 	import SettingRow from './SettingRow.svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import LinkRow from './LinkRow.svelte';
@@ -152,6 +154,11 @@
 		{:else if id === 'server'}
 			<div class="block" id="setting-updates"><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>
 			<NetworkSection />
+			<!-- Start over unpairs every device, so it sits alone at the foot. -->
+			<div class="foot">
+				<div id="setting-start-over"><ReopenSection /></div>
+				<IntroductionSection />
+			</div>
 		{/if}
 	</div>
 </SettingsPage>
@@ -159,6 +166,13 @@
 <style>
 	.rows {
 		border-top: 1px solid var(--color-border-subtle);
+	}
+
+	.foot {
+		margin-top: 48px;
+		display: flex;
+		flex-direction: column;
+		gap: 28px;
 	}
 
 	/* An existing settings block in a row's place: its own heading and

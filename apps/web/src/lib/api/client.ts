@@ -3069,9 +3069,7 @@ export interface SettingsChange {
 }
 
 export interface SettingsLately {
-	/** What needs you now, most urgent first. */
-	needs_you: AttentionItem[];
-	/** Changes and pairings, newest first. */
+	/** Changes and pairings in the last four weeks, newest first. */
 	changes: SettingsChange[];
 }
 

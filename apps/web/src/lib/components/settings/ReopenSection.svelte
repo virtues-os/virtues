@@ -1,6 +1,6 @@
 <!--
-  Settings → "Start over", alone at the foot of the Settings page, below
-  every setting, because it unpairs every device you own.
+  Settings → "Start over", alone at the foot of the Updates and network
+  page, below every setting, because it unpairs every device you own.
 
   Wraps `POST /api/pair/reopen-onboarding` — the `virtues reset --keep-data`
   path. Revokes every paired device and its credentials; touches no data, no

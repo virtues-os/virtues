@@ -65,8 +65,9 @@ export interface SidebarMode {
 }
 
 /**
- * Settings' pages under the landing page's three headings (LANDING in
- * lib/settings), for the crumbs on those pages: You, Your data, Your server.
+ * Settings' pages in three groups, for the crumbs on those pages: You, Your
+ * data, Your server. The landing page's site map groups them differently
+ * (LANDING in lib/settings); the TODO below retires these rows.
  */
 // TODO(2026-11-17): migrate the crumbs off these rows. Settings' pages are
 // listed in lib/settings (its landing links to each) and Sources is its own

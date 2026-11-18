@@ -1,13 +1,18 @@
 <script lang="ts">
 	/**
-	 * Two lists on Settings' landing page (`GET /api/settings/changes`):
-	 * Needs you, what wants an action now, and Changed lately, the settings
-	 * you changed and the devices you paired, newest first. A change that can
-	 * be put back has Undo; anything else opens where it lives.
+	 * Changed lately, on Settings' landing page (`GET /api/settings/changes`):
+	 * the settings you changed and the devices you paired in the last four
+	 * weeks, as a line of days (ChangesChart) over the newest few. A change
+	 * that can be put back has Undo; anything else opens where it lives.
+	 *
+	 * What needs you is not here: it is on the new-chat page and in the Mac
+	 * app's notifications (`api/attention.rs`), and it is fixed on the page
+	 * of the source or applet that failed.
 	 */
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Button from '$lib/components/Button.svelte';
+	import ChangesChart from './ChangesChart.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openSetting } from '$lib/settings/focus';
 	import { loadThemeFromDB } from '$lib/utils/theme';
@@ -26,18 +31,16 @@
 	let lately = $state<SettingsLately | null>(null);
 	let loadError = $state(false);
 	let undoing = $state<string | null>(null);
+	/** The change under the pointer in the list, ringed on the chart. */
+	let hot = $state<string | null>(null);
 
-	// Each list opens on its first few; the rest are a click away, with no
-	// count on the button (someone in recovery reads this page too).
+	// The list opens on its newest few, so the page fits on one screen; the
+	// rest are a click away, with no count on the button (someone in
+	// recovery reads this page too).
 	const FIRST = 4;
-	let allNeeds = $state(false);
-	let allChanges = $state(false);
+	let showAll = $state(false);
 
-	/** A failed applet's line would quote its raw error; the applet's own
-	 *  page shows that, so here it only says where to look. */
-	function subOf(item: { kind: string; body: string }): string {
-		return item.kind === 'applet' ? 'Open it to see what went wrong.' : item.body;
-	}
+	const shown = $derived(lately ? (showAll ? lately.changes : lately.changes.slice(0, FIRST)) : []);
 
 	async function load() {
 		loadError = false;
@@ -79,74 +82,73 @@
 			undoing = null;
 		}
 	}
-
 </script>
 
-{#if loadError}
-	<div class="list">
-		<p class="label">Changed lately</p>
+<section class="lately" aria-labelledby="changed-lately">
+	<div class="head">
+		<h2 id="changed-lately">Changed lately</h2>
+		{#if lately && lately.changes.length > FIRST}
+			<button type="button" class="link" onclick={() => (showAll = !showAll)}>{showAll ? 'Show fewer' : 'See all'}</button>
+		{/if}
+	</div>
+
+	{#if loadError}
 		<div class="failed">
 			<span>Your server couldn't load what changed lately.</span>
 			<Button variant="ghost" onclick={load}>Try again</Button>
 		</div>
-	</div>
-{:else if lately}
-	{#if lately.needs_you.length}
-		<section class="list" aria-label="Needs you">
-			<p class="label">Needs you</p>
+	{:else if lately}
+		<ChangesChart changes={lately.changes} listed={shown.map((c) => c.id)} {hot} />
+		{#if lately.changes.length}
 			<ul>
-				{#each allNeeds ? lately.needs_you : lately.needs_you.slice(0, FIRST) as item (item.key)}
-					<li>
-						<span class="what">
-							<span class="name">{item.title}</span>
-							<span class="sub">{subOf(item)}</span>
-						</span>
-						<span class="when"></span>
-						<button type="button" class="act" onclick={() => windowShellStore.navigate(item.route, { label: item.title })}>Open</button>
-					</li>
-				{/each}
-			</ul>
-			{#if lately.needs_you.length > FIRST}
-				<button type="button" class="more" onclick={() => (allNeeds = !allNeeds)}>{allNeeds ? 'Show fewer' : 'Show all'}</button>
-			{/if}
-		</section>
-	{/if}
-	{#if lately.changes.length}
-		<section class="list" aria-label="Changed lately">
-			<p class="label">Changed lately</p>
-			<ul>
-				{#each allChanges ? lately.changes : lately.changes.slice(0, FIRST) as change (change.id)}
-					<li>
+				{#each shown as change (change.id)}
+					<!-- Pointer or focus on a row rings its dot; the row's button is what acts. -->
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+					<li
+						onmouseenter={() => (hot = change.id)}
+						onmouseleave={() => (hot = null)}
+						onfocusin={() => (hot = change.id)}
+						onfocusout={() => (hot = null)}
+					>
+						<span class="when">{whenLabel(change.occurred_at)}</span>
 						<span class="what">
 							<span class="name">{nameOf(change)}</span>
 							<span class="sub">{describeChange(change)}{change.actor === 'assistant' ? `, with ${assistantName}` : ''}</span>
 						</span>
-						<span class="when">{whenLabel(change.occurred_at)}</span>
 						{#if change.can_undo}
-							<button type="button" class="act" disabled={undoing === change.id} onclick={() => undo(change)}>
+							<button type="button" class="link" disabled={undoing === change.id} onclick={() => undo(change)}>
 								{undoing === change.id ? 'Undoing…' : 'Undo'}
 							</button>
 						{:else}
-							<button type="button" class="act" onclick={() => open(change)}>Open</button>
+							<button type="button" class="link" onclick={() => open(change)}>Open</button>
 						{/if}
 					</li>
 				{/each}
 			</ul>
-			{#if lately.changes.length > FIRST}
-				<button type="button" class="more" onclick={() => (allChanges = !allChanges)}>{allChanges ? 'Show fewer' : 'Show all'}</button>
-			{/if}
-		</section>
+		{:else}
+			<p class="empty">Nothing in Settings has changed in the last four weeks.</p>
+		{/if}
 	{/if}
-{/if}
+</section>
 
 <style>
-	.list {
-		margin-top: 32px;
+	.lately {
+		margin-top: 40px;
 	}
 
-	.label {
-		margin: 0 0 8px;
-		font-size: 12px;
+	.head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	h2 {
+		margin: 0;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: 400;
+		letter-spacing: normal;
 		color: var(--color-foreground-muted);
 	}
 
@@ -154,77 +156,74 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		border-top: 1px solid var(--color-border-subtle);
 	}
 
 	li {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto 64px;
-		align-items: center;
-		gap: 24px;
-		min-height: 52px;
-		padding: 8px 0;
-		border-bottom: 1px solid var(--color-border-subtle);
-		box-sizing: border-box;
+		grid-template-columns: 88px minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: 16px;
+		padding: 5px 0;
+	}
+
+	.when {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
 	}
 
 	.what {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
 		min-width: 0;
+		white-space: nowrap;
 	}
 
 	.name {
-		display: block;
+		flex: none;
 		font-size: 14px;
 		color: var(--color-foreground);
 	}
 
 	.sub {
-		display: block;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.when {
 		font-size: 13px;
-		text-align: right;
-		white-space: nowrap;
 		color: var(--color-foreground-muted);
 	}
 
-	.act {
-		justify-self: end;
+	.link {
+		padding: 0;
 		border: none;
 		background: none;
-		padding: 4px 0;
 		font: inherit;
 		font-size: 13px;
 		color: var(--color-primary);
 		cursor: pointer;
 	}
 
-	.act:disabled {
+	.link:hover:not(:disabled) {
+		text-decoration: underline;
+	}
+
+	.link:disabled {
 		color: var(--color-foreground-muted);
 		cursor: default;
 	}
 
-	.more {
-		margin-top: 8px;
-		padding: 4px 0;
-		border: none;
-		background: none;
-		font: inherit;
+	.empty {
+		margin: 0;
 		font-size: 13px;
-		color: var(--color-primary);
-		cursor: pointer;
+		color: var(--color-foreground-muted);
 	}
 
 	.failed {
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		margin-top: 8px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
