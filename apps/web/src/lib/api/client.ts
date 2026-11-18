@@ -1181,6 +1181,17 @@ export interface NoteDetail extends Note {
 	found_by: string;
 	events: NoteEvent[];
 	task: { id: string; title: string; due_on: string; thread_id: string; thread_name: string } | null;
+	/** What acting on it would change, under a heading ("If you move it"). */
+	remedy_title: string;
+	remedy: string;
+	/** When your server first worked it out. */
+	raised_at: string | null;
+	/** What happened to it, oldest first. */
+	history: { kind: 'raised' | 'set_aside' | 'brought_back'; occurred_at: string }[];
+	/** "Fewer like this" is on for its kind and threads. */
+	is_muted: boolean;
+	/** The "Fewer like this" choice, in words. */
+	mute_label: string;
 }
 
 export function getNote(key: string): Promise<NoteDetail> {
@@ -1199,6 +1210,11 @@ export function dismissNote(key: string): Promise<void> {
 /** Bring a set-aside note back. */
 export function restoreNote(key: string): Promise<void> {
 	return apiSend<void>('DELETE', `/notes/${encodeURIComponent(key)}/dismiss`);
+}
+
+/** Fewer like this: stop raising this kind of note for its threads, or start again. */
+export function setNoteMuted(key: string, muted: boolean): Promise<void> {
+	return apiSend<void>(muted ? 'POST' : 'DELETE', `/notes/${encodeURIComponent(key)}/mute`);
 }
 
 export async function getAttention(): Promise<AttentionItem[]> {

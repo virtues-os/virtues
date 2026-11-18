@@ -87,6 +87,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/notes", get(notes_handler))
         .route("/api/notes/:key", get(note_handler))
         .route("/api/notes/:key/dismiss", post(dismiss_note_handler).delete(restore_note_handler))
+        .route("/api/notes/:key/mute", post(mute_note_handler).delete(unmute_note_handler))
         .route(
             "/api/threads/:id",
             get(get_thread_handler)
@@ -490,6 +491,16 @@ pub async fn dismiss_note_handler(State(state): State<AppState>, Path(key): Path
 /// DELETE /api/notes/:key/dismiss - Bring a set-aside note back
 pub async fn restore_note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
     api_response(crate::api::notes::restore(state.db.pool(), &key).await)
+}
+
+/// POST /api/notes/:key/mute - Fewer like this
+pub async fn mute_note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    api_response(crate::api::notes::set_muted(state.db.pool(), &key, true).await)
+}
+
+/// DELETE /api/notes/:key/mute - Raise this kind of note again
+pub async fn unmute_note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    api_response(crate::api::notes::set_muted(state.db.pool(), &key, false).await)
 }
 
 /// GET /api/threads/:id/graph - Entities referenced across the members

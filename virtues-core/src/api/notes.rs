@@ -7,7 +7,9 @@
 //! threads and calendar, so it leaves on its own once its condition clears
 //! or its moment passes. Its key names the condition, so "Not now"
 //! (`app_note_dismissals`) sets aside that condition only; a changed one is a
-//! new note. Every rule here needs no model to find. The sentence is fixed
+//! new note. "Fewer like this" (`app_note_mutes`) stops a kind of note for the
+//! threads it names. What happened to a note is kept in `app_note_events` for
+//! its page. Every rule here needs no model to find. The sentence is fixed
 //! wording for now.
 //!
 //! The rules:
@@ -16,6 +18,8 @@
 //!   overlap.
 //! - An open task in a thread is due within three days, and no calendar time
 //!   is set aside for that thread before the end of its day.
+
+use std::collections::HashSet;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
@@ -68,6 +72,24 @@ pub struct NoteDetail {
     pub events: Vec<NoteEvent>,
     /// The task it is about, when it is about one.
     pub task: Option<NoteTask>,
+    /// What acting on it would change, under a heading.
+    pub remedy_title: &'static str,
+    pub remedy: String,
+    /// When your server first worked it out.
+    pub raised_at: Option<DateTime<Utc>>,
+    /// What happened to it, oldest first.
+    pub history: Vec<NoteHistory>,
+    /// "Fewer like this" is on for its kind and threads.
+    pub is_muted: bool,
+    /// The "Fewer like this" choice, in words.
+    pub mute_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NoteHistory {
+    /// `raised` | `set_aside` | `brought_back`.
+    pub kind: String,
+    pub occurred_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -96,24 +118,65 @@ pub async fn notes(pool: &PgPool) -> Result<Vec<Note>> {
 }
 
 pub async fn notes_at(pool: &PgPool, now: DateTime<Utc>) -> Result<Vec<Note>> {
-    let (mut out, dismissed) = every_note(pool, now).await?;
-    out.retain(|n| !dismissed.contains(&n.key));
-    Ok(out)
+    let seen = every_note(pool, now).await?;
+    Ok(seen.notes.into_iter().filter(|n| !seen.dismissed.contains(&n.key) && !seen.muted.contains(&mute_scope(n))).collect())
 }
 
-/// Every note whose condition holds, and the keys set aside.
-async fn every_note(pool: &PgPool, now: DateTime<Utc>) -> Result<(Vec<Note>, Vec<String>)> {
+/// Every note whose condition holds, with which are set aside and which
+/// kinds are muted.
+struct Seen {
+    notes: Vec<Note>,
+    dismissed: HashSet<String>,
+    muted: HashSet<(String, String)>,
+    tz: Option<chrono_tz::Tz>,
+}
+
+async fn every_note(pool: &PgPool, now: DateTime<Utc>) -> Result<Seen> {
     let zone = crate::timezone::home_timezone_or_utc(pool, now.date_naive()).await;
     let tz = zone.parse::<chrono_tz::Tz>().ok();
     let today = tz.map(|tz| now.with_timezone(&tz).date_naive()).unwrap_or_else(|| now.date_naive());
 
-    let mut out = clashes(pool, now, tz).await?;
-    out.extend(unplanned(pool, now, today, &zone).await?);
+    let mut notes = clashes(pool, now, tz).await?;
+    notes.extend(unplanned(pool, now, today, &zone).await?);
+
+    // The first read that finds a note is when it was raised.
+    let keys: Vec<&str> = notes.iter().map(|n| n.key.as_str()).collect();
+    sqlx::query(
+        "INSERT INTO app_note_events (key, kind, occurred_at)
+         SELECT k, 'raised', $2 FROM unnest($1::text[]) AS k
+         ON CONFLICT (key) WHERE kind = 'raised' DO NOTHING",
+    )
+    .bind(&keys)
+    .bind(now)
+    .execute(pool)
+    .await?;
 
     let dismissed: Vec<String> = sqlx::query_scalar("SELECT key FROM app_note_dismissals")
         .fetch_all(pool)
         .await?;
-    Ok((out, dismissed))
+    let muted: Vec<(String, String)> = sqlx::query_as("SELECT rule, scope FROM app_note_mutes")
+        .fetch_all(pool)
+        .await?;
+    Ok(Seen { notes, dismissed: dismissed.into_iter().collect(), muted: muted.into_iter().collect(), tz })
+}
+
+/// The kind of note and the threads it names, which "Fewer like this" keys
+/// on: a clash by its two threads in sorted order, a task with no time set
+/// aside by its thread.
+fn mute_scope(note: &Note) -> (String, String) {
+    let mut threads: Vec<&str> = note.subjects.iter().filter_map(|s| s.strip_prefix("/thread/")).collect();
+    threads.sort_unstable();
+    (note.kind.to_string(), threads.join(":"))
+}
+
+async fn find(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<(Note, Seen)> {
+    let mut seen = every_note(pool, now).await?;
+    let at = seen.notes.iter().position(|n| n.key == key).ok_or_else(|| {
+        crate::error::Error::NotFound(
+            "This note has gone: what it was about has changed or its moment has passed.".into(),
+        )
+    })?;
+    Ok((seen.notes.swap_remove(at), seen))
 }
 
 /// One note and what it rests on. A note whose condition has cleared is
@@ -123,14 +186,17 @@ pub async fn note(pool: &PgPool, key: &str) -> Result<NoteDetail> {
 }
 
 pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<NoteDetail> {
-    let (all, dismissed) = every_note(pool, now).await?;
-    let note = all.into_iter().find(|n| n.key == key).ok_or_else(|| {
-        crate::error::Error::NotFound(
-            "This note has gone: what it was about has changed or its moment has passed.".into(),
-        )
-    })?;
-    let is_dismissed = dismissed.contains(&note.key);
+    let (note, seen) = find(pool, key, now).await?;
+    let is_dismissed = seen.dismissed.contains(&note.key);
+    let is_muted = seen.muted.contains(&mute_scope(&note));
+    let history: Vec<NoteHistory> =
+        sqlx::query_as("SELECT kind, occurred_at FROM app_note_events WHERE key = $1 ORDER BY id")
+            .bind(key)
+            .fetch_all(pool)
+            .await?;
+    let raised_at = history.iter().find(|h| h.kind == "raised").map(|h| h.occurred_at);
     let mut parts = note.key.split(':');
+    // absent-ok: this splits the note's key, not a query result; an empty kind falls to the task rule.
     let kind = parts.next().unwrap_or_default();
     if kind == "clash" {
         let ids: Vec<String> = parts.map(str::to_string).collect();
@@ -148,6 +214,23 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
         .await?;
         let mut events = events;
         events.sort_by_key(|e| e.started_at);
+        let remedy = match events.as_slice() {
+            [first, second] => format!(
+                "If {} started on {}, when {} ends, the two would no longer overlap and this note would leave. \
+                 Your server reads your calendar but doesn't change it, so make that change in your calendar app.",
+                second.title,
+                at_label(first.ended_at, seen.tz),
+                first.title
+            ),
+            _ => "Move one of the two entries so they no longer overlap, and this note leaves.".into(),
+        };
+        let mute_label = match events.as_slice() {
+            [first, second] => format!(
+                "Don't raise clashes between {} and {}",
+                first.thread_name, second.thread_name
+            ),
+            _ => "Don't raise clashes between these two threads".into(),
+        };
         return Ok(NoteDetail {
             why: "Two entries on your calendar overlap, and they belong to different threads.".into(),
             kind_label: "A calendar clash",
@@ -156,6 +239,12 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
             is_dismissed,
             events,
             task: None,
+            remedy_title: "If you move it",
+            remedy,
+            raised_at,
+            history,
+            is_muted,
+            mute_label,
         });
     }
     let task_id = parts.next().unwrap_or_default().to_string();
@@ -167,13 +256,11 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
     .bind(&task_id)
     .fetch_optional(pool)
     .await?;
-    let why = match &task {
-        Some(t) => format!(
-            "It is due soon, and nothing on your calendar is filed in {} between now and then.",
-            t.thread_name
-        ),
-        None => "It is due soon, and nothing on your calendar is set aside for it.".into(),
-    };
+    let thread = task.as_ref().map_or("its thread".to_string(), |t| t.thread_name.clone());
+    let why = format!("It is due soon, and nothing on your calendar is filed in {thread} between now and then.");
+    let remedy = format!(
+        "Put time for {thread} on your calendar before then and file it in that thread, and this note leaves."
+    );
     Ok(NoteDetail {
         why,
         kind_label: "No time set aside",
@@ -182,21 +269,65 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
         is_dismissed,
         events: Vec::new(),
         task,
+        remedy_title: "If you set aside time",
+        remedy,
+        raised_at,
+        history,
+        is_muted,
+        mute_label: format!("Don't raise these for {thread}"),
     })
 }
 
 /// Set a note aside. Its condition changing makes a new note, which shows.
 pub async fn dismiss(pool: &PgPool, key: &str) -> Result<()> {
-    sqlx::query("INSERT INTO app_note_dismissals (key) VALUES ($1) ON CONFLICT (key) DO NOTHING")
+    let mut tx = pool.begin().await?;
+    let added = sqlx::query("INSERT INTO app_note_dismissals (key) VALUES ($1) ON CONFLICT (key) DO NOTHING")
         .bind(key)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    if added.rows_affected() > 0 {
+        sqlx::query("INSERT INTO app_note_events (key, kind) VALUES ($1, 'set_aside')")
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
 /// Bring a set-aside note back.
 pub async fn restore(pool: &PgPool, key: &str) -> Result<()> {
-    sqlx::query("DELETE FROM app_note_dismissals WHERE key = $1").bind(key).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    let removed = sqlx::query("DELETE FROM app_note_dismissals WHERE key = $1").bind(key).execute(&mut *tx).await?;
+    if removed.rows_affected() > 0 {
+        sqlx::query("INSERT INTO app_note_events (key, kind) VALUES ($1, 'brought_back')")
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// "Fewer like this": stop raising this kind of note for the threads it
+/// names, or start again. The note itself has to still hold, since its
+/// threads come from it.
+pub async fn set_muted(pool: &PgPool, key: &str, muted: bool) -> Result<()> {
+    set_muted_at(pool, key, muted, Utc::now()).await
+}
+
+pub async fn set_muted_at(pool: &PgPool, key: &str, muted: bool, now: DateTime<Utc>) -> Result<()> {
+    let (note, _) = find(pool, key, now).await?;
+    let (rule, scope) = mute_scope(&note);
+    if muted {
+        sqlx::query("INSERT INTO app_note_mutes (rule, scope) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+    } else {
+        sqlx::query("DELETE FROM app_note_mutes WHERE rule = $1 AND scope = $2")
+    }
+    .bind(rule)
+    .bind(scope)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -391,6 +522,7 @@ mod tests {
         assert_eq!(unplanned[0].when, "By tomorrow");
 
         dismiss(&pool, &clash.key).await.unwrap();
+        dismiss(&pool, &clash.key).await.unwrap();
         assert!(notes_at(&pool, now).await.unwrap().iter().all(|n| n.kind != "clash"));
         restore(&pool, &clash.key).await.unwrap();
         assert!(notes_at(&pool, now).await.unwrap().iter().any(|n| n.kind == "clash"));
@@ -405,6 +537,23 @@ mod tests {
         let task_note = note_at(&pool, &unplanned[0].key, now).await.unwrap();
         assert_eq!(task_note.task.as_ref().map(|t| t.thread_name.as_str()), Some("Tax paperwork"));
         restore(&pool, &clash.key).await.unwrap();
+
+        // Its history: raised on the first read, then set aside and brought
+        // back twice. Asking twice to set it aside writes one line.
+        let detail = note_at(&pool, &clash.key, now).await.unwrap();
+        assert_eq!(detail.raised_at, Some(now));
+        let kinds: Vec<&str> = detail.history.iter().map(|h| h.kind.as_str()).collect();
+        assert_eq!(kinds, ["raised", "set_aside", "brought_back", "set_aside", "brought_back"]);
+        assert!(detail.remedy.starts_with("If Call with the agent started on Saturday at 1:00 PM, when Second coat ends"), "{}", detail.remedy);
+        assert_eq!(detail.mute_label, "Don't raise clashes between Repaint the hallway and Plan the trip");
+
+        // "Fewer like this" hides clashes between these two threads; the page
+        // still opens and can turn it off.
+        set_muted_at(&pool, &clash.key, true, now).await.unwrap();
+        assert!(notes_at(&pool, now).await.unwrap().iter().all(|n| n.kind != "clash"));
+        assert!(note_at(&pool, &clash.key, now).await.unwrap().is_muted);
+        set_muted_at(&pool, &clash.key, false, now).await.unwrap();
+        assert!(notes_at(&pool, now).await.unwrap().iter().any(|n| n.kind == "clash"));
 
         // Once both events have passed, the clash has gone on its own, and
         // its page says so.

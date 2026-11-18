@@ -4,13 +4,16 @@
 	 * leaves, and its action. "Why your server raised it" says the rule in
 	 * one line and draws the evidence: for a clash, the two calendar entries
 	 * on that afternoon's timeline with the overlap shaded; for a task with
-	 * no time set aside, the task and the days left before it. The side
-	 * column says what it is about, what kind of note it is, when it leaves
-	 * and how it was found.
+	 * no time set aside, the task and the days left before it. Then what
+	 * acting on it would change, and its history. The side column says what
+	 * it is about, what kind of note it is, when it was raised and leaves,
+	 * how it was found, and holds "Fewer like this".
 	 */
 	import type { Tab } from '$lib/tabs/types';
 	import type { NoteDetail, NoteEvent } from '$lib/api/client';
-	import { getNote } from '$lib/api/client';
+	import { getNote, restoreNote, setNoteMuted } from '$lib/api/client';
+	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
+	import { toast } from 'svelte-sonner';
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import { Button, TextAction } from '$lib';
@@ -53,6 +56,39 @@
 
 	function run() {
 		if (detail) windowShellStore.openTabFromRoute(detail.action_route, { focusExisting: true });
+	}
+
+	async function bringBack() {
+		if (!detail) return;
+		try {
+			await restoreNote(detail.key);
+			await Promise.all([load(detail.key), notesStore.load()]);
+		} catch (e) {
+			toast.error("Your server couldn't bring that back", { description: 'Try again' });
+		}
+	}
+
+	async function toggleMuted(muted: boolean) {
+		if (!detail) return;
+		try {
+			await setNoteMuted(detail.key, muted);
+			await Promise.all([load(detail.key), notesStore.load()]);
+		} catch (e) {
+			toast.error("Your server couldn't change that", { description: 'Try again' });
+			await load(detail.key);
+		}
+	}
+
+	const HISTORY_LINE: Record<NoteDetail['history'][number]['kind'], string> = {
+		raised: 'Your server raised it',
+		set_aside: 'You set it aside',
+		brought_back: 'You brought it back',
+	};
+
+	/** "Yesterday 4:12 PM", or the time alone for today. */
+	function moment(iso: string): string {
+		const day = formatRelativeTimestamp(iso);
+		return day.includes(':') ? `Today ${day}` : `${day} ${clock(iso)}`;
 	}
 
 	async function notNow() {
@@ -178,7 +214,9 @@
 				</p>
 				<div class="acts">
 					<Button variant="secondary" onclick={run}>{detail.action}</Button>
-					{#if !detail.is_dismissed}
+					{#if detail.is_dismissed}
+						<TextAction onclick={bringBack}>Bring it back</TextAction>
+					{:else}
 						<TextAction onclick={notNow}>Not now</TextAction>
 					{/if}
 				</div>
@@ -240,6 +278,26 @@
 						</ul>
 					{/if}
 				</section>
+
+				<section class="block">
+					<h2 class="block-title">{detail.remedy_title}</h2>
+					<p class="why">{detail.remedy}</p>
+				</section>
+
+				{#if detail.history.length}
+					<section class="block">
+						<h2 class="block-title">History</h2>
+						<ol class="history">
+							{#each detail.history as h, i (i)}
+								<li>
+									<span class="dot" aria-hidden="true"></span>
+									<span>{HISTORY_LINE[h.kind]}</span>
+									<span class="when">{moment(h.occurred_at)}</span>
+								</li>
+							{/each}
+						</ol>
+					</section>
+				{/if}
 			</main>
 
 			<aside class="side" aria-label="About this insight">
@@ -256,11 +314,21 @@
 					</dd>
 					<dt>Kind</dt>
 					<dd>{detail.kind_label}</dd>
+					{#if detail.raised_at}
+						<dt>Raised</dt>
+						<dd>{moment(detail.raised_at)}</dd>
+					{/if}
 					<dt>Leaves</dt>
 					<dd>{leaves(detail.until).replace(/^the e/, 'E')}</dd>
 					<dt>Found by</dt>
 					<dd class="found">{detail.found_by}</dd>
 				</dl>
+
+				<div class="psec fewer">Fewer like this</div>
+				<label class="mute">
+					<input type="checkbox" checked={detail.is_muted} onchange={(e) => toggleMuted(e.currentTarget.checked)} />
+					<span>{detail.mute_label}</span>
+				</label>
 			</aside>
 		</div>
 	{/if}
@@ -434,13 +502,18 @@
 		color: var(--color-foreground-muted);
 	}
 	.event-title {
-		min-width: 0;
+		flex: none;
+		max-width: 60%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.event-thread {
-		flex: none;
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		font-family: var(--font-serif-ui);
 		font-size: 14px;
 		color: var(--color-foreground-muted);
@@ -488,6 +561,52 @@
 	}
 	.day.due .day-label {
 		color: var(--color-foreground);
+	}
+	.history {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.history li {
+		display: grid;
+		grid-template-columns: 16px minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: 8px;
+		padding: 4px 0;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
+	}
+	.history .dot {
+		justify-self: center;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-foreground-subtle);
+		transform: translateY(-2px);
+	}
+	.history .when {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.psec.fewer {
+		margin-top: 32px;
+	}
+	.mute {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		font-size: 13px;
+		line-height: 20px;
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+	.mute input {
+		flex: none;
+		margin: 4px 0 0;
+		accent-color: var(--color-primary);
 	}
 	.side {
 		padding-top: 4px;
