@@ -22,11 +22,14 @@
 	import { TextAction } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 	import { homeOf, subjectName } from '$lib/tasks/homes';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import TaskList from '$lib/components/tasks/TaskList.svelte';
 	import TaskPreview from '$lib/components/tasks/TaskPreview.svelte';
 	import { newTaskDialog } from '$lib/stores/newTask.svelte';
+	import { notesStore } from '$lib/stores/notes.svelte';
+	import type { Note } from '$lib/api/client';
 	import { Button, IconButton, Page } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -47,13 +50,14 @@
 
 	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
-	type View = 'overview' | 'tasks' | 'threads';
+	type View = 'overview' | 'tasks' | 'threads' | 'insights';
 	type Filter = 'active' | 'backlog' | 'finished';
 
 	const params = $derived(new URLSearchParams(tab.route.split('?')[1] ?? ''));
-	const view = $derived<View>(
-		params.get('view') === 'tasks' ? 'tasks' : params.get('view') === 'threads' ? 'threads' : 'overview',
-	);
+	const view = $derived.by<View>(() => {
+		const v = params.get('view');
+		return v === 'tasks' || v === 'threads' || v === 'insights' ? v : 'overview';
+	});
 
 	function setView(next: View) {
 		const query = next === 'overview' ? '' : `?view=${next}`;
@@ -63,7 +67,17 @@
 	onMount(() => {
 		projectStore.load();
 		void tasksStore.load();
+		notesStore.start();
+		return () => notesStore.stop();
 	});
+
+	function subjectLabel(url: string): string {
+		return url.startsWith('/task/') ? 'Task' : 'Thread';
+	}
+
+	function runNote(n: Note) {
+		windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true });
+	}
 
 	// ── the week ───────────────────────────────────────────────────────────
 	let weekStart = $state<string | null>(null);
@@ -217,7 +231,7 @@
 			return;
 		}
 		if (Date.now() - gPressedAt < 1200) {
-			const to = ({ o: 'overview', t: 'tasks', a: 'threads' } as const)[e.key as 'o' | 't' | 'a'];
+			const to = ({ o: 'overview', t: 'tasks', a: 'threads', i: 'insights' } as const)[e.key as 'o' | 't' | 'a' | 'i'];
 			gPressedAt = 0;
 			if (to) {
 				e.preventDefault();
@@ -230,7 +244,7 @@
 			newTaskHere();
 			return;
 		}
-		if (view === 'tasks') return;
+		if (view === 'tasks' || view === 'insights') return;
 		if (e.key === 'j' || e.key === 'ArrowDown') {
 			e.preventDefault();
 			step(1);
@@ -442,6 +456,39 @@
 					{@render newThreadButton()}
 				</div>
 				{@render weekBlock()}
+			{:else if view === 'insights'}
+				<div class="hrow">
+					<h2 class="h2">Insights</h2>
+				</div>
+				<p class="lede">
+					What your server noticed about your tasks and threads, while you can still act on it. Each note leaves on its
+					own once its moment has passed.
+				</p>
+				{#if notesStore.items.length === 0}
+					<p class="empty">Nothing to note right now.</p>
+				{:else}
+					<ul class="insights">
+						{#each notesStore.items as n (n.key)}
+							<li class="ins">
+								<span class="mark" aria-hidden="true"></span>
+								<div class="ins-body">
+									<p class="ins-text">{n.text}</p>
+									<p class="ins-meta">
+										<Icon icon={n.subjects[0]?.startsWith('/task/') ? 'mynaui:circle' : THREAD_ICON} width="14" />
+										<span class="ins-about">{n.about}</span>
+										<span>{subjectLabel(n.subjects[0] ?? '')}</span>
+										<span>{n.when}</span>
+									</p>
+								</div>
+								<div class="ins-acts">
+									<Button variant="secondary" size="sm" onclick={() => runNote(n)}>{n.action}</Button>
+									<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<p class="foot">Home shows these under the new chat, one at a time.</p>
 			{:else}
 				<div class="hrow">
 					<h2 class="h2">All threads</h2>
@@ -561,7 +608,7 @@
 				<p class="quiet">Point at a task to see it here.</p>
 			{/if}
 		</aside>
-	{:else}
+	{:else if view !== 'insights'}
 		<aside class="preview" aria-live="polite" aria-label="Preview">
 			{#if shown}
 				<div class="ph">
@@ -583,6 +630,15 @@
 				{:else if shown.instructions}
 					<p class="stands">{shown.instructions}</p>
 				{/if}
+				{#each notesStore.about(`/thread/${shown.id}`).slice(0, 2) as n (n.key)}
+					<div class="note">
+						<p class="note-text"><span class="mark" aria-hidden="true"></span>{n.text}</p>
+						<div class="note-acts">
+							<Button variant="secondary" size="sm" onclick={() => runNote(n)}>{n.action}</Button>
+							<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
+						</div>
+					</div>
+				{/each}
 
 				<div class="chips">
 					<span class="chip"><Icon icon="mynaui:circle-half" width="14" />{statusOf(shown)}</span>
@@ -682,6 +738,97 @@
 	.vt[aria-pressed='true'] {
 		background: var(--active-bg);
 		color: var(--color-foreground);
+	}
+	.lede {
+		margin: 4px 0 0;
+		max-width: 620px;
+		font-size: 15px;
+		line-height: 24px;
+		color: var(--color-foreground-muted);
+	}
+	.insights {
+		list-style: none;
+		margin: 16px 0 0;
+		padding: 0;
+	}
+	.ins {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		padding: 12px;
+		margin: 0 -12px;
+		border-radius: var(--radius-md);
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.ins:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.mark {
+		display: inline-block;
+		flex: none;
+		width: 6px;
+		height: 6px;
+		margin-top: 8px;
+		border-radius: 50%;
+		background: var(--color-primary);
+	}
+	.ins-body {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.ins-text {
+		margin: 0;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
+	}
+	.ins-meta {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 4px 0 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.ins-about {
+		font-family: var(--font-serif-ui);
+		font-size: 14px;
+		color: var(--color-foreground);
+	}
+	.ins-acts {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		flex: none;
+	}
+	.foot {
+		margin: 16px 0 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.note {
+		margin-top: 20px;
+		padding: 12px 16px;
+		border-radius: var(--radius-md);
+		background: var(--hover-bg);
+	}
+	.note-text {
+		display: flex;
+		gap: 12px;
+		margin: 0;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
+	}
+	.note-text .mark {
+		margin-top: 8px;
+	}
+	.note-acts {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		margin: 12px 0 0 16px;
 	}
 	.key {
 		margin-left: 4px;

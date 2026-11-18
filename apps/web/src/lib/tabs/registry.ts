@@ -469,13 +469,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				// The door. `/tasks` and `?task=` open its Tasks view.
 				const task = params?.get('task');
 				const tasks = path.startsWith('/tasks') || !!task || params?.get('view') === 'tasks';
-				const threads = params?.get('view') === 'threads';
+				const other = params?.get('view');
+				const threads = other === 'threads' || other === 'insights';
 				const query = task
 					? `?view=tasks&task=${encodeURIComponent(task)}`
 					: tasks
 						? '?view=tasks'
 						: threads
-							? '?view=threads'
+							? `?view=${other}`
 							: '';
 				return {
 					type: 'thread',

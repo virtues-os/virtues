@@ -28,6 +28,7 @@
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { newTaskDialog } from "$lib/stores/newTask.svelte";
+	import { notesStore } from "$lib/stores/notes.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import TaskCheck from "$lib/components/tasks/TaskCheck.svelte";
 	import { TextAction } from "$lib";
@@ -389,6 +390,9 @@
 			{/if}
 		</span>
 		<span class="title">{t.title}</span>
+		{#if notesStore.about(`/task/${t.id}`).length}
+			<span class="noticed" role="img" aria-label="Your server noticed something"></span>
+		{/if}
 		<span class="spacer"></span>
 		{#each (t.also_about ?? []).slice(0, 3) as link (link.kind + link.id)}
 			<span class="also" title={subjectName(link)}><Icon icon={subjectIcon(link.kind)} width="14" /></span>
@@ -478,6 +482,13 @@
 	}
 	.spacer {
 		flex: 1 1 auto;
+	}
+	.noticed {
+		flex: none;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-primary);
 	}
 	.also {
 		display: inline-flex;

@@ -285,7 +285,15 @@ starts. Read `.claude/rules/migrations.md` first.
 5. **Home proposals.** For a task with no home, your server proposes one. For a
    cluster of tasks under one subject, it proposes a thread with "Make it a
    thread". Both follow the evidence rule above.
-6. **Notes on tasks and threads.** The first rule needs no model to find: a
+6. **Notes on tasks and threads.** Built (`api/notes.rs`, migration 0084):
+   two rules, a clash between calendar events filed in different threads in
+   the coming week, and a task in a thread due within three days with no
+   calendar time set aside for that thread before then. Notes are worked out
+   on each read, so they leave once their condition clears; "Not now" is
+   kept per condition. They show in the door's Insights view, in a thread's
+   or task's preview, as a mark on their rows, and on home's notes line. The
+   sentence is fixed wording; a model writing it is still to do.
+   The first rule needs no model to find: a
    clash between two calendar entries in different threads, or a dated task
    with no time set aside before its date. A model writes the sentence only.
    Notes reach the Insights view, the item's preview and the home notes line,

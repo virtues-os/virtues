@@ -84,6 +84,8 @@ pub fn routes() -> Router<AppState> {
         // its graph. Items come back inside GET /api/threads/:id.
         .route("/api/threads", get(list_threads_handler).post(create_thread_handler))
         .route("/api/threads/week", get(thread_week_handler))
+        .route("/api/notes", get(notes_handler))
+        .route("/api/notes/:key/dismiss", post(dismiss_note_handler).delete(restore_note_handler))
         .route(
             "/api/threads/:id",
             get(get_thread_handler)
@@ -467,6 +469,21 @@ pub async fn thread_week_handler(
         }
     };
     api_response(crate::api::thread_week::week(pool, start).await)
+}
+
+/// GET /api/notes - What your server noticed about your tasks and threads
+pub async fn notes_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::notes::notes(state.db.pool()).await)
+}
+
+/// POST /api/notes/:key/dismiss - Not now
+pub async fn dismiss_note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    api_response(crate::api::notes::dismiss(state.db.pool(), &key).await)
+}
+
+/// DELETE /api/notes/:key/dismiss - Bring a set-aside note back
+pub async fn restore_note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    api_response(crate::api::notes::restore(state.db.pool(), &key).await)
 }
 
 /// GET /api/threads/:id/graph - Entities referenced across the members

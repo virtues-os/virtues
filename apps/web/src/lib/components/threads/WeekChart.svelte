@@ -13,6 +13,7 @@
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import { dropZone } from '$lib/actions/dropZone';
 	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { notesStore } from '$lib/stores/notes.svelte';
 
 	let {
 		week,
@@ -148,6 +149,9 @@
 			<span class="label" role="rowheader">
 				<ProjectGlyph project={t} size={16} />
 				<span class="name">{t.name || 'Untitled thread'}</span>
+				{#if notesStore.about(`/thread/${t.id}`).length}
+					<span class="noticed" role="img" aria-label="Your server noticed something"></span>
+				{/if}
 			</span>
 			{#each t.days as d (d.date)}
 				<span class="cell" class:today={d.date === week.today} role="gridcell">
@@ -192,6 +196,9 @@
 			>
 				<ProjectGlyph project={t} size={14} />
 				<span>{t.name || 'Untitled thread'}</span>
+				{#if notesStore.about(`/thread/${t.id}`).length}
+					<span class="noticed" role="img" aria-label="Your server noticed something"></span>
+				{/if}
 			</button>
 		{/each}
 	</div>
@@ -322,6 +329,14 @@
 	}
 	.dot.unfiled {
 		background: var(--color-foreground-subtle);
+	}
+	/* A note about this thread: the one accent, meaning "now". */
+	.noticed {
+		flex: none;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-primary);
 	}
 	.none {
 		margin: 8px 0 0;

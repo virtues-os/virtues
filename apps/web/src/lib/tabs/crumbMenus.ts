@@ -94,6 +94,7 @@ function threadViewItems(here: string, open: (route: string) => void): ContextMe
 		{ id: 'overview', label: 'Overview', key: 'G O' },
 		{ id: 'tasks', label: 'Tasks', key: 'G T' },
 		{ id: 'threads', label: 'All threads', key: 'G A' },
+		{ id: 'insights', label: 'Insights', key: 'G I' },
 	];
 	return views.map((v) => ({
 		id: `view-${v.id}`,
