@@ -57,12 +57,16 @@ fn on_recommended_setup() -> bool {
     box_env::get("VIRTUES_INFERENCE").as_deref() == Some("bundled")
 }
 
-/// A Dragon still on its NPU setup. Read from the box env file as well as the
-/// process: this runs from root CLI contexts that don't load it, and a Dragon
-/// whose installer couldn't set up `virtues-qnnd` has no unit file to go by.
+/// A Dragon still on its NPU setup, by the box env file's `VIRTUES_INFERENCE`,
+/// which a Dragon whose installer couldn't set up `virtues-qnnd` still has.
+/// The qnnd unit counts only when the setting is missing: an owner who moved
+/// search to their own server (`manual`) keeps the unit on disk, and their
+/// choice is not ours to undo.
 fn on_npu_setup() -> bool {
-    box_env::get("VIRTUES_INFERENCE").as_deref() == Some("dragon")
-        || crate::inference_report::is_dragon_profile()
+    match box_env::get("VIRTUES_INFERENCE").as_deref() {
+        Some(mode) => mode == "dragon",
+        None => unit_path(QNND).exists(),
+    }
 }
 
 fn models_dir() -> PathBuf {
@@ -172,9 +176,10 @@ fn llama_server() -> PathBuf {
 /// serving the model it started with, and the index would be built for that.
 async fn stage_next(target: &Path) -> Result<(), String> {
     fetch_model(target).await.map_err(|e| format!("download {EMBED_GGUF}: {e}"))?;
-    let body = match std::fs::read_to_string(unit_path(EMBED)) {
-        Ok(embed_unit) => retarget_unit(&embed_unit, target, 18183),
-        Err(_) => {
+    let existing = std::fs::read_to_string(unit_path(EMBED)).ok().filter(|_| !paced_board());
+    let body = match existing {
+        Some(embed_unit) => retarget_unit(&embed_unit, target, 18183),
+        None => {
             let bin = llama_server();
             if !bin.exists() {
                 return Err(format!(
@@ -267,11 +272,12 @@ async fn move_off_npu() {
 /// settings that pointed at it. Its model files stay, which costs a few MB and
 /// keeps them for anyone who wants to look.
 fn retire_qnnd() {
-    if !unit_path(QNND).exists() {
-        return;
+    if unit_path(QNND).exists() {
+        ui::step("retiring virtues-qnnd (search now runs on this machine's CPU)…");
+        remove_unit(QNND);
     }
-    ui::step("retiring virtues-qnnd (search now runs on this machine's CPU)…");
-    remove_unit(QNND);
+    // A Dragon whose installer couldn't set up qnnd has the settings without
+    // the unit. Removing an absent key is a no-op.
     if let Err(e) = box_env::edit(&box_env::path(), &[], &["VIRTUES_QNND_MODELS_DIR", "VIRTUES_RERANK_URL"]) {
         ui::warn(&format!("couldn't remove the NPU settings from the box env: {e}"));
     }
@@ -309,6 +315,9 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     else {
         return;
     };
+    // An upgrade that replaces the sidecars stops this one before it settles.
+    // Starting a running unit is a no-op.
+    systemctl(&["start", NEXT]);
     // The index was built for what :18183 actually serves, which is what moves.
     // If that isn't the model its unit names, moving the unit would put a model
     // the index wasn't built for behind search.
@@ -325,7 +334,7 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     // since the swap, so nothing is reading from it.
     retire_qnnd();
     ui::step("moving the new search model onto its usual port…");
-    let body = match &embed_unit {
+    let body = match embed_unit.as_deref().filter(|_| !paced_board()) {
         Some(text) => retarget_unit(text, &new_model, 18181),
         None => embed_unit_for(&new_model),
     };
@@ -385,10 +394,12 @@ fn embed_unit_for(model: &Path) -> String {
 /// The embedding sidecar's unit, for a box that never had one (installed on
 /// its own server, or a Dragon moving off its NPU). Must match the installer's
 /// `EMBED_UNIT_TEMPLATE` (tools/virtues-installer/src/install.rs), which
-/// documents the flags; a box that has the unit keeps its own and only the
-/// model and port change.
+/// documents the flags, including the Dragon's. A box that has the unit keeps
+/// its own and only the model and port change, except on a Dragon, whose unit
+/// is always written fresh so that its pacing can't be lost
+/// ([`paced_board`]).
 fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
-    embed_unit_on(llama_server, model, port, crate::inference_report::is_dragon_board())
+    embed_unit_on(llama_server, model, port, paced_board())
 }
 
 /// [`embed_unit`] for a board that is, or isn't, a Dragon.
@@ -396,13 +407,14 @@ fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
 /// A Dragon has no fan. Measured on one with EmbeddingGemma 2: four threads
 /// held the CPU at its 90 °C throttle point within 30 seconds, while two held
 /// it near 75 °C at two thirds of the speed, and using the four slow cores as
-/// well made it slower. So there the sidecar runs two threads on the fast
-/// cores (4 to 6), at low priority, so the server, Postgres and chat come
+/// well made it slower. So there the sidecar runs two threads on the 2.4 GHz
+/// cores (4 to 6), and `CPUWeight=20` gives the server and Postgres the CPU
 /// first. It keeps one slot: a second didn't shorten a search's wait behind
-/// indexing, which the indexer's request sizing does (`search::indexer`).
+/// indexing, which the embedder's request sizing does
+/// (`search::embedder::LocalEmbedder::embed_batch_async`).
 fn embed_unit_on(llama_server: &Path, model: &Path, port: u16, dragon: bool) -> String {
     let (threads, pacing) = if dragon {
-        (DRAGON_FLAGS, "Nice=10\nCPUWeight=20\nCPUAffinity=4 5 6\n")
+        (DRAGON_FLAGS, "CPUWeight=20\nCPUAffinity=4 5 6\n")
     } else {
         ("", "")
     };
@@ -440,6 +452,11 @@ fn embed_unit_on(llama_server: &Path, model: &Path, port: u16, dragon: bool) -> 
         bin = llama_server.display(),
         model = model.display(),
     )
+}
+
+/// Whether this board's sidecar unit carries the Dragon pacing.
+fn paced_board() -> bool {
+    crate::inference_report::is_dragon_board()
 }
 
 /// The llama-server flags a Dragon adds (see [`embed_unit_on`]).
@@ -571,7 +588,7 @@ mod tests {
         let bin = Path::new("/usr/local/bin/llama-server");
         let dragon = embed_unit_on(bin, model, 18183, true);
         assert!(dragon.contains(" -np 1 --cache-ram 0 -ngl 0 -t 2\n"), "{dragon}");
-        assert!(dragon.contains("\nNice=10\nCPUWeight=20\nCPUAffinity=4 5 6\n"), "{dragon}");
+        assert!(dragon.contains("\nCPUWeight=20\nCPUAffinity=4 5 6\n"), "{dragon}");
         assert_eq!(unit_model(&dragon).as_deref(), Some(model));
         let other = embed_unit_on(bin, model, 18183, false);
         assert!(!other.contains(" -t ") && !other.contains("CPUAffinity"), "{other}");

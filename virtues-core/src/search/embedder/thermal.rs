@@ -1,50 +1,57 @@
-//! Pausing embedding while the CPU is hot.
+//! Pausing background embedding while the CPU is hot.
 //!
-//! Indexing sends batches back to back, so the embedding server's speed is the
-//! only limit on how hard it works the machine. On a desktop that is fine. On
-//! a fanless board it is not: measured on a Radxa Dragon Q6A, EmbeddingGemma 2
-//! at 4 threads reached the board's 90 °C throttle point within 30 seconds and
+//! Indexing, a model change and the day rescoring that follows one send
+//! requests back to back, so the embedding server's speed is the only limit on
+//! how hard they work the machine. On a desktop that is fine. On a fanless
+//! board it is not: measured on a Radxa Dragon Q6A, EmbeddingGemma 2 at 4
+//! threads reached the board's 90 °C throttle point within 30 seconds and
 //! stayed there, and a model change re-embeds the whole index, which takes days
 //! on such a board.
 //!
-//! So before each batch, [`wait_until_cool`] reads the CPU's thermal zones
-//! from sysfs. When one is within 10 °C of its first throttle point, embedding
-//! waits until every zone is 10 °C below that again. A machine whose zones
-//! can't be read is never paused.
+//! So before each document request ([`super::LocalEmbedder::embed_batch_async`]
+//! and `embed_async`), [`wait_until_cool`] reads the CPU's thermal zones from
+//! sysfs. When one is within [`PAUSE_BELOW_C`] of its first throttle point,
+//! embedding waits until every such zone is [`RESUME_BELOW_C`] below it.
+//! Search queries never wait.
+//!
+//! Only zones that declare a throttle point (a `passive` or `hot` trip) count.
+//! Arm boards declare one in their device tree. Intel's `x86_pkg_temp` usually
+//! reports none, and its firmware throttles on its own at a TjMax that busy
+//! machines run close to, so a guessed threshold would pause healthy machines
+//! all day. A machine with no such zone is never paused.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// How far below a zone's throttle point embedding pauses, and how much
-/// further it must cool before embedding resumes.
-const MARGIN_C: f64 = 10.0;
-/// The pause point for a zone that reports no throttle point.
-const DEFAULT_PAUSE_C: f64 = 80.0;
+/// How far below a zone's throttle point embedding pauses.
+const PAUSE_BELOW_C: f64 = 5.0;
+/// How far below it the zone must cool before embedding resumes.
+const RESUME_BELOW_C: f64 = 10.0;
 /// How often a paused run reads the temperature again.
 const RECHECK: Duration = Duration::from_secs(15);
 /// The longest one pause lasts. In a room too warm for the board to cool, one
-/// batch then goes ahead and the kernel's own throttling protects the chip;
-/// the pause only has to keep indexing from holding it there.
+/// request then goes ahead and the kernel's own throttling protects the chip;
+/// the pause only has to keep embedding from holding it there.
 const MAX_PAUSE: Duration = Duration::from_secs(10 * 60);
 
-/// One CPU thermal zone: its temperature and where embedding pauses for it.
+/// One CPU thermal zone that declares a throttle point.
 #[derive(Debug, Clone, PartialEq)]
 struct Zone {
     temp_c: f64,
-    pause_c: f64,
+    throttle_c: f64,
 }
 
 impl Zone {
     fn hot(&self) -> bool {
-        self.temp_c >= self.pause_c
+        self.temp_c >= self.throttle_c - PAUSE_BELOW_C
     }
     fn cool(&self) -> bool {
-        self.temp_c <= self.pause_c - MARGIN_C
+        self.temp_c <= self.throttle_c - RESUME_BELOW_C
     }
 }
 
 /// Wait while the CPU is too hot to embed. Returns at once when it isn't.
-pub(crate) async fn wait_until_cool() {
+pub(super) async fn wait_until_cool() {
     wait_until_cool_at(Path::new("/sys/class/thermal")).await
 }
 
@@ -53,25 +60,25 @@ async fn wait_until_cool_at(root: &Path) {
     let Some(hottest) = zones.iter().filter(|z| z.hot()).map(|z| z.temp_c).reduce(f64::max) else {
         return;
     };
-    tracing::info!(temp_c = hottest, "CPU is hot; embedding pauses until it cools");
+    tracing::info!(temp_c = hottest, "CPU is near its throttle point; embedding pauses until it cools");
     let started = Instant::now();
     loop {
         tokio::time::sleep(RECHECK).await;
-        let zones = cpu_zones(root);
-        if zones.iter().all(Zone::cool) {
+        if cpu_zones(root).iter().all(Zone::cool) {
             tracing::info!(paused_s = started.elapsed().as_secs(), "CPU has cooled; embedding resumes");
             return;
         }
         if started.elapsed() >= MAX_PAUSE {
-            tracing::info!("CPU still warm after the longest pause; embedding one more batch");
+            tracing::info!("CPU still warm after the longest pause; embedding goes ahead");
             return;
         }
     }
 }
 
-/// The CPU zones under `root` (`/sys/class/thermal`). Zones for other parts
-/// (battery, modem, GPU, the ACPI board sensor) are left out: a phone-sized
-/// board reports dozens, and only the CPU's say whether embedding heats it.
+/// The CPU zones under `root` (`/sys/class/thermal`) that declare a throttle
+/// point. Zones for other parts (battery, modem, GPU, the ACPI board sensor)
+/// are left out: a phone-sized board reports dozens, and only the CPU's say
+/// whether embedding heats it.
 fn cpu_zones(root: &Path) -> Vec<Zone> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -80,25 +87,27 @@ fn cpu_zones(root: &Path) -> Vec<Zone> {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("thermal_zone")))
         .filter(|p| read(p.join("type")).is_some_and(|t| is_cpu_zone(&t)))
-        .filter_map(|p| {
-            let temp_c = millideg(&p.join("temp"))?;
-            Some(Zone { temp_c, pause_c: throttle_point(&p).map_or(DEFAULT_PAUSE_C, |t| t - MARGIN_C) })
-        })
+        .filter_map(|p| Some(Zone { temp_c: millideg(&p.join("temp"))?, throttle_c: throttle_point(&p)? }))
         .collect()
 }
 
 /// Whether a zone's `type` names the CPU: `cpu0-thermal`, `cpuss0-thermal`
-/// and `cpu-big0-thermal` on Arm boards, `x86_pkg_temp` on Intel. AMD reports
-/// its CPU temperature through hwmon (`k10temp`), not a thermal zone, so an AMD
-/// machine is never paused.
+/// and `cpu-thermal` (Qualcomm, Raspberry Pi), `bigcore0-thermal`,
+/// `littlecore-thermal` and `soc-thermal` (Rockchip), `x86_pkg_temp` (Intel).
+/// AMD reports its CPU temperature through hwmon (`k10temp`), not a thermal
+/// zone, so an AMD machine is never paused.
 fn is_cpu_zone(kind: &str) -> bool {
     let k = kind.trim().to_ascii_lowercase();
-    k.starts_with("cpu") || k == "x86_pkg_temp" || k.contains("cpu-thermal")
+    k.starts_with("cpu")
+        || k.starts_with("bigcore")
+        || k.starts_with("littlecore")
+        || k == "soc-thermal"
+        || k == "x86_pkg_temp"
 }
 
 /// The lowest `passive` or `hot` trip point: where the kernel starts slowing
 /// the chip. `critical` is shutdown and `active` is a fan step, neither of
-/// which is the point to stay away from.
+/// which is the point to stay away from. Trips of 0 or below are unset.
 fn throttle_point(zone: &Path) -> Option<f64> {
     let entries = std::fs::read_dir(zone).ok()?;
     entries
@@ -147,28 +156,31 @@ mod tests {
     /// The Dragon's layout: per-core zones with passive trips at 90 and 95
     /// and a critical one at 110, beside zones for other parts.
     #[test]
-    fn a_cpu_zone_pauses_ten_degrees_under_its_first_throttle_point() {
+    fn a_dragon_pauses_at_85_and_resumes_at_80() {
         let d = tmp("dragon");
         let trips = [("passive", 90), ("passive", 95), ("critical", 110)];
         zone(&d, 0, "cpu0-thermal", 46, &trips);
-        zone(&d, 1, "cpu7-thermal", 81, &trips);
+        zone(&d, 1, "cpu7-thermal", 86, &trips);
         zone(&d, 2, "gpuss0-thermal", 99, &[("hot", 90)]);
-        zone(&d, 3, "pm7325-thermal", 120, &[]);
+        zone(&d, 3, "pm7325-thermal", 120, &[("passive", 100)]);
         let zones = cpu_zones(&d);
         assert_eq!(zones.len(), 2, "only the CPU zones count: {zones:?}");
-        assert!(zones.iter().all(|z| z.pause_c == 80.0));
-        assert!(zones.iter().any(Zone::hot), "81 °C is past the 80 °C pause point");
-        assert!(!zones.iter().all(Zone::cool), "and not yet under 70 °C");
+        assert!(zones.iter().all(|z| z.throttle_c == 90.0), "the lowest passive trip: {zones:?}");
+        assert!(zones.iter().any(Zone::hot), "86 °C is past the 85 °C pause point");
+        assert!(!zones.iter().all(Zone::cool), "and not yet under 80 °C");
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// Intel's package zone with unset trips, a zone with only a shutdown
+    /// trip, and a Rockchip big-core zone with a real one.
     #[test]
-    fn a_zone_without_trip_points_pauses_at_eighty() {
-        let d = tmp("notrips");
-        zone(&d, 0, "x86_pkg_temp", 79, &[]);
-        let zones = cpu_zones(&d);
-        assert_eq!(zones, vec![Zone { temp_c: 79.0, pause_c: DEFAULT_PAUSE_C }]);
-        assert!(!zones[0].hot());
+    fn only_zones_with_a_throttle_point_count() {
+        let d = tmp("trips");
+        zone(&d, 0, "x86_pkg_temp", 95, &[("passive", 0)]);
+        zone(&d, 1, "cpu-thermal", 95, &[("critical", 110)]);
+        zone(&d, 2, "bigcore0-thermal", 60, &[("passive", 85), ("critical", 115)]);
+        zone(&d, 3, "acpitz", 99, &[("passive", 90)]);
+        assert_eq!(cpu_zones(&d), vec![Zone { temp_c: 60.0, throttle_c: 85.0 }]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

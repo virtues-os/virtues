@@ -29,8 +29,11 @@ use sqlx::PgPool;
 use super::embedder::{EndpointConfig, LocalEmbedder, ENDPOINT_KEYS};
 use super::indexer::IndexerLock;
 
-/// Chunks read and embedded per round trip to the database.
-const BATCH: i64 = 256;
+/// Chunks read and embedded per round trip to the database. Each batch is
+/// committed before the deadline is checked, and the run is killed at its time
+/// limit a few minutes after that, so a batch must finish well inside the
+/// grace: 64 chunks are about 70 s on a Dragon's CPU, 256 were over 4 minutes.
+const BATCH: i64 = 64;
 
 /// The share of chunks the new model may refuse before the swap waits. A chunk
 /// the new model can't embed loses its vector, not its words: BM25 still finds
@@ -278,6 +281,11 @@ async fn begin(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
         "DROP INDEX IF EXISTS search_vectors_next_hnsw".to_string(),
         // `dim` is a validated integer, so the interpolation is injection-safe.
         format!("ALTER TABLE search_vectors_next ALTER COLUMN embedding TYPE halfvec({dim})"),
+        // On the empty table, so every insert keeps it current and the swap
+        // has nothing to build. Built at the swap instead, a large index on a
+        // Dragon's CPU could outlast the run's time limit, and a killed build
+        // starts over on the next run.
+        crate::database::hnsw_index_sql("search_vectors_next_hnsw", "search_vectors_next", false),
     ] {
         sqlx::query(&stmt).execute(&mut *tx).await?;
     }
@@ -362,9 +370,11 @@ async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
     Ok(())
 }
 
-/// The next table's HNSW index, built CONCURRENTLY so that deleting a chunk
-/// (which cascades into this table) doesn't wait minutes on the build. A build
-/// cut off leaves an invalid index behind; drop it and build again.
+/// The next table's HNSW index, for a build begun before [`begin`] created it
+/// on the empty table (a valid index returns at once). Built CONCURRENTLY so
+/// that deleting a chunk (which cascades into this table) doesn't wait minutes
+/// on the build. A build cut off leaves an invalid index behind; drop it and
+/// build again.
 async fn build_next_hnsw(pool: &PgPool) -> Result<()> {
     let valid: Option<bool> = sqlx::query_scalar(
         "SELECT i.indisvalid FROM pg_index i \

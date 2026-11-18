@@ -20,12 +20,12 @@
 //! whatever its owner points it at. Which model produced a vector is *recorded*
 //! (`search_embeddings.model`, from `model_id()`), never assumed.
 //!
-//! **Dragon (NPU)** is the same HTTP path: `virtues-qnnd` serves this exact
-//! contract (`/v1/embeddings` + `/v1/models`) on :18181, backed by the Hexagon
-//! NPU running **gte-small (384-d, native, untruncated)**. The tokenization/
-//! packing intelligence lives in that daemon (`crates/virtues-qnnd`), not here
-//! — the box no longer has a QNN-specific code path, and Dragon gets the same
-//! probe/fingerprint/dim guards as every other endpoint.
+//! **Dragon (NPU)**, until its search moves to the CPU (`cli::model_set`), is
+//! the same HTTP path: `virtues-qnnd` serves this exact contract
+//! (`/v1/embeddings` + `/v1/models`) on :18181, backed by the Hexagon NPU
+//! running **gte-small (384-d, native, untruncated)**. The box has no
+//! QNN-specific code path, and a Dragon gets the same probe/fingerprint/dim
+//! guards as every other endpoint.
 //!
 //! **Sidecar (default DIY/dev)** is the HTTP path below, and the installer's
 //! current GGUF is EmbeddingGemma 2 (Q8_0) — a Gemma-4-lineage bidirectional
@@ -49,8 +49,11 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+mod thermal;
 
 // `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
 // `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
@@ -601,12 +604,63 @@ impl HttpEmbedder {
     }
 }
 
-/// The embedder callers use — a thin wrapper preserving the public surface
-/// from when this dispatched between an HTTP backend and a native QNN client.
-/// There is now exactly ONE inference path: the HTTP contract. On Dragon the
-/// endpoint behind `VIRTUES_EMBED_URL` is `virtues-qnnd` (gte-small on the
-/// NPU); everywhere else it's llama-server or a BYO endpoint. The box can't
-/// tell the difference, which is the point.
+/// The longest one document request should take.
+///
+/// A search embeds its query on the same server, which answers requests in
+/// order, so a search waits behind the document request in flight. Measured on
+/// a Radxa Dragon Q6A at two CPU threads, a 32-chunk request took about 37 s,
+/// and so did every search sent meanwhile; a second server slot didn't help,
+/// because one request queues all its inputs at once.
+const TARGET_REQUEST: std::time::Duration = std::time::Duration::from_secs(3);
+/// The most inputs one request carries, however fast the server is.
+const MAX_REQUEST_INPUTS: usize = 32;
+/// Characters in a process's first request. The indexer runs as a new process
+/// every 15 minutes, so this is where every run starts: small enough to be
+/// about 3 s on a Dragon, and a fast machine doubles past it within a few
+/// requests.
+const FIRST_REQUEST_CHARS: usize = 1024;
+const MIN_REQUEST_CHARS: usize = 256;
+const MAX_REQUEST_CHARS: usize = MAX_REQUEST_INPUTS * 2048;
+
+/// The character budget for the next document request, from the last one's
+/// pace. Characters, not inputs, because inputs run from a few words to 2,048
+/// characters.
+static REQUEST_CHARS: AtomicUsize = AtomicUsize::new(FIRST_REQUEST_CHARS);
+
+/// Where the request starting at `start` ends: inputs up to `budget`
+/// characters, at least one, at most [`MAX_REQUEST_INPUTS`].
+fn request_end(texts: &[String], start: usize, budget: usize) -> usize {
+    let mut end = start + 1;
+    let mut chars = texts[start].len();
+    while end < texts.len() && end - start < MAX_REQUEST_INPUTS && chars + texts[end].len() <= budget {
+        chars += texts[end].len();
+        end += 1;
+    }
+    end
+}
+
+/// The next budget after `chars` characters took `took`: what fits in
+/// [`TARGET_REQUEST`] at that pace, at most double the last budget, so one
+/// quick request of a few short inputs doesn't leap to a long one.
+fn next_request_chars(budget: usize, chars: usize, took: std::time::Duration) -> usize {
+    let fits = if took.is_zero() {
+        usize::MAX
+    } else {
+        (chars as f64 * TARGET_REQUEST.as_secs_f64() / took.as_secs_f64()) as usize
+    };
+    fits.min(budget.saturating_mul(2)).clamp(MIN_REQUEST_CHARS, MAX_REQUEST_CHARS)
+}
+
+/// The embedder callers use. There is exactly one inference path, the HTTP
+/// contract: the endpoint behind `VIRTUES_EMBED_URL` is llama-server, a BYO
+/// server, or, on a Dragon that hasn't yet moved to its CPU, `virtues-qnnd`.
+/// The box can't tell the difference, which is the point.
+///
+/// Document embedding is background work (indexing, a model change, rescoring
+/// days), and it is paced here so that every caller is: each request waits
+/// while the CPU is near its throttle point (`thermal`), and is sized to take
+/// about [`TARGET_REQUEST`]. Query embedding is what a person is waiting on,
+/// and is never paced.
 pub struct LocalEmbedder {
     inner: Arc<HttpEmbedder>,
     /// The stored vector width (= the vector column's dims), resolved from the
@@ -639,12 +693,35 @@ impl LocalEmbedder {
 
     /// Embed a single stored **document/content** string.
     pub async fn embed_async(&self, text: &str) -> Result<Vec<f32>> {
+        thermal::wait_until_cool().await;
         self.inner.embed_async(text).await
     }
 
-    /// Embed a batch of **documents/content**.
+    /// Embed a batch of **documents/content**, in requests sized to take about
+    /// [`TARGET_REQUEST`] each. The vectors come back in input order. A failed
+    /// request fails the call, and halves the size of the next.
     pub async fn embed_batch_async(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed_batch_async(texts).await
+        let mut out = Vec::with_capacity(texts.len());
+        let mut start = 0;
+        while start < texts.len() {
+            thermal::wait_until_cool().await;
+            let budget = REQUEST_CHARS.load(Ordering::Relaxed);
+            let end = request_end(&texts, start, budget);
+            let chars: usize = texts[start..end].iter().map(|t| t.len()).sum();
+            let sent = std::time::Instant::now();
+            match self.inner.embed_batch_async(texts[start..end].to_vec()).await {
+                Ok(vectors) => {
+                    REQUEST_CHARS.store(next_request_chars(budget, chars, sent.elapsed()), Ordering::Relaxed);
+                    out.extend(vectors);
+                }
+                Err(e) => {
+                    REQUEST_CHARS.store((budget / 2).max(MIN_REQUEST_CHARS), Ordering::Relaxed);
+                    return Err(e);
+                }
+            }
+            start = end;
+        }
+        Ok(out)
     }
 
     pub fn dimension(&self) -> usize {
@@ -885,5 +962,36 @@ mod locality_tests {
         assert_eq!(locality("http://[fd7a::1]:8080").await, Locality::Local);
         assert_eq!(locality("https://203.0.113.7").await, Locality::Public);
         assert_eq!(locality("https://[2001:db8::1]:443").await, Locality::Public);
+    }
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn texts(lens: &[usize]) -> Vec<String> {
+        lens.iter().map(|n| "a".repeat(*n)).collect()
+    }
+
+    #[test]
+    fn a_request_takes_inputs_up_to_its_budget_and_always_one() {
+        let t = texts(&[300, 300, 300, 300, 2048, 10]);
+        assert_eq!(request_end(&t, 0, 1024), 3, "three 300-char inputs fit in 1024");
+        assert_eq!(request_end(&t, 4, 1024), 5, "an input over budget still goes, alone");
+        let many = texts(&[1; 100]);
+        assert_eq!(request_end(&many, 0, usize::MAX), MAX_REQUEST_INPUTS);
+    }
+
+    #[test]
+    fn the_budget_follows_the_pace_and_grows_at_most_double() {
+        // A Dragon at two threads: about 300 chars a second.
+        assert_eq!(next_request_chars(1024, 900, Duration::from_secs(3)), 900);
+        // A fast machine doubles each request rather than leaping.
+        assert_eq!(next_request_chars(1024, 1000, Duration::from_millis(20)), 2048);
+        assert_eq!(next_request_chars(MAX_REQUEST_CHARS, 1000, Duration::from_millis(1)), MAX_REQUEST_CHARS);
+        // Very slow, or a single long input: never below the floor.
+        assert_eq!(next_request_chars(1024, 2048, Duration::from_secs(60)), MIN_REQUEST_CHARS);
+        assert_eq!(next_request_chars(1024, 10, Duration::ZERO), 2048);
     }
 }

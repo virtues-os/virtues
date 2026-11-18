@@ -560,8 +560,10 @@ async fn activate(
     // provisioned separately. On the recommended setup the release's models
     // follow it: retire the reranker, and start a background move to a new
     // embedding model if this release recommends one (`model_set`). Never
-    // fails the upgrade. A box on its own server keeps its owner's models, and
-    // a Dragon's NPU models change only with the installer.
+    // fails the upgrade. A box on its own server keeps its owner's models. A
+    // Dragon still on its NPU starts moving to the recommended model on its
+    // CPU, from the nightly run of the new binary (this one is the old one on
+    // the upgrade that first carries the move).
     super::model_set::start_recommended_change().await;
 
     println!();

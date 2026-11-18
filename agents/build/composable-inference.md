@@ -17,7 +17,7 @@ from is decided once, at install (`InferenceMode`), and there are three answers:
 
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
-| **Dragon** | our board (Q6A, Hexagon v68 NPU), detected from the device tree | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181` (it also loads ColBERT on `:18182`, which search doesn't call) | detection; zero questions |
+| **Dragon** (retiring) | the Radxa Dragon Q6A, detected from the device tree | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, until the box's first nightly update moves it to Bundled with the Dragon's pacing ([model-migration.md](model-migration.md)) | detection; zero questions |
 | **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 
@@ -124,8 +124,7 @@ instead of re-embedding.
 - **`curl | sh` cannot prompt on stdin**; cliclack reads `/dev/tty` directly.
   No TTY and no env override is a clear error, not a hang.
 - **llama.cpp Vulkan on the Q6A's Adreno 643 GPU-hangs** (`vk::DeviceLost`).
-  The Q6A's inference is the NPU via `virtues-qnnd`; do not route it back
-  through the GPU.
+  The Q6A runs search on its CPU; do not route it through the GPU.
 - **EmbeddingGemma's activations overflow fp16**, so the bundled sidecar runs
   it on the CPU (`-ngl 0`). On the hardware we measured, a GPU was no faster.
   How a discrete GPU compares is unmeasured; the accelerator guide doesn't

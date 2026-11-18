@@ -1048,9 +1048,16 @@ const ATTENTION_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 
 #[derive(serde::Deserialize)]
 struct AttentionItem {
     key: String,
+    #[serde(default)]
+    kind: String,
     title: String,
     body: String,
 }
+
+/// Kinds that tell the owner what is happening without asking anything of
+/// them (`api/attention.rs`). The home screen shows them; a notification would
+/// be an alarm for something that needs nothing.
+const INFORM_ONLY: &[&str] = &["search"];
 
 /// Turns `GET /api/attention` into native notifications, once per problem.
 ///
@@ -1077,8 +1084,10 @@ impl AttentionNotifier {
         self.last_poll = Some(std::time::Instant::now());
         // A failed poll changes nothing: unreachable is the tray's own line.
         let Some(items) = fetch_attention_blocking() else { return };
-        let fresh: Vec<&AttentionItem> =
-            items.iter().filter(|i| !self.known.contains(&i.key)).collect();
+        let fresh: Vec<&AttentionItem> = items
+            .iter()
+            .filter(|i| !self.known.contains(&i.key) && !INFORM_ONLY.contains(&i.kind.as_str()))
+            .collect();
         notify_attention(app, &fresh);
         self.known = items.into_iter().map(|i| i.key).collect();
     }

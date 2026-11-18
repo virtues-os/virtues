@@ -5,7 +5,7 @@ The box talks to local inference over loopback HTTP: embedding on `:18181`
 
 | Profile | Server | Files it loads |
 |---|---|---|
-| **Dragon** (`VIRTUES_INFERENCE=dragon`) | `virtues-qnnd` on the Hexagon NPU, one unit | QAIRT context binaries + tokenizers under `$DATA_DIR/models/qnn/` |
+| **Dragon** (`VIRTUES_INFERENCE=dragon`), until it moves | `virtues-qnnd` on the Hexagon NPU, one unit | QAIRT context binaries + tokenizers under `$DATA_DIR/models/qnn/` |
 | **Bundled** (`VIRTUES_INFERENCE=bundled`) | one CPU `llama-server` sidecar, `virtues-embed` (plus `virtues-embed-next` on `:18183` while a model change runs) | GGUFs under `$DATA_DIR/models/` |
 | `make dev` | `llama-server` sidecars the Makefile starts | GGUFs under `.data/models/` |
 
@@ -80,14 +80,14 @@ reads embedding settings from there through `box_env::var`), and then, under
 `search_index_meta.rescore_pending`, forgets the old event embeddings and
 rescores every day. Settings → Search shows the progress.
 
-**Dragon boxes do not switch automatically.** Their NPU models change only with the installer:
-
-```
-curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION=<tag> sh
-```
-
-A release that changes the QNN binaries has to say so in its notes; nothing
-prints during `virtues upgrade`.
+**A Dragon on its NPU moves to the bundled setup.** The nightly
+`virtues auto-update` (the new binary; the upgrade that first carries a change
+is run by the old one) starts the recommended model as `virtues-embed-next` and
+sets `VIRTUES_INFERENCE=bundled`, while `virtues-qnnd` keeps serving search.
+The settle after the swap retires `virtues-qnnd` and its settings before the
+new model takes `:18181`. A Dragon's sidecar unit is always written fresh with
+its pacing (two threads on cores 4 to 6, `CPUWeight=20`), never retargeted
+from an older unit. A Dragon on `manual` is left alone like any other.
 
 **Re-running the installer on an existing bundled box** rewrites
 `virtues-embed` to the new model in place and keeps the box's env values,

@@ -10,6 +10,9 @@
 //! Every item's `key` stays the same for as long as its condition holds, so a
 //! client notifies once per problem, not once per poll.
 //!
+//! One kind informs rather than asks: `search`, while search moves to another
+//! model. It comes last, and the Mac app doesn't notify for it.
+//!
 //! Each source is read independently, and one that fails to read is left out
 //! rather than failing the list: a broken backup query must not hide an
 //! expired sign-in.
@@ -29,7 +32,7 @@ pub struct AttentionItem {
     /// Stable while the condition holds; a new key is a new problem.
     pub key: String,
     /// `key` | `update` | `disk` | `backup` | `source` | `connection` |
-    /// `stream` | `applet` | `applet_new`, most urgent first.
+    /// `stream` | `applet` | `applet_new` | `search`, most urgent first.
     pub kind: &'static str,
     pub title: String,
     pub body: String,
@@ -64,11 +67,6 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
         Err(e) => tracing::warn!("attention: credential expiry unreadable: {e}"),
     }
 
-    match crate::search::next_index::status(db.pool()).await {
-        Ok(change) => search_rebuild_items(&mut items, change.map(|c| c.model)),
-        Err(e) => tracing::warn!("attention: search model change unreadable: {e}"),
-    }
-
     match failed_applets(db).await {
         Ok(rows) => failed_applet_items(&mut items, rows),
         Err(e) => tracing::warn!("attention: applet runs unreadable: {e}"),
@@ -79,6 +77,11 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     match new_from_applets(db).await {
         Ok(rows) => new_applet_items(&mut items, rows),
         Err(e) => tracing::warn!("attention: applet results unreadable: {e}"),
+    }
+
+    match crate::search::next_index::status(db.pool()).await {
+        Ok(change) => search_rebuild_items(&mut items, change.map(|c| c.model)),
+        Err(e) => tracing::warn!("attention: search model change unreadable: {e}"),
     }
 
     Ok(items)
@@ -130,17 +133,18 @@ async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
 }
 
 /// While search moves to another model, a line saying so. It informs rather
-/// than warns: search keeps working on the old model until the new index is
-/// built, which on a small server takes days. No count or percentage here;
-/// Settings → Search has the numbers for anyone who wants them. Keyed by the
-/// model, so the Mac app notifies once per change.
+/// than warns, and makes no promise about search meanwhile: on most boxes the
+/// old model keeps serving, but a Dragon whose NPU never worked had no search
+/// by meaning to keep. A new index takes days on a small server. No count or
+/// percentage here; Settings → Search has the numbers for anyone who wants
+/// them.
 fn search_rebuild_items(items: &mut Vec<AttentionItem>, model: Option<String>) {
     let Some(model) = model else { return };
     items.push(AttentionItem {
         key: format!("search_rebuild:{model}"),
         kind: "search",
         title: "Your server is updating search".into(),
-        body: "Search keeps working while it finishes. On a small server this can take a few days.".into(),
+        body: "It finishes on its own. On a small server this can take a few days.".into(),
         route: "/virtues/search".into(),
     });
 }

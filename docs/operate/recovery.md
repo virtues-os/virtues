@@ -77,15 +77,16 @@ sudo journalctl -u virtues -n 200 --no-pager
 
 ## The pieces
 
-Besides the main service, a server runs an inference sidecar. On hardware
-with an NPU, a single daemon replaces it:
+Besides the main service, a server runs an inference sidecar. A Radxa Dragon
+set up to use its NPU runs a different daemon until its first automatic update
+moves search to the CPU:
 
 | Unit | What it is |
 |---|---|
 | `virtues` | the server itself, on port 8000 |
 | `virtues-embed` | embedding model, on local port 18181 |
 | `virtues-embed-next` | only while search moves to a new model, on local port 18183 |
-| `virtues-qnnd` | on NPU hardware, replaces the sidecar and serves ports 18181 and 18182 |
+| `virtues-qnnd` | on a Dragon until search moves to its CPU; serves ports 18181 and 18182 |
 
 If search returns nothing or feels broken while the server is otherwise healthy,
 suspect a sidecar:

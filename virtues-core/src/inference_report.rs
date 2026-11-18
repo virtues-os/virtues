@@ -83,20 +83,24 @@ fn models_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/var/lib/virtues/models"))
 }
 
-/// Is this box the Dragon NPU profile? The runtime no longer has a QNN code
-/// path (virtues-qnnd serves the same HTTP contract as llama-server), so this
-/// is purely a REPORTING distinction: which model artifacts to list. Keyed off
-/// the installer's `VIRTUES_INFERENCE=dragon`, with the qnnd unit file as a
-/// fallback for `sudo` CLI contexts that don't load the box env.
+/// Is this box's search still on the Dragon NPU profile? virtues-qnnd serves
+/// the same HTTP contract as llama-server, so this decides which model
+/// artifacts reports list and which unit a remedy names, never how search
+/// runs. False once a Dragon's search moves to its CPU (`cli::model_set`);
+/// for the board itself, see [`is_dragon_board`]. Keyed off the installer's
+/// `VIRTUES_INFERENCE=dragon`, with the qnnd unit file as a fallback for `sudo`
+/// CLI contexts that don't load the box env.
 pub(crate) fn is_dragon_profile() -> bool {
     std::env::var("VIRTUES_INFERENCE").map(|v| v == "dragon").unwrap_or(false)
         || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }
 
-/// Is this machine a Radxa Dragon Q6A, by its device tree? A question about the
-/// board, not the inference setup: a Dragon keeps being one after its search
-/// moves from the NPU to the CPU, and its embedding sidecar runs gently there
-/// (`cli::model_set::embed_unit`), because it has no fan.
+/// Is this machine a QCM6490 board such as the Radxa Dragon Q6A, by its device
+/// tree? A question about the board, not the search setup: a Dragon keeps being
+/// one after its search moves from the NPU to the CPU. Its embedding sidecar
+/// runs gently there (`cli::model_set::embed_unit_on`), because it has no fan;
+/// other QCM6490 boards (RB3 Gen2, Rubik Pi 3) share its core layout. Local
+/// mode is offered on it (`local_model::supported`).
 pub(crate) fn is_dragon_board() -> bool {
     std::fs::read("/proc/device-tree/compatible")
         .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a" || s == b"qcom,qcm6490"))
