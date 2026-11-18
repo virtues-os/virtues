@@ -1,468 +1,351 @@
 <script lang="ts">
 	/**
-	 * Settings → Billing → What AI has cost: this month, the last two weeks
-	 * by day, the month by kind of work, the wallet's money in and out, and
-	 * every call (UsageView). Where your subscription stands, the balance,
-	 * auto top-up and the spending limits are rows on the Settings page
-	 * (settings/BillingSettings.svelte); bringing your own AI is its own page
-	 * (settings/ByoPage.svelte).
+	 * Settings → What AI has cost: this month's total, the month day by day,
+	 * what it went to, and every call (UsageView).
+	 *
+	 * All four come from your server's own call log (`app_ai_calls`, each
+	 * call priced by the gateway's `usage.cost`), so they add up to each
+	 * other. The balance is the wallet's and lives on Billing; this page names
+	 * it in one line with a link there. Calls on your own AI key are counted
+	 * and never priced, since only your provider knows the price.
 	 */
-	import { TextAction } from '$lib';
 	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
-	import { formatMicrosPrecise } from '$lib/utils/currency';
-	import { formatDate } from '$lib/utils/dateUtils';
+	import { formatMicrosPrecise, formatMicrosUSD } from '$lib/utils/currency';
+	import { featureLabel } from '$lib/utils/aiFeatures';
+	import { openSettingsPage } from '$lib/settings/focus';
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { getBillingUsage, getUsageSummary, ApiError } from '$lib/api/client';
 
-	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
-	type LedgerEntry = { ts: string; micros: number; kind: string; real_micros: number | null };
-	type Usage = {
-		balance_micros: number;
-		month_to_date_micros: number;
-		expires_at: string | null;
-		entries: LedgerEntry[];
-		error?: string;
-		unlinked?: boolean;
-	};
-	let usage = $state<Usage | null>(null);
-	let usageLoading = $state(true);
-	/**
-	 * Why the balance is missing, in the words the server used.
-	 *
-	 * This panel used to hide itself on any failure — which removed the one
-	 * number the page exists to show and said nothing about why. A box whose
-	 * wallet call is failing then looks identical to a box with no wallet, and
-	 * the reader's only clue is an absence they have to notice.
-	 */
-	let usageError = $state<string | null>(null);
-	/** No Virtues account is connected, so there is no wallet to read. */
-	let unlinked = $state(false);
-
-	async function loadUsage() {
-		usageLoading = true;
-		usageError = null;
-		unlinked = false;
-		try {
-			const data = await getBillingUsage<Usage>();
-			// The server answers 200 with an `error` body when it cannot reach
-			// the wallet, so a thrown error is not the only failure shape.
-			if (data.unlinked) {
-				unlinked = true;
-				usage = null;
-			} else if (data.error) {
-				usageError = data.error;
-				usage = null;
-			} else {
-				// Never trust `entries` to be present.
-				usage = { ...data, entries: data.entries ?? [] };
-			}
-		} catch (e) {
-			usageError = e instanceof ApiError ? e.message : 'Could not reach the wallet.';
-			usage = null;
-		}
-		usageLoading = false;
-	}
-
-	$effect(() => { void loadUsage(); });
-
-	// ─── Local spend summary: the chart and the by-kind tracks ─────────────
-	// `app_ai_calls`, box-local, no egress. The wallet above is what the
-	// gateway says the money is; this is where it went, by day and by kind.
+	// ─── The month, from the call log ──────────────────────────────────────
 	type SpendBucket = { label: string; calls: number; cost_micros: number; byo_calls: number };
 	type DaySpend = { day: string; calls: number; cost_micros: number };
 	type Summary = {
+		month_start: string;
 		by_feature: SpendBucket[];
 		by_day: DaySpend[];
 		last_month_to_date_micros: number | null;
 	};
 	let summary = $state<Summary | null>(null);
 	let summaryError = $state<string | null>(null);
+
 	async function loadSummary() {
 		summaryError = null;
 		try {
 			summary = await getUsageSummary<Summary>();
 		} catch (e) {
-			summaryError = e instanceof ApiError ? e.message : 'Could not read your server’s call log.';
+			summaryError = e instanceof ApiError ? e.message : "Your server couldn't read its call log.";
 		}
 	}
-	$effect(() => { void loadSummary(); });
+	$effect(() => {
+		void loadSummary();
+	});
 
-	/** The last 14 UTC days as bar slots, absent days filled with zero. */
+	// ─── The balance, from the wallet, for one line ─────────────────────────
+	// Only a balance that loaded is named; Billing says why one is missing.
+	let balance = $state<number | null>(null);
+	$effect(() => {
+		getBillingUsage<{ balance_micros?: number; error?: string; unlinked?: boolean }>()
+			.then((u) => (balance = !u.error && !u.unlinked && typeof u.balance_micros === 'number' ? u.balance_micros : null))
+			.catch(() => {
+				// The month stands without the balance.
+				balance = null;
+			});
+	});
+
+	const monthStart = $derived(summary ? new Date(summary.month_start) : new Date());
+	const monthName = $derived(monthStart.toLocaleDateString(undefined, { month: 'long', timeZone: 'UTC' }));
+	const lastMonthName = $derived(
+		new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() - 1, 1)).toLocaleDateString(undefined, {
+			month: 'long',
+			timeZone: 'UTC',
+		}),
+	);
+
+	/** What the wallet paid this month; own-key calls add nothing they can't price. */
+	const monthMicros = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.cost_micros, 0));
+	const byoCalls = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.byo_calls, 0));
+
+	/** Every day of the month as a slot; days to come are empty. */
 	const days = $derived.by(() => {
 		const byDay = new Map((summary?.by_day ?? []).map((d) => [d.day, d]));
-		const out: { day: string; cost: number; calls: number; label: string }[] = [];
-		const today = new Date();
-		for (let i = 13; i >= 0; i--) {
-			const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
-			const key = d.toISOString().slice(0, 10);
+		const year = monthStart.getUTCFullYear();
+		const month = monthStart.getUTCMonth();
+		const length = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+		const today = new Date().toISOString().slice(0, 10);
+		return Array.from({ length }, (_, i) => {
+			const date = new Date(Date.UTC(year, month, i + 1));
+			const key = date.toISOString().slice(0, 10);
 			const row = byDay.get(key);
-			out.push({
-				day: key,
+			return {
+				key,
 				cost: row?.cost_micros ?? 0,
 				calls: row?.calls ?? 0,
-				label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-			});
-		}
-		return out;
+				today: key === today,
+				future: key > today,
+				label: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+			};
+		});
 	});
+	const todayIndex = $derived(days.findIndex((d) => d.today));
 	const dayMax = $derived(Math.max(1, ...days.map((d) => d.cost)));
-	// Chart geometry: 14 slots of 45 in a 640 box, bars 34 wide; plot 106 tall
-	// from y=12 to the baseline at y=118. One scale, from the tallest day.
-	const barX = (i: number) => 6 + i * 45;
-	const barH = (cost: number) => Math.max(cost > 0 ? 2 : 0, (cost / dayMax) * 106);
 
-	const monthLocalMicros = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.cost_micros, 0));
-	const totalCalls = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.calls, 0));
-	/** Percent change against last month to the same date; null when there is nothing to compare to. */
-	const monthDelta = $derived.by(() => {
-		const prev = summary?.last_month_to_date_micros;
-		if (prev == null || prev <= 0) return null;
-		return Math.round(((monthLocalMicros - prev) / prev) * 100);
+	// Chart geometry: one slot per day across 680, bars 64% of a slot, a plot
+	// 80 tall over the baseline at y=100.
+	const W = 680;
+	const slot = $derived(W / Math.max(1, days.length));
+	const barW = $derived(Math.max(4, slot * 0.64));
+	const barX = (i: number) => i * slot + (slot - barW) / 2;
+	const barH = (cost: number) => (cost > 0 ? Math.max(2, (cost / dayMax) * 80) : 0);
+
+	// The kinds: the six that cost most, then the rest as one line.
+	const KINDS_SHOWN = 6;
+	const kinds = $derived.by(() => {
+		const all = [...(summary?.by_feature ?? [])].sort((a, b) => b.cost_micros - a.cost_micros || b.calls - a.calls);
+		if (all.length <= KINDS_SHOWN + 1) return all.map((b) => ({ name: featureLabel(b.label), ...b }));
+		const rest = all.slice(KINDS_SHOWN);
+		return [
+			...all.slice(0, KINDS_SHOWN).map((b) => ({ name: featureLabel(b.label), ...b })),
+			{
+				name: 'Everything else',
+				label: 'rest',
+				calls: rest.reduce((a, b) => a + b.calls, 0),
+				cost_micros: rest.reduce((a, b) => a + b.cost_micros, 0),
+				byo_calls: rest.reduce((a, b) => a + b.byo_calls, 0),
+			},
+		];
 	});
-	const kindMax = $derived(Math.max(1, ...(summary?.by_feature ?? []).map((b) => b.cost_micros)));
-	const kindLabelOf = (label: string) =>
-		label === 'other' ? 'Other' : label.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
-
-	/** `$12<span class="c">.40</span>` — the cents recede. Escaped: only digits reach the markup. */
-	function moneyFigure(micros: number): string {
-		const neg = micros < 0;
-		const cents = Math.round(Math.abs(micros) / 10_000);
-		const dollars = Math.floor(cents / 100);
-		const rest = String(cents % 100).padStart(2, '0');
-		return `${neg ? '−' : ''}$${dollars.toLocaleString()}<span class="c">.${rest}</span>`;
-	}
-
-	const kindLabel: Record<string, string> = {
-		grant: 'Monthly credit',
-		topup: 'Top-up',
-		charge: 'Usage',
-		refund: 'Refund',
-		adjust: 'Adjustment',
-	};
-
-	function entryDate(ts: string): string {
-		const d = new Date(ts);
-		const today = new Date();
-		const sameDay = d.toDateString() === today.toDateString();
-		return sameDay
-			? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-			: formatDate(ts, { month: 'short', day: 'numeric' });
-	}
-
-
+	const kindMax = $derived(Math.max(1, ...kinds.map((k) => k.cost_micros)));
 </script>
 
-<SettingsPage
-	title="What AI has cost"
-	lede="The last two weeks day by day, each kind of work, and every call."
-	back={{ route: '/virtues/billing', label: 'Billing' }}
-	width="full"
->
-<div class="plan-sections">
-	<!-- ─── THE MONTH ─────────────────────────────────────────────────────
-	     The two figures and the wallet's money in and out. Auto top-up, the
-	     rule that refills the balance, is a row on the Settings page. -->
-	<section class="chapter chapter-figures">
-		{#if usageLoading && !usage && !usageError}
-			<p class="chapter-lede">Reading your balance…</p>
-		{:else if unlinked}
-			<p class="chapter-lede">Connect your Virtues account in Billing to see your balance and what you've paid.</p>
-		{:else if usageError}
-			<!-- The report stands where the numbers would be: one plain line,
-			     then the server's words small. -->
-			<p class="note note-error note-figure">
-				Your server couldn't read your balance.
-				<span class="error-code">{usageError}</span>
-				<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
-			</p>
-		{:else if usage}
-			<!-- Two figures, Apple-large, the cents receding. The delta is
-			     against last month to the same date — the only fair comparison
-			     on the 4th — and is absent rather than wrong when there is no
-			     last month to compare to. -->
-			<div class="figures">
-				<div>
-					<div class="figure-label">Balance</div>
-					<div class="figure mono">{@html moneyFigure(usage.balance_micros)}</div>
-				</div>
-				<div>
-					<div class="figure-label">This month</div>
-					<div class="figure mono">{@html moneyFigure(usage.month_to_date_micros)}</div>
-					{#if monthDelta !== null}
-						<div class="delta" class:down={monthDelta < 0}>
-							{monthDelta < 0 ? '↓' : '↑'} {Math.abs(monthDelta)}% on last month
-						</div>
-					{/if}
-				</div>
-			</div>
-
-			<!-- Money in and out. The itemized AI calls that make up the
-			     `Usage` lines are the last chapter of the page; this is the
-			     account statement, not the receipt. -->
-			<h3 class="subhead">Money in and out</h3>
-			{#if usage.entries.length > 0}
-				<div class="entries">
-					{#each usage.entries.slice(0, 15) as e (e.ts + e.kind + e.micros)}
-						<div class="entry">
-							<span class="entry-kind">{kindLabel[e.kind] ?? e.kind}</span>
-							<span class="leader"></span>
-							<span class="entry-when mono">{entryDate(e.ts)}</span>
-							<span class="entry-amount mono" class:credit={e.micros >= 0}>
-								{e.micros < 0 ? '−' : '+'}{formatMicrosPrecise(Math.abs(e.micros))}
-							</span>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<p class="chapter-lede">Nothing has moved yet. Top-ups and charges will appear here.</p>
-			{/if}
-		{/if}
-	</section>
-
-	<!-- ─── USAGE ─────────────────────────────────────────────────────────
-	     Where the month went: fourteen days as bars, then the same money by
-	     kind. Box-local (`app_ai_calls`); the wallet figures above are the
-	     gateway's. Own-key calls are counted and never priced. -->
-	<section class="chapter">
-		<div class="chapter-head">
-			<div>
-				<h2 class="settings-label">Usage</h2>
-				<p class="chapter-lede">
-					Each day of the last two weeks, and what the money went to. Calls on your own key
-					are counted but not priced, since only your provider knows the price.
-				</p>
-			</div>
-			{#if totalCalls > 0}
-				<a class="see-all" href="#calls">Every call</a>
-			{/if}
+<SettingsPage title="What AI has cost" lede="This month, what it went to, and every call." back={{ route: '/virtues/billing', label: 'Billing' }}>
+	{#if summaryError}
+		<div class="failed" role="alert">
+			<p>{summaryError}</p>
+			<Button variant="secondary" onclick={loadSummary}>Try again</Button>
 		</div>
-		{#if summaryError}
-			<p class="note note-error">
-				Your server couldn't read the call log.
-				<span class="error-code">{summaryError}</span>
+	{:else if !summary}
+		<p class="quiet">Reading your server's call log…</p>
+	{:else}
+		<section class="month" aria-label="This month">
+			<p class="figure"><!-- Precise, as the kinds and calls are, so a month under a cent doesn't read as nothing. -->
+			<span class="amount">{formatMicrosPrecise(monthMicros)}</span> <span class="when">so far in {monthName}</span></p>
+			<p class="beside">
+				{#if summary.last_month_to_date_micros !== null}
+					{summary.last_month_to_date_micros > 0
+						? `${formatMicrosUSD(summary.last_month_to_date_micros)} by this day in ${lastMonthName}.`
+						: `Nothing by this day in ${lastMonthName}.`}
+				{/if}
+				{#if balance !== null}
+					Your balance is {formatMicrosUSD(balance)} on
+					<!-- Billing's tab label has no assistant name in it, so the default stands in. -->
+					<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', DEFAULT_ASSISTANT_NAME)}>Billing</button>.
+				{/if}
+				{#if byoCalls > 0}
+					Calls on your own key aren't priced here.
+				{/if}
 			</p>
-		{:else if summary}
-			<svg class="chart" viewBox="0 0 640 146" role="img" aria-label="Spending per day for the last fourteen days">
-				<g>
-					{#each days as d, i (d.day)}
-						<rect
-							class="bar"
-							class:today={i === 13}
-							x={barX(i)}
-							y={118 - barH(d.cost)}
-							width="34"
-							height={barH(d.cost)}
-							rx="3"
-						><title>{i === 13 ? 'Today' : d.label} · {formatMicrosPrecise(d.cost)}{d.calls ? ` · ${d.calls} call${d.calls === 1 ? '' : 's'}` : ''}</title></rect>
-					{/each}
-				</g>
-				<line class="base" x1="6" x2="625" y1="118.5" y2="118.5" />
-				{#if days[13]?.cost > 0}
-					<text class="v" x={barX(13) + 17} y={118 - barH(days[13].cost) - 8} text-anchor="middle">{formatMicrosPrecise(days[13].cost)}</text>
+
+			<svg class="chart" viewBox="0 0 {W} 124" role="img" aria-label="What AI cost each day of {monthName}">
+				{#each days as d, i (d.key)}
+					{#if !d.future && d.cost > 0}
+						<rect class="bar" class:today={d.today} x={barX(i)} y={100 - barH(d.cost)} width={barW} height={barH(d.cost)} rx="3">
+							<title>{d.today ? 'Today' : d.label} · {formatMicrosPrecise(d.cost)}</title>
+						</rect>
+					{/if}
+				{/each}
+				<line class="base" x1="0" x2={W} y1="100.5" y2="100.5" />
+				{#if todayIndex >= 0 && days[todayIndex].cost > 0}
+					<text class="value" x={barX(todayIndex) + barW / 2} y={100 - barH(days[todayIndex].cost) - 7} text-anchor="middle">
+						{formatMicrosPrecise(days[todayIndex].cost)}
+					</text>
 				{/if}
-				{#if monthLocalMicros === 0 && days.every((d) => d.cost === 0)}
-					<text class="empty" x="316" y="72" text-anchor="middle">Nothing charged in the last two weeks</text>
+				<text x="0" y="118">{days[0]?.label}</text>
+				{#if todayIndex > 2 && todayIndex < days.length - 3}
+					<text x={barX(todayIndex) + barW / 2} y="118" text-anchor="middle">Today</text>
 				{/if}
-				<text x="6" y="138">{days[0]?.label}</text>
-				<text x="625" y="138" text-anchor="end">Today</text>
+				<text x={W} y="118" text-anchor="end">{todayIndex === days.length - 1 ? 'Today' : days[days.length - 1]?.label}</text>
 			</svg>
+		</section>
 
-			{#if summary.by_feature.length > 0}
-				<div class="kinds">
-					{#each summary.by_feature as b (b.label)}
-						<div class="kind">
-							<span class="kind-n">{kindLabelOf(b.label)}</span>
-							<div class="track"><div class="fill" style="width:{(b.cost_micros / kindMax) * 100}%"></div></div>
-							<!-- A bucket that is all own-key has a count and no price;
-							     "$0.00" there would be a number we invented. A mixed
-							     bucket shows the wallet price and says how many calls
-							     it leaves out, so the price is not read as the whole. -->
-							{#if b.byo_calls === b.calls}
-								<span class="kind-amt dim">on your key</span>
-							{:else}
-								<span class="kind-amt mono">
-									{formatMicrosPrecise(b.cost_micros)}
-									{#if b.byo_calls > 0}
-										<span class="block font-sans text-[11px] leading-tight text-foreground-subtle">{b.byo_calls} on your key</span>
-									{/if}
-								</span>
-							{/if}
-						</div>
+		{#if kinds.length}
+			<section aria-labelledby="went-to">
+				<h2 id="went-to">What it went to</h2>
+				<ul class="kinds">
+					{#each kinds as k (k.label)}
+						<li>
+							<span class="kind-name">{k.name}</span>
+							<span class="track"><span class="fill" style:width="{(k.cost_micros / kindMax) * 100}%"></span></span>
+							<!-- All on your key: a count of nothing priced, so no amount. -->
+							<span class="kind-amount">{k.byo_calls === k.calls ? 'on your key' : formatMicrosPrecise(k.cost_micros)}</span>
+						</li>
 					{/each}
-				</div>
-			{/if}
+				</ul>
+			</section>
 		{/if}
-	</section>
+	{/if}
 
-	<!-- The itemization, last. -->
-	<div id="calls"><UsageView /></div>
-</div>
+	<section aria-labelledby="every-call">
+		<h2 id="every-call">Every call</h2>
+		<UsageView />
+	</section>
 </SettingsPage>
 
 <style>
-	/* ─── Chapters ──────────────────────────────────────────────────────────
-	   The same chapter rule as System: a hairline under a heading separates
-	   subjects. */
-	.plan-sections {
-		display: flex;
-		flex-direction: column;
-	}
-	.chapter {
-		padding-top: 28px;
-		margin-top: 28px;
-		border-top: 1px solid var(--color-border-subtle);
-	}
-	.chapter:first-child {
-		border-top: none;
-		margin-top: 8px;
-		padding-top: 0;
-	}
-	/* A heading, then a link on the same line (Usage, "See all calls"). */
-	.chapter-head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-	.chapter-lede {
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		margin: 0;
-		max-width: 60ch;
-	}
-	/* A step below `.settings-label`: still a heading, still roman serif, just
-	   smaller — this names a part of Balance, not a chapter of the page. */
-	.subhead {
-		font-size: 0.875rem;
-		font-weight: 400;
-		color: var(--color-foreground);
-		margin: 22px 0 4px;
-	}
-
-	.mono {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-variant-numeric: tabular-nums;
+	.month {
+		margin-top: 32px;
 	}
 
 	.figure {
-		font-size: 40px;
-		line-height: 1;
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-	.leader {
-		flex: 1;
-		border-bottom: 1px dotted var(--color-border);
-		transform: translateY(-3px);
-		min-width: 16px;
-	}
-
-	/* ─── Wallet activity ───────────────────────────────────────────────────
-	   Was an icon + label + date + amount row. The kind icon is gone: the sign
-	   and the color already say which direction the money went, and a column
-	   of five different glyphs down the left edge was the loudest thing in a
-	   chapter about small numbers. */
-	.entries {
-		margin-top: 4px;
-	}
-	.entry {
 		display: flex;
 		align-items: baseline;
-		gap: 10px;
-		padding: 5px 0;
-		font-size: 13px;
-		border-bottom: 1px solid var(--color-border-subtle);
-	}
-	.entry:last-child {
-		border-bottom: none;
-	}
-	.entry-kind {
-		color: var(--color-foreground);
-		white-space: nowrap;
-	}
-	.entry-when {
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-		white-space: nowrap;
-	}
-	.entry-amount {
-		color: var(--color-foreground);
-		white-space: nowrap;
-		min-width: 5.5rem;
-		text-align: right;
-	}
-	.entry-amount.credit {
-		color: var(--color-success);
+		gap: 16px;
+		margin: 0;
 	}
 
-	/* ─── Notes ─────────────────────────────────────────────────────────────
-	   One shape for every thing the page has to tell you, tinted by weight.
-	   The error variant stands where the figures would be when the wallet
-	   cannot be read. */
-	.note {
-		font-size: 12px;
+	.amount {
+		font-family: var(--font-serif);
+		font-size: 48px;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
+	}
+
+	.when {
+		font-size: 15px;
+		color: var(--color-foreground-muted);
+	}
+
+	.beside {
+		margin: 8px 0 0;
+		font-size: 13px;
 		line-height: 1.5;
-		margin: 10px 0 0;
-		padding: 9px 11px;
-		border-radius: var(--radius-md);
-		border: 1px solid transparent;
-		max-width: 60ch;
+		color: var(--color-foreground-subtle);
 	}
-	.note-error {
-		color: var(--color-error);
-		border-color: color-mix(in srgb, var(--color-error) 22%, transparent);
-		background: var(--color-error-subtle);
+
+	.link {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
 	}
-	/* The branch, set quietly beside the sentence: an owner reads past it, and
-	   reads it out loud when we ask what the screen said. */
-	.error-code {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.85em;
-		opacity: 0.72;
+
+	.link:hover {
+		text-decoration: underline;
 	}
-	/* Holds the balance figure's slot when there is no balance to show. */
-	.note-figure {
-		margin-top: 2px;
+
+	.chart {
+		display: block;
+		width: 100%;
+		height: auto;
+		margin-top: 28px;
+		overflow: visible;
+	}
+
+	.bar {
+		fill: color-mix(in srgb, var(--color-primary) 28%, var(--color-background));
+	}
+
+	.bar.today {
+		fill: var(--color-primary);
+	}
+
+	.base {
+		stroke: var(--color-border);
+		stroke-width: 1;
+	}
+
+	.chart text {
+		font-family: var(--font-sans);
+		font-size: 12px;
+		fill: var(--color-foreground-subtle);
+	}
+
+	.chart .value {
+		fill: var(--color-foreground);
+	}
+
+	h2 {
+		margin: 44px 0 12px;
+		font-size: 22px;
+		font-weight: 400;
+		line-height: 1.3;
+		color: var(--color-foreground);
+	}
+
+	.kinds {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.kinds li {
+		display: grid;
+		grid-template-columns: 180px minmax(0, 1fr) 88px;
+		align-items: center;
+		gap: 16px;
+	}
+
+	.kind-name {
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+
+	.track {
+		height: 6px;
+		border-radius: 3px;
+		background: var(--color-surface-elevated);
+	}
+
+	.fill {
+		display: block;
+		height: 6px;
+		min-width: 2px;
+		border-radius: 3px;
+		background: var(--color-primary);
+	}
+
+	.kind-amount {
+		text-align: right;
+		font-size: 14px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
+	}
+
+	.quiet {
+		margin: 32px 0 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.failed {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 32px;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.failed p {
+		margin: 0;
 	}
 
 	@media (max-width: 640px) {
-		.chapter-head { flex-direction: column; gap: 10px; }
-		.figure { font-size: 34px; }
+		.kinds li {
+			grid-template-columns: minmax(0, 1fr) 88px;
+		}
+
+		.track {
+			grid-column: 1 / -1;
+			order: 3;
+		}
 	}
-
-	/* ─── The figures: Apple-large, mono, the cents recede ─────────────── */
-	.chapter-figures { padding-top: 22px; margin-top: 22px; }
-	.figures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-	.figure-label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-foreground-subtle); }
-	.figures .figure { font-size: 44px; letter-spacing: -0.02em; margin-top: 8px; }
-	.figures .figure :global(.c) { color: var(--color-foreground-subtle); font-weight: 400; }
-	.delta { font-size: 13px; color: var(--color-foreground-subtle); margin-top: 8px; }
-	.delta.down { color: var(--color-success); }
-	@media (max-width: 480px) { .figures { grid-template-columns: 1fr; } }
-
-	/* ─── The chart: soft bars, today in the accent, one baseline ─────── */
-	.see-all { font-size: 13px; color: var(--color-foreground-subtle); text-decoration: none; }
-	.see-all:hover { color: var(--color-foreground); }
-	.chart { width: 100%; height: auto; display: block; overflow: visible; margin-top: 6px; }
-	.chart .bar { fill: var(--color-border); transition: fill 120ms ease; }
-	.chart .bar.today { fill: var(--color-primary); }
-	.chart .bar:hover { fill: var(--color-foreground-subtle); }
-	.chart .bar.today:hover { fill: var(--color-primary); }
-	.chart .base { stroke: var(--color-border); stroke-width: 1; }
-	.chart text { font-family: var(--font-sans); font-size: 11px; fill: var(--color-foreground-subtle); }
-	.chart .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--color-primary); font-weight: 500; }
-	.chart .empty { font-family: var(--font-sans); font-size: 12px; fill: var(--color-foreground-subtle); }
-
-	/* By kind: a name, a track, a figure. */
-	.kinds { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
-	.kind { display: grid; grid-template-columns: 120px 1fr 72px; align-items: center; gap: 16px; font-size: 14px; }
-	.kind-n { color: var(--color-foreground); }
-	.track { height: 6px; border-radius: var(--radius-sm); background: var(--color-border-subtle); overflow: hidden; }
-	.fill { height: 100%; border-radius: var(--radius-sm); background: var(--color-border); }
-	.kind:first-child .fill { background: var(--color-primary); }
-	.kind-amt { text-align: right; color: var(--color-foreground); }
-	.kind-amt.dim { color: var(--color-foreground-subtle); font-size: 13px; }
-	@media (max-width: 480px) { .kind { grid-template-columns: 96px 1fr 64px; } }
-
 </style>

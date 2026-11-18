@@ -794,4 +794,8 @@
 	--page-reading: var(--reading-measure);
 	--page-medium: 60rem;
 	--page-full: 100%;
+	/* Every Settings page, its landing included: wide enough for a row's
+	   label, help and control side by side. A page that holds a table uses
+	   medium. */
+	--page-settings: 42.5rem;
 }

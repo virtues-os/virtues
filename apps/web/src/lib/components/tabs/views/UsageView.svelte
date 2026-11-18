@@ -1,205 +1,184 @@
 <!--
-	Billing → the call log. Every paid AI call, in order, with what it cost.
+	What AI has cost → Every call: each AI call your server made, newest
+	first, with what it was for, the model and what it cost. The page's month,
+	chart and kinds above are these calls added up (BillingView).
 
-	This is the last chapter of Billing (see BillingView), not a page. It
-	answers exactly one
-	question — "where did the balance above go?" — and nothing else belongs in
-	it. Three things that had accumulated here were removed on 2026-09-03:
-
-	  Background runs · Recent failures — applet run health. It is real, but it
-	    is not spending, and Applets already tells it better: the attention
-	    strip names the applets that failed or silently stopped firing, and each
-	    card carries its own run pulse and last-run status. An aggregate
-	    success-rate panel on the billing page was a second, worse telling with
-	    no way to act on it.
-	  System (last 24h) — CPU/memory/GPU/temperature sparklines, which are the
-	    machine, measured. They moved to Settings → System, beside the live
-	    vitals they are the history of.
-
-	The log is served a page at a time. It used to render a bare `LIMIT 100` as
-	an unpaginated list of divs — the wrong 100 rows (no search, no way to reach
-	row 101), and a hand-rolled table beside the grid every other list uses.
+	Served a page at a time from your server's call log (`/telemetry/ai-calls`);
+	Show more adds the next page, and the search asks the server, so a call
+	from months ago is reachable.
 -->
 <script lang="ts">
-	import UniversalDataGrid, {
-		type Column,
-	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
-	import type { GridQuery, GridPage } from "$lib/components/datagrid/types";
-	import { formatMicrosPrecise } from "$lib/utils/currency";
-	import { getAiCallsPage, type AiCallRow } from "$lib/api/client";
-	import { modelSlots } from "$lib/stores/modelSlots.svelte";
+	import { onMount } from 'svelte';
+	import Button from '$lib/components/Button.svelte';
+	import SearchField from '$lib/components/SearchField.svelte';
+	import { formatMicrosPrecise } from '$lib/utils/currency';
+	import { featureLabel } from '$lib/utils/aiFeatures';
+	import { whenAt } from '$lib/settings/changes';
+	import { getAiCallsPage, ApiError, type AiCallRow } from '$lib/api/client';
+	import { modelSlots } from '$lib/stores/modelSlots.svelte';
 
-	// Model names in the list come from the catalog.
-	$effect(() => {
+	const PAGE = 25;
+
+	let calls = $state<AiCallRow[]>([]);
+	let total = $state(0);
+	let search = $state('');
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+
+	// Model names come from the catalog.
+	onMount(() => {
 		if (!modelSlots.loaded && !modelSlots.loading) void modelSlots.load();
 	});
 
-	// No props: the grid pages itself off the server, so this section has
-	// nothing to learn from the tab it sits in.
-
-	// ─── AI-call log (server-paged) ───────────────────────────────────────────
-	async function fetchCalls(q: GridQuery): Promise<GridPage<AiCallRow>> {
-		const page = await getAiCallsPage({
-			offset: q.offset,
-			limit: q.limit,
-			search: q.search || undefined,
-			// "When" is the only server-sortable column; anything else stays
-			// newest-first.
-			dir: q.sort?.key === "created_at" && q.sort.dir === "asc" ? "asc" : "desc",
-		});
-		return { items: page.items, total: page.total };
+	/** Load from the start (`more` false) or the next page. A newer search wins. */
+	let asked = 0;
+	async function load(more: boolean) {
+		const ask = ++asked;
+		loading = true;
+		error = null;
+		try {
+			const page = await getAiCallsPage({ offset: more ? calls.length : 0, limit: PAGE, search: search.trim() || undefined });
+			if (ask !== asked) return;
+			calls = more ? [...calls, ...page.items] : page.items;
+			total = page.total;
+		} catch (e) {
+			if (ask !== asked) return;
+			error = e instanceof ApiError ? e.message : "Your server couldn't read its call log.";
+		} finally {
+			if (ask === asked) loading = false;
+		}
 	}
 
-	const callColumns: Column<AiCallRow>[] = [
-		{
-			key: "created_at",
-			label: "When",
-			icon: "mynaui:clock-circle",
-			width: "20%",
-			minWidth: "150px",
-			sortable: true,
-			// The grid's mobile card mode reads columns, not `tableRow`, so
-			// without these it shows the raw ISO instant and the raw slug.
-			getValue: (c) => fmtWhen(c.created_at),
-		},
-		{
-			key: "feature",
-			label: "What for",
-			icon: "mynaui:tag",
-			width: "20%",
-			minWidth: "120px",
-			getValue: (c) => (c.feature ? featureLabel(c.feature) : "—"),
-		},
-		{ key: "model", label: "Model", icon: "mynaui:chip", width: "30%", minWidth: "170px" },
-		{
-			// Prompt + completion + reasoning: three columns of small numbers
-			// nobody reads separately. `getValue` keeps the column keyed on a
-			// real field while displaying the sum.
-			key: "prompt_tokens",
-			label: "Tokens",
-			icon: "mynaui:hash",
-			width: "15%",
-			minWidth: "100px",
-			hideOnMobile: true,
-			getValue: (c) => tokens(c),
-		},
-		{ key: "cost_micros", label: "Cost", icon: "mynaui:dollar-circle", width: "15%", minWidth: "100px" },
-	];
-
-	function tokens(c: AiCallRow): number {
-		return c.prompt_tokens + c.completion_tokens + c.reasoning_tokens;
-	}
+	// A moment after typing stops, the list starts over for the new search.
+	$effect(() => {
+		void search;
+		const timer = setTimeout(() => void load(false), 250);
+		return () => clearTimeout(timer);
+	});
 
 	/**
-	 * What a call cost, or an honest refusal to say.
-	 *
-	 * Only our own gateway reports `usage.cost`, so a BYO row's `cost_micros`
-	 * is 0 meaning *unknown*, not free. Rendering "$0.00" there would read as a
-	 * measurement — a whole month of BYO traffic totalling nothing — when it is
-	 * the absence of one. The tokens are real and sit in the column beside it;
-	 * the price belongs to the user's provider and is theirs to look up.
+	 * What a call cost. Only the Virtues gateway reports a price, so a call on
+	 * your own key has none to show: "$0.00" there would read as free.
 	 */
 	function cost(c: AiCallRow): string {
-		return c.route === "byo" ? "on your key" : formatMicrosPrecise(c.cost_micros);
-	}
-
-	/**
-	 * The feature slug as a person would say it: `day_summary` → "Day summary".
-	 *
-	 * A twin of `kindLabelOf` in BillingView, which labels the by-kind
-	 * buckets above this log from the same slugs. Duplicated rather than
-	 * imported: BillingView imports this file, so importing back would be a
-	 * cycle, and a two-line map does not warrant a third file. Change both.
-	 */
-	function featureLabel(label: string): string {
-		return label === "other"
-			? "Other"
-			: label.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-	}
-
-	function fmtWhen(ts: string): string {
-		return new Date(ts).toLocaleString(undefined, {
-			month: "short",
-			day: "numeric",
-			hour: "2-digit",
-			minute: "2-digit",
-		});
+		return c.route === 'byo' ? 'on your key' : formatMicrosPrecise(c.cost_micros);
 	}
 </script>
 
-<!-- No <Page>: the last chapter of Billing. See BillingView. -->
-<section class="chapter">
-	<h2 class="settings-label">AI calls</h2>
-	<!-- Says how it relates to the wallet ledger above, so the two lists of
-	     spending are not read as separate charges. -->
-	<p class="chapter-lede">
-		Every AI call, newest first. The usage lines under Money in and out are these, added up.
-	</p>
-	<UniversalDataGrid
-		items={[]}
-		columns={callColumns}
-		entityType="ai-call"
-		server={fetchCalls}
-		pageSize={25}
-		emptyIcon="mynaui:sparkles"
-		emptyMessage="No AI calls yet"
-		loadingMessage="Reading the call log…"
-		searchPlaceholder="Search by purpose or model…"
-		defaultViewMode="table"
-		showCounts={false}
-	>
-		{#snippet tableRow(call: AiCallRow)}
-			<td class="cell when">{fmtWhen(call.created_at)}</td>
-			<td class="cell">{call.feature ? featureLabel(call.feature) : "—"}</td>
-			<td class="cell">{call.model ? modelSlots.nameOf(call.model) : "—"}</td>
-			<td class="cell num hide-mobile">{tokens(call).toLocaleString()}</td>
-			<td class="cell num" class:muted={call.route === "byo"}>{cost(call)}</td>
-		{/snippet}
-	</UniversalDataGrid>
-</section>
+<div class="search">
+	<SearchField bind:value={search} placeholder="Search by what it was for or the model" label="Search calls" />
+</div>
+
+{#if error}
+	<div class="failed" role="alert">
+		<p>{error}</p>
+		<Button variant="secondary" onclick={() => load(false)}>Try again</Button>
+	</div>
+{:else if !loading && calls.length === 0}
+	<p class="quiet">{search.trim() ? `No call matches “${search.trim()}”.` : 'No AI calls yet.'}</p>
+{:else}
+	<ul class="calls" aria-busy={loading}>
+		{#each calls as c (c.id)}
+			<li>
+				<span class="when">{whenAt(c.created_at)}</span>
+				<span class="what">{c.feature ? featureLabel(c.feature) : 'Other'}</span>
+				<span class="model">{c.route === 'byo' ? 'Your own key' : c.model ? modelSlots.nameOf(c.model) : '—'}</span>
+				<span class="cost" class:muted={c.route === 'byo'}>{cost(c)}</span>
+			</li>
+		{/each}
+	</ul>
+	{#if calls.length < total}
+		<div class="more">
+			<Button variant="secondary" loading={loading} onclick={() => load(true)}>Show more</Button>
+		</div>
+	{/if}
+{/if}
 
 <style>
-	/* Same chapter rule as the sections above (see BillingView) — a hairline
-	   under a small-caps eyebrow, not a bordered card. */
-	.chapter {
-		padding-top: 28px;
-		margin-top: 28px;
-		border-top: 1px solid var(--color-border-subtle);
-	}
-	.chapter-lede {
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		margin: 0 0 14px;
-		max-width: 60ch;
+	.search {
+		display: flex;
 	}
 
-	.cell {
-		padding: 0.625rem 0.75rem;
-		font-size: 0.8125rem;
+	.calls {
+		margin: 8px 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.calls li {
+		display: grid;
+		grid-template-columns: 136px minmax(0, 1fr) minmax(0, 200px) 88px;
+		align-items: baseline;
+		gap: 16px;
+		padding: 10px 0 0;
+		min-height: 30px;
+	}
+
+	.when {
+		font-size: 13px;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+
+	.what {
+		font-size: 15px;
 		color: var(--color-foreground);
 	}
-	.cell.when {
-		padding-left: 0;
+
+	.model {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 14px;
 		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
-	}
-	.cell.num {
-		font-variant-numeric: tabular-nums;
-	}
-	.cell.num:last-child {
-		padding-right: 0;
 	}
 
-	/* "your key" is prose in a column of figures — subdue it so a scan down the
-	   column reads the numbers, and don't align it as though it were one. */
-	.cell.num.muted {
+	.cost {
+		text-align: right;
+		font-size: 14px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
+	}
+
+	.cost.muted {
+		font-size: 13px;
 		color: var(--color-foreground-subtle);
-		font-variant-numeric: normal;
 	}
 
-	@media (max-width: 768px) {
-		.hide-mobile {
+	.more {
+		margin-top: 16px;
+	}
+
+	.quiet {
+		margin: 16px 0 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.failed {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 16px;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.failed p {
+		margin: 0;
+	}
+
+	@media (max-width: 640px) {
+		.calls li {
+			grid-template-columns: minmax(0, 1fr) 88px;
+		}
+
+		.when {
+			grid-column: 1 / -1;
+		}
+
+		.model {
 			display: none;
 		}
 	}

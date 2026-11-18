@@ -4,7 +4,8 @@
 	 * Every Settings page has the same top: a link back, the title, one
 	 * sentence. Section pages (SettingsSection) and the pages a row opens
 	 * (Keys, Devices, What AI has cost…) all use this, so the room reads as
-	 * one place. `width` is `full` for a page that holds a table.
+	 * one place, at one width (`--page-settings`). `width` is `full` for a
+	 * page that holds a table, which takes the medium width.
 	 */
 	import type { Snippet } from 'svelte';
 	import { openSettingsPage } from '$lib/settings/focus';
@@ -47,14 +48,16 @@
 </div>
 
 <style>
+	/* Border-box, as the landing is, so the text column is the same width on both. */
 	.page {
-		max-width: var(--page-reading);
+		box-sizing: border-box;
+		max-width: var(--page-settings);
 		margin: 0 auto;
 		padding: 32px 32px 96px;
 	}
 
 	.page.full {
-		max-width: var(--page-full);
+		max-width: var(--page-medium);
 	}
 
 	.back {

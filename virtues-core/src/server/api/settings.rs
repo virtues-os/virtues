@@ -681,13 +681,14 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
     }
 }
 
-/// GET /api/usage/summary — box-local AI spend breakdown for the Usage tab.
+/// GET /api/usage/summary — what AI has cost this month, from the box's own
+/// call log (`app_ai_calls`, each call priced by the gateway's `usage.cost`).
 ///
-/// Reads `app_ai_calls` (the per-call cost log) and returns spend grouped by
-/// feature and by model since the start of the current UTC month, plus the
-/// month boundary. The wallet headline (balance/month-to-date) comes from the
-/// separate `/api/billing/usage` proxy — this endpoint is purely the local
-/// "where did my money go" detail. No egress.
+/// Spend since the start of the current UTC month by feature, by model and
+/// by day, plus last month to the same point. The cost page adds its month
+/// total from these rows, so the total, the chart, the kinds and the call
+/// list all come from one log and agree. The balance is the wallet's
+/// (`/api/billing/usage`). No egress.
 pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
     use chrono::Datelike;
     let now = chrono::Utc::now();
@@ -708,12 +709,10 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         Ok(v) => v,
         Err(e) => return error_response(e.into()),
     };
-    // The Billing chart: the last 14 UTC days, today included. Days with no
-    // calls are absent from the rows; the client fills the run.
-    let since = (now - chrono::Duration::days(13)).date_naive().and_hms_opt(0, 0, 0)
-        .map(|dt| dt.and_utc())
-        .unwrap_or(now);
-    let by_day = match crate::api::ai_calls::spend_by_day(pool, since).await {
+    // The cost page's chart: each UTC day of this month so far, the same
+    // span as the month's total and its kinds. Days with no calls are absent
+    // from the rows; the client fills the run.
+    let by_day = match crate::api::ai_calls::spend_by_day(pool, month_start).await {
         Ok(v) => v,
         Err(e) => return error_response(e.into()),
     };

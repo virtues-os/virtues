@@ -204,8 +204,7 @@
 <style>
 	.page {
 		box-sizing: border-box;
-		/* Wider than reading width so each line of the site map fits on one row. */
-		max-width: 680px;
+		max-width: var(--page-settings);
 		margin: 0 auto;
 		padding: 44px 32px 32px;
 	}
