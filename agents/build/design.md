@@ -63,7 +63,7 @@ primaries first.
 | Setting | Theme | Notes |
 |---|---|---|
 | Light | Oxford | The default. `DEFAULT_THEME` in `virtues-registry` must match `DEFAULT_THEMES.light` in `lib/utils/theme.ts`. |
-| Dark | Asgard | Derived from the same tokens, never ported from a reference. |
+| Dark | Asgard | Near-black and near neutral, with bright main text, two cool grays below it and quiet hairlines. The glass and the painting stay. Derived from the same tokens, never ported from a reference. |
 | Match system | Oxford or Asgard | Follows `prefers-color-scheme`. |
 
 ```specimen Contrast
@@ -165,12 +165,12 @@ The interaction ramp mixes a neutral pigment (`--wash-ink`: black on Light,
 white on Dark) into whatever is behind it, so it reads on any ground. Four
 steps, no others:
 
-| Step | Token | Mix | Means |
+| Step | Token | Mix, Light / Dark | Means |
 |---|---|---|---|
 | Rest | | 0% | nothing |
-| Hover | `--hover-bg` | 7% | the pointer is here |
-| Selected | `--active-bg` | 12% | where you are |
-| Press | `--press-bg` | 16% | held down, only while pressed |
+| Hover | `--hover-bg` | 7% / 5% | the pointer is here |
+| Selected | `--active-bg` | 12% / 9% | where you are |
+| Press | `--press-bg` | 16% / 12% | held down, only while pressed |
 
 ```specimen Ramp
 ```

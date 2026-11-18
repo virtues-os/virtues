@@ -682,11 +682,11 @@ pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables 
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --color-surface: #171718;
-  --color-surface-elevated: #1e1f22;
-  --color-foreground: #d4d4d4;
-  --color-foreground-subtle: #828282;
-  --color-border: #2e3034;
+  --color-surface: #141416;
+  --color-surface-elevated: #1b1c1f;
+  --color-foreground: #ededef;
+  --color-foreground-subtle: #86878d;
+  --color-border: #26272b;
   --color-accent: #88c0d0;
   --color-primary: #88c0d0;
   --color-success: #3fa266;

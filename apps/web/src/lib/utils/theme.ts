@@ -251,11 +251,11 @@ export const themePreviewColors: Record<
 		primary: '#1D4572'
 	},
 	asgard: {
-		background: '#141414',
-		surface: '#181818',
-		surfaceElevated: '#1e1e1e',
-		foreground: '#D4D4D4',
-		foregroundMuted: '#898989',
+		background: '#0E0E0F',
+		surface: '#141416',
+		surfaceElevated: '#1B1C1F',
+		foreground: '#EDEDEF',
+		foregroundMuted: '#A1A2A8',
 		primary: '#88C0D0'
 	}
 };

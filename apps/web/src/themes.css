@@ -657,25 +657,23 @@
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
 
-	/* Surface Colors - Charcoal with a faint cool cast toward the Nordic
-	   blue. Pure black made the desk glare against the cards. */
-	--background: #141415;
-	--surface: #181819;
-	--surface-elevated: #1e1f22;
-	/* Dark: a card is lighter than the desk it lies on, so the desk goes
-	   below the page rather than above it. The desk and page are near
-	   neutral and 4 RGB units apart. A larger step, or more blue, made
-	   the pane look like a lighter slab. */
-	--page: #171718;
-	--desk: #131314;
-	--surface-overlay: #25262a;
+	/* Surface Colors - near-black and near neutral (owner, 2026-11-17:
+	   darker, toward Linear's dark mode, but not all the way). The desk is
+	   the ground; a card is a few steps lighter, so it reads as a sheet
+	   lying on it. A larger step made the pane look like a lighter slab. */
+	--background: #0E0E0F;
+	--desk: #0E0E0F;
+	--page: #141416;
+	--surface: #151517;
+	--surface-elevated: #1B1C1F;
+	--surface-overlay: #202125;
 
-	/* Content Colors */
-	--foreground: #D4D4D4;
-	--foreground-muted: #898989;
-	/* 4.66:1 on the page: the lightest ink that still clears AA for text. */
-	--foreground-subtle: #828282;
-	--foreground-disabled: #525252;
+	/* Content Colors - bright main text, which reads crisp on near-black,
+	   and two cool grays below it, far enough apart to tell apart. */
+	--foreground: #EDEDEF; /* 15.7:1 on the page */
+	--foreground-muted: #A1A2A8; /* 7.2:1 */
+	--foreground-subtle: #86878D; /* 5.1:1 */
+	--foreground-disabled: #55565C;
 
 	/* The accent in Dark's tuning; hover, press and tint follow it through
 	   the mixes in the Light block. */
@@ -698,10 +696,12 @@
 	--diff-remove-bg: #2d1a1f;
 
 	/* Border Colors */
-	--border: #2e3034;
-	--border-subtle: #242528;
-	--border-strong: #3e4045;
-	--border-field: #66686e; /* 3.2:1 on the page */
+	/* Quiet hairlines: on near-black a brighter line is the loudest thing
+	   on the page. */
+	--border: #26272B;
+	--border-subtle: #1E1F22;
+	--border-strong: #34363B;
+	--border-field: #66686e; /* 3.3:1 on the page */
 
 	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
 	 * against the near-black ground. */
@@ -750,8 +750,13 @@
  * ────────────────────────────────────────────────────────────────────────── */
 [data-theme="asgard"] {
 	--illustration-filter: invert(1);
-	/* The interaction ramp's pigment (see :root): light on a dark ground. */
+	/* The interaction ramp's pigment (see :root): light on a dark ground.
+	   The steps are quieter than Light's: white at 7% on near-black reads
+	   as a lit slab, so a hover is 5%, selected 9% and press 12%. */
 	--wash-ink: #ffffff;
+	--hover-bg: color-mix(in srgb, var(--wash-ink) 5%, transparent);
+	--active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
+	--press-bg: color-mix(in srgb, var(--wash-ink) 12%, transparent);
 
 	/* Glass on a dark ground: the surface thinned less, frosted without
 	   brightening, and a rim of faint light instead of white. */
@@ -773,8 +778,8 @@
 		rgb(255 255 255 / 0.07) 100%);
 	--lq-lift: 0 0 0 0.5px rgb(0 0 0 / 0.4), 0 6px 18px -12px rgb(0 0 0 / 0.2);
 	--lq-lift-selected: 0 0 0 0.5px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
-	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.05);
+	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.04);
 	--lq-glint: rgb(255 255 255 / 0.1);
 	--window-scene-filter: brightness(0.55) saturate(0.8);
 }
