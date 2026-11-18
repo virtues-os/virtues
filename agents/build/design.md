@@ -23,7 +23,8 @@ from the repo at build time. Editing the file is editing the page.
 - **A token named in backticks shows its current value beside it** on the
   page, read from the cascade and read again when the theme changes. When
   the text claims one number and the chip shows another, the text is stale.
-- **A specimen is a `*.specimen.svelte` file kept beside its component**
+- **A specimen is a file named `<Name>.specimen.svelte`, kept beside its
+  component**
   (`Button.specimen.svelte` next to `Button.svelte`), found by
   `lib/design/specimens.ts` with no list to maintain. A fenced block with
   the language `specimen` and the file's name, and nothing inside, places
@@ -83,7 +84,7 @@ All tokens live in `apps/web/src/themes.css`. `app.css` registers the fonts
 and holds the few app-wide rules (the focus reset, the Glass setting, the
 selection color).
 
-**Write the `--color-*` spelling in a component.** `themes.css` defines raw
+**Write the `--color-` spelling in a component.** `themes.css` defines raw
 values (`--surface`, `--border`, `--secondary`) and bridges them to Tailwind
 through `@theme inline` as `--color-surface`, `--color-border`,
 `--color-secondary`. Both resolve. The bridged name is the one the rest of
@@ -185,7 +186,7 @@ CDN or a system font.
 ```
 
 A chart's SVG may set its own tick and lane labels below 12px. Nothing else
-may. The markdown sizes (`--md-*` in `themes.css`) are the one definition both
+may. The markdown sizes (the `--md-` tokens in `themes.css`) are the one definition both
 the page and the editor read, which keeps the editor WYSIWYG; they take their
 values from this scale.
 
@@ -370,7 +371,7 @@ themes. Home has no paper: its tiles stand on the desk.
 
 Glass is for what floats over the desk and the painting: the ∴, the rail and
 the open sidebar, the tabs, the header's corner buttons, the home tiles. It is
-one recipe, `.lq` in `app.css` with its `--lq-*` tokens in `themes.css`. Do
+one recipe, `.lq` in `app.css` with its `--lq-` tokens in `themes.css`. Do
 not add a second glass.
 
 - **Clear** (`.lq`): small controls.
@@ -767,7 +768,7 @@ in a comment on or above it. Never cut a baseline from the shared checkout
 | colored things that mean neither *now* nor *pressable* | 0 | |
 | `border` and `background` on a block with no input, button or link | 0 | |
 | `box-shadow` in the pane | 0 | `shadow` |
-| a radius off the `--radius-*` steps | 0 | `radius` |
+| a radius that is not a radius step | 0 | `radius` |
 | off-grid px in padding, margin or gap | 0 | `off-grid` |
 | `--font-mono` outside code and a chart's SVG | 0 | `mono`, `mono-literal` |
 | a font size under 12px outside a chart's SVG | 0 | `tiny-type` (counts under 11px) |

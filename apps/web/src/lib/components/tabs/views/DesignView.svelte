@@ -40,7 +40,9 @@
 	const toolbar = usePageActions(() => (active ? themeControls : null));
 
 	let headings = $state<TocHeading[]>([]);
-	let scroller = $state<HTMLElement | null>(null);
+	// Page scrolls itself; the contents list follows its scroller.
+	let host = $state<HTMLElement | null>(null);
+	const scroller = $derived((host?.firstElementChild as HTMLElement | null) ?? null);
 </script>
 
 {#snippet themeControls()}
@@ -48,7 +50,7 @@
 	<IconButton icon="mynaui:moon" label="Preview Dark" pressed={preview === 'asgard'} onclick={() => show('asgard')} />
 {/snippet}
 
-<div class="scroller" bind:this={scroller}>
+<div class="host" bind:this={host}>
 	<Page maxWidth="detail">
 		{#if !toolbar.inToolbar}
 			<div class="controls">{@render themeControls()}</div>
@@ -80,9 +82,8 @@
 </div>
 
 <style>
-	.scroller {
+	.host {
 		height: 100%;
-		overflow-y: auto;
 		container-type: inline-size;
 	}
 

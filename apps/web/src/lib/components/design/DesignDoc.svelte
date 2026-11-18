@@ -20,7 +20,8 @@
 
 	let root = $state<HTMLElement | null>(null);
 
-	const TOKEN = /^--[a-z0-9-]+$/;
+	/** A whole token name. A prefix such as `--color-` names a family and gets no value. */
+	const TOKEN = /^--[a-z0-9-]*[a-z0-9]$/;
 
 	function decorate(el: HTMLElement) {
 		const headings: TocHeading[] = [];
@@ -55,10 +56,12 @@
 	$effect(() => {
 		const el = root;
 		if (!el) return;
-		let frame = 0;
+		// A timer, not a frame: a background tab runs no animation frames, and
+		// the page should be decorated when you come back to it.
+		let frame: ReturnType<typeof setTimeout> | undefined;
 		const schedule = () => {
-			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() => decorate(el));
+			clearTimeout(frame);
+			frame = setTimeout(() => decorate(el), 30);
 		};
 		// Markdown renders after mount, and a specimen can arrive later still.
 		void tick().then(schedule);
@@ -66,7 +69,7 @@
 		observer.observe(el, { childList: true, subtree: true });
 		window.addEventListener('themechange', schedule);
 		return () => {
-			cancelAnimationFrame(frame);
+			clearTimeout(frame);
 			observer.disconnect();
 			window.removeEventListener('themechange', schedule);
 		};
