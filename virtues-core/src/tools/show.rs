@@ -352,9 +352,19 @@ fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Valu
         "interrupted" => fields.split_at.is_some(),
         "baseline" => has_column(mark, "usual_low", columns) && has_column(mark, "usual_high", columns),
         "states" => ["day", "start", "end", "state"].iter().all(|c| has_column(mark, c, columns)),
-        "multiples" => has_column(mark, "panel", columns),
-        // A text category and exactly two numbers: then and now.
-        "dumbbell" => columns.len() == 3 && rows.len() <= 20 && is_label_column(rows, &columns[0]),
+        // A panel column by name, or three columns whose first repeats: each
+        // group comes back on many rows, one per point of its small chart.
+        "multiples" => {
+            has_column(mark, "panel", columns)
+                || (columns.len() == 3 && is_label_column(rows, &columns[0]) && first_repeats(rows, &columns[0]))
+        }
+        // A text category on each row once, and exactly two numbers: then and now.
+        "dumbbell" => {
+            columns.len() == 3
+                && rows.len() <= 20
+                && is_label_column(rows, &columns[0])
+                && !first_repeats(rows, &columns[0])
+        }
         // A text label and one value, few enough to list; a dated first
         // column is a trend and stays a bar.
         "list" => columns.len() == 2 && rows.len() <= 20 && is_label_column(rows, &columns[0]),
@@ -814,6 +824,16 @@ fn values_of<'a>(rows: &'a [Value], column: &'a str) -> impl Iterator<Item = f64
     rows.iter().filter_map(move |r| {
         let v = r.get(column)?;
         v.as_f64().or_else(|| v.as_str()?.trim().parse().ok())
+    })
+}
+
+/// Whether some value in the column appears on more than one row.
+fn first_repeats(rows: &[Value], column: &str) -> bool {
+    let mut seen: Vec<&Value> = Vec::new();
+    rows.iter().filter_map(|r| r.get(column)).any(|v| {
+        let again = seen.contains(&v);
+        seen.push(v);
+        again
     })
 }
 
@@ -1447,6 +1467,13 @@ mod tests {
         assert_eq!(pick_chart_mark(p, &none, &cols(&["Place", "Hours"]), &named).mark, "list");
         let dated = vec![json!({ "Week": "2026-09-07", "Hours": 7 })];
         assert_eq!(pick_chart_mark(p, &none, &cols(&["Week", "Hours"]), &dated).mark, "bar");
+        // No panel column by name: a weekday repeated across weeks is still small multiples.
+        let repeated = vec![
+            json!({ "Weekday": "Mon", "Week": "2026-09-07", "Pages": 2 }),
+            json!({ "Weekday": "Mon", "Week": "2026-09-14", "Pages": 1 }),
+            json!({ "Weekday": "Tue", "Week": "2026-09-07", "Pages": 0 }),
+        ];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Weekday", "Week", "Pages"]), &repeated).mark, "multiples");
     }
 
     #[test]
