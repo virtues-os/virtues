@@ -197,10 +197,12 @@ pub async fn execute(
         _ => candidates[0],
     };
     let (columns, rows) = mark_columns(drawn.mark, columns, rows);
-    let mut shaped = if drawn.mark == "states" {
-        shape_states(drawn.max_rows, &columns, rows)?
-    } else {
-        shape(kind, drawn.max_rows, &columns, rows)?
+    // Three chart marks have rows `shape`'s bar and line checks don't fit.
+    let mut shaped = match drawn.mark {
+        "states" => shape_states(drawn.max_rows, &columns, rows)?,
+        "multiples" => shape_multiples(drawn.max_rows, &columns, rows)?,
+        "stack" => shape_stack(drawn.max_rows, &columns, rows)?,
+        _ => shape(kind, drawn.max_rows, &columns, rows)?,
     };
     if kind == Kind::Chart {
         check_mark(drawn.mark, &fields, &columns, &mut shaped)?;
@@ -325,6 +327,17 @@ fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Valu
         "interrupted" => fields.split_at.is_some(),
         "baseline" => has_column(mark, "usual_low", columns) && has_column(mark, "usual_high", columns),
         "states" => ["day", "start", "end", "state"].iter().all(|c| has_column(mark, c, columns)),
+        "multiples" => has_column(mark, "panel", columns),
+        // A text category and exactly two numbers: then and now.
+        "dumbbell" => columns.len() == 3 && rows.len() <= 20 && is_label_column(rows, &columns[0]),
+        // A text label and one value, few enough to list; a dated first
+        // column is a trend and stays a bar.
+        "list" => columns.len() == 2 && rows.len() <= 20 && is_label_column(rows, &columns[0]),
+        "waterfall" => columns.len() == 2 && values_of(rows, &columns[1]).any(|v| v < 0.0),
+        "share" => {
+            columns.len() == 2 && (2..=8).contains(&rows.len()) && values_of(rows, &columns[1]).all(|v| v >= 0.0)
+        }
+        "stack" => columns.len() >= 3,
         // A line runs over real time: every value in the first column is a
         // time or a date, and at least one is there.
         "line" => columns.first().is_some_and(|x| {
@@ -347,6 +360,7 @@ const MARK_ALIASES: &[(&str, &str, &[&str])] = &[
     ("states", "start", &["started_at"]),
     ("states", "end", &["ended_at"]),
     ("states", "state", &["what", "place", "label"]),
+    ("multiples", "panel", &["group"]),
 ];
 
 fn has_column(mark: &str, want: &str, columns: &[String]) -> bool {
@@ -449,6 +463,29 @@ fn check_mark(mark: &str, fields: &ChartFields, columns: &[String], out: &mut Ma
             out.insert("split_at".into(), json!(at));
             out.insert("split_label".into(), json!(label));
         }
+        "dumbbell" if columns.len() != 3 => {
+            return Err(invalid(format!(
+                "a dumbbell plot is the category, then exactly two numbers for the two moments; this query has {} columns",
+                columns.len()
+            )))
+        }
+        "list" | "share" | "waterfall" if columns.len() != 2 => {
+            let name = chart_marks::mark(mark).map_or(mark, |m| m.name);
+            let second = if mark == "waterfall" { "an amount" } else { "a value" };
+            return Err(invalid(format!(
+                "a {} is a label, then {second}; this query has {} columns",
+                name.to_lowercase(),
+                columns.len()
+            )));
+        }
+        "share" => {
+            let values: Vec<f64> = out["rows"].as_array().map(|r| values_of(r, &columns[1]).collect()).unwrap_or_default();
+            if values.iter().any(|v| *v < 0.0) || values.iter().sum::<f64>() <= 0.0 {
+                return Err(invalid(
+                    "a 100% bar draws parts of one whole, so every value is zero or more and they add to more than zero",
+                ));
+            }
+        }
         "baseline" => {
             if !(columns.iter().any(|c| c == "usual_low") && columns.iter().any(|c| c == "usual_high")) || columns.len() != 4 {
                 return Err(invalid(format!(
@@ -504,12 +541,82 @@ fn shape_states(max_rows: usize, columns: &[String], rows: Vec<Value>) -> Result
             states.len()
         )));
     }
+    Ok(chart_out(columns, rows))
+}
+
+/// Small multiples' rows: panel, then the x axis and the value. The x axis
+/// is shared by every panel, so it may be a date. Pure.
+fn shape_multiples(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("small multiples draw at most {max_rows} points; aggregate to fewer")));
+    }
+    if columns.len() != 3 {
+        return Err(invalid(format!(
+            "small multiples are panel (the group's name), the x axis and the value; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    numeric_column(&mut rows, &columns[2], "the value")?;
+    let panel = columns.iter().find(|c| *c == "panel").unwrap_or(&columns[0]);
+    let mut panels: Vec<String> = Vec::new();
+    for row in &rows {
+        let p = row.get(panel).map(Value::to_string).unwrap_or_default();
+        if !panels.contains(&p) {
+            panels.push(p);
+        }
+    }
+    if !(2..=12).contains(&panels.len()) {
+        return Err(invalid(format!(
+            "small multiples draw 2 to 12 panels, and this query has {}; group the panels differently",
+            panels.len()
+        )));
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// Stacked bars' rows: the x axis, then 2 to 5 parts. Pure.
+fn shape_stack(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("stacked bars draw at most {max_rows} bars; aggregate to fewer")));
+    }
+    if !(3..=6).contains(&columns.len()) {
+        return Err(invalid(format!(
+            "stacked bars are the x axis, then 2 to 5 part columns; this query has {} columns",
+            columns.len()
+        )));
+    }
+    for part in &columns[1..] {
+        numeric_column(&mut rows, part, "a part")?;
+        if values_of(&rows, part).any(|v| v < 0.0) {
+            return Err(invalid(format!("\"{part}\" goes below zero, and a stacked part can't; draw it as a bar or a line")));
+        }
+    }
+    Ok(chart_out(columns, rows))
+}
+
+fn chart_out(columns: &[String], rows: Vec<Value>) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("kind".into(), json!("chart"));
     out.insert("columns".into(), json!(columns));
     out.insert("row_count".into(), json!(rows.len()));
     out.insert("rows".into(), Value::Array(rows));
-    Ok(out)
+    out
+}
+
+/// The numbers in a column, reading numeric strings as `numeric_column` does.
+fn values_of<'a>(rows: &'a [Value], column: &'a str) -> impl Iterator<Item = f64> + 'a {
+    rows.iter().filter_map(move |r| {
+        let v = r.get(column)?;
+        v.as_f64().or_else(|| v.as_str()?.trim().parse().ok())
+    })
+}
+
+/// Whether a column holds labels: every value is text that is not a time.
+fn is_label_column(rows: &[Value], column: &str) -> bool {
+    let mut values = rows.iter().filter_map(|r| r.get(column)).filter(|v| !v.is_null()).peekable();
+    values.peek().is_some() && values.all(|v| v.as_str().is_some_and(|s| !is_time(s) && s.trim().parse::<f64>().is_err()))
 }
 
 /// What every drawn figure needs: some rows, and no two columns with one name.
@@ -1119,5 +1226,53 @@ mod tests {
         let (_, m) = purpose_and_mark(Some("cumulative".into()), Some("line".into())).unwrap();
         assert_eq!(m.as_deref(), Some("line"));
         assert!(purpose_and_mark(Some("vibes".into()), None).is_err());
+    }
+
+    #[test]
+    fn compare_groups_picks_by_shape() {
+        let p = purpose("compare_groups");
+        let none = ChartFields::default();
+        let panels = vec![json!({ "panel": "Mon", "Week": "2026-09-07", "Hours": 7 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["panel", "Week", "Hours"]), &panels).mark, "multiples");
+        let then_now = vec![json!({ "Day": "Mon", "October": 7, "November": 6.5 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Day", "October", "November"]), &then_now).mark, "dumbbell");
+        let named = vec![json!({ "Place": "Home", "Hours": 300 }), json!({ "Place": "Work", "Hours": 40 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Place", "Hours"]), &named).mark, "list");
+        let dated = vec![json!({ "Week": "2026-09-07", "Hours": 7 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Week", "Hours"]), &dated).mark, "bar");
+    }
+
+    #[test]
+    fn part_to_whole_picks_waterfall_share_or_stack() {
+        let p = purpose("part_to_whole");
+        let none = ChartFields::default();
+        let steps = vec![json!({ "Step": "Start", "Amount": 1000 }), json!({ "Step": "Rent", "Amount": -800 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Step", "Amount"]), &steps).mark, "waterfall");
+        let parts = vec![json!({ "Kind": "Food", "Spent": 300 }), json!({ "Kind": "Travel", "Spent": 120 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Kind", "Spent"]), &parts).mark, "share");
+        let weeks = vec![json!({ "Week": "2026-09-07", "Deep": 1, "Light": 4, "REM": 1.5 })];
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["Week", "Deep", "Light", "REM"]), &weeks).mark, "stack");
+    }
+
+    #[test]
+    fn small_multiples_and_stacks_check_their_own_rows() {
+        let row = |p: &str, v: Value| json!({ "group": p, "Week": "2026-09-07", "Hours": v });
+        let (columns, rows) = mark_columns("multiples", cols(&["group", "Week", "Hours"]), vec![row("Mon", json!(7)), row("Tue", json!("6.5"))]);
+        let out = shape_multiples(400, &columns, rows).unwrap();
+        assert_eq!((out["columns"][0].as_str(), &out["rows"][1]["Hours"]), (Some("panel"), &json!(6.5)));
+        assert!(err(shape_multiples(400, &cols(&["panel", "Week", "Hours"]), vec![row("Mon", json!(7))])).contains("2 to 12 panels"));
+        let bar = |v: Value| json!({ "Week": "2026-09-07", "Deep": 1, "Light": v });
+        assert!(shape_stack(199, &cols(&["Week", "Deep", "Light"]), vec![bar(json!(4))]).is_ok());
+        assert!(err(shape_stack(199, &cols(&["Week", "Deep", "Light"]), vec![bar(json!(-1))])).contains("below zero"));
+        assert!(err(shape_stack(199, &cols(&["Week", "Deep"]), vec![json!({ "Week": "2026-09-07", "Deep": 1 })])).contains("2 to 5 part"));
+    }
+
+    #[test]
+    fn a_share_needs_a_whole_and_a_list_two_columns() {
+        let parts = vec![json!({ "Kind": "Food", "Spent": 300 }), json!({ "Kind": "Travel", "Spent": -5 })];
+        assert!(err(checked("share", &ChartFields::default(), &["Kind", "Spent"], parts)).contains("zero or more"));
+        let three = vec![json!({ "Kind": "Food", "A": 1, "B": 2 }), json!({ "Kind": "Travel", "A": 1, "B": 2 })];
+        assert!(err(checked("list", &ChartFields::default(), &["Kind", "A", "B"], three.clone())).contains("sorted bar list is a label"));
+        assert!(checked("dumbbell", &ChartFields::default(), &["Kind", "A", "B"], three).is_ok());
     }
 }

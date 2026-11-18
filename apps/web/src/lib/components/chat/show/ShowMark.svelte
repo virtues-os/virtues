@@ -9,6 +9,12 @@
 	import * as months from "./marks/months.js";
 	import * as split from "./marks/split.js";
 	import * as ribbons from "./marks/ribbons.js";
+	import * as multiples from "./marks/multiples.js";
+	import * as compare from "./marks/compare.js";
+	import * as list from "./marks/list.js";
+	import * as stack from "./marks/stack.js";
+	import * as share from "./marks/share.js";
+	import * as waterfall from "./marks/waterfall.js";
 	import type { KitMark, ShowOutput } from "./show";
 
 	interface Props {
@@ -22,6 +28,12 @@
 		cumulative: months,
 		interrupted: split,
 		states: ribbons,
+		multiples,
+		dumbbell: compare,
+		list,
+		stack,
+		share,
+		waterfall,
 	};
 
 	let el: HTMLDivElement;

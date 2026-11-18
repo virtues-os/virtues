@@ -11,7 +11,18 @@ export type ShowKind = "chart" | "numbers" | "table" | "map" | "timeline" | "cho
 export type Row = Record<string, unknown>;
 
 /** Chart marks drawn by a chart-kit module (ShowMark.svelte) rather than ShowChart. */
-export const KIT_MARKS = ["baseline", "cumulative", "interrupted", "states"] as const;
+export const KIT_MARKS = [
+	"baseline",
+	"cumulative",
+	"interrupted",
+	"states",
+	"multiples",
+	"dumbbell",
+	"list",
+	"stack",
+	"share",
+	"waterfall",
+] as const;
 export type KitMark = (typeof KIT_MARKS)[number];
 
 export function isKitMark(mark: unknown): mark is KitMark {
