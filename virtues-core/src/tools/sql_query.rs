@@ -415,6 +415,20 @@ impl SqlQueryTool {
         out
     }
 
+    /// The query `show` draws, with the row limit its mark needs. `execute`
+    /// clamps a model's limit to 200, and several marks draw more, so `show`
+    /// comes in here instead. The read-only transaction, the role, the
+    /// timeout and the byte budget are `execute_query`'s, as for any query.
+    pub(crate) async fn query_for_show(
+        &self,
+        sql: &str,
+        limit: u32,
+        timezone: Option<&str>,
+        schema: Option<&str>,
+    ) -> Result<ToolResult, ToolError> {
+        self.execute_query(sql, limit, None, timezone, schema).await
+    }
+
     /// Execute a read-only SQL query.
     ///
     /// Read-only is enforced by Postgres itself (`SET TRANSACTION READ ONLY`),
@@ -1197,6 +1211,21 @@ mod tests {
             Some(false),
             "read-only transaction must leave no table behind",
         );
+    }
+
+    /// show's door takes the limit its mark needs; a model's own query is
+    /// still clamped to 200.
+    #[sqlx::test]
+    async fn show_reads_past_the_200_row_clamp_and_a_model_query_does_not(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let sql = "SELECT g AS n FROM generate_series(1, 300) g";
+        let shown = tool.query_for_show(sql, 301, None, None).await.expect("show's query runs");
+        assert_eq!(shown.data["rows"].as_array().map(Vec::len), Some(300));
+        let asked = tool
+            .execute(serde_json::json!({ "operation": "query", "sql": sql, "limit": 301 }), None, None, None)
+            .await
+            .expect("a model's query runs");
+        assert_eq!(asked.data["rows"].as_array().map(Vec::len), Some(200));
     }
 
     /// An ordinary SELECT still works — the guard rejects writes, not reads.

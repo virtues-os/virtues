@@ -78,17 +78,6 @@ impl Kind {
             Kind::Choices => "choices",
         }
     }
-
-    /// Rows the kind draws. The query is asked for one more, so a result
-    /// that would be cut is known to be one.
-    fn max_rows(self) -> usize {
-        match self {
-            Kind::Chart | Kind::Timeline | Kind::Map => 199,
-            Kind::Table => 50,
-            Kind::Numbers => 1,
-            Kind::Choices => 0,
-        }
-    }
 }
 
 /// A table wider than this does not fit the reply's column.
@@ -149,11 +138,12 @@ pub async fn execute(
         _ => None,
     };
 
-    // One more than the kind draws, so a cut result is seen rather than drawn.
-    let limit = kind.max_rows() as u32 + 1;
-    let result = sql_query
-        .execute(json!({ "operation": "query", "sql": sql, "limit": limit }), None, timezone, schema)
-        .await?;
+    // One more than the most any mark this call may draw with takes, so a cut
+    // result is seen rather than drawn. sql_query's own `execute` clamps to
+    // 200 rows; `query_for_show` takes the mark's limit.
+    let candidates = marks_for_call(kind, purpose, named_chart_mark);
+    let limit = candidates.iter().map(|m| m.max_rows).max().unwrap_or(0) as u32 + 1;
+    let result = sql_query.query_for_show(sql, limit, timezone, schema).await?;
     let data = result.data;
     if data.get("truncated").is_some() {
         return Err(invalid(
@@ -168,15 +158,15 @@ pub async fn execute(
     let rows: Vec<Value> = data["rows"].as_array().cloned().unwrap_or_default();
 
     let (columns, rows) = canonical_columns(kind, columns, rows);
-    let mark = match (kind, named_chart_mark) {
-        (Kind::Chart, Some(m)) => Some(m),
-        (Kind::Chart, None) => Some(pick_chart_mark(purpose, &columns, &rows).mark),
-        _ => None,
+    let drawn = match (kind, named_chart_mark) {
+        (Kind::Chart, Some(m)) => chart_marks::mark(m).expect("bar and line are chart marks"),
+        (Kind::Chart, None) => pick_chart_mark(purpose, &columns, &rows),
+        _ => candidates[0],
     };
-    let mut shaped = shape(kind, &columns, rows)?;
+    let mut shaped = shape(kind, drawn.max_rows, &columns, rows)?;
     shaped.insert("title".into(), json!(title));
-    if let Some(mark) = mark {
-        shaped.insert("mark".into(), json!(mark));
+    if kind == Kind::Chart {
+        shaped.insert("mark".into(), json!(drawn.mark));
     }
     if let Some(p) = purpose {
         shaped.insert("purpose".into(), json!(p.id));
@@ -224,6 +214,27 @@ fn kind_before_query(purpose: Option<&chart_marks::ChartPurpose>, named_mark: Op
         }
     };
     Kind::parse(m.kind)
+}
+
+/// The marks a call may end up drawing with: the named chart mark, else the
+/// purpose's marks of this kind, else every mark of this kind. Never empty for
+/// a kind that takes sql (`every_kind_with_sql_has_a_mark`).
+fn marks_for_call(
+    kind: Kind,
+    purpose: Option<&chart_marks::ChartPurpose>,
+    named_chart_mark: Option<&str>,
+) -> Vec<&'static ChartMark> {
+    if let Some(m) = named_chart_mark.and_then(chart_marks::mark) {
+        return vec![m];
+    }
+    let of_kind = |m: &&'static ChartMark| m.kind == kind.name();
+    if let Some(p) = purpose {
+        let marks: Vec<_> = chart_marks::marks_for(p.id).filter(of_kind).collect();
+        if !marks.is_empty() {
+            return marks;
+        }
+    }
+    chart_marks::MARKS.iter().filter(of_kind).collect()
 }
 
 /// The chart mark for a call that gave no mark: the first of the purpose's
@@ -298,8 +309,9 @@ fn choices(options: Vec<String>) -> Result<Vec<String>, ToolError> {
 }
 
 /// Check the rows against what the kind draws and put them in its shape.
-/// Pure, so every refusal is tested without a database.
-fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+/// `max_rows` is the drawn mark's (`ChartMark::max_rows`). Pure, so every
+/// refusal is tested without a database.
+fn shape(kind: Kind, max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
     if rows.is_empty() {
         return Err(invalid(
             "the query returned no rows, so there is nothing to draw. Say so in words, \
@@ -313,7 +325,7 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
             "two columns are both named \"{dup}\"; alias them apart (AS \"...\")"
         )));
     }
-    let more = rows.len() > kind.max_rows();
+    let more = rows.len() > max_rows;
     let mut out = Map::new();
     out.insert("kind".into(), json!(kind.name()));
 
@@ -322,7 +334,7 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
             if more {
                 return Err(invalid(format!(
                     "a chart draws at most {} points; aggregate to fewer (GROUP BY a week or a month)",
-                    kind.max_rows()
+                    max_rows
                 )));
             }
             if columns.len() < 2 || columns.len() > MAX_SERIES + 1 {
@@ -377,14 +389,14 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
                     columns.len()
                 )));
             }
-            rows.truncate(kind.max_rows());
+            rows.truncate(max_rows);
             out.insert("more".into(), json!(more));
         }
         Kind::Map => {
             if more {
                 return Err(invalid(format!(
                     "a map draws at most {} places; group nearby points or narrow the window",
-                    kind.max_rows()
+                    max_rows
                 )));
             }
             for c in ["lat", "lon"] {
@@ -411,7 +423,7 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
             if more {
                 return Err(invalid(format!(
                     "a timeline draws at most {} items; narrow the window or group them",
-                    kind.max_rows()
+                    max_rows
                 )));
             }
             for c in ["start", "label"] {
@@ -496,6 +508,18 @@ fn numeric_column(rows: &mut [Value], column: &str, what: &str) -> Result<(), To
 mod tests {
     use super::*;
 
+    /// The row cap of the kind's marks, as a kind-only call gets it.
+    fn cap(kind: Kind) -> usize {
+        marks_for_call(kind, None, None).iter().map(|m| m.max_rows).max().unwrap()
+    }
+
+    #[test]
+    fn every_kind_with_sql_has_a_mark() {
+        for kind in [Kind::Chart, Kind::Numbers, Kind::Table, Kind::Map, Kind::Timeline] {
+            assert!(!marks_for_call(kind, None, None).is_empty(), "{} has no mark", kind.name());
+        }
+    }
+
     fn cols(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
     }
@@ -514,7 +538,7 @@ mod tests {
             json!({ "Week": "2026-09-08", "Hours asleep": null }),
             json!({ "Week": "2026-09-15", "Hours asleep": 6 }),
         ];
-        let out = shape(Kind::Chart, &cols(&["Week", "Hours asleep"]), rows).unwrap();
+        let out = shape(Kind::Chart, cap(Kind::Chart), &cols(&["Week", "Hours asleep"]), rows).unwrap();
         assert_eq!(out["rows"][0]["Hours asleep"], json!(7.25));
         assert_eq!(out["rows"][1]["Hours asleep"], Value::Null);
         assert_eq!(out["columns"], json!(["Week", "Hours asleep"]));
@@ -523,40 +547,40 @@ mod tests {
     #[test]
     fn a_chart_refuses_text_in_a_series_and_names_the_fix() {
         let rows = vec![json!({ "x": "a", "y": "lots" }), json!({ "x": "b", "y": "1" })];
-        let m = err(shape(Kind::Chart, &cols(&["x", "y"]), rows));
+        let m = err(shape(Kind::Chart, cap(Kind::Chart), &cols(&["x", "y"]), rows));
         assert!(m.contains("\"y\"") && m.contains("::float8"), "{m}");
     }
 
     #[test]
     fn a_chart_refuses_a_series_with_no_values() {
         let rows = vec![json!({ "x": "a", "y": 1, "z": null }), json!({ "x": "b", "y": 2, "z": null })];
-        let m = err(shape(Kind::Chart, &cols(&["x", "y", "z"]), rows));
+        let m = err(shape(Kind::Chart, cap(Kind::Chart), &cols(&["x", "y", "z"]), rows));
         assert!(m.contains("\"z\" is null in every row"), "{m}");
     }
 
     #[test]
     fn a_chart_refuses_more_points_than_it_draws() {
         let rows = (0..200).map(|i| json!({ "x": i, "y": i })).collect();
-        let m = err(shape(Kind::Chart, &cols(&["x", "y"]), rows));
+        let m = err(shape(Kind::Chart, cap(Kind::Chart), &cols(&["x", "y"]), rows));
         assert!(m.contains("GROUP BY"), "{m}");
     }
 
     #[test]
     fn a_chart_needs_an_axis_and_a_series() {
         let rows = vec![json!({ "x": 1 }), json!({ "x": 2 })];
-        assert!(err(shape(Kind::Chart, &cols(&["x"]), rows)).contains("1 to 3"));
+        assert!(err(shape(Kind::Chart, cap(Kind::Chart), &cols(&["x"]), rows)).contains("1 to 3"));
     }
 
     #[test]
     fn no_rows_is_said_in_words_not_drawn() {
-        assert!(err(shape(Kind::Table, &cols(&["a"]), vec![])).contains("in words"));
+        assert!(err(shape(Kind::Table, cap(Kind::Table), &cols(&["a"]), vec![])).contains("in words"));
     }
 
     #[test]
     fn numbers_is_one_row() {
         let rows = vec![json!({ "a": 1 }), json!({ "a": 2 })];
-        assert!(err(shape(Kind::Numbers, &cols(&["a"]), rows)).contains("one row"));
-        let out = shape(Kind::Numbers, &cols(&["Nights", "Best day"]), vec![json!({ "Nights": "41", "Best day": "Tuesday" })])
+        assert!(err(shape(Kind::Numbers, cap(Kind::Numbers), &cols(&["a"]), rows)).contains("one row"));
+        let out = shape(Kind::Numbers, cap(Kind::Numbers), &cols(&["Nights", "Best day"]), vec![json!({ "Nights": "41", "Best day": "Tuesday" })])
             .unwrap();
         assert_eq!(out["rows"][0]["Nights"], json!(41.0));
         assert_eq!(out["rows"][0]["Best day"], json!("Tuesday"));
@@ -565,17 +589,17 @@ mod tests {
     #[test]
     fn a_long_table_is_cut_and_says_so() {
         let rows = (0..51).map(|i| json!({ "n": i })).collect();
-        let out = shape(Kind::Table, &cols(&["n"]), rows).unwrap();
+        let out = shape(Kind::Table, cap(Kind::Table), &cols(&["n"]), rows).unwrap();
         assert_eq!(out["row_count"], json!(50));
         assert_eq!(out["more"], json!(true));
     }
 
     #[test]
     fn a_map_needs_lat_and_lon_and_drops_out_of_range_points() {
-        let m = err(shape(Kind::Map, &cols(&["y", "x"]), vec![json!({ "y": 1, "x": 2 })]));
+        let m = err(shape(Kind::Map, cap(Kind::Map), &cols(&["y", "x"]), vec![json!({ "y": 1, "x": 2 })]));
         assert!(m.contains("returns y, x"), "{m}");
         let rows = vec![json!({ "lat": "51.5", "lon": -0.12 }), json!({ "lat": 200, "lon": 0 })];
-        let out = shape(Kind::Map, &cols(&["lat", "lon"]), rows).unwrap();
+        let out = shape(Kind::Map, cap(Kind::Map), &cols(&["lat", "lon"]), rows).unwrap();
         assert_eq!(out["row_count"], json!(1));
         assert_eq!(out["rows"][0]["lat"], json!(51.5));
     }
@@ -607,13 +631,13 @@ mod tests {
     #[test]
     fn a_timeline_needs_a_start_on_every_row() {
         let rows = vec![json!({ "start": null, "label": "x" })];
-        assert!(err(shape(Kind::Timeline, &cols(&["start", "label"]), rows)).contains("null"));
+        assert!(err(shape(Kind::Timeline, cap(Kind::Timeline), &cols(&["start", "label"]), rows)).contains("null"));
     }
 
     #[test]
     fn a_timeline_start_must_be_a_time_not_a_label() {
         let rows = vec![json!({ "start": "9:45 AM", "label": "Standup" })];
-        assert!(err(shape(Kind::Timeline, &cols(&["start", "label"]), rows)).contains("to_char"));
+        assert!(err(shape(Kind::Timeline, cap(Kind::Timeline), &cols(&["start", "label"]), rows)).contains("to_char"));
         for ok in ["2026-10-06T14:45:00+00:00", "2026-10-06 09:45:00", "2026-10-06 09:45:00.5", "2026-10-06"] {
             assert!(is_time(ok), "{ok}");
         }
@@ -622,7 +646,7 @@ mod tests {
     #[test]
     fn two_columns_with_one_name_are_refused() {
         let rows = vec![json!({ "title": "a" })];
-        assert!(err(shape(Kind::Table, &cols(&["title", "title"]), rows)).contains("both named"));
+        assert!(err(shape(Kind::Table, cap(Kind::Table), &cols(&["title", "title"]), rows)).contains("both named"));
     }
 
     #[test]

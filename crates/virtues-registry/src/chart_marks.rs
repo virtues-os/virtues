@@ -30,6 +30,9 @@ pub struct ChartMark {
     pub purposes: &'static [&'static str],
     /// One line for the tool description.
     pub line: &'static str,
+    /// The most rows it draws. show asks the query for one more, so a result
+    /// that would be cut is refused (or, for a table, cut and said so).
+    pub max_rows: usize,
 }
 
 pub const PURPOSES: &[ChartPurpose] = &[
@@ -49,6 +52,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "chart",
         purposes: &["change_over_time"],
         line: "a date or time first, then 1-3 numeric columns",
+        max_rows: 199,
     },
     ChartMark {
         mark: "bar",
@@ -56,6 +60,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "chart",
         purposes: &["change_over_time", "compare_groups"],
         line: "a label or period first, then 1-3 numeric columns",
+        max_rows: 199,
     },
     ChartMark {
         mark: "timeline",
@@ -63,6 +68,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "timeline",
         purposes: &["events"],
         line: "start, optional end, and label",
+        max_rows: 199,
     },
     ChartMark {
         mark: "map",
@@ -70,6 +76,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "map",
         purposes: &["place"],
         line: "lat, lon and an optional label",
+        max_rows: 199,
     },
     ChartMark {
         mark: "numbers",
@@ -77,6 +84,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "numbers",
         purposes: &["in_sentence"],
         line: "one row of 1-4 columns, each a figure",
+        max_rows: 1,
     },
     ChartMark {
         mark: "table",
@@ -84,6 +92,7 @@ pub const MARKS: &[ChartMark] = &[
         kind: "table",
         purposes: &["table"],
         line: "up to 8 columns; 50 rows show",
+        max_rows: 50,
     },
 ];
 

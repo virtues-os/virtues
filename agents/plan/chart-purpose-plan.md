@@ -181,11 +181,11 @@ executor that takes the mark's `max_rows + 1` as its limit: a crate-internal
 
 ## Order of work
 
-1. The mark table, with today's marks only (`bar`, `line`, `map`, `timeline`,
+1. **Built.** The mark table, with today's marks only (`bar`, `line`, `map`, `timeline`,
    `numbers`, `table`). Build `show_tool`'s description from it. Add
    `purpose` and the picker for those marks. This ships on its own and
    changes nothing the owner sees.
-2. `query_for_show` and per-mark row caps.
+2. **Built.** `query_for_show` and per-mark row caps.
 3. Port marks in batches: the client component, the show.rs shape branch, the
    table row and the picker row together, in one change per batch. Start with
    the marks the model will reach for most: `baseline`, `cumulative`,
