@@ -45,7 +45,7 @@
 		return tableActions(editor);
 	});
 	/**
-	 * On touch every action is a 44pt button (design-grammar §6): a 28px one's
+	 * On touch every action is a 44pt button (design.md, "Primitives"): a 28px one's
 	 * grown hit area would reach into its neighbour's, so the edge of Row above
 	 * ran Row below. Fewer fit a phone's width at that size, so the
 	 * alignments go behind More there.

@@ -15,7 +15,7 @@
 	import { TOOLBAR_OFFSET } from '$lib/document/toolbar';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 
-	/** On touch every button is 44pt (design-grammar §6): this bar is how a phone formats. */
+	/** On touch every button is 44pt (design.md, "Primitives"): this bar is how a phone formats. */
 	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
 	type MarkType = 'strong' | 'em' | 'underline' | 'code' | 'strikethrough' | 'link';

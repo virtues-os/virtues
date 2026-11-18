@@ -4,7 +4,7 @@
 	/**
 	 * A text action: a verb you can press, with no box around it.
 	 *
-	 * design-grammar.md §6 has always had the rule — "Everything else is a
+	 * design.md, "Primitives" has always had the rule — "Everything else is a
 	 * quiet link in `--color-primary` at 14px/500 sans" — and on 2026-09-16
 	 * nothing in the tree obeyed it. A sweep found **18 independent
 	 * definitions** of this one affordance (seven of them literally named

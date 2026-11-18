@@ -136,7 +136,7 @@
 		cursor: text;
 	}
 
-	/* A thumb's 44pt, inside the picker and the field (design-grammar §6). */
+	/* A thumb's 44pt, inside the picker and the field (design.md, "Primitives"). */
 	@media (pointer: coarse) {
 		select.doc-code-language {
 			min-height: 44px;

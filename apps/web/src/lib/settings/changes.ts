@@ -4,6 +4,7 @@
  * from the list (`titleOf`); this is the line beside it.
  */
 import type { SettingsChange } from '$lib/api/client';
+import { getThemeDisplayName, isValidTheme } from '$lib/utils/theme';
 
 /** Values longer than this read as "Changed" rather than being quoted. */
 const QUOTE_MAX = 40;
@@ -50,7 +51,7 @@ export function describeChange(change: SettingsChange): string {
 		case 'models':
 			return value === null ? 'Back to the recommended model' : 'Changed';
 		case 'theme':
-			return typeof value === 'string' ? `Changed to ${capitalize(value.replace(/-/g, ' '))}` : 'Changed';
+			return typeof value === 'string' ? `Changed to ${isValidTheme(value) ? getThemeDisplayName(value) : capitalize(value.replace(/-/g, ' '))}` : 'Changed';
 		case 'birthday':
 			if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
 				const day = new Date(`${value.slice(0, 10)}T00:00:00Z`);
@@ -60,6 +61,8 @@ export function describeChange(change: SettingsChange): string {
 		case 'style':
 		case 'subjects':
 			return 'Changed';
+		case 'units':
+			return value === 'metric' ? 'Changed to metric units' : 'Changed to US units';
 		case 'capabilities':
 			return describeCapabilities(change.old_value, value);
 	}

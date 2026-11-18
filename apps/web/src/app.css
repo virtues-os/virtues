@@ -256,7 +256,7 @@
    evidence that a web license exists. Until a human confirms one: do not add
    weights, do not copy these files into another repo or another product, and
    do not remove them either — swapping the sans is a design decision, not a
-   cleanup. See agents/build/typography.md. */
+   cleanup. See agents/build/design.md, "Type". */
 @font-face {
 	font-family: 'Avenir';
 	src: url('/fonts/Avenir-Regular.woff2') format('woff2');

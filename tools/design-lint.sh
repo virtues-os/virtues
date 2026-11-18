@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Design lint: count the things agents/build/design-grammar.md §9 says to count.
+# Design lint: count the things agents/build/design.md, "The checklist" says to count.
 #
 # Run from anywhere:   bash tools/design-lint.sh
 #
@@ -86,7 +86,7 @@ describe() {
     radius)            echo "border-radius that is not a --radius-* step, 0, 50% or a pill (§6)" ;;
     off-grid)          echo "off-grid px in padding/margin/gap (§6: the 8pt grid — 8·12·16·20·24·32…)" ;;
     no-reduced-motion) echo "file animates with no prefers-reduced-motion block (§7)" ;;
-    serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/typography.md)" ;;
+    serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/design.md, "Type")" ;;
     esac
 }
 
@@ -311,7 +311,7 @@ scan() {
         # italic` is a browser-synthesized oblique: a mechanical slant of the
         # roman, not a drawn italic, and it looks it. Neither is loud enough to
         # catch in review, which is the whole reason to count them. The full
-        # account is agents/build/typography.md and the @font-face comment in
+        # account is agents/build/design.md, "Type" and the @font-face comment in
         # apps/web/src/app.css. A serif hierarchy is set with size, case, color
         # and space — §4 already asks for exactly that.
         #
@@ -434,7 +434,7 @@ if [ -n "$improved" ]; then
 fi
 
 if [ "$fail" -ne 0 ]; then
-    echo "The page grammar is agents/build/design-grammar.md. A limit it states as a"
+    echo "The page grammar is agents/build/design.md. A limit it states as a"
     echo "number is not advice; put the count back under its baseline, or annotate the"
     echo "one line the grammar actually permits with \`design-ok: <why>\`."
     exit 1

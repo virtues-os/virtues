@@ -194,7 +194,7 @@
 			background-color 0.12s ease;
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"). */
 	@media (pointer: coarse) {
 		.command-item {
 			min-height: 44px;

@@ -615,7 +615,7 @@ export function setReadout(node, parts) {
 }
 
 /* The second series is ink at 60% and the third subtle ink drawn hollow and dotted, so three series never claim a
-   second hue (design-grammar §5). `pin` is the opacity of a stem's pinpricks. */
+   second hue (design.md, "Color"). `pin` is the opacity of a stem's pinpricks. */
 export const SERIES_STYLE = Object.freeze([
   Object.freeze({ line: 1.75, dash: null, head: 3, hollow: false, pin: 0.62 }),
   Object.freeze({ line: 1.5, dash: null, head: 2.6, hollow: false, pin: 0.62 }),

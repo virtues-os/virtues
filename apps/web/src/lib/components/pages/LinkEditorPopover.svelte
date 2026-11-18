@@ -7,7 +7,7 @@
 	let labelInput = $state<HTMLInputElement | null>(null);
 	let hrefInput = $state<HTMLInputElement | null>(null);
 
-	/** On touch the panel's buttons are a thumb's 44pt (design-grammar §6): `lg` is 48px, `sm` 32px. */
+	/** On touch the panel's buttons are a thumb's 44pt (design.md, "Primitives"): `lg` is 48px, `sm` 32px. */
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	// A new link (⌘K on words) has its words and needs an address: the focus

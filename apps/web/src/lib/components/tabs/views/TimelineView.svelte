@@ -1527,7 +1527,7 @@
 		if (!m.getLayer('lit-glow')) return;
 		// The picked drive stands out from a drive the playhead merely passes
 		// through: twice the path's weight, over a still halo. Nothing on the
-		// page breathes but Home's now-marker (design-grammar §7).
+		// page breathes but Home's now-marker (design.md, "Motion").
 		// The picked drive turns the brighter orange (PROTOTYPE-RULES 9.21, 9.27).
 		m.setPaintProperty('lit-run', 'line-width', 6);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
@@ -1758,7 +1758,7 @@
 
 <style>
 	/* Every card over the map is the page's own material: the surface inside a
-	   hairline at 12px, and no shadow (design-grammar §6). It reads as separate
+	   hairline at 12px, and no shadow (design.md, "Elevation"). It reads as separate
 	   because it floats over the map, not because it is lifted. */
 	.timeline {
 		position: absolute;
@@ -2093,7 +2093,7 @@
 		display: none;
 	}
 	/* A stay picked from the inspector: a still ring at its place while it
-	   stays picked. Nothing here breathes (design-grammar §7). */
+	   stays picked. Nothing here breathes (design.md, "Motion"). */
 	.timeline :global(.tl-pulse) {
 		width: 20px;
 		height: 20px;

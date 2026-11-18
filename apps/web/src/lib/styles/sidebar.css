@@ -65,7 +65,7 @@
 }
 
 /* A row takes the press fill only: a full-width row that shrank would read
-   as a wobble. Square controls also sink (design.md, "The scale"). */
+   as a wobble. Square controls also sink (design.md, "Motion"). */
 .sidebar-interactive:active {
 	background: var(--press-bg);
 	transition-duration: var(--motion-press);

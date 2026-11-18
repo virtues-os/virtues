@@ -4,7 +4,7 @@
   WHAT THIS IS. The one place in this product where you can look at the
   product's own parts. Every primitive in `$lib/components`, in every state it
   actually has; every design token with its resolved value; the type scale; and
-  a WCAG contrast check run across all sixteen themes at once.
+  a WCAG contrast check run across both themes at once.
 
   WHY IT EXISTS. There was nowhere to see a theme regression before a user did.
   Sixteen themes, 227 `.svelte` files, a primitive library only about thirty of
@@ -24,7 +24,7 @@
   that are wrong. Where a component's API made a state impossible to reach from
   the outside, this page says so in a NOTE rather than faking the state.
 
-  HOW THE READINGS ARE TAKEN. On mount the page walks all sixteen themes by
+  HOW THE READINGS ARE TAKEN. On mount the page walks both themes by
   setting `data-theme` on the document element, reads every token out of the
   cascade with `getComputedStyle`, resolves each to real sRGB through a hidden
   probe element (so `color-mix()` and `rgba()` resolve exactly as the browser
@@ -69,34 +69,16 @@
 		id: string;
 		label: string;
 		mode: "light" | "dark";
-		/** "Virtues Light" / "Virtues Dark" — the two the product stands behind. */
+		/** "Light" or "Dark": the name a person picks it by. */
 		canonical?: string;
 		note?: string;
 	};
 
-	/**
-	 * Order matches `getAvailableThemes()` in `$lib/utils/theme`: the two
-	 * canonical themes lead, then light, then dark. Pemberley is `:root` rather
-	 * than a `[data-theme]` block, so setting an unmatched attribute value is
-	 * exactly how you select it — that is not a typo below.
-	 */
+	/** The two themes (design.md, "Themes"), Light first. Match system is a
+	 * choice between them, not a third palette, so it has no row here. */
 	const THEMES: ThemeRow[] = [
-		{ id: "oxford", label: "Oxford", mode: "light", canonical: "Virtues Light", note: "virtues-registry DEFAULT_THEME — what a new box lands on" },
-		{ id: "asgard", label: "Asgard", mode: "dark", canonical: "Virtues Dark" },
-		{ id: "pemberley", label: "Pemberley", mode: "light", note: "occupies :root — the base layer every other theme overrides" },
-		{ id: "caladan", label: "Caladan", mode: "light" },
-		{ id: "rivendell", label: "Rivendell", mode: "light" },
-		{ id: "netherfield", label: "Netherfield", mode: "light" },
-		{ id: "hogwarts", label: "Hogwarts", mode: "light" },
-		{ id: "tatooine", label: "Tatooine", mode: "light" },
-		{ id: "lothlorien", label: "Lothlorien", mode: "dark" },
-		{ id: "baker-street", label: "Baker Street", mode: "dark" },
-		{ id: "narnia", label: "Narnia", mode: "dark" },
-		{ id: "canterbury", label: "Canterbury", mode: "dark" },
-		{ id: "borghese", label: "Borghese", mode: "dark", note: "deliberately achromatic: --primary / --success / --error are all #FFFFFF, --warning / --info #CCCCCC. Not a bug — the one theme with no hue at all." },
-		{ id: "lyceum", label: "The Lyceum", mode: "dark" },
-		{ id: "agora", label: "Agora", mode: "dark" },
-		{ id: "shire", label: "The Shire", mode: "dark" },
+		{ id: "oxford", label: "Oxford", mode: "light", canonical: "Light", note: "virtues-registry DEFAULT_THEME — what a new box lands on" },
+		{ id: "asgard", label: "Asgard", mode: "dark", canonical: "Dark" },
 	];
 
 	// ========================================================================
@@ -161,7 +143,7 @@
 		},
 		{
 			name: "Interaction ramp",
-			blurb: "Hover and press, defined once as a mix against the FOREGROUND rather than against another surface — which is why they survive all sixteen themes. These carry alpha; the swatch is drawn over `surface` so you see what a user sees.",
+			blurb: "Hover and press, defined once as a mix against the FOREGROUND rather than against another surface — which is why they survive both themes. These carry alpha; the swatch is drawn over `surface` so you see what a user sees.",
 			tokens: [
 				"hover-bg", "active-bg", "press-bg",
 			],
@@ -470,7 +452,7 @@
 	}
 
 	// ========================================================================
-	// TYPE SCALE (agents/build/design-grammar.md §4)
+	// TYPE SCALE (agents/build/design.md, "Type")
 	// ========================================================================
 
 	type TypeRow = { size: number; face: "serif" | "sans" | "mono"; weight?: number; role: string; specimen: string };
@@ -573,7 +555,7 @@
 		},
 		{
 			component: "TextAction",
-			note: "`--color-accent` DOES NOT RESOLVE. `wiki/EntityArticleSection.svelte` and `wiki/NotesRail.svelte` both color their `.linkish` with `var(--color-accent, currentColor)`, and `themes.css` defines no `--accent`, so the `@theme inline` bridge never emits one and both have silently rendered `currentColor` on all sixteen themes since they were written. This is the warning at the top of the token table, caught in the wild. TextAction uses `--color-primary`, which §6 names and which resolves.",
+			note: "`--color-accent` DOES NOT RESOLVE. `wiki/EntityArticleSection.svelte` and `wiki/NotesRail.svelte` both color their `.linkish` with `var(--color-accent, currentColor)`, and `themes.css` defines no `--accent`, so the `@theme inline` bridge never emits one and both have silently rendered `currentColor` on both themes since they were written. This is the warning at the top of the token table, caught in the wild. TextAction uses `--color-primary`, which §6 names and which resolves.",
 		},
 		{
 			component: "IconButton",
@@ -681,7 +663,7 @@
 			<p>
 				Every primitive in <code>$lib/components</code>, in every state it actually has;
 				every design token with the value the browser computed for it; the type scale;
-				and a WCAG contrast check run across all sixteen themes.
+				and a WCAG contrast check run across both themes.
 			</p>
 			<p class="rule">
 				<strong>The rule:</strong> a new primitive must appear here, in the same change
@@ -957,7 +939,7 @@
 			<h2>Type scale</h2>
 			<p class="lede">
 				Three faces, the ones <code>themes.css</code> declares, at the sizes
-				<code>agents/build/design-grammar.md</code> §4 specifies. The serif ships in
+				<code>agents/build/design.md</code> §4 specifies. The serif ships in
 				<strong>one cut</strong> — the weights and the italic below are shown as
 				prohibitions, not as options.
 			</p>
@@ -1654,7 +1636,7 @@
 
 <style>
 	/* Plain CSS throughout, on theme tokens only. The gallery's own chrome must
-	   survive all sixteen themes as well as the specimens do, or a theme
+	   survive both themes as well as the specimens do, or a theme
 	   regression could hide inside the tool meant to catch it. */
 
 	.gallery {

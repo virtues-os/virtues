@@ -1218,8 +1218,8 @@
 	   in api/publish_page.rs) or the same page reads differently to its author
 	   and its reader.
 	   The 500 was never drawn either way: the serif ships one cut and the request
-	   resolves back to the regular in silence (agents/build/typography.md). At
-	   36px, the page title's size on the type scale (agents/build/design-grammar.md),
+	   resolves back to the regular in silence (agents/build/design.md, "Type"). At
+	   36px, the page title's size on the type scale (agents/build/design.md),
 	   in full ink above the body the title leads the document. */
 	.page-title-input {
 		flex: 1;

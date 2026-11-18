@@ -2,7 +2,7 @@
 	// What a failed turn says for itself. One serif line names what happened,
 	// one sans sentence says what to do, one quiet verb does it. No fill, no
 	// stripe, no icon: a hairline card on the page, the same object as any
-	// other thing here that can be acted on (agents/build/design-grammar.md).
+	// other thing here that can be acted on (agents/build/design.md).
 	// The provider's own text is shown only when it adds something we could
 	// not say better, and never more than a line of it.
 	//

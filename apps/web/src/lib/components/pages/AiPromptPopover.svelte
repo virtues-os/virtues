@@ -179,7 +179,7 @@
 		color: var(--color-primary);
 	}
 
-	/* A thumb's 44pt (design-grammar §6): the selection toolbar's Ask AI and
+	/* A thumb's 44pt (design.md, "Primitives"): the selection toolbar's Ask AI and
 	   `/ai` open this on a phone. The row wraps there, as it may. */
 	@media (pointer: coarse) {
 		.ai-prompt-action {

@@ -42,12 +42,11 @@
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
-		getTheme,
+		getThemeChoice,
 		applyTheme,
 		setTheme,
-		themeDefaultLabel,
 		themeMetadata,
-		type Theme,
+		type ThemeChoice,
 	} from "$lib/utils/theme";
 
 	interface Props {
@@ -91,7 +90,7 @@
 
 	// ── Themes ──────────────────────────────────────────────────────────────
 	const themes = getAvailableThemes();
-	let originalTheme: Theme | null = null;
+	let originalTheme: ThemeChoice | null = null;
 	const shownThemes = $derived(
 		mode === "theme" && query.trim()
 			? themes.filter((t) => getThemeDisplayName(t).toLowerCase().includes(query.trim().toLowerCase()))
@@ -99,7 +98,7 @@
 	);
 
 	function enterThemeMode() {
-		originalTheme = getTheme();
+		originalTheme = getThemeChoice();
 		query = "";
 		mode = "theme";
 		selectedIndex = Math.max(0, themes.indexOf(originalTheme));
@@ -114,7 +113,7 @@
 		mode = "search";
 	}
 
-	function saveTheme(theme: Theme | undefined) {
+	function saveTheme(theme: ThemeChoice | undefined) {
 		if (!theme) return;
 		setTheme(theme);
 		originalTheme = null;
@@ -339,12 +338,7 @@
 				}}
 			>
 				<Icon icon={themeMetadata[theme].icon} width="16" class="row-icon" />
-				<span class="row-label">
-					{getThemeDisplayName(theme)}
-					<!-- The role follows the name: the theme is called Asgard, and
-					     "Virtues Dark" is what it is for. -->
-					{#if themeDefaultLabel(theme)}<span class="muted">({themeDefaultLabel(theme)})</span>{/if}
-				</span>
+				<span class="row-label">{getThemeDisplayName(theme)}</span>
 				<span class="row-note">{themeMetadata[theme].description}</span>
 			</button>
 		{/each}

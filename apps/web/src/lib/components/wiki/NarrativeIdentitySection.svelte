@@ -202,7 +202,7 @@
 	}
 
 	/* 400: the serif ships one cut, so the 500 this carried resolved back to the
-	   regular and said nothing (agents/build/typography.md). Size and full ink
+	   regular and said nothing (agents/build/design.md, "Type"). Size and full ink
 	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);

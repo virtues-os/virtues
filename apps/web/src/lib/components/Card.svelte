@@ -27,7 +27,7 @@
 	 * first divider, which is exactly the misalignment the copies produced.
 	 *
 	 * Written in Tailwind until 2026-09-16, when the radius moved from
-	 * `rounded-lg` (8px) to the 12px design-grammar.md §6 specifies for a card,
+	 * `rounded-lg` (8px) to the 12px design.md, "Radius", specifies for a card,
 	 * and the rules moved into scoped CSS so that a card reads the same way the
 	 * 192 components around it are written. A card is a hairline on a surface
 	 * and never a shadow: it reads as separate because it can be acted on, not

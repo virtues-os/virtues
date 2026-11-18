@@ -116,7 +116,7 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
-      # The page grammar's countable limits (agents/build/design-grammar.md §9),
+      # The page grammar's countable limits (agents/build/design.md, "The checklist"),
       # as a ratchet against a frozen baseline: 419 hex literals accumulated in
       # a document whose §6 says "Nothing else." Fails only on an INCREASE; the
       # script says why it is not a wall.

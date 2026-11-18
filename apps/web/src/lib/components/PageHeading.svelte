@@ -9,7 +9,7 @@
 	 * which we ship in exactly one cut. A weight request inside that family resolves
 	 * to the regular and returns silently, so the declaration did nothing at
 	 * best; where a browser synthesizes instead, it returned a smeared faux
-	 * bold. design-grammar.md §4 says the serif is never bold, and it is worth
+	 * bold. design.md, "Type" says the serif is never bold, and it is worth
 	 * knowing that this is not only taste: there is no bold to set. Hierarchy
 	 * comes from size, case, ink and space.
 	 *
@@ -101,7 +101,7 @@
 		font-size: 22px;
 	}
 
-	/* The page's one sentence (design-grammar.md §1), in the sans. */
+	/* The page's one sentence (design.md, "One sentence per page"), in the sans. */
 	.page-heading-description {
 		margin: 10px 0 0;
 		font-family: var(--font-sans);

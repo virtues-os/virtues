@@ -472,7 +472,7 @@
 		transition: background-color 0.1s;
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"). */
 	@media (pointer: coarse) {
 		.result-item {
 			min-height: 44px;

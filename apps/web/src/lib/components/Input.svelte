@@ -704,7 +704,7 @@
 	/* ===================================
 	   REDUCED MOTION
 	   =================================== */
-	/* Keep the information, drop the travel (design-grammar §7). The shake is
+	/* Keep the information, drop the travel (design.md, "Motion"). The shake is
 	   the one thing here that moves the reader rather than the ink, and until
 	   today it could only be fired by a rejected auto-save — now `error` is a
 	   prop, so any caller's validation can shake the page of a reader who asked

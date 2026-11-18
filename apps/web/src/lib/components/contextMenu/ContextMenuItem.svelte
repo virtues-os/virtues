@@ -13,7 +13,7 @@
 	 * specific to the context menu — the store, the submenu, the dividers.
 	 *
 	 * `iconColor` does not survive the move. It was a per-item inline `color:`
-	 * on the glyph — a literal in the pane, which design-grammar.md §5 will not
+	 * on the glyph — a literal in the pane, which design.md, "Color" will not
 	 * have. Nothing sets it: `ContextMenuItem.iconColor` is declared on the
 	 * store's type and read by `ContextMenuSubmenu` (where it paints a color
 	 * swatch, and still does), but no call site in the tree assigns it on a

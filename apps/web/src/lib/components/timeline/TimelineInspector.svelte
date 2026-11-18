@@ -684,7 +684,7 @@
 	}
 	/* What a stretch was, by form: a stay is filled ink, a drive a hollow
 	   ring, a gap a dashed one, a night half-filled, a conversation a small
-	   dot. No hue (design-grammar §5). */
+	   dot. No hue (design.md, "Color"). */
 	.dot {
 		flex: 0 0 8px;
 		width: 8px;

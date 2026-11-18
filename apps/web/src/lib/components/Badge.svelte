@@ -7,7 +7,7 @@
 	 *
 	 * Two rules it was breaking, both from doctrine written before it:
 	 *
-	 * - It was set at **10px**, and design-grammar.md §4 says nothing under 11.
+	 * - It was set at **10px**, and design.md, "Type" says nothing under 12.
 	 *   Eleven is the floor because ten is where a sans stops being read and
 	 *   starts being recognized by shape.
 	 * - It was set in **IBM Plex Mono**, and design.md §5 says mono is for code
@@ -16,10 +16,8 @@
 	 *   the same move, one component further in.
 	 *
 	 * Color comes from the semantic tokens and nothing else, so a badge stays
-	 * legible in all sixteen themes including Borghese, where `--color-primary`,
-	 * `--color-success` and `--color-error` are deliberately all white. A badge
-	 * that reads only by hue is unreadable there by construction; the word in
-	 * it has to carry the meaning on its own.
+	 * legible in both themes. The word in it carries the meaning on its own,
+	 * so a badge never reads by hue alone.
 	 */
 	type Variant = "muted" | "success" | "error" | "warning" | "info" | "primary";
 
@@ -77,7 +75,7 @@
 	   and on Pemberley the two resolve to the same white — so a muted badge
 	   rendered as bare text beside five tinted ones, which the gallery caught
 	   the day it was built. The foreground mix is defined against the ink, so
-	   it reads in all sixteen themes. design.md: never use a surface token
+	   it reads in both themes. design.md: never use a surface token
 	   where a ground has to show. */
 	[data-fill="solid"][data-variant="muted"] {
 		background: var(--hover-bg);

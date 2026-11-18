@@ -34,7 +34,10 @@ describe('describeChange', () => {
 		expect(describeChange(change('update-channel', 'stable'))).toBe('Changed to released updates');
 	});
 
-	it('reads a theme id as a name', () => {
+	it('names a theme choice in words', () => {
+		expect(describeChange(change('theme', 'oxford'))).toBe('Changed to Light');
+		expect(describeChange(change('theme', 'system'))).toBe('Changed to Match system');
+		// A name recorded before the themes were cut still reads as a name.
 		expect(describeChange(change('theme', 'baker-street'))).toBe('Changed to Baker street');
 	});
 
@@ -47,6 +50,11 @@ describe('describeChange', () => {
 	it('quotes a short value and says when one was cleared', () => {
 		expect(describeChange(change('preferred-name', 'Nick'))).toBe('Changed to Nick');
 		expect(describeChange(change('employer', null))).toBe('Cleared');
+	});
+
+	it('names the units', () => {
+		expect(describeChange(change('units', 'metric'))).toBe('Changed to metric units');
+		expect(describeChange(change('units', 'us'))).toBe('Changed to US units');
 	});
 
 	it('names the capability that was switched', () => {

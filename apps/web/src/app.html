@@ -26,15 +26,24 @@
 		<script>
 			(function () {
 				try {
+					// The stored choice (lib/utils/theme.ts): oxford, asgard or
+					// system. Anything else is a retired name, which paints
+					// Oxford until theme.ts maps it.
 					var t = localStorage.getItem("virtues-theme");
-					if (t) document.documentElement.setAttribute("data-theme", t);
+					var sys = t === "system";
+					if (sys) t = matchMedia("(prefers-color-scheme: dark)").matches ? "asgard" : "oxford";
+					if (t === "oxford" || t === "asgard") document.documentElement.setAttribute("data-theme", t);
 					// Settings · Appearance · Glass (stores/glass.svelte.ts).
 					var g = localStorage.getItem("virtues-glass");
 					if (g) document.documentElement.setAttribute("data-glass", g);
-					var bg =
-						localStorage.getItem("virtues-theme-surface") ||
-						localStorage.getItem("virtues-theme-bg") ||
-						"#FFFFFF";
+					// Under Match system the cached page colour may be the other
+					// theme's, if the device switched since, so paint the one
+					// this frame resolves to. Asgard's --page is #171718.
+					var bg = sys
+						? t === "asgard" ? "#171718" : "#FFFFFF"
+						: localStorage.getItem("virtues-theme-surface") ||
+							localStorage.getItem("virtues-theme-bg") ||
+							"#FFFFFF";
 					document.documentElement.style.backgroundColor = bg;
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */

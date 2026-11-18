@@ -119,7 +119,7 @@
 		/**
 		 * Stroke weight, in the 24-unit box's units. Leave it unset: it is
 		 * derived from `size` so every glyph renders at the scale's one line,
-		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "The scale").
+		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "Glyphs").
 		 */
 		stroke?: number;
 		/**

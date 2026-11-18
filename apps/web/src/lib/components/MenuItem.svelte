@@ -159,7 +159,7 @@
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6): a long press on a
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"): a long press on a
 	   block page opens these menus on a phone. */
 	@media (pointer: coarse) {
 		.v-menuitem {

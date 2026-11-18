@@ -154,7 +154,7 @@ Tree pages are created only by tests and the flag in this slice.
 `DocumentEditor.svelte` inside `views/PageContent.svelte` for tree pages,
 reusing `RefPicker`, `SlashMenu`, `SelectionToolbar`, `PageOutline`,
 `VersionHistoryPanel`, `AiPromptPopover`. Uploads keep `/api/media/upload`.
-Typography uses the `--md-*` tokens ([build/design-grammar.md](../build/design-grammar.md)
+Typography uses the `--md-*` tokens ([build/design.md](../build/design.md)
 makes them the one definition the read path and the editor share).
 
 Parity with today's editor: each feature below is explicitly kept or cut.

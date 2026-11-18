@@ -255,7 +255,7 @@
 	cursor: default;
 }
 
-/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
+/* A thumb's 44pt: the box stays 14px, its hit area grows (design.md, "Primitives"),
    up, down and to the left only. It ends at the box's right edge: the
    item's text starts 8px past it, and a tap there places the caret. */
 @media (pointer: coarse) {
@@ -393,7 +393,7 @@
 	--md-body-family: var(--md-article-family);
 	--md-body-size: var(--md-article-size);
 	--md-body-lh: var(--md-article-lh);
-	/* The serif has one weight (agents/build/typography.md), so the lower
+	/* The serif has one weight (agents/build/design.md, "Type"), so the lower
 	   headings step by size and color, not by the sans's 500 and 600. h4 is
 	   a step over the 17px body and h3 a step over h4; h5 is the body's size
 	   in the muted ink; h6 is smaller, also muted, as in the sans. */
@@ -464,7 +464,7 @@
 .prose--flat-headings .prose h5::before { content: "#####"; content: "#####" / ""; }
 .prose--flat-headings .prose h6::before { content: "######"; content: "######" / ""; }
 
-/* The serif has one weight (agents/build/typography.md), so in Serif mode
+/* The serif has one weight (agents/build/design.md, "Type"), so in Serif mode
    the levels step by ink alone. */
 .prose--article.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6) {
 	font-weight: 400;

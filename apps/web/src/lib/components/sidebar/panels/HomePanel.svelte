@@ -1564,7 +1564,7 @@
 		   text instead, which WebKit tries first. */
 		user-select: none;
 		-webkit-user-select: none;
-		/* The scale's motion (design.md, "The scale"), as on the tab strip:
+		/* The scale's motion (design.md, "Motion"), as on the tab strip:
 		   hover in fast and out slow. */
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),

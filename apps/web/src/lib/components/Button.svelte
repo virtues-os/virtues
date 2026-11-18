@@ -14,7 +14,7 @@
 	 * their own. The fix was not a bigger API — it already took snippets. It
 	 * was speaking the same language as everything around it.
 	 *
-	 * Shape is design-grammar.md §6: pills, 40px tall, `0 22px`, one filled
+	 * Shape is design.md, "Primitives": a box at `--radius-md`, one filled
 	 * claret action per page. The sizes are the 8pt grid either side of that.
 	 *
 	 * `variant` is a claim about the button's job, not its color:
@@ -104,7 +104,7 @@
 		justify-content: center;
 		gap: 6px;
 		border: 1px solid transparent;
-		/* A control's box radius (design.md, Corners): the pill is the
+		/* A control's box radius (design.md, "Radius"): the pill is the
 		   composer's alone. */
 		border-radius: var(--radius-md);
 		font-family: var(--font-sans);
@@ -198,7 +198,7 @@
 
 	/* Claret (`--color-secondary`) is the page's single filled action, and is
 	   the one exception to `--color-primary` being the only color the pane
-	   carries (design-grammar.md §5). Never a rule, a fill, a border for
+	   carries (design.md, "Color"). Never a rule, a fill, a border for
 	   emphasis, or a second button. */
 	.v-btn[data-variant="primary"] {
 		background: var(--color-secondary);

@@ -28,7 +28,7 @@
 	import AppearanceSettings from './AppearanceSettings.svelte';
 	import CapabilitiesSettings from './CapabilitiesSettings.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
-	import { getTheme, setTheme, type Theme } from '$lib/utils/theme';
+	import { getThemeChoice, setTheme, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
 	import { openSettingsPage, takePendingSetting } from '$lib/settings/focus';
 
@@ -59,12 +59,12 @@
 	const spoken = $derived(name.charAt(0).toUpperCase() + name.slice(1));
 	const title = (settingId: string) => titleOf(findSetting(settingId)?.title ?? settingId, spoken);
 
-	let theme = $state<Theme>(getTheme());
+	let theme = $state<ThemeChoice>(getThemeChoice());
 
 	// `setTheme` applies it and saves it in the assistant profile's
 	// `ui_preferences`, which is where the app reads it and where Changed
 	// lately records it.
-	function chooseTheme(next: Theme) {
+	function chooseTheme(next: ThemeChoice) {
 		theme = next;
 		void setTheme(next);
 	}
@@ -138,7 +138,7 @@
 			<div class="block" id="setting-suggested-questions"><SuggestionsSettings assistantName={spoken} /></div>
 			<LinkRow id="memory" label={title('memory')} help="Notes {spoken} keeps from your chats. Edit one and it becomes yours." href="/virtues/assistant/memory" />
 		{:else if id === 'appearance'}
-			<SettingRow id="theme" label={title('theme')} help="Light, dark, and the colors of each." block>
+			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
 			</SettingRow>
 			<AppearanceSettings assistantName={spoken} />

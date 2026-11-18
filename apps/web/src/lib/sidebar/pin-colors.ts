@@ -13,7 +13,7 @@
  * `--cat-*` tokens. So the dot a pin got for free was muted cloth and the dot
  * they chose was bright candy, in the same column, and neither could be
  * reached from the other. Worse, bookcloth was pure TypeScript: six literal
- * hexes that ignored all sixteen themes, which is exactly the failure the
+ * hexes that ignored the themes, which is exactly the failure the
  * token rule exists to prevent.
  *
  * Now there is one palette: `--cat-*`, nine hues, authored per theme with a

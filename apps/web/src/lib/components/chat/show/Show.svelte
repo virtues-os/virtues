@@ -6,7 +6,7 @@
 	(virtues-core tools/show.rs). So this never renders anything the model
 	wrote as markup, and every figure on it came out of the record.
 
-	Unframed, like the rest of the box's turn (design-grammar §2): no border
+	Unframed, like the rest of the box's turn (design.md, "Framed and unframed blocks"): no border
 	and no ground of its own, a chart at the full width of the column.
 -->
 <script lang="ts">

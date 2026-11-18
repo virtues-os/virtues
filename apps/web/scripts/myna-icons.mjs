@@ -12,7 +12,7 @@
  * write such names out in full.
  *
  * Myna draws a 1.5 line on a 24-unit grid, which is 1px at 16px. The shell's
- * line is 1.25px at 16px (design.md, "Lines and glyphs"), so the stroke is
+ * line is 1.25px at 16px (design.md, "Glyphs"), so the stroke is
  * rewritten to 1.875 here, the same weight lucide.ts gives Lucide.
  *
  * Runs before `pnpm dev` and `pnpm build`. `--check` writes nothing and

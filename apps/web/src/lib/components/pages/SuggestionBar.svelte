@@ -88,7 +88,7 @@
 		color: var(--color-primary);
 	}
 
-	/* A thumb's 44pt (design-grammar §6): the target is the button itself. */
+	/* A thumb's 44pt (design.md, "Primitives"): the target is the button itself. */
 	@media (pointer: coarse) {
 		.sb-btn {
 			height: 44px;

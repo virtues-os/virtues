@@ -11,7 +11,7 @@
 	 * with nowhere to go, and all 59 hand-rolled their own. A triage on
 	 * 2026-09-16 found ONE control drawn seventeen ways: ten box sizes (16,
 	 * 18, 20, 24, 26, 28, 30, 32, 36, 44) and six radii (4, 6, 8, 10, 999px,
-	 * `--radius-full`). Nine of those ten rows violate design-grammar.md §6,
+	 * `--radius-full`). Nine of those ten rows violate design.md, "Radius",
 	 * which allows `{0, 6px, 12px, 50%, a pill}` and nothing else.
 	 *
 	 * None of that variance was a decision. It is what happens when a shape is
