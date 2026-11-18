@@ -298,8 +298,11 @@ starts. Read `.claude/rules/migrations.md` first.
    then "Why your server raised it" with the rule in one line and the
    evidence (the overlapping entries on a timeline, or the days up to a due
    date with nothing set aside), and how it was found in the side column.
-   "Why this?" in the door's previews opens it. Still to do on it: what
-   acting changes, its history, and "Fewer like this".
+   "Why this?" in the door's previews opens it. It also says what would
+   clear the note (the calendar is read-only, so a clash names the change
+   for the owner to make), its history from `app_note_events`, and "Fewer
+   like this", which mutes that kind of note for its threads
+   (`app_note_mutes`, migration 0086).
    The first rule needs no model to find: a
    clash between two calendar entries in different threads, or a dated task
    with no time set aside before its date. A model writes the sentence only.
