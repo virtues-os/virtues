@@ -39,11 +39,18 @@
 	const title = $derived(out ? out.title : typeof part.input?.title === "string" ? part.input.title : null);
 	const columns = $derived(out?.columns ?? []);
 	const rows = $derived(out?.rows ?? []);
-	// A call may give only `purpose` (virtues_registry::chart_marks); the one
-	// that draws numbers holds the short placeholder, so the reply doesn't jump.
-	const kind = $derived(
-		out?.kind ?? (part.input?.kind as string | undefined) ?? (part.input?.purpose === "in_sentence" ? "numbers" : undefined),
-	);
+	// While a call runs, its kind comes from the call: `chart` (the field the
+	// tool offers, virtues_registry::chart_marks), or `kind` and `purpose` from
+	// calls written before it. Numbers hold the short placeholder, so the
+	// reply doesn't jump, and choices draw no placeholder at all.
+	function kindOfCall(input: Record<string, unknown> | undefined): string | undefined {
+		const chart = input?.chart ?? input?.purpose;
+		if (typeof input?.kind === "string") return input.kind;
+		if (chart === "choices") return "choices";
+		if (chart === "in_sentence" || chart === "numbers") return "numbers";
+		return undefined;
+	}
+	const kind = $derived(out?.kind ?? kindOfCall(part.input as Record<string, unknown> | undefined));
 </script>
 
 {#if out || (drawing && kind !== "choices")}

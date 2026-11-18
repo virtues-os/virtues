@@ -13,7 +13,7 @@
 pub struct ChartPurpose {
     /// The value of `show`'s `purpose` argument.
     pub id: &'static str,
-    /// The story the data tells, for the tool description.
+    /// The owner's question it answers, for the tool description.
     pub story: &'static str,
 }
 
@@ -36,17 +36,17 @@ pub struct ChartMark {
 }
 
 pub const PURPOSES: &[ChartPurpose] = &[
-    ChartPurpose { id: "change_over_time", story: "how a measure moves over time" },
-    ChartPurpose { id: "before_and_after", story: "a measure before and after a dated change" },
-    ChartPurpose { id: "usual_range", story: "how a measure sits against its own usual range" },
-    ChartPurpose { id: "compare_groups", story: "one measure across a few groups or categories" },
-    ChartPurpose { id: "part_to_whole", story: "how a total divides into its parts" },
-    ChartPurpose { id: "relationship", story: "whether two measures move together, or when in the week something happens" },
-    ChartPurpose { id: "daily_rhythm", story: "how days are made up, across many days" },
-    ChartPurpose { id: "events", story: "what happened when, item by item" },
-    ChartPurpose { id: "place", story: "where things are or happened" },
-    ChartPurpose { id: "in_sentence", story: "one to four figures beside the sentence" },
-    ChartPurpose { id: "table", story: "rows to read rather than a shape to see" },
+    ChartPurpose { id: "change_over_time", story: "how has this changed over time?" },
+    ChartPurpose { id: "before_and_after", story: "did it change after a dated event?" },
+    ChartPurpose { id: "usual_range", story: "is this normal for me, and how much does it vary?" },
+    ChartPurpose { id: "compare_groups", story: "how do these groups compare, or then against now?" },
+    ChartPurpose { id: "part_to_whole", story: "what is the total made of?" },
+    ChartPurpose { id: "relationship", story: "does one measure move with another, or when in the week does it happen?" },
+    ChartPurpose { id: "daily_rhythm", story: "when in the day do things usually happen, across many days?" },
+    ChartPurpose { id: "events", story: "what happened, item by item?" },
+    ChartPurpose { id: "place", story: "where?" },
+    ChartPurpose { id: "in_sentence", story: "which one to four figures belong in the sentence?" },
+    ChartPurpose { id: "table", story: "which rows should the owner read?" },
 ];
 
 /// Within a purpose, the picker tries marks in this order.
@@ -242,15 +242,29 @@ pub fn marks_for(purpose: &str) -> impl Iterator<Item = &'static ChartMark> + '_
     MARKS.iter().filter(move |m| m.purposes.contains(&purpose))
 }
 
-/// The `purpose` argument's description: each purpose, its story, and the
+/// The values `show`'s `chart` argument takes: every purpose, every mark
+/// whose name is not already a purpose's, and choices for reply buttons.
+pub fn chart_values() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = PURPOSES.iter().map(|p| p.id).collect();
+    for m in MARKS {
+        if !out.contains(&m.mark) {
+            out.push(m.mark);
+        }
+    }
+    out.push("choices");
+    out
+}
+
+/// The `chart` argument's description: each purpose, its story, and the
 /// marks that draw it with the columns each one needs.
 pub fn purpose_catalog() -> String {
     let mut out = String::from(
-        "What the figure is for; the server picks the chart from the query's columns. Give purpose, \
-         or kind.",
+        "Give the purpose whose question the figure answers; the server picks the chart from the \
+         columns your query returns. Give a chart's own name only when the owner asked for that chart, \
+         or choices for reply buttons (no sql, give options). Purposes, and the columns each chart reads:",
     );
     for p in PURPOSES {
-        out.push_str(&format!("\n{}: {}.", p.id, p.story));
+        out.push_str(&format!("\n{}, {}", p.id, p.story));
         for m in marks_for(p.id) {
             out.push_str(&format!(" {}: {}.", m.mark, m.line));
         }

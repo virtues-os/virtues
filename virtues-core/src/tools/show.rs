@@ -27,6 +27,11 @@ use super::sql_query::SqlQueryTool;
 
 #[derive(Debug, Deserialize)]
 struct ShowArgs {
+    /// What the figure answers: a purpose, a mark, or choices. The one field
+    /// the tool offers; kind, purpose and mark are read for calls written
+    /// before it.
+    #[serde(default)]
+    chart: Option<String>,
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
@@ -132,7 +137,8 @@ pub async fn execute(
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
     let trimmed = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let (purpose, mut named_mark) = purpose_and_mark(trimmed(&args.purpose), trimmed(&args.mark))?;
+    let (purpose_in, kind_in) = chart_into(trimmed(&args.chart), trimmed(&args.purpose), trimmed(&args.kind));
+    let (purpose, mut named_mark) = purpose_and_mark(purpose_in, trimmed(&args.mark))?;
     let fields = ChartFields {
         split_at: trimmed(&args.split_at),
         split_label: trimmed(&args.split_label),
@@ -140,7 +146,7 @@ pub async fn execute(
         unit: trimmed(&args.unit),
         finding: trimmed(&args.finding),
     };
-    let kind = match trimmed(&args.kind) {
+    let kind = match kind_in {
         // A mark's name given as the kind (`kind: "share"`) is read as that
         // mark, as one given as the purpose is; refusing it only buys a retry.
         Some(k) => match (Kind::parse(&k), chart_marks::mark(&k)) {
@@ -248,6 +254,17 @@ pub async fn execute(
     Ok(ToolResult::success(Value::Object(shaped)))
 }
 
+/// Where `chart` goes: choices and chart are kinds; anything else is read as
+/// a purpose, which `purpose_and_mark` also reads as a mark. A purpose or
+/// kind the call gives by name wins.
+fn chart_into(chart: Option<String>, purpose: Option<String>, kind: Option<String>) -> (Option<String>, Option<String>) {
+    match chart {
+        Some(c) if c == "choices" || c == "chart" => (purpose, kind.or(Some(c))),
+        Some(c) => (purpose.or(Some(c)), kind),
+        None => (purpose, kind),
+    }
+}
+
 /// The call's purpose and mark. A mark's name given as the purpose
 /// (`purpose: "cumulative"`) is read as that mark with its first purpose:
 /// models do write it, and refusing it only buys a retry.
@@ -268,7 +285,7 @@ fn purpose_and_mark(
 fn purpose_named(id: &str) -> Result<&'static chart_marks::ChartPurpose, ToolError> {
     chart_marks::purpose(id).ok_or_else(|| {
         let known: Vec<&str> = chart_marks::PURPOSES.iter().map(|p| p.id).collect();
-        invalid(format!("unknown purpose '{id}'. Use one of: {}", known.join(", ")))
+        invalid(format!("'{id}' is not a purpose or a chart. Give a purpose: {}", known.join(", ")))
     })
 }
 
@@ -1344,6 +1361,14 @@ mod tests {
         let out = call(json!({ "purpose": "change_over_time", "mark": "bar", "sql": weeks })).await.unwrap().data;
         assert_eq!(out["mark"], json!("bar"), "a named mark wins over the pick: {out}");
 
+        // The one field the tool offers: a purpose, a mark, or choices.
+        let out = call(json!({ "chart": "change_over_time", "sql": weeks })).await.unwrap().data;
+        assert_eq!((out["mark"].as_str(), out["purpose"].as_str()), (Some("line"), Some("change_over_time")), "{out}");
+        let out = call(json!({ "chart": "share", "sql": days })).await.unwrap().data;
+        assert_eq!(out["mark"], json!("share"), "{out}");
+        let out = call(json!({ "chart": "choices", "options": ["Yes", "No"] })).await.unwrap().data;
+        assert_eq!(out["kind"], json!("choices"), "{out}");
+
         let out = call(json!({ "kind": "share", "sql": days })).await.unwrap().data;
         assert_eq!((out["kind"].as_str(), out["mark"].as_str()), (Some("chart"), Some("share")), "a mark given as the kind: {out}");
 
@@ -1448,6 +1473,16 @@ mod tests {
         assert!(err(shape_states(600, &cols(&["day", "start", "state"]), vec![json!({ "day": "2026-09-01", "start": "09:00", "state": "Home" })])).contains("end is missing"));
         let bad = vec![json!({ "day": "2026-09-01", "start": "morning", "end": "10:30", "state": "Home" })];
         assert!(err(shape_states(600, &cols(&["day", "start", "end", "state"]), bad)).contains("time of day"));
+    }
+
+    #[test]
+    fn chart_routes_to_a_kind_or_a_purpose_and_a_named_field_wins() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(chart_into(s("choices"), None, None), (None, s("choices")));
+        assert_eq!(chart_into(s("usual_range"), None, None), (s("usual_range"), None));
+        assert_eq!(chart_into(s("dumbbell"), None, None), (s("dumbbell"), None));
+        assert_eq!(chart_into(s("dumbbell"), s("compare_groups"), None), (s("compare_groups"), None));
+        assert_eq!(chart_into(None, s("place"), s("map")), (s("place"), s("map")));
     }
 
     #[test]

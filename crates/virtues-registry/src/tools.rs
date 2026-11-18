@@ -405,27 +405,18 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads, and `purpose`, what the figure is for; the server picks the chart from the columns the query returns. It runs the query, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads, and `chart`, the purpose whose question the figure answers; the server picks the chart from the columns the query returns. It runs the query, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Make one call for each figure: if show refuses it, call once more with the fix the refusal names, and never draw a figure again once it has drawn. If show is closed for the turn, say in words what the figure would have shown, and don't draw it another way, such as with shell. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "purpose": {
+                "chart": {
                     "type": "string",
-                    "enum": crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>(),
+                    "enum": crate::chart_marks::chart_values(),
                     "description": crate::chart_marks::purpose_catalog()
                 },
-                "kind": {
-                    "type": "string",
-                    "enum": ["chart", "numbers", "table", "map", "timeline", "choices"],
-                    "description": "Not needed with purpose, except choices. chart: first column is the x axis, then 1-3 numeric series; under 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
-                },
                 "title": { "type": "string", "description": "A few words naming what is shown" },
-                "sql": { "type": "string", "description": "Alias every column as the owner should read it: AS \"Hours asleep\"" },
-                "mark": {
-                    "type": "string",
-                    "enum": crate::chart_marks::MARKS.iter().map(|m| m.mark).collect::<Vec<_>>(),
-                    "description": "Usually leave it out: the server picks the chart that fits the purpose and the columns. Name a mark only when the owner asked for that chart"
-                },
+                "sql": { "type": "string", "description": "Name the columns a chart reads as its line under chart says (day, hour, usual_low, started_at and so on); alias every other column as the owner should read it: AS \"Hours asleep\"" },
+                "finding": { "type": "string", "description": "scatter only: one sentence on what lines up, written only from rows you have already read" },
                 "split_at": { "type": "string", "description": "interrupted only: the date of the change" },
                 "split_label": { "type": "string", "description": "interrupted only: the change in a few words" },
                 "step_kind": { "type": "string", "enum": ["day", "weekday", "hour"], "description": "cumulative only: what a step is; default day" },
