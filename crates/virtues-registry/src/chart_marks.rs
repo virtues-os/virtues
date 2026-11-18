@@ -104,7 +104,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Actogram",
         kind: "chart",
         purposes: &["daily_rhythm"],
-        line: "day, started_at and ended_at",
+        line: "a daily window across many days: day, started_at and ended_at",
         max_rows: 400,
     },
     ChartMark {
@@ -128,7 +128,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Stacked area chart",
         kind: "chart",
         purposes: &["change_over_time"],
-        line: "a line's columns, stacked; only when named",
+        line: "a filled area over time, 1-3 series stacked; when an area chart is asked for",
         max_rows: 199,
     },
     ChartMark {
