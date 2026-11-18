@@ -11,7 +11,6 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { arrive } from "$lib/tabs/arrive";
-	import { closeIntoTab, markClosed } from "$lib/tabs/close";
 	import { beginTabToPane, tabBecomesPane, tabRect } from "$lib/tabs/split";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
 	import { onMount, untrack } from "svelte";
@@ -267,9 +266,6 @@
 		};
 		untrack(() => {
 			if (previous) {
-				// A tab that was on screen and is gone has closed: its page
-				// shrinks back into its tab ($lib/tabs/close).
-				markClosed([...previous.visible.keys()].filter((id) => !next.panes.has(id)));
 				if (!isResizing) startMotion(previous, next);
 			}
 			previous = next;
@@ -535,7 +531,6 @@
 		<div
 			class="tab-slot"
 			use:arrive={{ route: tab.route, active: isActive }}
-			out:closeIntoTab={tab}
 			data-tab-id={tab.id}
 			data-side={side}
 			data-active={isActive ? "" : undefined}
