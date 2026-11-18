@@ -854,6 +854,8 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow], zone: Option<&str>) 
                     serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
                     serde_json::Value::String(v.format("%Y-%m-%d").to_string())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveTime, _>(i) {
+                    serde_json::Value::String(v.format("%H:%M:%S%.f").to_string())
                 }
                 // Interval → readable string (PgInterval has no Display)
                 else if let Ok(v) = row.try_get::<sqlx::postgres::types::PgInterval, _>(i) {
@@ -1232,6 +1234,18 @@ mod tests {
             Some(false),
             "read-only transaction must leave no table behind",
         );
+    }
+
+    /// A time of day comes back as its value, so a chart that reads one can
+    /// draw it.
+    #[sqlx::test]
+    async fn a_time_column_decodes_to_its_value(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let shown = tool
+            .query_for_show("SELECT TIME '08:35:00' AS t", 10, None, None)
+            .await
+            .expect("the query runs");
+        assert_eq!(shown.data["rows"][0]["t"], "08:35:00");
     }
 
     /// show's door takes the limit its mark needs; a model's own query is

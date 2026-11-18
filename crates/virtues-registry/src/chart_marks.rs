@@ -152,7 +152,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Sorted bar list",
         kind: "chart",
         purposes: &["compare_groups"],
-        line: "a label, then a value, largest first; never to rank people",
+        line: "the sorted bar list, a label then a value, largest first; never to rank people",
         max_rows: 20,
     },
     ChartMark {
@@ -260,8 +260,9 @@ pub fn chart_values() -> Vec<&'static str> {
 pub fn purpose_catalog() -> String {
     let mut out = String::from(
         "Give the purpose whose question the figure answers; the server picks the chart from the \
-         columns your query returns. Give a chart's own name only when the owner asked for that chart, \
-         or choices for reply buttons (no sql, give options). Purposes, and the columns each chart reads:",
+         columns your query returns. Give a chart's own name (bar, line, scatter) only when the owner \
+         named that chart in their message, and choices for reply buttons (no sql, give options). \
+         Purposes, and the columns each chart reads:",
     );
     for p in PURPOSES {
         out.push_str(&format!("\n{}, {}", p.id, p.story));
