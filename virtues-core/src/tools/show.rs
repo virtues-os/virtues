@@ -57,6 +57,15 @@ struct ShowArgs {
     /// scatter: one sentence on what lines up, from rows already read.
     #[serde(default)]
     finding: Option<String>,
+    /// aligned: the event at zero, in a few words.
+    #[serde(default)]
+    event_label: Option<String>,
+    /// lollipop: the window's length in days, 7 to 92.
+    #[serde(default)]
+    days: Option<Value>,
+    /// density: the stretch the minutes cover, in a few words.
+    #[serde(default)]
+    period: Option<String>,
 }
 
 /// The call fields a chart mark reads beyond its rows, trimmed.
@@ -67,12 +76,20 @@ struct ChartFields {
     step_kind: Option<String>,
     unit: Option<String>,
     finding: Option<String>,
+    event_label: Option<String>,
+    days: Option<Value>,
+    period: Option<String>,
 }
 
 const MAX_STATES: usize = 6;
 const MAX_UNIT_CHARS: usize = 12;
 const MAX_SPLIT_LABEL_CHARS: usize = 60;
 const MAX_FINDING_CHARS: usize = 240;
+const MAX_EVENT_LABEL_CHARS: usize = 40;
+const MAX_PERIOD_CHARS: usize = 40;
+const MAX_MODE_CHARS: usize = 24;
+const MAX_ALIGNED_EVENTS: usize = 40;
+const MAX_LANES: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -145,6 +162,9 @@ pub async fn execute(
         step_kind: trimmed(&args.step_kind),
         unit: trimmed(&args.unit),
         finding: trimmed(&args.finding),
+        event_label: trimmed(&args.event_label),
+        days: args.days.clone(),
+        period: trimmed(&args.period),
     };
     let kind = match kind_in {
         // A mark's name given as the kind (`kind: "share"`) is read as that
@@ -158,6 +178,12 @@ pub async fn execute(
             (Err(e), None) => return Err(e),
         },
         None => kind_before_query(purpose, named_mark.as_deref())?,
+    };
+    // A known mark draws with its own kind, so `kind: "chart", mark:
+    // "swimlanes"` is a swimlane plot rather than a refusal.
+    let kind = match named_mark.as_deref().and_then(chart_marks::mark) {
+        Some(m) if kind != Kind::Choices => Kind::parse(m.kind)?,
+        _ => kind,
     };
     let title = args.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|t| {
         t.chars().take(MAX_TITLE_CHARS).collect::<String>()
@@ -179,17 +205,18 @@ pub async fn execute(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| invalid(format!("a {} needs `sql`: the SELECT whose rows it draws", kind.name())))?;
-    // A chart's mark is settled before the query when the call names it, and
+    // The mark is settled before the query when the call names it, and
     // picked from the columns after it when only the purpose is given.
-    let named_chart_mark = match (kind, named_mark.as_deref()) {
-        (Kind::Chart, Some(m)) => match chart_marks::mark(m) {
-            Some(cm) if cm.kind == "chart" => Some(cm.mark),
+    let named_chart_mark = match named_mark.as_deref() {
+        Some(m) => match chart_marks::mark(m) {
+            Some(cm) if cm.kind == kind.name() => Some(cm.mark),
             _ => {
-                let known: Vec<&str> = chart_marks::MARKS.iter().filter(|m| m.kind == "chart").map(|m| m.mark).collect();
-                return Err(invalid(format!("mark '{m}' is not a chart mark: use one of {}", known.join(", "))));
+                let known: Vec<&str> =
+                    chart_marks::MARKS.iter().filter(|m| m.kind == kind.name()).map(|m| m.mark).collect();
+                return Err(invalid(format!("mark '{m}' is not a {} mark: use one of {}", kind.name(), known.join(", "))));
             }
         },
-        _ => None,
+        None => None,
     };
 
     // One more than the most any mark this call may draw with takes, so a cut
@@ -213,8 +240,9 @@ pub async fn execute(
 
     let (columns, rows) = canonical_columns(kind, columns, rows);
     let drawn = match (kind, named_chart_mark) {
-        (Kind::Chart, Some(m)) => chart_marks::mark(m).expect("a named chart mark is in the table"),
+        (_, Some(m)) => chart_marks::mark(m).expect("a named mark is in the table"),
         (Kind::Chart, None) => pick_chart_mark(purpose, &fields, &columns, &rows),
+        (Kind::Timeline | Kind::Map, None) => pick_mark(kind, purpose, &fields, &columns, &rows),
         _ => candidates[0],
     };
     let (columns, rows) = mark_columns(drawn.mark, columns, rows);
@@ -228,11 +256,24 @@ pub async fn execute(
         "actogram" => shape_actogram(drawn.max_rows, &columns, rows)?,
         "dotplot" => shape_dotplot(drawn.max_rows, &columns, rows)?,
         "scatter" => shape_scatter(drawn.max_rows, &columns, rows)?,
+        "aligned" => shape_aligned(drawn.max_rows, &columns, rows)?,
+        "swimlanes" => shape_swimlanes(drawn.max_rows, &columns, rows)?,
+        "lollipop" => shape_lollipop(drawn.max_rows, &columns, rows)?,
+        "itinerary" => shape_itinerary(drawn.max_rows, &columns, rows)?,
+        "route" => shape_route(drawn.max_rows, &columns, rows)?,
+        "density" => shape_density(drawn.max_rows, &columns, rows)?,
         _ => shape(kind, drawn.max_rows, &columns, rows)?,
     };
-    if kind == Kind::Chart {
+    // A plain map or timeline carries no mark, as before the others existed.
+    if kind == Kind::Chart || drawn.mark != kind.name() {
         check_mark(drawn.mark, &fields, &columns, &mut shaped)?;
         shaped.insert("mark".into(), json!(drawn.mark));
+    }
+    // The window these marks draw starts on the day the reply was written,
+    // so a saved chat keeps its window.
+    if matches!(drawn.mark, "swimlanes" | "lollipop") {
+        let today = crate::timezone::owner_rfc3339(chrono::Utc::now(), timezone);
+        shaped.insert("as_of".into(), json!(today.get(..10).unwrap_or(&today)));
     }
     shaped.insert("title".into(), json!(title));
     if let Some(p) = purpose {
@@ -361,6 +402,24 @@ fn pick_chart_mark(
     }
 }
 
+/// The mark for a map or a timeline that names none: the first of the
+/// purpose's marks of that kind whose columns fit, else the kind's own plain
+/// mark (`map`, `timeline`), which every earlier call drew. Pure.
+fn pick_mark(
+    kind: Kind,
+    purpose: Option<&chart_marks::ChartPurpose>,
+    fields: &ChartFields,
+    columns: &[String],
+    rows: &[Value],
+) -> &'static ChartMark {
+    let plain = chart_marks::mark(kind.name()).expect("a map and a timeline are marks of their own kind");
+    let Some(p) = purpose else { return plain };
+    chart_marks::marks_for(p.id)
+        .filter(|m| m.kind == kind.name())
+        .find(|m| chart_fits(m.mark, fields, columns, rows))
+        .unwrap_or(plain)
+}
+
 fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Value]) -> bool {
     match mark {
         // Only a literal step column or step_kind: an ordinary `day, steps`
@@ -398,6 +457,19 @@ fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Valu
         "diurnal" => ["hour", "days", "share"].iter().all(|c| has_column(mark, c, columns)),
         "actogram" => ["day", "started_at", "ended_at"].iter().all(|c| has_column(mark, c, columns)),
         "dotplot" => (1..=2).contains(&columns.len()),
+        "aligned" => has_column(mark, "event", columns) && has_column(mark, "offset", columns),
+        "swimlanes" => ["lane", "at", "what"].iter().all(|c| has_column(mark, c, columns)),
+        "lollipop" => has_column(mark, "due", columns),
+        // A column named place, and a start and an end (a timeline would
+        // otherwise draw the same stays as bars).
+        "itinerary" => {
+            columns.iter().any(|c| c.eq_ignore_ascii_case("place"))
+                && (has_column(mark, "started_at", columns) || has_column("timeline", "start", columns))
+                && (has_column(mark, "ended_at", columns) || has_column("timeline", "end", columns))
+        }
+        "route" => has_column(mark, "at", columns),
+        "density" => has_column(mark, "minutes", columns),
+        "timeline" | "map" => true,
         // The weekly-rhythm form and every shape it takes are its own refusal's to explain.
         "scatter" => true,
         // Same rows as a line; drawn only when the call names it.
@@ -434,6 +506,19 @@ const MARK_ALIASES: &[(&str, &str, &[&str])] = &[
     ("actogram", "day", &["night", "date"]),
     ("actogram", "started_at", &["asleep_at", "start"]),
     ("actogram", "ended_at", &["woke_at", "end"]),
+    ("aligned", "event", &[]),
+    ("aligned", "offset", &[]),
+    ("swimlanes", "lane", &["thread", "project"]),
+    ("swimlanes", "at", &[]),
+    ("swimlanes", "what", &[]),
+    ("lollipop", "due", &[]),
+    ("lollipop", "label", &[]),
+    ("lollipop", "amount", &[]),
+    ("itinerary", "place", &[]),
+    ("itinerary", "started_at", &["start", "arrived_at"]),
+    ("itinerary", "ended_at", &["end", "left_at"]),
+    ("route", "at", &["occurred_at", "recorded_at", "time"]),
+    ("density", "minutes", &["duration_minutes", "mins"]),
 ];
 
 /// Whether a mark's column is there by its name or an alias, in any case:
@@ -548,6 +633,38 @@ fn check_mark(mark: &str, fields: &ChartFields, columns: &[String], out: &mut Ma
                     return Err(invalid(format!("finding is one sentence, at most {MAX_FINDING_CHARS} characters")));
                 }
                 out.insert("finding".into(), json!(f));
+            }
+        }
+        "aligned" => {
+            let Some(label) = &fields.event_label else {
+                return Err(invalid(
+                    "an event-aligned overlay needs event_label, the event at zero in a few words (Payday, Rowing starts)",
+                ));
+            };
+            if label.chars().count() > MAX_EVENT_LABEL_CHARS {
+                return Err(invalid(format!("event_label is a few words, at most {MAX_EVENT_LABEL_CHARS} characters")));
+            }
+            out.insert("event_label".into(), json!(label));
+        }
+        "lollipop" => {
+            if let Some(v) = &fields.days {
+                let days = v.as_f64().or_else(|| v.as_str()?.trim().parse().ok());
+                match days {
+                    Some(d) if d.fract() == 0.0 && (7.0..=92.0).contains(&d) => {
+                        out.insert("days".into(), json!(d as i64));
+                    }
+                    _ => return Err(invalid(format!("days is a whole number from 7 to 92, not {v}"))),
+                }
+            }
+        }
+        "density" => {
+            if let Some(period) = &fields.period {
+                if period.chars().count() > MAX_PERIOD_CHARS {
+                    return Err(invalid(format!(
+                        "period is a few words for the stretch (in October), at most {MAX_PERIOD_CHARS} characters"
+                    )));
+                }
+                out.insert("period".into(), json!(period));
             }
         }
         "dumbbell" if columns.len() != 3 => {
@@ -838,9 +955,246 @@ fn shape_scatter(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> R
     Ok(chart_out(columns, rows))
 }
 
+/// An event-aligned overlay's rows: the event (when each occurrence began),
+/// the offset from it in minutes, and the value. Pure.
+fn shape_aligned(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!(
+            "an event-aligned overlay draws at most {max_rows} points; bin the offsets wider (5 minutes, or a day)"
+        )));
+    }
+    if columns.len() != 3 || !["event", "offset"].iter().all(|c| columns.iter().any(|have| have == c)) {
+        return Err(invalid(format!(
+            "an event-aligned overlay is event (when each occurrence began), offset (minutes from it, \
+             negative before) and the value; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    let value = columns.iter().find(|c| *c != "event" && *c != "offset").expect("three columns, two named");
+    numeric_column(&mut rows, "offset", "offset")?;
+    numeric_column(&mut rows, value, "the value")?;
+    let mut events: Vec<String> = Vec::new();
+    for row in &rows {
+        if !row["event"].as_str().is_some_and(is_time) {
+            return Err(invalid(format!("event must be the time or date each occurrence began, and one row's is {}", row["event"])));
+        }
+        if row["offset"].is_null() {
+            return Err(invalid("every row needs an offset, in minutes from its event"));
+        }
+        let e = row["event"].to_string();
+        if !events.contains(&e) {
+            events.push(e);
+        }
+    }
+    if events.len() > MAX_ALIGNED_EVENTS {
+        return Err(invalid(format!(
+            "an event-aligned overlay lines up at most {MAX_ALIGNED_EVENTS} occurrences, and this query has {}; \
+             narrow the window",
+            events.len()
+        )));
+    }
+    Ok(chart_out(columns, rows))
+}
+
+/// A swimlane event plot's rows: lane (the group), at (a time or date) and
+/// what (a few words). Pure.
+fn shape_swimlanes(max_rows: usize, columns: &[String], rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("a swimlane plot draws at most {max_rows} events; narrow the window")));
+    }
+    if let Some(missing) = ["lane", "at", "what"].iter().find(|c| !columns.iter().any(|have| have == *c)) {
+        return Err(invalid(format!(
+            "a swimlane plot needs lane (the group; thread or project work too), at and what; \
+             {missing} is missing from {}",
+            columns.join(", ")
+        )));
+    }
+    let mut lanes: Vec<String> = Vec::new();
+    for row in &rows {
+        if !row["at"].as_str().is_some_and(is_time) {
+            return Err(invalid(format!("at must be a timestamp or a date, and one row's is {}", row["at"])));
+        }
+        let lane = row["lane"].to_string();
+        if !lanes.contains(&lane) {
+            lanes.push(lane);
+        }
+    }
+    if lanes.len() > MAX_LANES {
+        return Err(invalid(format!(
+            "a swimlane plot draws at most {MAX_LANES} lanes, and this query has {}; keep the groups the owner asked about",
+            lanes.len()
+        )));
+    }
+    Ok(figure_out(Kind::Timeline, columns, rows))
+}
+
+/// A lollipop timeline's rows: due (a date), label, and an optional amount.
+/// Pure.
+fn shape_lollipop(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("a lollipop timeline draws at most {max_rows} items; narrow the window")));
+    }
+    if !["due", "label"].iter().all(|c| columns.iter().any(|have| have == c)) {
+        return Err(invalid(format!(
+            "a lollipop timeline needs due (a date) and label, and optionally amount; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    if columns.iter().any(|c| c == "amount") {
+        numeric_column(&mut rows, "amount", "amount")?;
+    }
+    for row in &rows {
+        if !row["due"].as_str().is_some_and(is_time) {
+            return Err(invalid(format!("due must be a date, and one row's is {}", row["due"])));
+        }
+        if row["label"].as_str().is_none_or(|l| l.trim().is_empty()) {
+            return Err(invalid("every item needs a label; filter out rows where it is empty"));
+        }
+    }
+    Ok(figure_out(Kind::Timeline, columns, rows))
+}
+
+/// An itinerary's rows: one stay each, in order, with place, started_at and
+/// ended_at, and an optional mode (how the stay was reached). Pure.
+fn shape_itinerary(max_rows: usize, columns: &[String], rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("an itinerary draws at most {max_rows} stays; merge short ones or narrow the trip")));
+    }
+    if let Some(missing) = ["place", "started_at", "ended_at"].iter().find(|c| !columns.iter().any(|have| have == *c)) {
+        return Err(invalid(format!(
+            "an itinerary needs place, started_at and ended_at for each stay (start and end work too); \
+             {missing} is missing from {}",
+            columns.join(", ")
+        )));
+    }
+    let time = |row: &Value, c: &str| -> Result<Option<chrono::DateTime<chrono::FixedOffset>>, ToolError> {
+        match &row[c] {
+            Value::Null => Ok(None),
+            Value::String(s) if is_time(s) => Ok(parse_time(s)),
+            other => Err(invalid(format!("{c} must be a timestamp or a date, and one row's is {other}"))),
+        }
+    };
+    let last = rows.len() - 1;
+    let mut previous_start = None;
+    for (i, row) in rows.iter().enumerate() {
+        let (start, end) = (time(row, "started_at")?, time(row, "ended_at")?);
+        if start.is_none() && i != 0 {
+            return Err(invalid("only the first stay may have no started_at (where the run leaves from)"));
+        }
+        if end.is_none() && i != last {
+            return Err(invalid("only the last stay may have no ended_at (where the run arrives)"));
+        }
+        if let (Some(s), Some(e)) = (start, end) {
+            if e < s {
+                return Err(invalid(format!("a stay ends before it starts, at {}", row["place"])));
+            }
+        }
+        if let (Some(p), Some(s)) = (previous_start, start) {
+            if s < p {
+                return Err(invalid("stays go in order: ORDER BY started_at"));
+            }
+        }
+        previous_start = start.or(previous_start);
+        if let Some(mode) = row.get("mode").filter(|m| !m.is_null()) {
+            if !mode.as_str().is_some_and(|m| m.chars().count() <= MAX_MODE_CHARS) {
+                return Err(invalid(format!("mode is a word or two (Train, Flight), at most {MAX_MODE_CHARS} characters")));
+            }
+        }
+    }
+    Ok(figure_out(Kind::Timeline, columns, rows))
+}
+
+/// A route's rows: lat, lon and at, joined in the order of at. Pure.
+fn shape_route(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if !(2..=max_rows).contains(&rows.len()) {
+        return Err(invalid(format!(
+            "a route draws 2 to {max_rows} points, and this query has {}; thin the points (every nth) or narrow the window",
+            rows.len()
+        )));
+    }
+    coordinates(columns, &mut rows, "a route needs lat, lon and at")?;
+    if !columns.iter().any(|c| c == "at") {
+        return Err(invalid(format!("a route needs at, the time of each point; this query returns {}", columns.join(", "))));
+    }
+    if !rows.iter().all(|r| r["at"].as_str().is_some_and(is_time)) {
+        return Err(invalid("at must be a timestamp on every point"));
+    }
+    if rows.len() < 2 {
+        return Err(invalid("a route needs at least two points with coordinates in range"));
+    }
+    Ok(figure_out(Kind::Map, columns, rows))
+}
+
+/// A dot density map's rows: lat, lon and minutes, with an optional label.
+/// A row with no minutes is left out. Pure.
+fn shape_density(max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!("a dot density map draws at most {max_rows} places; group nearby ones")));
+    }
+    coordinates(columns, &mut rows, "a dot density map needs lat, lon and minutes")?;
+    if !columns.iter().any(|c| c == "minutes") {
+        return Err(invalid(format!(
+            "a dot density map needs minutes, the time spent at each place; this query returns {}",
+            columns.join(", ")
+        )));
+    }
+    numeric_column(&mut rows, "minutes", "minutes")?;
+    rows.retain(|r| r["minutes"].as_f64().is_some());
+    if values_of(&rows, "minutes").any(|m| m < 0.0) {
+        return Err(invalid("minutes can't go below zero"));
+    }
+    if rows.is_empty() {
+        return Err(invalid("no place has minutes; filter out rows where it is null"));
+    }
+    Ok(figure_out(Kind::Map, columns, rows))
+}
+
+/// lat and lon as numbers in range, the rows outside it left out.
+fn coordinates(columns: &[String], rows: &mut Vec<Value>, need: &str) -> Result<(), ToolError> {
+    for c in ["lat", "lon"] {
+        if !columns.iter().any(|have| have == c) {
+            return Err(invalid(format!("{need} (latitude and longitude work too); this query returns {}", columns.join(", "))));
+        }
+        numeric_column(rows, c, "a coordinate")?;
+    }
+    rows.retain(|row| {
+        matches!((row["lat"].as_f64(), row["lon"].as_f64()),
+            (Some(a), Some(o)) if (-90.0..=90.0).contains(&a) && (-180.0..=180.0).contains(&o))
+    });
+    if rows.is_empty() {
+        return Err(invalid("no row has a coordinate in range (lat -90..90, lon -180..180)"));
+    }
+    Ok(())
+}
+
+/// A time as `is_time` accepts it, with a date or a naive time read as UTC.
+fn parse_time(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    use chrono::{DateTime, NaiveDate, NaiveDateTime};
+    let utc = chrono::FixedOffset::east_opt(0)?;
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").ok().map(|t| t.and_utc().with_timezone(&utc)))
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|t| t.and_utc().with_timezone(&utc))
+        })
+}
+
 fn chart_out(columns: &[String], rows: Vec<Value>) -> Map<String, Value> {
+    figure_out(Kind::Chart, columns, rows)
+}
+
+fn figure_out(kind: Kind, columns: &[String], rows: Vec<Value>) -> Map<String, Value> {
     let mut out = Map::new();
-    out.insert("kind".into(), json!("chart"));
+    out.insert("kind".into(), json!(kind.name()));
     out.insert("columns".into(), json!(columns));
     out.insert("row_count".into(), json!(rows.len()));
     out.insert("rows".into(), Value::Array(rows));
@@ -1634,5 +1988,104 @@ mod tests {
         let mut out = Map::new();
         let long = fields(|f| f.finding = Some("x".repeat(241)));
         assert!(err(check_mark("scatter", &long, &cols(&["at"]), &mut out).map(|_| Map::new())).contains("finding"));
+    }
+    #[test]
+    fn events_and_place_pick_their_marks_from_the_columns_and_fall_back_to_the_plain_one() {
+        let none = ChartFields::default();
+        let ev = purpose("events");
+        let row = vec![json!({})];
+        assert_eq!(pick_mark(Kind::Timeline, ev, &none, &cols(&["thread", "at", "what"]), &row).mark, "swimlanes");
+        assert_eq!(pick_mark(Kind::Timeline, ev, &none, &cols(&["due", "label", "amount"]), &row).mark, "lollipop");
+        assert_eq!(pick_mark(Kind::Timeline, ev, &none, &cols(&["place", "start", "end"]), &row).mark, "itinerary");
+        // A visit query's place_name is a timeline's label, as it always was.
+        assert_eq!(pick_mark(Kind::Timeline, ev, &none, &cols(&["label", "start", "end"]), &row).mark, "timeline");
+        let pl = purpose("place");
+        assert_eq!(pick_mark(Kind::Map, pl, &none, &cols(&["lat", "lon", "occurred_at"]), &row).mark, "route");
+        assert_eq!(pick_mark(Kind::Map, pl, &none, &cols(&["lat", "lon", "duration_minutes", "label"]), &row).mark, "density");
+        assert_eq!(pick_mark(Kind::Map, pl, &none, &cols(&["lat", "lon", "label"]), &row).mark, "map");
+        assert_eq!(pick_mark(Kind::Map, None, &none, &cols(&["lat", "lon", "at"]), &row).mark, "map");
+        let rows = vec![json!({ "event": "2026-09-01", "offset": -30, "Heart rate": 61 })];
+        assert_eq!(pick_chart_mark(purpose("before_and_after"), &none, &cols(&["event", "offset", "Heart rate"]), &rows).mark, "aligned");
+    }
+
+    #[test]
+    fn an_event_aligned_overlay_needs_its_event_label_and_time_events() {
+        let r = |e: &str, o: i64, v: f64| json!({ "event": e, "offset": o, "Heart rate": v });
+        let rows = vec![r("2026-09-01 06:00:00", -30, 58.0), r("2026-09-01 06:00:00", 0, 92.0), r("2026-09-03 06:10:00", 0, 95.0)];
+        let mut out = shape_aligned(1200, &cols(&["event", "offset", "Heart rate"]), rows.clone()).unwrap();
+        assert_eq!(out["kind"], json!("chart"));
+        assert!(err(check_mark("aligned", &ChartFields::default(), &cols(&["event", "offset", "Heart rate"]), &mut out).map(|_| Map::new())).contains("event_label"));
+        let labelled = fields(|f| f.event_label = Some("Rowing starts".into()));
+        check_mark("aligned", &labelled, &cols(&["event", "offset", "Heart rate"]), &mut out).unwrap();
+        assert_eq!(out["event_label"], json!("Rowing starts"));
+        assert!(err(shape_aligned(1200, &cols(&["event", "Heart rate"]), vec![json!({ "event": "2026-09-01", "Heart rate": 60 })])).contains("offset"));
+        let bad = vec![json!({ "event": "Monday", "offset": 0, "Heart rate": 60 })];
+        assert!(err(shape_aligned(1200, &cols(&["event", "offset", "Heart rate"]), bad)).contains("time or date"));
+    }
+
+    #[test]
+    fn a_swimlane_plot_reads_thread_as_lane_and_caps_its_lanes() {
+        let (columns, rows) = mark_columns("swimlanes", cols(&["thread", "at", "what"]), vec![json!({ "thread": "Garden", "at": "2026-09-02", "what": "Seeds in" })]);
+        let out = shape_swimlanes(400, &columns, rows).unwrap();
+        assert_eq!((out["kind"].as_str(), out["columns"][0].as_str()), (Some("timeline"), Some("lane")));
+        let many: Vec<Value> = (0..13).map(|i| json!({ "lane": format!("Lane {i}"), "at": "2026-09-02", "what": "x" })).collect();
+        assert!(err(shape_swimlanes(400, &cols(&["lane", "at", "what"]), many)).contains("at most 12 lanes"));
+        let bad = vec![json!({ "lane": "Garden", "at": "soon", "what": "x" })];
+        assert!(err(shape_swimlanes(400, &cols(&["lane", "at", "what"]), bad)).contains("timestamp or a date"));
+    }
+
+    #[test]
+    fn a_lollipop_timeline_checks_its_dates_amounts_and_window() {
+        let rows = vec![json!({ "due": "2026-09-14", "label": "Library card", "amount": null }), json!({ "due": "2026-09-20", "label": "Phone plan", "amount": "35.00" })];
+        let mut out = shape_lollipop(40, &cols(&["due", "label", "amount"]), rows).unwrap();
+        assert_eq!(out["rows"][1]["amount"], json!(35.0));
+        check_mark("lollipop", &fields(|f| f.days = Some(json!(14))), &cols(&["due", "label", "amount"]), &mut out).unwrap();
+        assert_eq!(out["days"], json!(14));
+        assert!(err(check_mark("lollipop", &fields(|f| f.days = Some(json!(400))), &cols(&["due", "label"]), &mut out).map(|_| Map::new())).contains("7 to 92"));
+        let bad = vec![json!({ "due": "next week", "label": "Phone plan" })];
+        assert!(err(shape_lollipop(40, &cols(&["due", "label"]), bad)).contains("due must be a date"));
+    }
+
+    #[test]
+    fn an_itinerary_keeps_its_stays_in_order_with_open_ends_only_at_the_ends() {
+        let s = |p: &str, a: Value, b: Value| json!({ "place": p, "started_at": a, "ended_at": b });
+        let trip = vec![
+            s("Home", Value::Null, json!("2026-06-12")),
+            s("Lisbon", json!("2026-06-12"), json!("2026-06-16")),
+            s("Porto", json!("2026-06-16"), Value::Null),
+        ];
+        let out = shape_itinerary(30, &cols(&["place", "started_at", "ended_at"]), trip).unwrap();
+        assert_eq!(out["kind"], json!("timeline"));
+        let gap = vec![s("Lisbon", json!("2026-06-12"), Value::Null), s("Porto", json!("2026-06-16"), json!("2026-06-18"))];
+        assert!(err(shape_itinerary(30, &cols(&["place", "started_at", "ended_at"]), gap)).contains("only the last"));
+        let back = vec![s("Lisbon", json!("2026-06-16"), json!("2026-06-18")), s("Porto", json!("2026-06-12"), json!("2026-06-14"))];
+        assert!(err(shape_itinerary(30, &cols(&["place", "started_at", "ended_at"]), back)).contains("ORDER BY started_at"));
+        let inside_out = vec![s("Lisbon", json!("2026-06-16"), json!("2026-06-12"))];
+        assert!(err(shape_itinerary(30, &cols(&["place", "started_at", "ended_at"]), inside_out)).contains("ends before it starts"));
+    }
+
+    #[test]
+    fn a_route_and_a_density_map_check_their_columns() {
+        let p = |lat: f64, at: &str| json!({ "lat": lat, "lon": -97.74, "at": at });
+        let walk = vec![p(30.26, "2026-09-01 12:00:00"), p(30.27, "2026-09-01 12:20:00")];
+        let out = shape_route(199, &cols(&["lat", "lon", "at"]), walk).unwrap();
+        assert_eq!(out["kind"], json!("map"));
+        assert!(err(shape_route(199, &cols(&["lat", "lon", "at"]), vec![p(30.26, "2026-09-01 12:00:00")])).contains("2 to 199"));
+        let (columns, rows) = mark_columns("density", cols(&["lat", "lon", "duration_minutes"]), vec![
+            json!({ "lat": 30.26, "lon": -97.74, "duration_minutes": "120" }),
+            json!({ "lat": 30.27, "lon": -97.75, "duration_minutes": null }),
+        ]);
+        let mut out = shape_density(400, &columns, rows).unwrap();
+        assert_eq!((out["row_count"].as_u64(), out["rows"][0]["minutes"].as_f64()), (Some(1), Some(120.0)));
+        check_mark("density", &fields(|f| f.period = Some("in September".into())), &columns, &mut out).unwrap();
+        assert_eq!(out["period"], json!("in September"));
+    }
+
+    #[test]
+    fn a_named_mark_draws_with_its_own_kind() {
+        assert_eq!(kind_before_query(None, Some("lollipop")).unwrap(), Kind::Timeline);
+        assert_eq!(kind_before_query(None, Some("density")).unwrap(), Kind::Map);
+        let cap = marks_for_call(Kind::Timeline, purpose("events"), None).iter().map(|m| m.max_rows).max();
+        assert_eq!(cap, Some(400), "an events query is asked for enough rows for a swimlane plot");
     }
 }

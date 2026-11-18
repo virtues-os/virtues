@@ -421,6 +421,9 @@ fn show_tool() -> ToolConfig {
                 "split_label": { "type": "string", "description": "interrupted only: the change in a few words" },
                 "step_kind": { "type": "string", "enum": ["day", "weekday", "hour"], "description": "cumulative only: what a step is; default day" },
                 "unit": { "type": "string", "description": "cumulative only: USD for money, or a word such as steps or km" },
+                "event_label": { "type": "string", "description": "aligned only: the event at zero in a few words, such as Payday" },
+                "days": { "type": "integer", "minimum": 7, "maximum": 92, "description": "lollipop only: the window in days; default 30" },
+                "period": { "type": "string", "description": "density only: the stretch the minutes cover, such as in October" },
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },

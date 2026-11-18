@@ -10,7 +10,8 @@ export type ShowKind = "chart" | "numbers" | "table" | "map" | "timeline" | "cho
 
 export type Row = Record<string, unknown>;
 
-/** Chart marks drawn by a chart-kit module (ShowMark.svelte) rather than ShowChart. */
+/** Marks drawn by a chart-kit module (ShowMark.svelte): chart marks, and the
+ * timeline and map marks other than the plain timeline and map. */
 export const KIT_MARKS = [
 	"baseline",
 	"cumulative",
@@ -28,6 +29,12 @@ export const KIT_MARKS = [
 	"dotplot",
 	"scatter",
 	"area",
+	"aligned",
+	"swimlanes",
+	"lollipop",
+	"itinerary",
+	"route",
+	"density",
 ] as const;
 export type KitMark = (typeof KIT_MARKS)[number];
 
@@ -38,7 +45,7 @@ export function isKitMark(mark: unknown): mark is KitMark {
 export interface ShowOutput {
 	kind: ShowKind;
 	title?: string | null;
-	/** chart only. The marks are virtues_registry::chart_marks::MARKS of kind chart. */
+	/** The marks are virtues_registry::chart_marks::MARKS. A plain map or timeline carries none. */
 	mark?: "bar" | "line" | KitMark;
 	/** The purpose the call gave, when it gave one. */
 	purpose?: string;
@@ -50,6 +57,14 @@ export interface ShowOutput {
 	split_label?: string;
 	/** scatter only: one sentence on what lines up */
 	finding?: string;
+	/** aligned only: the event at zero */
+	event_label?: string;
+	/** swimlanes and lollipop: the owner's date when the query ran, where the window starts or ends */
+	as_of?: string;
+	/** lollipop only: the window in days */
+	days?: number;
+	/** density only: the stretch the minutes cover */
+	period?: string;
 	columns?: string[];
 	rows?: Row[];
 	row_count?: number;

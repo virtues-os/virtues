@@ -61,7 +61,7 @@
 
 		{#if !out}
 			<div class="drawing" class:short={kind === "numbers"}></div>
-		{:else if out.kind === "chart" && isKitMark(out.mark)}
+		{:else if isKitMark(out.mark)}
 			<ShowMark out={{ ...out, mark: out.mark }} {onOpenRows} />
 		{:else if out.kind === "chart"}
 			<ShowChart {columns} {rows} mark={out.mark === "line" ? "line" : "bar"} />

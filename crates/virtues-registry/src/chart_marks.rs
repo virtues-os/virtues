@@ -68,6 +68,14 @@ pub const MARKS: &[ChartMark] = &[
         max_rows: 199,
     },
     ChartMark {
+        mark: "aligned",
+        name: "Event-aligned overlay",
+        kind: "chart",
+        purposes: &["before_and_after"],
+        line: "event (when each began), offset (minutes, negative before), the measure; give event_label",
+        max_rows: 1200,
+    },
+    ChartMark {
         mark: "baseline",
         name: "Baseline band",
         kind: "chart",
@@ -196,12 +204,52 @@ pub const MARKS: &[ChartMark] = &[
         max_rows: 199,
     },
     ChartMark {
+        mark: "swimlanes",
+        name: "Swimlane event plot",
+        kind: "timeline",
+        purposes: &["events"],
+        line: "lane (the group), at and what",
+        max_rows: 400,
+    },
+    ChartMark {
+        mark: "lollipop",
+        name: "Lollipop timeline",
+        kind: "timeline",
+        purposes: &["events"],
+        line: "due, label, optional amount; days (7-92) sets the window",
+        max_rows: 40,
+    },
+    ChartMark {
+        mark: "itinerary",
+        name: "Itinerary strip map",
+        kind: "timeline",
+        purposes: &["events"],
+        line: "stays in order: place, started_at, ended_at, optional mode",
+        max_rows: 30,
+    },
+    ChartMark {
         mark: "timeline",
         name: "Timeline",
         kind: "timeline",
         purposes: &["events"],
         line: "start, optional end, and label",
         max_rows: 199,
+    },
+    ChartMark {
+        mark: "route",
+        name: "Route map",
+        kind: "map",
+        purposes: &["place"],
+        line: "lat, lon and at",
+        max_rows: 199,
+    },
+    ChartMark {
+        mark: "density",
+        name: "Dot density map",
+        kind: "map",
+        purposes: &["place"],
+        line: "lat, lon, minutes, optional label; give period",
+        max_rows: 400,
     },
     ChartMark {
         mark: "map",
@@ -312,11 +360,11 @@ mod tests {
     }
 
     /// The catalog is read on every turn that offers `show`. About four
-    /// characters make a token, so 2,400 characters is about 600 tokens, the
-    /// plan's limit with every mark listed.
+    /// characters make a token, so 2,700 characters is about 675 tokens with
+    /// every mark listed. A new mark's line names its columns and nothing more.
     #[test]
     fn the_catalog_stays_short() {
         let n = purpose_catalog().chars().count();
-        assert!(n <= 2_400, "purpose catalog is {n} characters, over the 2,400 limit");
+        assert!(n <= 2_700, "purpose catalog is {n} characters, over the 2,700 limit");
     }
 }

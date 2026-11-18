@@ -1,5 +1,5 @@
 <!--
-	A chart mark drawn by a module from the chart kit (./marks/), mounted on its
+	A mark drawn by a module from the chart kit (./marks/), mounted on its
 	element with the whole show result and destroyed on teardown. Show.svelte
 	already draws the title and the rows footer, so the module draws neither.
 -->
@@ -21,6 +21,12 @@
 	import * as spread from "./marks/spread.js";
 	import * as cloud from "./marks/cloud.js";
 	import * as area from "./marks/area.js";
+	import * as aligned from "./marks/aligned.js";
+	import * as moments from "./marks/moments.js";
+	import * as renewals from "./marks/renewals.js";
+	import * as tripline from "./marks/tripline.js";
+	import * as path from "./marks/path.js";
+	import * as stipple from "./marks/stipple.js";
 	import type { KitMark, ShowOutput } from "./show";
 
 	interface Props {
@@ -46,6 +52,12 @@
 		dotplot: spread,
 		scatter: cloud,
 		area,
+		aligned,
+		swimlanes: moments,
+		lollipop: renewals,
+		itinerary: tripline,
+		route: path,
+		density: stipple,
 	};
 
 	let el: HTMLDivElement;

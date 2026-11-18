@@ -188,7 +188,7 @@ executor that takes the mark's `max_rows + 1` as its limit: a crate-internal
    `purpose` and the picker for those marks. This ships on its own and
    changes nothing the owner sees.
 2. **Built.** `query_for_show` and per-mark row caps.
-3. **Three batches built**: baseline, cumulative, interrupted and states; then multiples, dumbbell, list, waterfall, share and stack; then ridgeline, diurnal, actogram, dotplot, scatter and area. Port marks in batches: the client component, the show.rs shape branch, the
+3. **Four batches built**: baseline, cumulative, interrupted and states; then multiples, dumbbell, list, waterfall, share and stack; then ridgeline, diurnal, actogram, dotplot, scatter and area; then aligned, swimlanes, lollipop, itinerary, route and density. The event marks draw with kind timeline and the place marks with kind map, so each purpose keeps one kind; route and density draw without map tiles, from the lab modules. Drill-down and spark are not built: they need a series query per figure and the reply text to turn a quoted figure into its chart. Port marks in batches: the client component, the show.rs shape branch, the
    table row and the picker row together, in one change per batch. Start with
    the marks the model will reach for most: `baseline`, `cumulative`,
    `interrupted` and `states`.
