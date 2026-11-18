@@ -376,9 +376,9 @@ fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Valu
         "ridgeline" => {
             columns.len() == 3
                 && has_column(mark, "day", columns)
-                && columns.iter().any(|c| c == "hour" || c == "minute")
+                && (has_column(mark, "hour", columns) || has_column(mark, "minute", columns))
         }
-        "diurnal" => ["hour", "days", "share"].iter().all(|c| columns.iter().any(|have| have == *c)),
+        "diurnal" => ["hour", "days", "share"].iter().all(|c| has_column(mark, c, columns)),
         "actogram" => ["day", "started_at", "ended_at"].iter().all(|c| has_column(mark, c, columns)),
         "dotplot" => (1..=2).contains(&columns.len()),
         // The weekly-rhythm form and every shape it takes are its own refusal's to explain.
@@ -409,27 +409,38 @@ const MARK_ALIASES: &[(&str, &str, &[&str])] = &[
     ("states", "state", &["what", "place", "label"]),
     ("multiples", "panel", &["group"]),
     ("ridgeline", "day", &["date", "night"]),
+    ("ridgeline", "hour", &[]),
+    ("ridgeline", "minute", &[]),
+    ("diurnal", "hour", &[]),
+    ("diurnal", "days", &[]),
+    ("diurnal", "share", &[]),
     ("actogram", "day", &["night", "date"]),
     ("actogram", "started_at", &["asleep_at", "start"]),
     ("actogram", "ended_at", &["woke_at", "end"]),
 ];
 
+/// Whether a mark's column is there by its name or an alias, in any case:
+/// a model aliases columns for the owner, so `Hour` is `hour`.
 fn has_column(mark: &str, want: &str, columns: &[String]) -> bool {
-    columns.iter().any(|c| c == want)
+    columns.iter().any(|c| names_column(mark, want, c))
+}
+
+fn names_column(mark: &str, want: &str, column: &str) -> bool {
+    column.eq_ignore_ascii_case(want)
         || MARK_ALIASES
             .iter()
             .filter(|(m, w, _)| *m == mark && *w == want)
-            .any(|(_, _, aliases)| columns.iter().any(|c| aliases.contains(&c.as_str())))
+            .any(|(_, _, aliases)| aliases.iter().any(|a| column.eq_ignore_ascii_case(a)))
 }
 
-/// Rename the first alias present to the mark's column, unless the column is
-/// already there.
+/// Rename the first column that names one of the mark's columns (by name
+/// in any case, or an alias) to it, unless the column is already there.
 fn mark_columns(mark: &str, mut columns: Vec<String>, mut rows: Vec<Value>) -> (Vec<String>, Vec<Value>) {
-    for (m, want, aliases) in MARK_ALIASES {
+    for (m, want, _) in MARK_ALIASES {
         if *m != mark || columns.iter().any(|c| c == want) {
             continue;
         }
-        let Some(at) = columns.iter().position(|c| aliases.contains(&c.as_str())) else { continue };
+        let Some(at) = columns.iter().position(|c| names_column(mark, want, c)) else { continue };
         let from = std::mem::replace(&mut columns[at], want.to_string());
         for row in rows.iter_mut() {
             if let Some(obj) = row.as_object_mut() {
@@ -1437,6 +1448,19 @@ mod tests {
         assert!(err(shape_states(600, &cols(&["day", "start", "state"]), vec![json!({ "day": "2026-09-01", "start": "09:00", "state": "Home" })])).contains("end is missing"));
         let bad = vec![json!({ "day": "2026-09-01", "start": "morning", "end": "10:30", "state": "Home" })];
         assert!(err(shape_states(600, &cols(&["day", "start", "end", "state"]), bad)).contains("time of day"));
+    }
+
+    #[test]
+    fn a_mark_reads_its_columns_in_any_case() {
+        let p = purpose("daily_rhythm");
+        let rows = vec![json!({ "Day": "2026-09-01", "Hour": 14, "Pages": 2 })];
+        assert_eq!(pick_chart_mark(p, &ChartFields::default(), &cols(&["Day", "Hour", "Pages"]), &rows).mark, "ridgeline");
+        let (columns, rows) = mark_columns("ridgeline", cols(&["Day", "Hour", "Pages"]), rows);
+        assert_eq!(columns, cols(&["day", "hour", "Pages"]), "the value keeps the owner's label");
+        assert!(shape_ridgeline(1200, &columns, rows).is_ok());
+        // A bar chart's columns are its labels, and aren't renamed.
+        let (columns, _) = mark_columns("bar", cols(&["Day", "Hour"]), vec![]);
+        assert_eq!(columns, cols(&["Day", "Hour"]));
     }
 
     #[test]
