@@ -18,9 +18,9 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
-	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
+	import { accentCss } from "$lib/sidebar/pin-colors";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
-	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { isEmoji, kindIcon } from "$lib/utils/iconHelpers";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { pinMenuItem, pinIconMenuItem } from "$lib/pins/pinAction";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -271,7 +271,7 @@
 							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
 							color: look.color,
 							label: look.title,
-							autoColor: clothFor({ url: tab.route }),
+							fallback: kindIcon(tab.route),
 							// Persisted on click, without closing — so you can
 							// try a color against the grid before choosing the
 							// glyph, which is the point of one panel.
@@ -730,7 +730,7 @@
 	function getDefaultIcon(type: string): string {
 		switch (type) {
 			case "chat":
-				return "mynaui:chat";
+				return "atlas:chats";
 			case "history":
 				return "mynaui:clock-circle";
 			case "wiki":
@@ -791,7 +791,7 @@
 			{@const tab = item.tab}
 			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
 			{@const identity = tabLook(tab)}
-			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
+			{@const glyph = identity.icon || (ownedRef(tab.route) ? kindIcon(tab.route) : item.icon) || getDefaultIcon(tab.type)}
 			{@const chatId = chatOf(tab)}
 			<div
 				class="tab"

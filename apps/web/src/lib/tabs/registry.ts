@@ -115,7 +115,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'chat',
 					label: temporary ? 'Temporary chat' : 'New chat',
-					icon: temporary ? 'mynaui:incognito' : 'mynaui:chat',
+					icon: temporary ? 'mynaui:incognito' : 'atlas:chats',
 					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
 			}
@@ -124,7 +124,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'chat',
 				label: 'Chat',
-				icon: 'mynaui:chat',
+				icon: 'atlas:chats',
 				entityId: match?.[1],
 			};
 		},
@@ -135,7 +135,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/chat';
 		},
-		icon: 'mynaui:chat',
+		icon: 'atlas:chats',
 		defaultLabel: 'Chats',
 		component: ChatView,
 		detailComponent: ChatView,
@@ -184,7 +184,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'page',
 					label: 'Pages',
-					icon: 'mynaui:file-text',
+					icon: 'atlas:pages',
 				};
 			}
 			// Detail view
@@ -192,7 +192,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'page',
 				label: 'Page',
-				icon: 'mynaui:file-text',
+				icon: 'atlas:pages',
 				entityId: match?.[1],
 			};
 		},
@@ -203,7 +203,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/page';
 		},
-		icon: 'mynaui:file-text',
+		icon: 'atlas:pages',
 		defaultLabel: 'Pages',
 		component: PagesView,
 		detailComponent: PageDetailView,
@@ -1096,7 +1096,7 @@ export function parseRoute(route: string): ParsedRoute {
 	return {
 		type: 'chat',
 		label: 'New chat',
-		icon: 'mynaui:chat',
+		icon: 'atlas:chats',
 	};
 }
 

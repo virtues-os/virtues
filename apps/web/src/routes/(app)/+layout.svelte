@@ -532,7 +532,6 @@
 				color={iconPickerStore.currentColor}
 				label={iconPickerStore.label}
 				fallback={iconPickerStore.fallback}
-				autoColor={iconPickerStore.autoColor}
 				onColorSelect={iconPickerStore.colorEnabled
 					? (c) => iconPickerStore.selectColor(c)
 					: undefined}

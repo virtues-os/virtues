@@ -83,11 +83,6 @@
 		label?: string;
 		/** The mark the thing wears with no icon chosen. Defaults to the dot. */
 		fallback?: string;
-		/**
-		 * The CSS color the thing wears with no color chosen, such as a pin's
-		 * automatic hue. Omit it and "no color" previews in the text color.
-		 */
-		autoColor?: string | null;
 	}
 
 	let {
@@ -99,7 +94,6 @@
 		onColorSelect,
 		label = 'Untitled',
 		fallback = 'shape:circle',
-		autoColor = null,
 	}: Props = $props();
 
 	let search = $state('');
@@ -120,7 +114,7 @@
 	const previewIcon = $derived(hoverIcon ?? value ?? fallback);
 	const previewColor = $derived(hoverColor !== undefined ? hoverColor : activeColor);
 	const previewTint = $derived.by(() => {
-		const css = previewColor ? accentCss(previewColor) : autoColor;
+		const css = previewColor ? accentCss(previewColor) : null;
 		return css ? `color: ${css}` : '';
 	});
 

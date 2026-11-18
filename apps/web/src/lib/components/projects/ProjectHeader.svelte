@@ -20,7 +20,7 @@
 	import { Popover } from '$lib/floating';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { thingsStore } from '$lib/stores/things.svelte';
-	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { accentCss } from '$lib/sidebar/pin-colors';
 	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 	import {
 		changeOutcome,
@@ -108,7 +108,7 @@
 			{#snippet trigger({ toggle }: { toggle: () => void })}
 				<button
 					class="project-icon"
-					style={`--room-accent: ${projectColor(project)}`}
+					style={`--room-accent: ${accentCss(project.accent_color) ?? 'var(--color-foreground-muted)'}`}
 					title="Change icon and color"
 					aria-label="Change icon and color"
 					onclick={toggle}
@@ -125,7 +125,6 @@
 					onColorSelect={setAccent}
 					label={project.name}
 					fallback={THREAD_ICON}
-					autoColor={projectColor({ id: project.id })}
 				/>
 			{/snippet}
 		</Popover>

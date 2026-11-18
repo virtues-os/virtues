@@ -125,8 +125,9 @@ function request(url: string) {
 /**
  * What `url` is called and wears now. The live store row when this client
  * holds one; then the box's resolution; then `known`, the best the caller
- * has (a tab's last-known label). Icon and color fall back to `known` when
- * the thing has none of its own.
+ * has (a tab's last-known label). A chat, page or thread wears only its own
+ * icon and color, so its pin, its tab and its heading show one icon. Anything
+ * else falls back to `known` when it has none of its own.
  *
  * `ask: false` skips the box — for a caller whose `known` already came from
  * it (a pin).
@@ -143,17 +144,16 @@ export function identityOf(
 		return { kind: known.kind ?? parseRef(url)?.kind ?? 'route', title: known.title.trim(), icon: known.icon ?? null, color: known.color ?? null };
 	}
 	const live = storeIdentity(url);
-	if (live) {
-		return { ...live, icon: live.icon ?? known.icon ?? null, color: live.color ?? known.color ?? null };
-	}
+	if (live) return live;
 	const named = NAMED.has(parseRef(url)?.kind ?? '');
 	const answer = named ? resolved.get(url) : undefined;
 	if (answer && answer.state !== 'unknown' && answer.state !== 'gone') {
+		const own = ownedRef(url) !== null;
 		return {
 			kind: answer.kind,
 			title: answer.title,
-			icon: answer.icon ?? known.icon ?? null,
-			color: answer.color ?? known.color ?? null,
+			icon: answer.icon ?? (own ? null : known.icon ?? null),
+			color: answer.color ?? (own ? null : known.color ?? null),
 		};
 	}
 	if (ask && named && !answer) request(url);

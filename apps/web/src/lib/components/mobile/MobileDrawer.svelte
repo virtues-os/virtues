@@ -43,8 +43,8 @@
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { sidebarDoors, type DoorId } from "$lib/stores/sidebarDoors.svelte";
 	import { pinIdentity } from "$lib/refs/identity.svelte";
-	import { clothFor } from "$lib/sidebar/pin-colors";
-	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { accentCss } from "$lib/sidebar/pin-colors";
+	import { isEmoji, kindGlyph } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newProject } from "$lib/utils/projectActions";
 	import { newPage as makePage } from "$lib/utils/newActions";
@@ -236,8 +236,9 @@
 					onclick={() => openPin(pin, look.title)}
 				>
 					<span class="chat-title with-glyph">
-						<!-- The mark picked for it, else a dot in its color. -->
-						<span class="pin-mark" aria-hidden="true" style="color: {clothFor({ url: pin.url, color: look.color })}">
+						<!-- The mark picked for it, else its kind's base glyph, in its
+						     color if it has one. -->
+						<span class="pin-mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
 							{#if look.icon && isEmoji(look.icon)}
 								{look.icon}
 							{:else if look.icon?.startsWith("atlas:")}
@@ -245,7 +246,7 @@
 							{:else if look.icon}
 								<Icon icon={look.icon} width={16} />
 							{:else}
-								<Icon icon="shape:circle" width={14} />
+								<AtlasIcon name={kindGlyph(pin.url)} size={16} bare />
 							{/if}
 						</span>
 						<span class="title-text">{look.title}</span>

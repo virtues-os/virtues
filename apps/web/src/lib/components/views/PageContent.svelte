@@ -16,7 +16,8 @@
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import { identityOf } from "$lib/refs/identity.svelte";
-	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
+	import { kindIcon } from "$lib/utils/iconHelpers";
+	import { accentCss } from "$lib/sidebar/pin-colors";
 	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
 	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -501,6 +502,13 @@
 			icon = data.icon;
 			iconColor = data.icon_color ?? null;
 			coverUrl = data.cover_url;
+			// The page as just read is newer than the page list, which may have
+			// loaded before an icon was changed in another window. Without this
+			// the heading would follow the list's stale icon below.
+			pagesStore.updatePageLocally(data.id, {
+				icon: data.icon,
+				icon_color: data.icon_color ?? null,
+			});
 
 			// Update label
 			onLabelChange?.(data.title);
@@ -662,9 +670,10 @@
 			// Use store method - handles API call, cache invalidation, and sidebar refresh
 			// NOTE: Content is NOT sent here - it's synced via Yjs WebSocket
 			// The Yjs server handles debounced content persistence
+			// The icon is not sent here: it is saved on its own when picked, so a
+			// title save can't overwrite an icon changed in another window.
 			await pagesStore.savePage(pageData.id, {
 				title,
-				icon,
 				cover_url: coverUrl,
 			});
 
@@ -744,15 +753,20 @@
 		value={icon}
 		onSelect={(value) => {
 			icon = value;
-			if (pageData) pagesStore.updatePageLocally(pageData.id, { icon: value });
 			onIconChange?.(value);
-			save();
+			if (pageData) {
+				pagesStore.updatePageLocally(pageData.id, { icon: value });
+				void pagesStore.savePage(pageData.id, { icon: value }).catch((err) => {
+					console.error("Failed to save page icon:", err);
+					saveError = true;
+				});
+			}
 		}}
 		{close}
 		color={iconColor}
 		onColorSelect={(value) => {
 			// Saved on its own rather than through `save()`: that path sends
-			// title, icon and cover together, and picking a color shouldn't drag
+			// the title and cover together, and picking a color shouldn't drag
 			// a half-typed title to the server with it.
 			iconColor = value;
 			if (pageData) {
@@ -761,7 +775,7 @@
 			}
 		}}
 		label={identityOf(`/page/${pageId}`).title}
-		autoColor={clothFor({ url: `/page/${pageId}` })}
+		fallback={kindIcon(`/page/${pageId}`)}
 	/>
 {/snippet}
 

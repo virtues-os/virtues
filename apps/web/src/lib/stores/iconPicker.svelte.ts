@@ -32,8 +32,6 @@ interface ShowOptions {
 	label?: string;
 	/** The mark it wears with no icon chosen. The picker defaults to the dot. */
 	fallback?: string;
-	/** The CSS color it wears with no color chosen. */
-	autoColor?: string | null;
 }
 
 class IconPickerStore {
@@ -45,7 +43,6 @@ class IconPickerStore {
 	anchor = $state<PickerAnchor | null>(null);
 	label = $state<string | undefined>(undefined);
 	fallback = $state<string | undefined>(undefined);
-	autoColor = $state<string | null>(null);
 	private _onSelect: ((icon: string | null) => void) | null = null;
 	private _onColorSelect: ((color: string | null) => void) | null = null;
 
@@ -60,7 +57,6 @@ class IconPickerStore {
 		this.anchor = options.anchor ?? null;
 		this.label = options.label;
 		this.fallback = options.fallback;
-		this.autoColor = options.autoColor ?? null;
 		this._onSelect = onSelect;
 		this._onColorSelect = options.onColorSelect ?? null;
 		this.open = true;

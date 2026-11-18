@@ -483,7 +483,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'mynaui:chat' });
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'atlas:chats' });
 	}
 
 	/**

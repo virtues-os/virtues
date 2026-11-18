@@ -12,8 +12,10 @@
 //! thing each time pins are listed ([`PinView`]): a chat, page or project
 //! shows its own title, icon and color, and a pin to one in the trash is not
 //! listed at all. The row's `label`, `icon` and `color` are the pin's own
-//! only where the thing has none to give: an external URL's label, and the
-//! icon a pin carried before icons moved onto the thing.
+//! only where the pin is the thing: an external URL or an app screen. A
+//! chat, page or project shows only its own icon, so its pin, its tab and
+//! its heading draw one icon. An icon a pin stored before icons moved onto
+//! the thing is not shown.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PIN_PREFIX};
@@ -44,9 +46,10 @@ pub struct PinView {
     pub kind: String,
     /// The thing's name now. For an external URL, the pin's label or host.
     pub title: String,
-    /// The thing's icon, else the pin's own.
+    /// A chat, page or project's own icon. Anything else: its record's
+    /// icon, else the pin's own.
     pub icon: Option<String>,
-    /// The thing's color key, else the pin's own.
+    /// The same rule as `icon`, for the color key.
     pub color: Option<String>,
     /// The pin's stored label, which names only an external URL.
     pub label: Option<String>,
@@ -86,8 +89,8 @@ pub async fn resolve_pins(db: &PgPool, pins: Vec<Pin>) -> Result<Vec<PinView>> {
             // Nothing to look up (an app screen): the pin is the thing.
             kind: if found.state == "unknown" { "route".into() } else { found.kind.clone() },
             title,
-            icon: found.icon.clone().or_else(|| pin.icon.clone()),
-            color: found.color.clone().or_else(|| pin.color.clone()),
+            icon: if owned { found.icon.clone() } else { found.icon.clone().or_else(|| pin.icon.clone()) },
+            color: if owned { found.color.clone() } else { found.color.clone().or_else(|| pin.color.clone()) },
             label: pin.label,
             sort_order: pin.sort_order,
             pinned_at: pin.pinned_at,
@@ -252,9 +255,10 @@ mod resolve_tests {
         CreatePinRequest { url: url.into(), label: label.map(Into::into), icon: icon.map(Into::into), color: None }
     }
 
-    /// The name is the thing's, the icon falls back to the pin's own, a
-    /// trashed target is not listed and comes back on restore, and an
-    /// external URL keeps the label it was pinned under.
+    /// The name and icon are the thing's, an icon stored on the pin of a
+    /// page is not shown, a trashed target is not listed and comes back on
+    /// restore, and an external URL keeps the label and icon it was pinned
+    /// under.
     #[sqlx::test(migrations = "./migrations")]
     async fn pins_show_the_thing_as_it_is_now(pool: PgPool) {
         sqlx::query("INSERT INTO app_pages (id, title, content) VALUES ('page_p', 'Old name', '')")
@@ -262,14 +266,19 @@ mod resolve_tests {
             .await
             .unwrap();
         create_pin(&pool, req("/page/page_p", Some("Stale label"), Some("📝"))).await.unwrap();
-        create_pin(&pool, req("https://example.com/a", Some("Reading list"), None)).await.unwrap();
+        create_pin(&pool, req("https://example.com/a", Some("Reading list"), Some("🔖"))).await.unwrap();
 
         sqlx::query("UPDATE app_pages SET title = 'New name' WHERE id = 'page_p'").execute(&pool).await.unwrap();
         let pins = list_pins(&pool).await.unwrap();
         let page = pins.iter().find(|p| p.url == "/page/page_p").unwrap();
-        assert_eq!((page.kind.as_str(), page.title.as_str(), page.icon.as_deref()), ("page", "New name", Some("📝")));
+        assert_eq!((page.kind.as_str(), page.title.as_str(), page.icon.as_deref()), ("page", "New name", None));
         let web = pins.iter().find(|p| p.kind == "web").unwrap();
-        assert_eq!(web.title, "Reading list");
+        assert_eq!((web.title.as_str(), web.icon.as_deref()), ("Reading list", Some("🔖")));
+
+        sqlx::query("UPDATE app_pages SET icon = '📃' WHERE id = 'page_p'").execute(&pool).await.unwrap();
+        let pins = list_pins(&pool).await.unwrap();
+        let page = pins.iter().find(|p| p.url == "/page/page_p").unwrap();
+        assert_eq!(page.icon.as_deref(), Some("📃"));
 
         sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_p'").execute(&pool).await.unwrap();
         assert!(list_pins(&pool).await.unwrap().iter().all(|p| p.url != "/page/page_p"));

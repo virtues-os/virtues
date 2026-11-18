@@ -1,25 +1,9 @@
-<script lang="ts" module>
-	/** The glyph of what a pin opens, for a pin with no mark of its own. */
-	export function pinKindGlyph(url: string): string {
-		if (/^https?:\/\//i.test(url)) return 'wiki';
-		if (url.startsWith('/chat/')) return 'chats';
-		if (url.startsWith('/thread/')) return 'projects';
-		if (url.startsWith('/applet')) return 'applets';
-		// A task, linked by `?task=`. A pin made before Tasks joined the
-		// Threads door still says /tasks, and opens the door's Tasks view.
-		if (url.startsWith('/tasks') || url.startsWith('/threads?view=tasks')) return 'tasks';
-		if (url.startsWith('/threads')) return 'projects';
-		if (url.startsWith('/wiki')) return 'wiki';
-		if (url.startsWith('/day/')) return 'day';
-		return 'pages';
-	}
-</script>
-
 <script lang="ts">
 	/**
 	 * A pin's glyph, shared by the sidebar's Pinned rows and the rail: a
-	 * tile tinted with the pin's color, holding the mark the user picked,
-	 * else the glyph of what it opens, drawn in that color. The tile gives
+	 * tile holding the mark the user picked, else the base glyph of what it
+	 * opens. A thing with a color tints its tile; one without gets a plain
+	 * tile in muted ink, the same base mark its tab draws. The tile gives
 	 * the color enough area to show, and it tells a pin from a door that
 	 * draws the same glyph. It is a tint, not a solid, so four pins in four
 	 * colors stay quieter than the doors' ink. An emoji stands on its own. A pinned chat that is replying shows the
@@ -28,8 +12,8 @@
 	 */
 	import type { Pin } from '$lib/api/client';
 	import { pinIdentity } from '$lib/refs/identity.svelte';
-	import { clothFor } from '$lib/sidebar/pin-colors';
-	import { isEmoji } from '$lib/utils/iconHelpers';
+	import { accentCss } from '$lib/sidebar/pin-colors';
+	import { isEmoji, kindGlyph } from '$lib/utils/iconHelpers';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -44,7 +28,7 @@
 
 	const look = $derived(pinIdentity(pin));
 	const chatId = $derived(pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null);
-	const color = $derived(clothFor({ url: pin.url, color: look.color }));
+	const color = $derived(accentCss(look.color) ?? 'var(--color-foreground-muted)');
 </script>
 
 <span class="pin-glyph" aria-hidden="true">
@@ -64,7 +48,7 @@
 		</span>
 	{:else}
 		<span class="tile" style="--pin: {color}">
-			<AtlasIcon name={pinKindGlyph(pin.url)} size={MARK_PX} stroke={MARK_STROKE} bare />
+			<AtlasIcon name={kindGlyph(pin.url)} size={MARK_PX} stroke={MARK_STROKE} bare />
 		</span>
 	{/if}
 </span>

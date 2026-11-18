@@ -28,7 +28,7 @@ import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 import { ownedRef, pinIdentity, setRefLook } from '$lib/refs/identity.svelte';
-import { clothFor } from '$lib/sidebar/pin-colors';
+import { kindIcon } from '$lib/utils/iconHelpers';
 import { isNewChat } from '$lib/components/chat/state/chatRoute';
 
 export interface PinTarget {
@@ -135,7 +135,7 @@ export function pinIconMenuItem(
 					},
 					anchor,
 					label: look.title,
-					autoColor: clothFor({ url }),
+					fallback: kindIcon(url),
 				},
 			);
 		},

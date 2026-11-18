@@ -1946,7 +1946,7 @@
 		previousTabRoute = route;
 		windowShellStore.updateTab(tab.id, {
 			route,
-			icon: isGhost ? "mynaui:incognito" : "mynaui:chat",
+			icon: isGhost ? "mynaui:incognito" : "atlas:chats",
 			...(PLACEHOLDER_LABELS.has(tab.label) && {
 				label: isGhost ? "Temporary chat" : untitled("chat"),
 			}),
