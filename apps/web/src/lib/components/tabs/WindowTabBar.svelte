@@ -30,7 +30,7 @@
 	import { routeToEntityId } from "$lib/utils/urlUtils";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import TabHoverCard, { type TabCardAction } from "./TabHoverCard.svelte";
-	import { isPinned, togglePin } from "$lib/pins/pinAction";
+	import { canPin, isPinned, togglePin } from "$lib/pins/pinAction";
 	import { cubicBezier, easePremium, motionMs } from "$lib/utils/motion";
 
 	const FLIP_DURATION_MS = 150;
@@ -601,6 +601,12 @@
 	onMount(() => () => clearTimeout(cardTimer));
 
 	const cardTab = $derived(cardTabId ? tabs.find((t) => t.id === cardTabId) : undefined);
+	/**
+	 * A tab with fewer than three things to do gets no card: its title
+	 * already fits (an empty new chat), and one or two buttons under it
+	 * look unfinished.
+	 */
+	const cardActionList = $derived(cardTab ? cardActions(cardTab) : []);
 
 	function cardActions(tab: Tab): TabCardAction[] {
 		const actions: TabCardAction[] = [];
@@ -609,7 +615,7 @@
 			closeCard();
 			run();
 		};
-		if (tab.route) {
+		if (tab.route && canPin(tab.route)) {
 			const pinned = isPinned(tab.route);
 			actions.push({
 				id: "pin",
@@ -634,12 +640,6 @@
 				}),
 			});
 		}
-		actions.push({
-			id: "compact",
-			label: tab.pinned ? "Expand" : "Compact",
-			icon: "mynaui:move-horizontal",
-			run: act(() => windowShellStore.togglePin(tab.id)),
-		});
 		if (isSplitMode || tabs.length > 1) {
 			const toRight = paneId !== "right";
 			actions.push({
@@ -647,6 +647,27 @@
 				label: toRight ? "Move to right side" : "Move to left side",
 				icon: toRight ? "mynaui:panel-right" : "mynaui:panel-left",
 				run: act(() => windowShellStore.moveTabAcross(tab.id)),
+			});
+		}
+		if (windowShellStore.canClose(tab.id)) {
+			actions.push({
+				id: "close",
+				label: "Close",
+				icon: "mynaui:x",
+				run: act(() => {
+					if (paneId) windowShellStore.closeTabInPane(tab.id, paneId);
+					else windowShellStore.closeTab(tab.id);
+				}),
+			});
+		}
+		// Compact fills the row when the tab has room for it, so the card
+		// keeps three or four actions.
+		if (actions.length < 4) {
+			actions.splice(actions.length - (windowShellStore.canClose(tab.id) ? 1 : 0), 0, {
+				id: "compact",
+				label: tab.pinned ? "Expand" : "Compact",
+				icon: "mynaui:move-horizontal",
+				run: act(() => windowShellStore.togglePin(tab.id)),
 			});
 		}
 		return actions;
@@ -893,11 +914,11 @@
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
 
-	{#if cardTab && cardAnchor}
+	{#if cardTab && cardAnchor && cardActionList.length >= 3}
 		<TabHoverCard
 			anchor={cardAnchor}
 			title={tabLook(cardTab).title}
-			actions={cardActions(cardTab)}
+			actions={cardActionList}
 			onenter={keepCard}
 			onleave={leaveCard}
 		/>
@@ -973,7 +994,9 @@
 		color: var(--color-foreground-muted);
 		/* The sidebar rows' size, so the header and the column read as one. */
 		font-size: 13px;
-		cursor: pointer;
+		/* The arrow, as a browser tab has. The drag library sets an inline
+		   grab cursor on every tab it can drag, hence !important. */
+		cursor: default !important;
 		white-space: nowrap;
 		/* Every tab is the same width whatever its title, so the strip reads
 		   as a row of equal slots and a tab does not jump when its chat names
