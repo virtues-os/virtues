@@ -52,26 +52,18 @@
 </script>
 
 <section>
-	<h2 class="settings-label">Spending on requests</h2>
+	<h2 class="settings-label">What tasks may spend</h2>
 	<p class="sec-hint">
-		What a task you hand {assistantName} may spend while it works in the background. A run
-		that reaches its limit stops and shows you what it has so far.
+		For tasks you hand {assistantName}. A task that reaches its limit stops and shows you what it
+		has so far. Chat and applets have no limit.
 	</p>
-	<div class="fields">
-		<Input
-			label="Each run, in dollars"
-			bind:value={run}
-			disabled={!loaded}
-			autoSave
-			onSave={(v: string | number) => save('request_run_limit_micros', v)}
-		/>
-		<Input
-			label="Each day, in dollars"
-			bind:value={day}
-			disabled={!loaded}
-			autoSave
-			onSave={(v: string | number) => save('request_day_limit_micros', v)}
-		/>
+	<div class="limit">
+		<label for="limit-run-field">One task</label>
+		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-run-field" bind:value={run} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_run_limit_micros', v)} /></div>
+	</div>
+	<div class="limit">
+		<label for="limit-day-field">All tasks in a day</label>
+		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-day-field" bind:value={day} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_day_limit_micros', v)} /></div>
 	</div>
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
@@ -86,16 +78,27 @@
 		gap: 12px;
 	}
 
-	.fields {
+	.limit {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 12rem));
-		gap: 16px;
+		grid-template-columns: minmax(0, 1fr) 9rem;
+		align-items: center;
+		gap: 24px;
 	}
 
-	@media (max-width: 480px) {
-		.fields {
-			grid-template-columns: minmax(0, 1fr);
-		}
+	.limit label {
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+
+	.field {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.unit {
+		font-size: 15px;
+		color: var(--color-foreground-subtle);
 	}
 
 	.sec-hint,

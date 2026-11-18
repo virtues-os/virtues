@@ -27,7 +27,7 @@ import { matchRank } from '$lib/search/match';
  *  (`assistant_profile::DEFAULT_ASSISTANT_NAME`). */
 export const DEFAULT_ASSISTANT_NAME = 'Virtues';
 
-export type SectionId = 'you' | 'assistant' | 'data' | 'appearance' | 'billing' | 'server';
+export type SectionId = 'you' | 'assistant' | 'tools' | 'spending' | 'data' | 'appearance' | 'billing' | 'server';
 
 export interface Section {
 	id: SectionId;
@@ -60,10 +60,12 @@ export interface Setting {
 
 export const SECTIONS: readonly Section[] = [
 	{ id: 'you', title: 'Profile', lede: 'What {name} knows about you to start with. Your pages and day summaries use it too.', route: '/virtues/profile' },
-	{ id: 'assistant', title: '{name}', lede: 'How it talks to you, what it can do, and the models it runs on.', route: '/virtues/assistant' },
+	{ id: 'assistant', title: 'How {name} talks to you', lede: 'Its name and how it speaks to you.', route: '/virtues/assistant' },
+	{ id: 'tools', title: 'What {name} can do', lede: "Turn off anything you don't want it to do.", route: '/virtues/assistant/tools' },
+	{ id: 'spending', title: 'Models and spending', lede: 'Which models it uses and how much it may spend.', route: '/virtues/assistant/spending' },
 	{ id: 'data', title: 'What {name} may read', lede: 'Which of your records {name} sees, how long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
-	{ id: 'billing', title: 'Billing', lede: 'Your subscription, what AI may spend, and what it has cost.', route: '/virtues/billing' },
+	{ id: 'billing', title: 'Billing', lede: 'Your subscription, your balance, and your own AI key.', route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
 ];
 
@@ -81,10 +83,17 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'assistant-name', title: "{name}'s name", section: 'assistant', kind: 'control', words: ['assistant', 'rename', 'call it'], route: '/virtues/assistant' },
 	{ id: 'style', title: 'How {name} talks to you', section: 'assistant', kind: 'control', words: ['style', 'tone', 'shorter', 'longer', 'answers', 'voice', 'instructions'], route: '/virtues/assistant' },
 	{ id: 'subjects', title: 'Subjects {name} never raises', section: 'assistant', kind: 'control', words: ['rules', 'avoid', 'never bring up', 'topics'], route: '/virtues/assistant' },
-	{ id: 'capabilities', title: 'What {name} can do', section: 'assistant', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off'], route: '/virtues/assistant' },
-	{ id: 'models', title: 'Models {name} runs on', section: 'assistant', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant' },
-	{ id: 'model-catalog', title: 'Every model you can pick', section: 'assistant', kind: 'page', words: ['models', 'catalog', 'compare'], route: '/virtues/assistant/models' },
-	{ id: 'suggested-questions', title: 'Suggested questions', section: 'assistant', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas'], route: '/virtues/assistant' },
+
+	// What the assistant can do
+	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
+	{ id: 'suggested-questions', title: 'Suggested questions', section: 'tools', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas', 'speaking up'], route: '/virtues/assistant/tools' },
+
+	// Models and spending
+	{ id: 'models', title: 'Models {name} runs on', section: 'spending', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant/spending' },
+	{ id: 'model-catalog', title: 'Every model you can pick', section: 'spending', kind: 'page', words: ['models', 'catalog', 'compare'], route: '/virtues/assistant/spending/models' },
+	{ id: 'limit-day', title: 'Most tasks can spend in a day', section: 'spending', kind: 'control', words: ['spending limit', 'daily limit', 'cap', 'budget', 'spend', 'request'], route: '/virtues/assistant/spending' },
+	{ id: 'limit-run', title: 'Most one task can spend', section: 'spending', kind: 'control', words: ['spending limit', 'per run', 'cap', 'budget', 'spend', 'request'], route: '/virtues/assistant/spending' },
+	{ id: 'ai-cost', title: 'What AI has cost', section: 'spending', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/assistant/spending/cost' },
 
 	// Your data
 	{ id: 'memory', title: 'What {name} remembers', section: 'data', kind: 'page', words: ['memory', 'memories', 'notes', 'forget'], route: '/virtues/assistant/memory' },
@@ -107,10 +116,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'subscription', title: 'Subscription', section: 'billing', kind: 'action', words: ['plan', 'stripe', 'payment', 'card', 'cancel', 'renew'], route: '/virtues/billing' },
 	{ id: 'balance', title: 'Balance', section: 'billing', kind: 'value', words: ['wallet', 'credit', 'money', 'left'], route: '/virtues/billing' },
 	{ id: 'auto-top-up', title: 'Auto top-up', section: 'billing', kind: 'control', words: ['top up', 'refill', 'add money', 'limit'], route: '/virtues/billing' },
-	{ id: 'limit-day', title: 'Most a request can spend in a day', section: 'billing', kind: 'control', words: ['spending limit', 'daily limit', 'cap', 'budget', 'spend'], route: '/virtues/billing' },
-	{ id: 'limit-run', title: 'Most one request can spend', section: 'billing', kind: 'control', words: ['spending limit', 'per run', 'cap', 'budget', 'spend'], route: '/virtues/billing' },
 	{ id: 'byo-ai', title: 'Bring your own AI', section: 'billing', kind: 'page', words: ['own key', 'provider', 'endpoint', 'openai', 'byo'], route: '/virtues/billing/byo' },
-	{ id: 'ai-cost', title: 'What AI has cost', section: 'billing', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/billing/cost' },
 
 	// Server and devices
 	{ id: 'updates', title: 'Check for updates', section: 'server', kind: 'action', words: ['update', 'version', 'upgrade', 'release'], route: '/virtues/server' },
@@ -179,11 +185,9 @@ export const LANDING: readonly { title: string; heading: string; links: readonly
 		title: 'Assistant',
 		heading: 'Your assistant',
 		links: [
-			{ label: 'Voice', route: '/virtues/assistant', setting: 'style' },
-			{ label: 'Data access', route: '/virtues/data' },
-			{ label: 'Memory', route: '/virtues/assistant/memory' },
-			{ label: 'Tools and models', route: '/virtues/assistant', setting: 'capabilities' },
-			{ label: 'Spending limits', route: '/virtues/billing', setting: 'limit-run' },
+			{ label: 'How it talks', route: '/virtues/assistant' },
+			{ label: 'What it can do', route: '/virtues/assistant/tools' },
+			{ label: 'Models and spending', route: '/virtues/assistant/spending' },
 		],
 	},
 	{
@@ -203,6 +207,7 @@ export const LANDING: readonly { title: string; heading: string; links: readonly
 			{ label: 'Devices', route: '/virtues/devices' },
 			{ label: 'Updates and network', route: '/virtues/server' },
 			{ label: 'Backup', route: '/virtues/backup' },
+			{ label: 'Your data', route: '/virtues/data' },
 			{ label: 'Keys', route: '/virtues/keys' },
 			{ label: 'Shared links', route: '/virtues/shared' },
 		],

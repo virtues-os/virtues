@@ -18,7 +18,6 @@
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
 	import StyleNotesSettings from '$lib/components/StyleNotesSettings.svelte';
 	import RulesSettings from '$lib/components/RulesSettings.svelte';
-	import ModelSettings from '$lib/components/ModelSettings.svelte';
 	import SuggestionsSettings from '$lib/components/SuggestionsSettings.svelte';
 	import RequestLimitsSettings from '$lib/components/RequestLimitsSettings.svelte';
 	import UpdateSection from './UpdateSection.svelte';
@@ -26,6 +25,7 @@
 	import ReopenSection from './ReopenSection.svelte';
 	import IntroductionSection from './IntroductionSection.svelte';
 	import SettingRow from './SettingRow.svelte';
+	import ModelRows from './ModelRows.svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import LinkRow from './LinkRow.svelte';
 	import YouSettings from './YouSettings.svelte';
@@ -37,7 +37,7 @@
 	import { getAssistantProfile } from '$lib/api/client';
 	import { getAccent, getThemeChoice, setTheme, type Accent, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
-	import { takePendingSetting } from '$lib/settings/focus';
+	import { openSettingsPage, takePendingSetting } from '$lib/settings/focus';
 
 	let { section: id }: { section: SectionId } = $props();
 
@@ -130,12 +130,19 @@
 			<div class="block" id="setting-style">
 				<StyleNotesSettings bind:notes={styleNotes} assistantName={spoken} disabled={assistant !== 'ready'} />
 			</div>
-			<CapabilitiesSettings assistantName={spoken} />
 			<div class="block" id="setting-subjects"><RulesSettings assistantName={spoken} /></div>
-			<!-- The catalog is reached from inside this block ("Compare every model"). -->
-			<div class="block" id="setting-models"><ModelSettings assistantName={spoken} /></div>
+		{:else if id === 'tools'}
+			<CapabilitiesSettings assistantName={spoken} />
 			<div class="block" id="setting-suggested-questions"><SuggestionsSettings assistantName={spoken} /></div>
-			<LinkRow id="memory" label={title('memory')} help="Notes {spoken} keeps from your chats. Edit one and it becomes yours." href="/virtues/assistant/memory" />
+		{:else if id === 'spending'}
+			<!-- Each role's row opens the model list with that role picked. -->
+			<div class="block" id="setting-models"><ModelRows assistantName={spoken} /></div>
+			<div class="block" id="setting-limit-run"><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
+			<LinkRow id="ai-cost" label={title('ai-cost')} help="This month day by day, what it went to, and every call." href="/virtues/assistant/spending/cost" />
+			<p class="aside">
+				Your subscription, balance and your own AI key are on
+				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', spoken)}>Billing</button>.
+			</p>
 		{:else if id === 'appearance'}
 			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
@@ -146,9 +153,9 @@
 			<AppearanceSettings assistantName={spoken} />
 		{:else if id === 'billing'}
 			<BillingSettings />
-			<div class="block" id="setting-limit-run"><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
 			<LinkRow id="byo-ai" label={title('byo-ai')} help="Send AI calls to your own provider and key instead of paying through Virtues." href="/virtues/billing/byo" />
-			<LinkRow id="ai-cost" label={title('ai-cost')} help="The last two weeks day by day, each kind of work, and every call." href="/virtues/billing/cost" />
+			<!-- The cost page lives under Models and spending; Billing links to it too, beside the balance it draws down. -->
+			<LinkRow id="ai-cost-billing" label={title('ai-cost')} help="This month day by day, what it went to, and every call." href="/virtues/assistant/spending/cost" />
 		{:else if id === 'data'}
 			<ReadingSettings assistantName={spoken} />
 			<DataSettings />
@@ -166,7 +173,7 @@
 
 <style>
 	.rows {
-		border-top: 1px solid var(--color-border-subtle);
+		margin-top: 8px;
 	}
 
 	.foot {
@@ -176,20 +183,39 @@
 		gap: 28px;
 	}
 
-	/* An existing settings block in a row's place: its own heading and
-	   controls, with the rows' hairline under it. */
+	/* A settings block in a row's place: its own heading and controls.
+	   Space sets the blocks apart, no rule between them. */
 	.block {
-		padding: 16px 0;
-		border-bottom: 1px solid var(--color-border-subtle);
+		padding: 24px 0 8px;
 	}
 
-	/* The older blocks title themselves with an h2, which takes the serif
-	   heading face; on these pages they read as the rows' names do. */
+	/* A block's h2 is a section heading: the app's serif h2 at the heading step. */
 	.rows :global(.settings-label) {
-		font-family: var(--font-sans);
-		font-size: 15px;
+		font-family: var(--font-serif);
+		font-size: var(--text-heading);
+		font-weight: 400;
+		line-height: 1.3;
 		letter-spacing: normal;
-		margin-bottom: 4px;
+		margin: 0 0 8px;
+	}
+
+	.aside {
+		margin: 24px 0 0;
+		font-size: 13px;
+		color: var(--color-foreground-subtle);
+	}
+
+	.link {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+
+	.link:hover {
+		text-decoration: underline;
 	}
 
 	.load-error {

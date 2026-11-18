@@ -52,9 +52,10 @@
 
 {#if !missing}
 	<section>
+		<h2 class="settings-label">Speaking up</h2>
 		<div class="row">
 			<div>
-				<h2 class="settings-label">Suggested questions</h2>
+				<p class="name">Suggested questions</p>
 				<p class="sec-hint">
 					When you open a new chat, {assistantName} offers a question about what is happening in
 					your day. It writes them once an hour from your calendar, email, messages and pages.
@@ -71,19 +72,26 @@
 {/if}
 
 <style>
-	/* The same hint as the other Assistant sections (RequestLimitsSettings). */
+	.name {
+		margin: 0;
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+
 	.sec-hint {
-		margin: 12px 0 0;
+		margin: 4px 0 0;
 		max-width: 60ch;
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
 	}
 
 	.row {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
 		gap: 24px;
+		min-height: 56px;
 	}
 
 	.error {

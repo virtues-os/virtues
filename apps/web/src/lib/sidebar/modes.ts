@@ -68,6 +68,8 @@ export interface SidebarMode {
 /** Each Settings page's glyph in the crumb menus, and the Remix name kept beside it. */
 const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/assistant': { icon: 'mynaui:sparkles', glyph: 'assistant' },
+	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
+	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
 	'/virtues/data': { icon: 'mynaui:database' },
 	'/virtues/assistant/memory': { icon: 'mynaui:bookmark' },
 	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
@@ -92,10 +94,9 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
  * open. They come from the landing page's site map (LANDING in lib/settings),
  * so a page sits under the same heading in both: Assistant, You, Your server.
  *
- * One row per page. A site-map link that names a row on a page (Voice,
- * Spending limits) points at a page another link already lists, so the page
- * goes under its plain link where it has one (Billing, under You), and
- * otherwise under its group's name (the assistant's page is "Assistant").
+ * One row per page. A site-map link that names a row on a page points at a
+ * page another link already lists, so the page goes under its plain link
+ * where it has one, and otherwise under its group's name.
  */
 function settingsRows(): ModeRow[] {
 	const rows: ModeRow[] = [];

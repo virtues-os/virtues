@@ -147,7 +147,7 @@
 	</div>
 	{#if !previewOpen}
 		<div>
-			<Button variant="ghost" onclick={() => (previewOpen = true)}>Show a sample reply</Button>
+			<Button variant="secondary" onclick={() => (previewOpen = true)}>Show a sample reply</Button>
 		</div>
 	{:else}
 		<div class="sample" aria-live="polite" aria-busy={previewing}>

@@ -76,20 +76,18 @@ describe('RulesSettings', () => {
 	it('lists the rules in force, oldest first, and never the proposals', async () => {
 		await open();
 		const rows = [...target.querySelectorAll('li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
-		expect(rows).toEqual(['Never bring up my ex', 'Hold me to no work email on Sundays']);
+		expect(rows).toEqual(['my ex', 'Hold me to no work email on Sundays']);
 		expect(text()).not.toContain('my old job');
-		expect(text()).toContain('Nick follows these in chat.');
+		expect(text()).toContain('Nick never raises these.');
 	});
 
 	it('adds a rule at the bottom and sends the whole set, keeping proposals', async () => {
 		await open();
-		// The kind select is not driven here: happy-dom never matches
-		// `:checked` on an option, which is what Svelte's select binding reads.
 		const input = target.querySelector('.add input') as HTMLInputElement;
-		expect(target.querySelector('.add .placeholder')?.textContent?.trim()).toBe('my ex');
-		expect(button('Add rule').disabled).toBe(true);
+		expect(target.querySelector('.add .placeholder')?.textContent?.trim()).toBe('A subject Nick should leave alone');
+		expect(button('Add').disabled).toBe(true);
 		type(input, '  the move ');
-		expect(button('Add rule').disabled).toBe(false);
+		expect(button('Add').disabled).toBe(false);
 		press(input, 'Enter');
 
 		await vi.waitFor(() => expect(saveNarrativeRules).toHaveBeenCalledOnce());
@@ -112,7 +110,7 @@ describe('RulesSettings', () => {
 		type(input, 'my ex, or anything about him');
 		press(input, 'Escape');
 		expect(saveNarrativeRules).not.toHaveBeenCalled();
-		expect(text()).toContain('Never bring up my ex');
+		expect(text()).toContain('my ex');
 
 		button('Edit rule').click();
 		flushSync();
@@ -133,7 +131,7 @@ describe('RulesSettings', () => {
 		flushSync();
 		vi.advanceTimersByTime(6000);
 		expect(saveNarrativeRules).not.toHaveBeenCalled();
-		expect(text()).toContain('Never bring up my ex');
+		expect(text()).toContain('my ex');
 
 		button('Remove rule').click();
 		flushSync();
@@ -195,6 +193,6 @@ describe('RulesSettings', () => {
 		flushSync();
 		await vi.waitFor(() => expect(text()).toContain("Your server couldn't load the rules."));
 		expect(target.querySelector('.add')).toBeNull();
-		expect(text()).toContain('Virtues follows these in chat');
+		expect(text()).toContain('Virtues never raises these');
 	});
 });

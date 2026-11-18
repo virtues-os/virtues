@@ -47,14 +47,21 @@
 		gap: 24px;
 		min-height: 56px;
 		padding: 8px 0;
-		border-bottom: 1px solid var(--color-border-subtle);
 		box-sizing: border-box;
 	}
 
+	/* A block is a section of the page: a list, a picker, a note. Its name
+	   is the section's heading, the app's serif h2 at the heading step. */
 	.row.block {
 		grid-template-columns: minmax(0, 1fr);
 		gap: 8px;
-		padding: 16px 0;
+		padding: 24px 0 8px;
+	}
+
+	.row.block .name {
+		font-family: var(--font-serif);
+		font-size: var(--text-heading);
+		line-height: 1.3;
 	}
 
 	.name {

@@ -9,12 +9,14 @@
 
 	  (landing)    /virtues                — search, Changed lately, every page
 	  Profile      /virtues/profile        — you: name, birthday, work, home
-	  Assistant    /virtues/assistant      — its name, how it talks, what it can do
+	  How it talks /virtues/assistant      — its name, its manner, what it never raises
+	  Can do       /virtues/assistant/tools — its tools, and suggested questions
+	  Spending     /virtues/assistant/spending — models, and what tasks may spend
+	               /virtues/assistant/spending/models — the model list (?role= picks one)
+	               /virtues/assistant/spending/cost   — what AI has cost, and every call
 	  Memory       /virtues/assistant/memory — what the assistant remembers
-	  Models       /virtues/assistant/models — the catalog
 	  Appearance   /virtues/appearance     — theme, reading font, motion
-	  Billing      /virtues/billing        — subscription, balance, limits
-	  Cost         /virtues/billing/cost   — what AI has cost, and every call
+	  Billing      /virtues/billing        — subscription, balance, auto top-up
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
 	  Your data    /virtues/data           — keep recordings, export everything
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
@@ -70,21 +72,23 @@
 		'/virtues/you': '/virtues/profile',
 		'/virtues/account': '/virtues/profile',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// The model catalog is Assistant's sub-page, beside the pickers it serves.
-		'/virtues/models': '/virtues/assistant/models',
+		// The model list and the cost page sit under Models and spending.
+		'/virtues/models': '/virtues/assistant/spending/models',
+		'/virtues/assistant/models': '/virtues/assistant/spending/models',
+		'/virtues/billing/cost': '/virtues/assistant/spending/cost',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
 		// bookmarks, not just historical paths.
-		'/virtues/usage': '/virtues/billing/cost',
+		'/virtues/usage': '/virtues/assistant/spending/cost',
 		'/virtues/account/billing': '/virtues/billing',
 		'/virtues/byo-key': '/virtues/billing/byo',
 		'/virtues/billing/plan': '/virtues/billing',
-		'/virtues/account/usage': '/virtues/billing/cost',
-		'/virtues/billing/usage': '/virtues/billing/cost',
+		'/virtues/account/usage': '/virtues/assistant/spending/cost',
+		'/virtues/billing/usage': '/virtues/assistant/spending/cost',
 		// Telemetry was the cost page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/billing/cost',
-		'/virtues/developer/telemetry': '/virtues/billing/cost',
+		'/virtues/telemetry': '/virtues/assistant/spending/cost',
+		'/virtues/developer/telemetry': '/virtues/assistant/spending/cost',
 		// "Plan" named a choice that does not exist — one subscription, one
 		// price. Short-lived (2026-08-31 → 09-03), but it was a live row with
 		// bookmarks, so its door stays open.
@@ -200,7 +204,10 @@
 
 	// (section, sub) are a pure function of the route. `raw` is everything after
 	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Assistant, Devices, Developer).
-	const raw = $derived(tab.route.replace(/^\/virtues\/?/, ''));
+	// The query (`?role=` on the model list) is not part of the path.
+	const routePath = $derived(tab.route.split('?')[0]);
+	const routeQuery = $derived(tab.route.split('?')[1] ?? '');
+	const raw = $derived(routePath.replace(/^\/virtues\/?/, ''));
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
@@ -209,6 +216,8 @@
 	// SettingsPage's, which sets its own width.
 	const width = usePageWidth(() => (section === 'applets' ? 'full' : null));
 	const sub = $derived(raw.split('/')[1] ?? '');
+	const subPage = $derived(raw.split('/')[2] ?? '');
+	const role = $derived(new URLSearchParams(routeQuery).get('role') ?? undefined);
 
 	// No section list sits beside these pages: the landing links to each,
 	// and each page links back to it.
@@ -231,16 +240,20 @@
 		{:else if section === 'assistant'}
 			{#if sub === 'memory'}
 				<MemoryPage />
-			{:else if sub === 'models'}
-				<ModelCatalogView />
+			{:else if sub === 'tools'}
+				<SettingsSection section="tools" />
+			{:else if sub === 'spending' && subPage === 'models'}
+				<ModelCatalogView {role} />
+			{:else if sub === 'spending' && subPage === 'cost'}
+				<BillingView />
+			{:else if sub === 'spending'}
+				<SettingsSection section="spending" />
 			{:else}
 				<SettingsSection section="assistant" />
 			{/if}
 		{:else if section === 'billing'}
 			{#if sub === 'byo'}
 				<ByoPage />
-			{:else if sub === 'cost'}
-				<BillingView />
 			{:else}
 				<SettingsSection section="billing" />
 			{/if}

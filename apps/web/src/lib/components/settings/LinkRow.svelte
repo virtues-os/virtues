@@ -48,7 +48,6 @@
 		min-height: 56px;
 		padding: 8px 0;
 		border: none;
-		border-bottom: 1px solid var(--color-border-subtle);
 		background: none;
 		text-align: left;
 		font: inherit;

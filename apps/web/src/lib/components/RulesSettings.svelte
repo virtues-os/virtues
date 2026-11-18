@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
-	 * The rules in force (`wiki_rules`, active): what chat never raises
-	 * (`avoid`) and what it holds the person to (`defend`), also read by the
-	 * wiki editor. The interview proposes rules; this is where the ones in
-	 * force are listed, added, edited and removed.
+	 * Never bring up, on How it talks: the subjects chat never raises
+	 * (`wiki_rules`, active, kind `avoid`), listed, added, edited and removed
+	 * here. The interview proposes rules too.
+	 *
+	 * Rules of the other kind (`defend`, "hold me to") are no longer added
+	 * here. Ones already in force still show, labelled, so none is in force
+	 * without being seen, and can be removed.
 	 *
 	 * Every save replaces the whole set, so it always sends `keepProposed`:
 	 * proposals waiting for the interview's close are not this page's to drop.
@@ -14,7 +17,6 @@
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Input from '$lib/components/Input.svelte';
-	import Select from '$lib/components/Select.svelte';
 	import { getNarrativeRules, saveNarrativeRules, type NarrativeRule } from '$lib/api/client';
 
 	type Kind = NarrativeRule['kind'];
@@ -32,10 +34,6 @@
 		avoid: 'Never bring up',
 		defend: 'Hold me to',
 	};
-	const PLACEHOLDER: Record<Kind, string> = {
-		avoid: 'my ex',
-		defend: 'no work email on Sundays',
-	};
 	const UNDO_MS = 6000;
 
 	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
@@ -45,8 +43,6 @@
 	let saveFailed = $state(false);
 	let editingKey = $state<number | null>(null);
 	let editDraft = $state('');
-	let addKind = $state<Kind>('avoid');
-	const KINDS = (['avoid', 'defend'] as const).map((value) => ({ value, label: KIND_LABEL[value] }));
 	let addText = $state('');
 	let listEl = $state<HTMLElement>();
 	let addEl = $state<HTMLElement>();
@@ -217,15 +213,11 @@
 	function add() {
 		const text = addText.trim();
 		if (!text || !ready) return;
-		const kind = addKind;
-		rows.push({ key: nextKey++, rule: text, kind, removing: false });
+		rows.push({ key: nextKey++, rule: text, kind: 'avoid', removing: false });
 		addText = '';
 		save(() => {
 			// Give the words back, unless something new has been typed since.
-			if (!addText) {
-				addText = text;
-				addKind = kind;
-			}
+			if (!addText) addText = text;
 		});
 	}
 
@@ -240,12 +232,11 @@
 <svelte:window onpagehide={commitPending} />
 
 <section class="rules">
-	<h2 class="settings-label">Rules</h2>
+	<h2 class="settings-label">Never bring up</h2>
 	<!-- What a rule does in chat (RULES_PROMPT in agent/prompt.rs): never
 	     opens the subject, still engages when the owner does. -->
 	<p class="sec-hint">
-		{assistantName} follows these in chat.
-		It never raises a subject you've ruled out, but talks about it if you do.
+		{assistantName} never raises these. If you bring one up, it talks about it.
 	</p>
 
 	{#if phase === 'error'}
@@ -264,7 +255,7 @@
 								<Button variant="ghost" onclick={() => undo(row)}>Undo</Button>
 							</span>
 						{:else}
-							<span class="kind">{KIND_LABEL[row.kind]}</span>
+							{#if row.kind === 'defend'}<span class="kind">{KIND_LABEL[row.kind]}</span>{/if}
 							{#if editingKey === row.key}
 								<label class="edit">
 									<span class="sr-only">Rule</span>
@@ -305,25 +296,18 @@
 		{/if}
 
 		<div class="add" bind:this={addEl}>
-			<Select
-				value={addKind}
-				options={KINDS}
-				label="Kind of rule"
-				disabled={!ready}
-				onchange={(k) => (addKind = k)}
-			/>
 			<label class="add-text">
 				<span class="sr-only">Rule</span>
 				<Input
 					bind:value={addText}
-					placeholder={PLACEHOLDER[addKind]}
+					placeholder="A subject {assistantName} should leave alone"
 					autocomplete="off"
 					disabled={!ready}
 					onkeydown={addKeydown}
 				/>
 			</label>
 			<Button variant="secondary" disabled={!ready || !addText.trim()} onclick={add}>
-				Add rule
+				Add
 			</Button>
 		</div>
 	{/if}

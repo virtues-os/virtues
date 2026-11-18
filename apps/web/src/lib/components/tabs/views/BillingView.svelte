@@ -119,7 +119,7 @@
 	const kindMax = $derived(Math.max(1, ...kinds.map((k) => k.cost_micros)));
 </script>
 
-<SettingsPage title="What AI has cost" lede="This month, what it went to, and every call." back={{ route: '/virtues/billing', label: 'Billing' }}>
+<SettingsPage title="What AI has cost" lede="This month, what it went to, and every call." back={{ route: '/virtues/assistant/spending', label: 'Models and spending' }}>
 	{#if summaryError}
 		<div class="failed" role="alert">
 			<p>{summaryError}</p>

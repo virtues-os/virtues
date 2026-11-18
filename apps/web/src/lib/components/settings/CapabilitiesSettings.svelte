@@ -7,7 +7,6 @@
 	 */
 	import SwitchList from './SwitchList.svelte';
 	import { getCapabilities, setCapability, type Capability } from '$lib/api/client';
-	import { findSetting, titleOf } from '$lib/settings';
 
 	let { assistantName }: { assistantName: string } = $props();
 
@@ -17,14 +16,12 @@
 		applets: { label: 'Make and change applets', help: 'Builds applets that run on their own, and edits them. Running them stays on.' },
 		pages: { label: 'Write in your pages', help: 'Creates pages and edits them when you ask.' },
 	};
-
-	const title = $derived(titleOf(findSetting('capabilities')?.title ?? 'What {name} can do', assistantName));
 </script>
 
 <SwitchList
 	id="capabilities"
-	label={title}
-	help="Turn one off and {assistantName} won't do it, in a chat or in an applet."
+	label="Tools"
+	help="Turn a tool off and {assistantName} won't use it, in a chat or in an applet."
 	words={WORDS}
 	load={getCapabilities}
 	save={setCapability}

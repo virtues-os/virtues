@@ -15,6 +15,8 @@ const PENDING_MS = 3000;
 
 /** The tab label for a Settings page: "Settings · Billing". */
 export function settingsLabel(route: string, assistantName: string): string {
+	// A query (the model list's `?role=`) picks within a page; the page is the path.
+	route = route.split('?')[0];
 	const section = sectionAt(route);
 	if (section) return `Settings · ${titleOf(section.title, assistantName)}`;
 	const page = SETTINGS.find((s) => s.kind === 'page' && s.route === route);
