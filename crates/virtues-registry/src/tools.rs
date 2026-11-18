@@ -424,7 +424,7 @@ fn show_tool() -> ToolConfig {
                 "mark": {
                     "type": "string",
                     "enum": crate::chart_marks::MARKS.iter().map(|m| m.mark).collect::<Vec<_>>(),
-                    "description": "Optional: draw this instead of the chart the server picks. With kind chart and no purpose, bar is the default"
+                    "description": "Usually leave it out: the server picks the chart that fits the purpose and the columns. Name a mark only when the owner asked for that chart"
                 },
                 "split_at": { "type": "string", "description": "interrupted only: the date of the change" },
                 "split_label": { "type": "string", "description": "interrupted only: the change in a few words" },

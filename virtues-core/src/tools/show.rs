@@ -127,7 +127,7 @@ pub async fn execute(
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
     let trimmed = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let (purpose, named_mark) = purpose_and_mark(trimmed(&args.purpose), trimmed(&args.mark))?;
+    let (purpose, mut named_mark) = purpose_and_mark(trimmed(&args.purpose), trimmed(&args.mark))?;
     let fields = ChartFields {
         split_at: trimmed(&args.split_at),
         split_label: trimmed(&args.split_label),
@@ -135,7 +135,16 @@ pub async fn execute(
         unit: trimmed(&args.unit),
     };
     let kind = match trimmed(&args.kind) {
-        Some(k) => Kind::parse(&k)?,
+        // A mark's name given as the kind (`kind: "share"`) is read as that
+        // mark, as one given as the purpose is; refusing it only buys a retry.
+        Some(k) => match (Kind::parse(&k), chart_marks::mark(&k)) {
+            (Ok(kind), _) => kind,
+            (Err(_), Some(m)) => {
+                named_mark.get_or_insert(k);
+                Kind::parse(m.kind)?
+            }
+            (Err(e), None) => return Err(e),
+        },
         None => kind_before_query(purpose, named_mark.as_deref())?,
     };
     let title = args.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|t| {
@@ -1108,6 +1117,9 @@ mod tests {
 
         let out = call(json!({ "purpose": "change_over_time", "mark": "bar", "sql": weeks })).await.unwrap().data;
         assert_eq!(out["mark"], json!("bar"), "a named mark wins over the pick: {out}");
+
+        let out = call(json!({ "kind": "share", "sql": days })).await.unwrap().data;
+        assert_eq!((out["kind"].as_str(), out["mark"].as_str()), (Some("chart"), Some("share")), "a mark given as the kind: {out}");
 
         let refused = call(json!({ "sql": weeks })).await;
         assert!(matches!(refused, Err(ToolError::InvalidParameters(ref m)) if m.contains("purpose")), "{refused:?}");
