@@ -5,8 +5,9 @@
 	 * it that swatch's color in the theme on screen and no value is copied
 	 * here. The last one opens the system color picker: the app takes the
 	 * color live as you move through it and saves it when the picker
-	 * closes, fitted to both themes (tuneAccent). It shows a spectrum until
-	 * you have chosen one, then your color. The chosen swatch wears a ring
+	 * closes, fitted to both themes (tuneAccent). It shows the color wheel
+	 * until you have chosen one, then your color inside a ring of the
+	 * wheel. The chosen swatch wears a ring
 	 * in its own color; the names are in the tooltips and said by each radio.
 	 */
 	import { ACCENTS, applyAccent, isCustomAccent, setAccent, type Accent } from '$lib/utils/theme';
@@ -47,7 +48,7 @@
 		</button>
 	{/each}
 	<label class="swatch" class:selected={custom} data-tip="Choose your own" onpointerdown={seed}>
-		<span class="dot" class:spectrum={!custom}></span>
+		<span class="dot spectrum" class:chosen={custom}></span>
 		<input
 			bind:this={input}
 			type="color"
@@ -93,9 +94,26 @@
 		background: var(--accent-dark);
 	}
 
-	/* Not chosen yet: the whole wheel, so it reads as "any color". */
-	.dot.spectrum,
+	/* The picker always shows the wheel, so it reads as "any color" and
+	   never as one more swatch. Before a color is chosen it is the whole
+	   wheel; after, the wheel is a ring around your color, as a system
+	   color well draws it. */
+	.dot.spectrum {
+		--well: var(--accent-light);
+		background:
+			radial-gradient(circle closest-side, var(--well) 0 54%, var(--page) 54% 66%, transparent 66%),
+			var(--accent-spectrum);
+	}
+
 	:global([data-theme="asgard"]) .dot.spectrum {
+		--well: var(--accent-dark);
+		background:
+			radial-gradient(circle closest-side, var(--well) 0 54%, var(--page) 54% 66%, transparent 66%),
+			var(--accent-spectrum);
+	}
+
+	.dot.spectrum:not(.chosen),
+	:global([data-theme="asgard"]) .dot.spectrum:not(.chosen) {
 		background: var(--accent-spectrum);
 	}
 
