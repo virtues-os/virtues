@@ -53,8 +53,8 @@
 <section>
 	<h2 class="settings-label">Spending on requests</h2>
 	<p class="sec-hint">
-		When you hand {assistantName} a task, it works on it in the background. These limits
-		cap what that work can spend through Virtues.
+		What a task you hand {assistantName} may spend while it works in the background. A run
+		that reaches its limit stops and shows you what it has so far.
 	</p>
 	<div class="fields">
 		<Input
@@ -75,11 +75,7 @@
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 	{/if}
-	<p class="sec-hint">
-		A run that reaches its limit stops and shows you what it has so far. Once a day's limit is reached,
-		requests wait until the day's spending falls under it. With your own AI key, the cost is unknown,
-		so these limits do not apply.
-	</p>
+	<p class="sec-hint">Once the last 24 hours reach the day's limit, tasks wait until spending falls under it. Neither limit applies on your own AI key, whose cost isn't known.</p>
 </section>
 
 <style>

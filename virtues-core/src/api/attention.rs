@@ -140,13 +140,33 @@ async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Op
     .await?)
 }
 
+/// A failure the owner can act on, in plain words, for the errors that
+/// recur across applets. Anything else is quoted as the run reported it.
+fn plain_failure(error: &str) -> Option<&'static str> {
+    let e = error.to_ascii_lowercase();
+    if e.contains("failed to spawn") {
+        Some("Its program is missing from your server")
+    } else if e.contains("timed out") || e.contains("timeout") {
+        Some("It ran out of time")
+    } else if e.contains("invalid_grant") || e.contains("unauthorized") || e.contains(" 401") {
+        Some("Its sign-in has expired. Connect the source again")
+    } else if e.contains("connection refused") || e.contains("dns error") || e.contains("error sending request") {
+        Some("It couldn't reach the service it needs")
+    } else {
+        None
+    }
+}
+
 fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, String, Option<String>)>) {
     for (id, name, run_id, error) in rows {
         let why = error
             .as_deref()
-            .map(|e| {
-                let line = e.lines().next().unwrap_or(e);
-                line.split(". ").next().unwrap_or(line).trim_end_matches('.').trim().chars().take(160).collect::<String>()
+            .map(|e| match plain_failure(e) {
+                Some(plain) => plain.to_string(),
+                None => {
+                    let line = e.lines().next().unwrap_or(e);
+                    line.split(". ").next().unwrap_or(line).trim_end_matches('.').trim().chars().take(160).collect::<String>()
+                }
             })
             .filter(|e| !e.is_empty());
         items.push(AttentionItem {
@@ -767,6 +787,11 @@ mod tests {
         assert_eq!(items[1].title, "Morning examen wrote Tuesday, 3 March");
         assert_eq!((items[2].title.as_str(), items[2].body.as_str()), ("Garden has something for you", "The tomatoes are ready."));
         assert_ne!(items[1].key, items[2].key);
+
+        // A failure that recurs across applets is said in plain words.
+        let mut items = vec![];
+        failed_applet_items(&mut items, vec![("a".into(), "Weather sync".into(), "run_9".into(), Some("failed to spawn action command: No such file or directory (os error 2)".into()))]);
+        assert_eq!(items[0].body, "Its program is missing from your server. Open it to see what happened.");
     }
 
     /// A scheduled run with something to read is in the Inbox until the

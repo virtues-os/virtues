@@ -226,7 +226,7 @@
 						{kindLabel(device.kind)}
 						{#if device.paired_at}
 							<span class="text-foreground-subtle font-normal">
-								· paired {formatTimeAgo(device.paired_at)}
+								· paired {formatTimeAgo(device.paired_at)}{device.paired_from_ip ? ` from ${device.paired_from_ip}` : ""}
 							</span>
 						{/if}
 					</div>
