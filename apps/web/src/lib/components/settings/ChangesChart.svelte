@@ -113,7 +113,7 @@
 <style>
 	.chart {
 		height: 60px;
-		margin: 12px 0 10px;
+		margin: 12px 0 8px;
 	}
 
 	svg {

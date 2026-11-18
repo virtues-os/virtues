@@ -163,7 +163,7 @@
 		grid-template-columns: 88px minmax(0, 1fr) auto;
 		align-items: baseline;
 		gap: 16px;
-		padding: 5px 0;
+		padding: 4px 0;
 	}
 
 	.when {

@@ -217,7 +217,7 @@
 		font-size: 2rem;
 		font-weight: 400;
 		line-height: 1.2;
-		margin: 0 0 14px;
+		margin: 0 0 12px;
 	}
 
 	.search {
@@ -292,7 +292,7 @@
 	.map {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: 8px;
 		margin-top: auto;
 		padding-top: 48px;
 	}
@@ -327,7 +327,7 @@
 		display: inline-flex;
 		align-items: center;
 		height: 26px;
-		padding: 0 10px;
+		padding: 0 12px;
 		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		font-size: 13px;
