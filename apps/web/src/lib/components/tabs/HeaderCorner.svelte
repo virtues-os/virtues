@@ -43,7 +43,7 @@
 	<button
 		type="button"
 		class="corner-button lq"
-		class:lq-selected={inSources}
+		class:selected={inSources}
 		onclick={openSources}
 		aria-label="Sources"
 		aria-current={inSources ? 'page' : undefined}
@@ -54,7 +54,7 @@
 	<button
 		type="button"
 		class="corner-button lq"
-		class:lq-selected={inSettings}
+		class:selected={inSettings}
 		onclick={openSettings}
 		aria-label="Settings"
 		aria-current={inSettings ? 'page' : undefined}
@@ -91,7 +91,7 @@
 	}
 
 	.corner-button:hover,
-	.corner-button.lq-selected {
+	.corner-button.selected {
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}

@@ -430,10 +430,11 @@ the open sidebar, the tabs, the header's corner buttons, the home tiles. It is
 one recipe, `.lq` in `app.css` with its `--lq-` tokens in `themes.css`. Do
 not add a second glass.
 
-- **Clear** (`.lq`): small controls.
-- **Regular** (`.lq-regular`): surfaces that hold text, such as the sidebar
-  and the home tiles. Less see-through than clear, and a flat fill, because a
-  gradient this tall shows bands in Chrome. Dark's is denser than Light's.
+- **One density and one lift.** The sidebar, the selected tab, the corner
+  buttons, the ∴ and the home tiles are the same glass. It is dense enough
+  that a label stays readable over the painting, and a flat fill, because a
+  gradient as tall as the sidebar shows bands in Chrome. Dark's is denser
+  than Light's.
 - **Selected inside glass** is a flat tint, never a second pane of glass. No
   card on a card, no shadow on a shadow.
 - The rim (`--lq-rim`) and the lift (`--lq-lift`) are set per theme in
@@ -529,7 +530,7 @@ glyph becomes its solid version (`SOLID_GLYPHS` and `fillable` in
 Every tab is the same width whatever its title (`WindowTabBar`), at
 `--radius-lg`, so the strip reads as a row of equal slots and a tab does not
 jump when its chat names itself. The selected tab is on the sidebar's glass
-(`.lq-selected`). Tabs you are not on have no fill until you point at them.
+(`.lq`). Tabs you are not on have no fill until you point at them.
 Pointing at a tab opens its hover card (`TabHoverCard`) with the full title
 and its actions. In a split, the active tab of the pane you are not working
 in dims its ink.

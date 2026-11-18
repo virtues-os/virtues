@@ -138,9 +138,9 @@
 /* Liquid glass (themes.css, `--lq-*`). One recipe for everything that
    floats over the painting. The rim and the lift are shadows because glass
    is the one surface in the shell that is lifted off what is behind it.
-   `.lq-regular` is the frostier glass of surfaces that hold text: the
-   sidebar, the home cards, and the tab you are on (`.lq-selected`), so
-   the shell reads as one material. */
+   There is one glass, at one density: the sidebar, the tab you are on,
+   the corner buttons, the ∴ and the home cards all draw it, so the shell
+   reads as one material. */
 .lq {
 	position: relative;
 	background: var(--lq-sheen), var(--lq-fill);
@@ -167,29 +167,12 @@
 	mask-composite: exclude;
 }
 
-.lq.lq-regular {
-	background: var(--lq-sheen), var(--lq-fill-regular);
-	-webkit-backdrop-filter: var(--lq-filter-regular);
-	backdrop-filter: var(--lq-filter-regular);
-}
-
-.lq.lq-selected {
-	background: var(--lq-sheen), var(--lq-fill-regular);
-	-webkit-backdrop-filter: var(--lq-filter-regular);
-	backdrop-filter: var(--lq-filter-regular);
-	box-shadow: var(--lq-rim), var(--lq-lift-selected); /* design-ok: the selected tab's glass */
-}
-
 /* Glass you can press lights up under the pointer, as glass catches
    light: the pane brightens a little, and a soft glint sits where the
    pointer is. The root layout keeps --lq-x and --lq-y on the glass under
    the pointer (routes/(app)/+layout.svelte). */
 :is(button, [role="button"]).lq:hover {
 	box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
-}
-
-:is(button, [role="button"]).lq.lq-selected:hover {
-	box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift-selected); /* design-ok: the selected tab under the pointer */
 }
 
 :is(button, [role="button"]).lq::after {
@@ -223,18 +206,14 @@
 
 :root[data-glass="none"] {
 	--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
-	--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
 	--lq-filter: none;
-	--lq-filter-regular: none;
 }
 
 /* Reduce transparency on the device is None. */
 @media (prefers-reduced-transparency: reduce) {
 	:root:root {
 		--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
-		--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
 		--lq-filter: none;
-		--lq-filter-regular: none;
 	}
 }
 

@@ -464,7 +464,7 @@
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
 	<div
-		class="sidebar-glass lq lq-regular"
+		class="sidebar-glass lq"
 		class:railed={isCollapsed}
 		class:reaches-top={reachesTop}
 		class:unmeasured={isCollapsed && railBottom === 0}
@@ -761,7 +761,7 @@
 			height var(--motion-sidebar) var(--ease-sidebar) 100ms;
 	}
 
-	/* The glass (`.lq-regular`, app.css) behind the column: the opened
+	/* The glass (`.lq`, app.css) behind the column: the opened
 	   sidebar's panel, or the rail. It changes shape in two beats, so the
 	   rail reads as the same piece of glass growing into the panel.
 	   Opening, it runs down to full height first, quickly, and widens on a

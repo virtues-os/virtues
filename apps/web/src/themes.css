@@ -148,8 +148,9 @@
 	   cards (`.lq` in app.css). A thin layer of the surface that lets the
 	   picture through, frosted, with a lit rim that is strongest along the
 	   top edge, a sheen across the top, and a soft lift. All of it is one
-	   material: the selected tab is the sidebar's glass,
-	   not a white pill. Pages sit on paper, never on glass.
+	   material, at one density and one lift: the sidebar, the selected tab,
+	   the corner buttons and the ∴ are the same glass. Pages sit on paper,
+	   never on glass.
 
 	   How much shows through is the owner's (Settings · Appearance ·
 	   Glass). Each fill thins the surface by its share times `--lq-see`:
@@ -164,25 +165,17 @@
 	   just inside the edge. A backdrop brightness filter would push the
 	   desk to pure white, and white glass with a shadow looks like a card. */
 	--lq-see: 1;
-	--lq-fill: linear-gradient(180deg,
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 60% * var(--lq-see)), transparent),
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 86% * var(--lq-see)), transparent));
-	/* Regular glass, for surfaces that hold text: the sidebar and the home
-	   cards. Denser and more frosted than a control's clear glass, so a
-	   label stays readable where the painting is behind it (`.lq-regular`,
-	   app.css). */
-	/* One flat layer: a fade down a surface as tall as the sidebar draws
-	   as visible bands, because the browser does not dither gradients. The
-	   sheen lights the top instead. Over the plain desk the fill hardly
-	   shows; over the painting it keeps the blur from going muddy. */
-	--lq-fill-regular: linear-gradient(
+	/* Dense enough that a label stays readable where the painting is
+	   behind it. One flat layer: a fade down a surface as tall as the
+	   sidebar draws as visible bands, because the browser does not dither
+	   gradients. The sheen lights the top instead. Over the plain desk the
+	   fill hardly shows; over the painting it keeps the blur from going
+	   muddy. */
+	--lq-fill: linear-gradient(
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent));
-	--lq-filter-regular: blur(20px) saturate(1.25);
+	--lq-filter: blur(20px) saturate(1.25);
 	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0) 14px);
-	/* The saturation lift is kept small: over the warm desk a larger one
-	   pulls the white of a selected tab toward cream. */
-	--lq-filter: blur(12px) saturate(1.15);
 	/* Inside the edge: a bright line along the top, a faint light line
 	   all round, and a soft shade, which together give the glass a
 	   thickness. The edge itself is a 1.2px ring lit from the top left and
@@ -199,7 +192,6 @@
 	/* A faint outline and a contact shadow, kept low so the glass sits
 	   nearly flat on the desk. A deeper drop makes it look like a card. */
 	--lq-lift: 0 0 0 0.5px rgb(26 32 48 / 0.07), 0 1px 2px rgb(26 32 48 / 0.04), 0 10px 24px -16px rgb(26 32 48 / 0.04);
-	--lq-lift-selected: 0 0 0 0.5px rgb(26 32 48 / 0.1), 0 1px 2px rgb(26 32 48 / 0.03);
 	/* Glass you can press brightens under the pointer: a wash across the
 	   whole pane, and a glint of light where the pointer is (app.css). */
 	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.16);
@@ -679,15 +671,11 @@
 
 	/* Glass on a dark ground: the surface thinned less, frosted without
 	   brightening, and a rim of faint light instead of white. */
-	--lq-fill: linear-gradient(180deg,
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent),
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 56% * var(--lq-see)), transparent));
-	--lq-fill-regular: linear-gradient(
+	--lq-fill: linear-gradient(
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent));
-	--lq-filter-regular: blur(20px) saturate(1.15) brightness(0.9);
+	--lq-filter: blur(20px) saturate(1.15) brightness(0.9);
 	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.015), rgb(255 255 255 / 0) 16px);
-	--lq-filter: blur(12px) saturate(1.15) brightness(0.92);
 	--lq-rim: inset 0 0 0 transparent;
 	--lq-specular: linear-gradient(135deg,
 		rgb(255 255 255 / 0.1) 0%,
@@ -696,7 +684,6 @@
 		rgb(255 255 255 / 0.04) 78%,
 		rgb(255 255 255 / 0.07) 100%);
 	--lq-lift: 0 0 0 0.5px rgb(0 0 0 / 0.4), 0 6px 18px -12px rgb(0 0 0 / 0.2);
-	--lq-lift-selected: 0 0 0 0.5px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
 	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.04);
 	--lq-glint: rgb(255 255 255 / 0.1);

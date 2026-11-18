@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
-	 * Desk, paper and glass over the window's painting: a clear glass
-	 * control, regular glass that holds text, a paper card, and the one
-	 * shadow a floating layer carries. The Glass setting changes the glass
+	 * Desk, paper and glass over the window's painting: a glass control
+	 * and a glass card, which are the same one material, a paper card, and
+	 * the one shadow a floating layer carries. The Glass setting changes the glass
 	 * here as it does in the shell.
 	 */
 </script>
@@ -13,9 +13,9 @@
 		<img src="/scenes/lake.jpg" alt="" aria-hidden="true" />
 	</picture>
 	<div class="row">
-		<button type="button" class="clear lq">Clear glass</button>
-		<div class="regular lq lq-regular">
-			<div class="label">Regular glass</div>
+		<button type="button" class="control lq">Glass</button>
+		<div class="card lq">
+			<div class="label">Glass</div>
 			<div class="line">Holds words, like the sidebar.</div>
 		</div>
 		<div class="paper">
@@ -54,7 +54,7 @@
 		align-items: flex-start;
 		gap: 16px;
 	}
-	.clear {
+	.control {
 		height: 34px;
 		padding: 0 16px;
 		border: none;
@@ -64,7 +64,7 @@
 		color: var(--color-foreground);
 		cursor: pointer;
 	}
-	.regular,
+	.card,
 	.paper,
 	.float {
 		width: 180px;

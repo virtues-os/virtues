@@ -797,7 +797,6 @@
 				class="tab"
 				class:active={tab.id === activeTabId}
 				class:lq={tab.id === activeTabId}
-				class:lq-selected={tab.id === activeTabId}
 				class:only={dndItems.length === 1}
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
@@ -977,8 +976,8 @@
 		display: none;
 	}
 
-	/* A tab is a pill on the painting. The one you are on is glass
-	   (`.lq.lq-selected`, app.css); the others are their icon and label,
+	/* A tab is a pill on the painting. The one you are on is the shell's
+	   glass (`.lq`, app.css); the others are their icon and label,
 	   with a wash under the pointer. */
 	.tab {
 		display: flex;

@@ -250,14 +250,14 @@
 					<div class="cards">
 						{#each ordered as t (t.key)}
 							{#if t.open}
-								<button class="tile lq lq-regular" onclick={t.open}>{@render body(t)}</button>
+								<button class="tile lq" onclick={t.open}>{@render body(t)}</button>
 							{:else}
-								<div class="tile lq lq-regular still">{@render body(t)}</div>
+								<div class="tile lq still">{@render body(t)}</div>
 							{/if}
 						{/each}
 					</div>
 				{:else if homeLayout.value === 'rows'}
-					<div class="rows lq lq-regular">
+					<div class="rows lq">
 						{#each ordered as t (t.key)}
 							{#if t.open}
 								<button class="row" onclick={t.open}>{@render row(t)}</button>
@@ -346,7 +346,7 @@
 		gap: 12px;
 	}
 
-	/* Regular glass on the painting (`.lq-regular`, app.css), because a
+	/* The shell's glass on the painting (`.lq`, app.css), because a
 	   card holds lines to read. Short enough that the painting's village
 	   shows below the row. The height is fixed, so a line arriving after its
 	   read does not move it. */
@@ -434,7 +434,7 @@
 		background: var(--color-primary);
 	}
 
-	/* One glass card of rows, in the tiles' regular glass. */
+	/* One glass card of rows, in the tiles' glass. */
 	.rows {
 		border-radius: var(--radius-xl);
 		overflow: hidden;
