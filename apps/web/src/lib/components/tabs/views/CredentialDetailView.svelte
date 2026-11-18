@@ -10,6 +10,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { type Tab, routeToEntityId } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
@@ -28,6 +29,8 @@
 	import { relativeTime } from '$lib/applets/palette';
 
 	let { tab }: { tab: Tab } = $props();
+
+	const width = usePageWidth(() => 'medium');
 
 	const credentialId = $derived(routeToEntityId(tab.route) ?? '');
 
@@ -130,7 +133,7 @@
 	}
 </script>
 
-<section class="cred-detail">
+<section style:max-width={width.css} class="cred-detail">
 	{#if loading}
 		<div class="state">
 			<Icon icon="mynaui:spinner" width="20" />
@@ -238,7 +241,6 @@
 		flex-direction: column;
 		gap: 1.25rem;
 		padding: 1rem 0.5rem;
-		max-width: var(--page-detail);
 	}
 
 	.state {

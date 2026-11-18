@@ -16,6 +16,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import { subjectHref } from "$lib/wiki/links";
 	import { units } from "$lib/stores/units.svelte";
 	import { formatTemperature } from "$lib/utils/units";
@@ -107,6 +108,9 @@
 	}
 
 	let { page }: Props = $props();
+
+	// The day's bar and its article share one width, the page's.
+	const width = usePageWidth(() => "medium");
 
 	// `page.date` is an ISO day string. Read it as a LOCAL date — `new Date`
 	// on a bare `YYYY-MM-DD` is UTC midnight, which is the previous day for
@@ -1207,7 +1211,7 @@
 
 {#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
 
-<div class="day-page-outer">
+<div class="day-page-outer" style:--page-width={width.css}>
 	<div class="day-page-layout">
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
 			{#if dayToolbar.inToolbar}
@@ -1469,7 +1473,7 @@
 		display: flex;
 		align-items: center;
 		gap: 1.125rem;
-		max-width: var(--page-detail);
+		max-width: var(--page-width);
 		height: 3.25rem;
 		margin: 0 auto;
 		font-family: var(--font-sans);
@@ -1852,7 +1856,7 @@
 
 
 	.day-content {
-		max-width: var(--page-detail);
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 		padding-top: 1rem;

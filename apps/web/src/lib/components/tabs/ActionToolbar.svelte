@@ -16,11 +16,13 @@
 	 * (`usePageStatus`), then what the page lets you do: the controls a
 	 * view hands over with `usePageActions`, then the buttons it publishes
 	 * with `paneActions.set`, two inline and the rest behind a `···`, since a
-	 * split pane can be dragged to a third of the window.
+	 * split pane can be dragged to a third of the window. Last is the page's
+	 * width (`usePageWidth`), on every page that has a column of content.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { pageWidth, PAGE_WIDTHS } from "$lib/stores/pageWidth.svelte";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { canPin, isPinned, togglePin } from "$lib/pins/pinAction";
@@ -149,6 +151,32 @@
 		);
 	}
 
+	const declared = $derived(pageWidth.declaredFor(tab.id));
+	const width = $derived(declared ? pageWidth.widthFor(declared.kind, declared.initial, declared.sheet) : undefined);
+	const widthLabel = $derived(PAGE_WIDTHS.find((w) => w.value === width)?.label);
+
+	/** The widths this page can take, the page's own marked as its default. */
+	function showWidths(e: MouseEvent) {
+		e.stopPropagation();
+		const d = declared;
+		if (!d) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show(
+			{ x: rect.right, y: rect.bottom + 4 },
+			PAGE_WIDTHS.filter((w) => w.value !== "sheet" || d.sheet).map((w) => ({
+				id: `width-${w.value}`,
+				label: w.value === d.initial ? `${w.label} (default)` : w.label,
+				role: "menuitemradio" as const,
+				checked: w.value === width,
+				action: () => pageWidth.choose(d.kind, w.value, d.initial),
+			})),
+			{
+				anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+				placement: "bottom-end",
+			},
+		);
+	}
+
 	function showOverflow(e: MouseEvent) {
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -249,7 +277,7 @@
 		{/if}
 	</div>
 
-	{#if status || controls.length > 0 || actions.length > 0}
+	{#if status || controls.length > 0 || actions.length > 0 || declared}
 		<div class="actions">
 			{#if status}
 				<svelte:element
@@ -288,6 +316,18 @@
 			{#if overflowActions.length > 0}
 				<button class="action" onclick={showOverflow} aria-label="More actions" data-tip="More actions">
 					<Icon icon="mynaui:dots" />
+				</button>
+			{/if}
+
+			{#if declared}
+				<button
+					class="action"
+					onclick={showWidths}
+					aria-haspopup="menu"
+					aria-label="Page width: {widthLabel}"
+					data-tip="Page width: {widthLabel}"
+				>
+					<Icon icon="mynaui:move-horizontal" />
 				</button>
 			{/if}
 		</div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	/**
 	 * A year.
 	 *
@@ -33,6 +34,8 @@
 		year: number;
 	}
 	let { year }: Props = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	let page = $state<YearApi | null>(null);
 	let loading = $state(true);
@@ -107,7 +110,7 @@
 {:else if !page}
 	<p class="quiet">There is no page for {year}.</p>
 {:else}
-	<article class="year" in:fly={{ y: 4, duration: 200 }}>
+	<article style:max-width={width.css} class="year" in:fly={{ y: 4, duration: 200 }}>
 		<WikiCrumbs bar path={[{ label: 'Years', route: '/wiki/years' }, { label: String(year) }]} />
 		<header>
 			<p class="eyebrow">Year</p>
@@ -217,7 +220,6 @@
 
 <style>
 	.year {
-		max-width: 44rem;
 		margin: 0 auto;
 		padding: 0.5rem 1.5rem 4rem;
 	}

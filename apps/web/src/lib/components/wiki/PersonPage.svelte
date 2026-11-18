@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import { subjectHref } from "$lib/wiki/links";
 	import { untrack } from "svelte";
 	import { slide } from "$lib/utils/transitions";
@@ -38,6 +39,8 @@
 	}
 
 	let { page }: Props = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	// Dates arrive as ISO strings. `parseDateSlug` reads them as LOCAL dates;
 	// `new Date("1990-09-14")` is UTC midnight, which renders as the 13th for
@@ -228,7 +231,7 @@
 
 <div class="person-page-layout">
 	<article class="person-article wiki-article">
-		<div class="person-content">
+		<div style:max-width={width.css} class="person-content">
 			<WikiCrumbs bar path={[{ label: "People", route: "/wiki/people" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="person-header">
@@ -469,7 +472,6 @@
 	}
 
 	.person-content {
-		max-width: var(--page-reading);
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;

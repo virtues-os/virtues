@@ -15,6 +15,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { TextAction } from '$lib';
 	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
@@ -110,6 +111,13 @@
 					? 'things'
 					: (routeSegment as Section)
 	);
+
+	// Each section of the room keeps its own width: the days' grid is full,
+	// the lists and articles are set to the reading measure. The overview
+	// (WikiFront) sets its own.
+	const width = usePageWidth(() => (section === 'overview' ? null : section === 'days' ? 'full' : 'reading'), {
+		part: () => section,
+	});
 
 	// The lifeline left the wiki for the Timeline, the rail's own room for a
 	// life laid out in time. Its old door lands there.
@@ -438,7 +446,7 @@
 
 </script>
 
-<div class="wiki-view">
+<div class="wiki-view" style:--page-width={width.css}>
 	<main class="content">
 		{#if section === 'overview'}
 			<WikiFront entities={findable} />
@@ -649,16 +657,16 @@
 		}
 	}
 
-	/* This room's own wraps use the page widths in themes.css: full for
-	   anything gridded, reading for text, on the shell's 3rem padding, so
-	   the column does not shift between the room's tabs or its neighbors. */
+	/* This room's own wraps take the section's width (`usePageWidth`), on
+	   the shell's 3rem padding, so the column does not shift between the
+	   room's tabs or its neighbors. */
 	.days-wrap {
-		max-width: var(--page-full);
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 	}
 	.list-wrap {
-		max-width: var(--page-reading);
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -712,7 +720,7 @@
 	}
 
 	.identity-wrap {
-		max-width: var(--page-reading);
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -726,7 +734,7 @@
 
 	/* Years: a plain index, set to the reading measure. */
 	.measure {
-		max-width: var(--page-reading);
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 		padding: 1.5rem 0;

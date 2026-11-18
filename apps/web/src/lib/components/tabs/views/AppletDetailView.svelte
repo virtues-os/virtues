@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Switch from '$lib/components/settings/Switch.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
@@ -476,6 +477,8 @@
 		}
 		contextMenu.show({ x: rect.left, y: rect.bottom + 4 }, items);
 	}
+
+	const width = usePageWidth(() => 'medium');
 </script>
 
 {#snippet headActions()}
@@ -561,7 +564,7 @@
 	{:else if err && !action}
 		<p class="state error-msg">{err}</p>
 	{:else if action}
-		<div class="measure">
+		<div style:max-width={width.css} class="measure">
 			{#if inInfo}
 				<div class="narrow">
 					<header class="head sub">
@@ -723,7 +726,6 @@
 		}
 	}
 	.measure {
-		max-width: var(--page-detail);
 		margin: 0 auto;
 		display: flex;
 		flex-direction: column;

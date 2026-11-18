@@ -10,6 +10,7 @@
 	and a swatch's colors are the hours you spend at that place.
 -->
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { onMount } from 'svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { WIKI_MODE } from '$lib/sidebar/modes';
@@ -33,6 +34,8 @@
 	}
 
 	let { entities }: { entities: Findable[] } = $props();
+
+	const width = usePageWidth(() => 'medium', { part: () => 'overview' });
 
 	const today = getLocalDateSlug();
 
@@ -143,7 +146,7 @@
 	}
 </script>
 
-<div class="front">
+<div style:max-width={width.css} class="front">
 	<h1>Wiki</h1>
 
 	<div class="find">
@@ -330,7 +333,6 @@
 
 <style>
 	.front {
-		max-width: 60rem;
 		margin: 0 auto;
 		padding-bottom: 2rem;
 	}

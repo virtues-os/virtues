@@ -285,13 +285,21 @@ such as a chip. A turn opens 48px below the last. `design-lint.sh` counts any
 padding, margin or gap in px that is not a multiple of 4 (`off-grid`), and
 allows two exceptions: 6px and 22px.
 
-**Page widths.** Three, in `themes.css`, set through `Page`'s `maxWidth`:
+**Page widths.** Three, in `themes.css`. A view declares the one it is
+designed for with `Page`'s `maxWidth` or, when it lays out its own column,
+`usePageWidth` (`stores/pageWidth.svelte.ts`), and sets the column's
+`max-width` from the result. The person reading can change it from the width
+button in the page bar. The choice is kept per kind of page on that device.
 
-| Token | Width | For |
-|---|---|---|
-| `--page-reading` | the reading measure | text and plain lists |
-| `--page-detail` | 60rem | a page with a side column |
-| `--page-full` | 72rem | grids and list pages |
+| Width | Token | Size | For |
+|---|---|---|---|
+| Reading | `--page-reading` | the reading measure | text and plain lists |
+| Medium | `--page-medium` | 60rem | a page with a side column |
+| Full | `--page-full` | the whole pane | grids, tables and list pages |
+
+Never cap a page column with a literal or a token directly: the page bar
+can't change a width it doesn't know about. A measure inside the column (a
+paragraph at 60ch, a dialog) is not the page's width and stays as it is.
 
 **A page has one measure, and its padding lives on the outer scroller.**
 Center the measure inside that padding, never pad from inside it, or two

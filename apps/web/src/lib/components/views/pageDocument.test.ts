@@ -189,20 +189,20 @@ describe('PageContent, in its source', () => {
 		expect(page).toMatch(/<MarkdownView \{pageId\} ydoc=\{treeDoc\.ydoc\} \/>/);
 		expect(page).toMatch(/onPrint=\{format === "tree" && canPrint \? printPage : undefined\}/);
 		expect(page).toMatch(/class="page-topbar"[^>]*data-print="hide"/);
-		expect(page).toMatch(/class:width-page=/);
+		expect(page).toMatch(/class:width-sheet=/);
 	});
 
 	it('the cover is as wide as the text in every width, the A4 sheet included', () => {
 		const cover = source('../pages/PageCoverImage.svelte');
-		const display = source('../../stores/pageDisplay.svelte.ts');
-		const modes = /export type WidthMode = ([^;]+);/.exec(display)![1].match(/"(\w+)"/g)!.map((m) => m.slice(1, -1));
-		expect(modes).toContain('page');
+		// The column widths come from one table, for the cover and the text alike.
+		expect(page).toMatch(/style:max-width=\{width\.width === "sheet" \? undefined : width\.css\}/);
+		expect(cover).toMatch(/style:max-width=\{width === "sheet" \? undefined : PAGE_WIDTH_CSS\[width\]\}/);
+		expect(page).toMatch(/width=\{width\.width\}/);
+		// The sheet is the one width the CSS sets, and both set it the same.
 		const widthOf = (css: string, selector: string) =>
 			new RegExp(`${selector.replace(/\./g, '\\.')} \\{[^}]*max-width: ([^;]+);`).exec(css)?.[1];
-		for (const mode of modes) {
-			expect(cover, mode).toMatch(new RegExp(`class:width-${mode}=\\{widthMode === "${mode}"\\}`));
-			expect(widthOf(cover, `.cover-image-wrapper.width-${mode}`), mode).toBe(widthOf(page, `.page-inner.width-${mode}`));
-		}
+		expect(widthOf(cover, '.cover-image-wrapper.width-sheet')).toBe('210mm');
+		expect(widthOf(page, '.page-inner.width-sheet')).toBe('210mm');
 	});
 
 	it('the history panel previews a block version with DocumentPreview and restores it on the server', () => {

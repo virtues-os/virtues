@@ -93,6 +93,8 @@
 		 */
 		article?: boolean;
 		editable: boolean;
+		/** The page is drawn as an A4 sheet (stores/pageWidth.svelte.ts). */
+		sheet?: boolean;
 		placeholder?: string;
 		/** The inline writer; without one, Ask AI is not offered. */
 		ai?: TreeAiDriver;
@@ -116,6 +118,7 @@
 		pageTitle,
 		article = false,
 		editable,
+		sheet = false,
 		placeholder = "Start writing, or press / for commands…",
 		ai,
 		onDocChange,
@@ -766,7 +769,7 @@
 	class="document-editor"
 	class:prose--article={pageDisplay.article}
 	class:prose--flat-headings={pageDisplay.headingMode === "flat"}
-	class:doc-page-view={pageDisplay.widthMode === "page"}
+	class:doc-page-view={sheet}
 	class:doc-veiled={veil.hiding}
 	style:--prose-family={pageDisplay.fontFamily}
 	style:--prose-size={pageDisplay.fontSize}

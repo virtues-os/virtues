@@ -10,6 +10,7 @@
 	the newest files across every folder.
 -->
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { onMount } from 'svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { STORAGE_MODE } from '$lib/sidebar/modes';
@@ -180,10 +181,12 @@
 			parts: parts.map((p) => ({ ...p, pct: (p.size / usage!.quota_bytes) * 100, text: bytes(p.size) })),
 		};
 	});
+
+	const width = usePageWidth(() => 'medium');
 </script>
 
 <div class="front-wrap">
-	<div class="front">
+	<div style:max-width={width.css} class="front">
 		<h1>Storage</h1>
 
 		<form class="find" onsubmit={(e) => e.preventDefault()}>
@@ -277,7 +280,6 @@
 	}
 
 	.front {
-		max-width: var(--page-detail);
 		margin: 0 auto;
 		padding-bottom: 2rem;
 	}

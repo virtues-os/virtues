@@ -51,7 +51,7 @@
 {/snippet}
 
 <div class="host" bind:this={host}>
-	<Page maxWidth="detail">
+	<Page maxWidth="medium">
 		{#if !toolbar.inToolbar}
 			<div class="controls">{@render themeControls()}</div>
 		{/if}

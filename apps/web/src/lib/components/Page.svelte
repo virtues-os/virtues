@@ -3,6 +3,7 @@
     import type { Snippet } from "svelte";
     import PageHeading from "./PageHeading.svelte";
     import { usePageActions } from "$lib/stores/paneActions.svelte";
+    import { usePageWidth, type PageWidth } from "$lib/stores/pageWidth.svelte";
 
     let {
         title,
@@ -18,14 +19,13 @@
         title?: string;
         description?: string;
         /**
-         * The page's width, one of the three in themes.css: `reading` for
-         * text and plain lists, `detail` for a page with a side column, `full`
-         * for tables and grids.
-         *
-         * This is chrome, chosen by the view. The *reader's* width preference
-         * is a different thing and lives in `stores/pageDisplay.svelte.ts`.
+         * The width the page is designed for (stores/pageWidth.svelte.ts):
+         * `reading` for text and plain lists, `medium` for a page with a side
+         * column, `full` for tables and grids. You can change it from the
+         * page bar. `none` is a page without a column, which has no width
+         * to change.
          */
-        maxWidth?: "none" | "reading" | "detail" | "full";
+        maxWidth?: "none" | PageWidth;
         padding?: "default" | "compact" | "none";
         scrollable?: boolean;
         class?: string;
@@ -73,17 +73,12 @@
     const headingActions = $derived(toolbar.inToolbar ? undefined : actions);
     const showHeading = $derived(!!headingTitle || !!description);
 
-    const maxWidthClass = $derived({
-        none: "",
-        reading: "max-w-[var(--page-reading)] mx-auto",
-        detail: "max-w-[var(--page-detail)] mx-auto",
-        full: "max-w-[var(--page-full)] mx-auto",
-    }[maxWidth]);
+    const width = usePageWidth(() => (maxWidth === "none" ? null : maxWidth));
 </script>
 
 <div class={twMerge("page-container h-full", paddingClass, scrollable && "overflow-y-auto", className)}>
-    {#if maxWidthClass}
-        <div class={maxWidthClass}>
+    {#if maxWidth !== "none"}
+        <div class="page-column" style:max-width={width.css}>
             {#if heading}
                 {@render heading()}
             {:else if title && showHeading}
@@ -100,3 +95,16 @@
         {@render children()}
     {/if}
 </div>
+
+<style>
+    .page-column {
+        margin-inline: auto;
+        transition: max-width var(--motion-hover-out, 0.2s) var(--ease-premium, ease-out);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .page-column {
+            transition: none;
+        }
+    }
+</style>

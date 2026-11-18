@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import { subjectHref } from "$lib/wiki/links";
 	import type { WikiPlaceApi } from "$lib/wiki/api";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
@@ -25,6 +26,8 @@
 	}
 
 	let { page }: Props = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	// `seen_count`/`first_seen`/`last_seen` are WIRE fields, counted live from
 	// `wiki_refs` — the columns of those names were dropped in migration 0025
@@ -106,7 +109,7 @@
 
 <div class="page-layout">
 	<article class="wiki-article">
-		<div class="page-content">
+		<div style:max-width={width.css} class="page-content">
 			<WikiCrumbs bar path={[{ label: "Places", route: "/wiki/places" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="page-header">
@@ -267,7 +270,6 @@
 	}
 
 	.page-content {
-		max-width: 48rem;
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;

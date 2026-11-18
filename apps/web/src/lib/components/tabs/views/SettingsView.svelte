@@ -39,6 +39,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
@@ -203,6 +204,10 @@
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
+
+	// The applets section lays out its own column. The other sections are
+	// SettingsPage's, which sets its own width.
+	const width = usePageWidth(() => (section === 'applets' ? 'full' : null));
 	const sub = $derived(raw.split('/')[1] ?? '');
 
 	// No section list sits beside these pages: the landing links to each,
@@ -248,10 +253,10 @@
 		{:else if section === 'shared'}
 			<SharedLinksView />
 		{:else if section === 'applets'}
-			<!-- Padding on the scroller, the 72rem measure inside it: the same
+			<!-- Padding on the scroller, the page's width inside it: the same
 			     box model as the Applets page in Home, so the two line up. -->
 			<div class="applets-settings">
-				<div class="measure">
+				<div class="measure" style:max-width={width.css}>
 					<ManageApplets {tab} />
 				</div>
 			</div>
@@ -307,7 +312,6 @@
 	}
 
 	.measure {
-		max-width: var(--page-full);
 		width: 100%;
 		margin: 0 auto;
 	}

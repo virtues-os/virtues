@@ -785,14 +785,13 @@
 	--reading-gutter: 1.5rem;
 }
 
-/* The three widths a page's content can have. Reading is the reading
-   column above, so a list lines up with the page it opens. Detail is a
-   page with a side column; its main column stays near reading width.
-   Full is for pages whose content is a table or a grid. `Page`'s
-   `maxWidth` presets use these, and a view that sets its own width uses
-   one of them too. */
+/* The three widths a page's content can have (stores/pageWidth.svelte.ts).
+   Reading is the reading column above, so a list lines up with the page it
+   opens. Medium fits a page with a side column, its main column near
+   reading width. Full is the whole pane inside the page's gutter. Each view
+   declares one, and you can change it from the page bar. */
 :root {
 	--page-reading: var(--reading-measure);
-	--page-detail: 60rem;
-	--page-full: 72rem;
+	--page-medium: 60rem;
+	--page-full: 100%;
 }

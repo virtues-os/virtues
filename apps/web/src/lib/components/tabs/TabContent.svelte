@@ -7,11 +7,17 @@
 	import Button from "$lib/components/Button.svelte";
 	import ActionToolbar from "./ActionToolbar.svelte";
 	import { provideTabId } from "$lib/stores/paneActions.svelte";
+	import { providePageKind, kindOf } from "$lib/stores/pageWidth.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	provideTabId(() => tab.id);
+	providePageKind({ tabId: () => tab.id, kind: () => kindOf(tab, isOne) });
+
+	// A tab shows one thing ('/person/person_abc') or a list ('/wiki').
+	// "/" is a new chat, which counts as one.
+	const isOne = $derived(tab.route === '/' || !!routeToEntityId(tab.route));
 
 	// Which view this tab wants, as a loader (see $lib/tabs/lazy.ts). Handles
 	// detail variants for entity namespaces.
@@ -28,10 +34,7 @@
 		}
 
 		// For all other types, use getComponent which handles list vs detail view
-		// Derive hasEntityId from route (e.g., '/person/person_abc' has entity, '/wiki' does not)
-		// Special case: "/" is a new chat (entityId: 'new' in registry), treat as having entity
-		const hasEntityId = tab.route === '/' || !!routeToEntityId(tab.route);
-		return getComponent(tab.type, hasEntityId);
+		return getComponent(tab.type, isOne);
 	});
 
 	// The resolved view. Eager views (chat, home) and any chunk that has

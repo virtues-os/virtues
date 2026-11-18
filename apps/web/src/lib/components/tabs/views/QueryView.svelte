@@ -7,6 +7,7 @@
 	so it opens from a link anywhere and after a reload.
 -->
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import type { Tab } from "$lib/tabs/types";
 	import type { QueryResult } from "$lib/types/Citation";
 	import Icon from "$lib/components/Icon.svelte";
@@ -21,6 +22,8 @@
 	import { parseToolRef } from "$lib/utils/refRoutes";
 
 	let { tab }: { tab: Tab } = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	interface Loaded {
 		result: QueryResult;
@@ -121,7 +124,7 @@
 {#snippet pieces(list: Piece[])}{#each list as piece, p (p)}{#if piece.marked}<mark>{piece.text}</mark>{:else}{piece.text}{/if}{/each}{/snippet}
 
 <div class="query-view">
-	<div class="inner">
+	<div style:max-width={width.css} class="inner">
 		{#if loading}
 			<div class="state">Loading the query…</div>
 		{:else if error}
@@ -174,7 +177,6 @@
 		overflow-y: auto;
 	}
 	.inner {
-		max-width: var(--page-reading);
 		margin: 0 auto;
 		padding: 3.5rem 2rem 6rem;
 	}

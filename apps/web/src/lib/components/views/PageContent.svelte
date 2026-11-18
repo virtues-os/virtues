@@ -44,6 +44,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { isUntitled, untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import type { TreeDocument } from "$lib/yjs";
 	import { cutServerVersion } from "$lib/yjs/versions";
 	import { canPrint, printAlone, printThis } from "$lib/document/print";
@@ -85,6 +86,11 @@
 	// when it docks there) is the end of the tab's action toolbar. The phone
 	// has no toolbar, so there it stays above the page.
 	const toolbar = usePageActions(() => (pageData ? topbar : null));
+
+	// A page opens in the reading column chat's messages use, so a page and a
+	// chat start their text at one edge when you switch tabs. The page bar
+	// changes it, and offers the A4 sheet the page prints on.
+	const width = usePageWidth(() => "reading", { sheet: true });
 
 	// A block page's state, as the action toolbar's status mark. The phone
 	// has no toolbar, and there PageStatusNote says it in the page's corner.
@@ -816,7 +822,7 @@
 			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
-		<div class="max-w-[var(--page-reading)] mx-auto p-4">
+		<div class="mx-auto p-4" style:max-width={width.css}>
 			<div
 				class="p-4 bg-error-subtle border border-error rounded-lg text-error"
 			>
@@ -852,7 +858,7 @@
 				{#if coverUrl}
 					<PageCoverImage
 						{coverUrl}
-						widthMode={pageDisplay.widthMode}
+						width={width.width}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;
@@ -864,10 +870,8 @@
 				<div
 					class="page-inner"
 					bind:clientWidth={columnWidth}
-					class:width-small={pageDisplay.widthMode === "small"}
-					class:width-medium={pageDisplay.widthMode === "medium"}
-					class:width-full={pageDisplay.widthMode === "full"}
-					class:width-page={pageDisplay.widthMode === "page"}
+					class:width-sheet={width.width === "sheet"}
+					style:max-width={width.width === "sheet" ? undefined : width.css}
 					class:prose--marks-inline={marksInline}
 				>
 					<!-- Header -->
@@ -986,6 +990,7 @@
 									pageTitle={title}
 									article={pageData?.kind === "article"}
 									editable={!treeDoc.readOnly && !refusedReason}
+									sheet={width.width === "sheet"}
 									ai={treeAiDriver}
 									findHost={topbarEl}
 									onFindOpen={(open) => (finding = open)}
@@ -1130,24 +1135,10 @@
 		transition: max-width 0.2s ease-out;
 	}
 
-	.page-inner.width-small {
-		max-width: 32rem; /* ~512px */
-	}
-
-	/* The reading column chat's messages use, so a page and a chat start
-	   their text at one edge when you switch tabs (themes.css). */
-	.page-inner.width-medium {
-		max-width: var(--reading-measure);
-	}
-
-	.page-inner.width-full {
-		max-width: 100%;
-	}
-
 	/* The A4 sheet, title and all: 210 mm wide with 20 mm margins, as it
 	   prints. The block editor's own sheet (`.doc-page-view`) folds into it,
 	   so the title is not left outside the page it heads. */
-	.page-inner.width-page {
+	.page-inner.width-sheet {
 		box-sizing: border-box;
 		max-width: 210mm;
 		min-height: 297mm;
@@ -1156,7 +1147,7 @@
 		background: var(--color-background);
 	}
 
-	.page-inner.width-page :global(.doc-page-view) {
+	.page-inner.width-sheet :global(.doc-page-view) {
 		width: auto;
 		min-height: 0;
 		padding: 0;
@@ -1164,7 +1155,7 @@
 	}
 
 	@media (max-width: 230mm) {
-		.page-inner.width-page {
+		.page-inner.width-sheet {
 			padding: 16px;
 			border: none;
 			min-height: 0;
@@ -1366,7 +1357,7 @@
 		}
 
 		/* Paper has its own margins (`@page`, document.css). */
-		.page-inner.width-page {
+		.page-inner.width-sheet {
 			max-width: none;
 			min-height: 0;
 			padding: 0;
