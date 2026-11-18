@@ -1137,6 +1137,39 @@ export interface AttentionItem {
 	route: string;
 }
 
+/** What your server noticed about your tasks and threads (`api/notes.rs`).
+ *  Worked out on each read, so a note goes once its condition clears. */
+export interface Note {
+	key: string;
+	/** `clash` | `unplanned`. */
+	kind: string;
+	/** The note, in one sentence. */
+	text: string;
+	/** What it is about (`/thread/…`, `/task/…`); the first is the one it is listed under. */
+	subjects: string[];
+	/** The first subject's name. */
+	about: string;
+	/** When it matters, in words. */
+	when: string;
+	/** The one thing to do about it, and where. */
+	action: string;
+	action_route: string;
+}
+
+export function getNotes(): Promise<Note[]> {
+	return apiGet<Note[]>('/notes');
+}
+
+/** Not now: set a note aside until its condition changes. */
+export function dismissNote(key: string): Promise<void> {
+	return apiSend<void>('POST', `/notes/${encodeURIComponent(key)}/dismiss`);
+}
+
+/** Bring a set-aside note back. */
+export function restoreNote(key: string): Promise<void> {
+	return apiSend<void>('DELETE', `/notes/${encodeURIComponent(key)}/dismiss`);
+}
+
 export async function getAttention(): Promise<AttentionItem[]> {
 	return apiGet<AttentionItem[]>('/attention');
 }
@@ -1336,6 +1369,8 @@ export interface Profile {
 	theme?: string | null;
 	update_check_hour?: number | null;
 	home_timezone?: string | null;
+	/** The units the owner reads in (Settings · Profile). */
+	units?: 'us' | 'metric';
 	home_place_id?: string | null;
 	/** Which wiki_people row is the owner (migration 0080). */
 	self_person_id?: string | null;
