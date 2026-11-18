@@ -268,6 +268,16 @@ pub async fn execute(
         "itinerary" => shape_itinerary(drawn.max_rows, &columns, rows)?,
         "route" => shape_route(drawn.max_rows, &columns, rows)?,
         "density" => shape_density(drawn.max_rows, &columns, rows)?,
+        // A query with a row per day of each period is the commonest miss,
+        // and the generic advice to aggregate sends the retry the wrong way.
+        "cumulative" if rows.len() > drawn.max_rows => {
+            return Err(invalid(format!(
+                "a cumulative comparison has one row per step (at most {}), with this period's and the last \
+                 period's running totals side by side as two columns; this query returns {} rows",
+                drawn.max_rows,
+                rows.len()
+            )))
+        }
         _ => shape(kind, drawn.max_rows, &columns, rows)?,
     };
     // A plain map or timeline carries no mark, as before the others existed.
@@ -2187,6 +2197,18 @@ mod tests {
         assert!(err(shape_series("Average", &cols(&["Night", "Hours", "figure"]), one)).contains("at least two rows"));
         let two = vec![json!({ "Night": "2026-09-01", "Hours": 7 }), json!({ "Night": "2026-09-02", "Hours": 7 })];
         assert!(err(shape_series("Average", &cols(&["Night", "Hours"]), two)).contains("and figure"));
+    }
+
+    #[sqlx::test]
+    async fn a_cumulative_comparison_with_a_row_per_day_is_told_to_put_the_periods_side_by_side(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(std::sync::Arc::new(pool));
+        let long = "SELECT g AS step, g * 10 AS \"This month\", g * 9 AS \"Last month\" FROM generate_series(1, 40) g";
+        let Err(ToolError::InvalidParameters(m)) =
+            execute(&tool, json!({ "chart": "cumulative", "sql": long, "step_kind": "day" }), None, None).await
+        else {
+            panic!()
+        };
+        assert!(m.contains("side by side"), "{m}");
     }
 
     #[sqlx::test]

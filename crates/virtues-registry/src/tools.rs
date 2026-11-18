@@ -405,7 +405,7 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. Before your first show call in a chat, load the charts skill with use_applet: it says which chart fits the question and the columns each reads. Give `chart` and `sql`, one read-only SELECT over the tables sql_query reads; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading, once or twice a reply at most. Make one call for each figure: if show refuses it, call once more with the fix the refusal names, and never draw a figure again once it has drawn. If show is closed for the turn, say in words what the figure would have shown, and don't draw it another way, such as with shell. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. Before your first show call in a chat, load the charts skill (use_applet): which chart fits, and the columns each reads. Give `chart` and `sql`, one read-only SELECT; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading or the owner asks to see something, once or twice a reply at most. Make one call per figure: if show refuses it, call once more with the fix the refusal names; never draw a figure again once it has drawn. If show is closed for the turn, say in words what it would have shown; don't draw it another way, such as with shell. One number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -416,7 +416,7 @@ fn show_tool() -> ToolConfig {
                         crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")
                     )
                 },
-                "title": { "type": "string", "description": "A few words naming what is shown" },
+                "title": { "type": "string", "description": "A few words for what is shown" },
                 "sql": { "type": "string", "description": "One read-only SELECT, its columns named as the charts skill says" },
                 "finding": { "type": "string", "description": "scatter; see the charts skill" },
                 "split_at": { "type": "string", "description": "interrupted; see the charts skill" },
@@ -429,7 +429,7 @@ fn show_tool() -> ToolConfig {
                 "series": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
-                    "description": "in_sentence and spark; see the charts skill"
+                    "description": "in_sentence and spark: rows behind a figure in your sentence, for the owner to open; see the charts skill"
                 },
                 "options": {
                     "type": "array",
