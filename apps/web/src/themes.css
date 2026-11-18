@@ -195,7 +195,7 @@
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent));
 	--lq-filter-regular: blur(20px) saturate(1.25);
-	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 14px);
+	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0) 14px);
 	/* The saturation lift is kept small: over the warm desk a larger one
 	   pulls the white of a selected tab toward cream. */
 	--lq-filter: blur(12px) saturate(1.15);
@@ -204,18 +204,18 @@
 	   thickness. The edge itself is a 1.2px ring lit from the top left and
 	   shaded at the bottom right. */
 	--lq-rim:
-		inset 0 1px 0 rgb(255 255 255 / 0.6),
+		inset 0 1px 0 rgb(255 255 255 / 0.4),
 		inset 0 0 0 1px rgb(255 255 255 / 0.25);
 	--lq-specular: linear-gradient(160deg,
-		rgb(255 255 255 / 0.7) 0%,
-		rgb(255 255 255 / 0.3) 20%,
-		rgb(255 255 255 / 0.05) 45%,
-		rgb(26 32 48 / 0.04) 75%,
-		rgb(26 32 48 / 0.08) 100%);
+		rgb(255 255 255 / 0.5) 0%,
+		rgb(255 255 255 / 0.25) 20%,
+		rgb(255 255 255 / 0.1) 45%,
+		rgb(26 32 48 / 0.02) 75%,
+		rgb(26 32 48 / 0.04) 100%);
 	/* A faint outline and a contact shadow, kept low so the glass sits
 	   nearly flat on the desk. A deeper drop makes it look like a card. */
-	--lq-lift: 0 0 0 0.5px rgb(26 32 48 / 0.07), 0 1px 2px rgb(26 32 48 / 0.04), 0 10px 24px -16px rgb(26 32 48 / 0.08);
-	--lq-lift-selected: 0 0 0 0.5px rgb(26 32 48 / 0.1), 0 1px 2px rgb(26 32 48 / 0.06);
+	--lq-lift: 0 0 0 0.5px rgb(26 32 48 / 0.07), 0 1px 2px rgb(26 32 48 / 0.04), 0 10px 24px -16px rgb(26 32 48 / 0.04);
+	--lq-lift-selected: 0 0 0 0.5px rgb(26 32 48 / 0.1), 0 1px 2px rgb(26 32 48 / 0.03);
 	/* Glass you can press brightens under the pointer: a wash across the
 	   whole pane, and a glint of light where the pointer is (app.css). */
 	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.16);
@@ -747,17 +747,17 @@
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent));
 	--lq-filter-regular: blur(20px) saturate(1.15) brightness(0.9);
-	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.03), rgb(255 255 255 / 0) 16px);
+	--lq-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.015), rgb(255 255 255 / 0) 16px);
 	--lq-filter: blur(12px) saturate(1.15) brightness(0.92);
 	--lq-rim: inset 0 0 0 transparent;
 	--lq-specular: linear-gradient(135deg,
-		rgb(255 255 255 / 0.14) 0%,
-		rgb(255 255 255 / 0.06) 22%,
-		rgb(255 255 255 / 0.02) 50%,
+		rgb(255 255 255 / 0.1) 0%,
+		rgb(255 255 255 / 0.05) 22%,
+		rgb(255 255 255 / 0.03) 50%,
 		rgb(255 255 255 / 0.04) 78%,
-		rgb(255 255 255 / 0.1) 100%);
-	--lq-lift: 0 0 0 0.5px rgb(0 0 0 / 0.4), 0 6px 18px -12px rgb(0 0 0 / 0.35);
-	--lq-lift-selected: 0 0 0 0.5px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.2);
+		rgb(255 255 255 / 0.07) 100%);
+	--lq-lift: 0 0 0 0.5px rgb(0 0 0 / 0.4), 0 6px 18px -12px rgb(0 0 0 / 0.2);
+	--lq-lift-selected: 0 0 0 0.5px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
 	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 10%, transparent);
 	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.05);
 	--lq-glint: rgb(255 255 255 / 0.1);
