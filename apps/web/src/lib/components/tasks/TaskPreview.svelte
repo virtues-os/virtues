@@ -43,7 +43,7 @@
 <div class="ph">
 	<span class="kind">{isRequest(task) ? 'Request' : 'Task'}</span>
 	{#if !isRequest(task)}
-		<Button variant="secondary" size="sm" onclick={() => toggleTaskDone(task)}>
+		<Button variant="secondary" onclick={() => toggleTaskDone(task)}>
 			{isClosed(task) ? 'Mark not done' : 'Mark done'}
 		</Button>
 	{/if}
@@ -82,7 +82,7 @@
 	<div class="buttons">
 		<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
 			{#snippet trigger({ toggle })}
-				<Button variant="secondary" size="sm" onclick={toggle}>Change date</Button>
+				<Button variant="secondary" onclick={toggle}>Change date</Button>
 			{/snippet}
 			{#snippet children({ close })}
 				<DuePicker

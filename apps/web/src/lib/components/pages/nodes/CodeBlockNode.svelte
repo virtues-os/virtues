@@ -114,7 +114,7 @@
 	{:else}
 		<span class="prose-code-lang">{languageLabel(language) || "Plain text"}</span>
 	{/if}
-	<IconButton icon={copied ? "mynaui:check" : "mynaui:copy"} label="Copy code" size="sm" onclick={copy} />
+	<IconButton icon={copied ? "mynaui:check" : "mynaui:copy"} label="Copy code" size="nested" onclick={copy} />
 </div>
 
 <style>

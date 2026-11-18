@@ -153,8 +153,8 @@
 
 <Page title="Applets" maxWidth="reading">
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
-		<Button variant="primary" size="sm" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New applet</Button>
+		<Button variant="secondary" onclick={openManage}>Manage applets</Button>
+		<Button variant="primary" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New applet</Button>
 	{/snippet}
 
 	{#if err}

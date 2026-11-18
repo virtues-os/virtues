@@ -148,7 +148,7 @@
                     <IconButton
                         icon="mynaui:info-circle"
                         label="Why read-only?"
-                        size="sm"
+                        size="nested"
                     />
                     <div class="info-popover">
                         <div class="info-title">You can read these tables, not change them</div>
@@ -184,7 +184,6 @@
                         </div>
                         <Button
                             variant="ghost"
-                            size="sm"
                             icon="mynaui:play-solid"
                             {loading}
                             onclick={runQuery}>Run</Button

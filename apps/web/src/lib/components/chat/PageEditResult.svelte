@@ -67,7 +67,6 @@
 		{#if config.showOpenButton && pageId}
 			<Button
 				variant="ghost"
-				size="sm"
 				icon="mynaui:external-link"
 				onclick={handleOpenPage}
 			>

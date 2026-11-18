@@ -483,7 +483,7 @@
 		{#if chatId}
 			<!-- A word with the icon: a speech bubble alone didn't say you
 			     can tell it things or change it there. -->
-			<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
+			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
 		<IconButton
 			icon="mynaui:info-circle"
@@ -493,7 +493,7 @@
 		/>
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
 		{#if action.archived_at}
-			<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+			<Button variant="secondary" onclick={() => setEnabled(true)} disabled={saving}>
 				Turn back on
 			</Button>
 		{:else}
@@ -517,7 +517,7 @@
 			<span class="failed">{problemText}</span>
 		</span>
 		{#if fix}
-			<Button variant="primary" size="sm" onclick={openFix}>{fix.label}</Button>
+			<Button variant="primary" onclick={openFix}>{fix.label}</Button>
 		{:else if canRunNow}
 			<TextAction onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
 		{/if}

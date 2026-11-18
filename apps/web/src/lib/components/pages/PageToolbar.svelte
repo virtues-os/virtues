@@ -221,14 +221,12 @@
 							<div class="delete-confirm-actions">
 								<Button
 									variant="secondary"
-									size="sm"
 									onclick={() => (showDeleteConfirm = false)}
 								>
 									Cancel
 								</Button>
 								<Button
 									variant="danger"
-									size="sm"
 									onclick={() => {
 										onDelete();
 										close();

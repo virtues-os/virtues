@@ -267,6 +267,13 @@
 	--text-small: 13px;
 	--text-caption: 12px;
 
+	/* Control heights (design.md, "Controls"): every box you click is 34px,
+	   a control inside another control is 20px, and a control made for a
+	   thumb is 44px. */
+	--control-h: 34px;
+	--control-nested-h: 20px;
+	--control-touch-h: 44px;
+
 	/* Named breakpoint for the app's dominant hand-written media query (900px),
 	   giving a `nav:` responsive variant. Deliberately NOT redefining --breakpoint-lg
 	   (that would silently move every existing `lg:` utility from 1024px). */
@@ -520,7 +527,7 @@
 	   (RAIL_GLASS_PX in sidebarState), so its glyphs have room around
 	   them. */
 	--chrome-row-h: 54px;
-	--chrome-tab-h: 34px;
+	--chrome-tab-h: var(--control-h);
 	--rail-w: 44px;
 	/* Where the header's controls start: the air above a control. */
 	--chrome-control-top: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2);

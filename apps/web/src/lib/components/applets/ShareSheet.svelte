@@ -360,18 +360,18 @@
 							</div>
 							<div class="link-actions">
 								{#if l.link}
-									<Button size="sm" variant="secondary" icon="mynaui:copy" onclick={() => copy(l.link!)}>
+									<Button variant="secondary" icon="mynaui:copy" onclick={() => copy(l.link!)}>
 										{copied === l.link ? 'Copied' : 'Copy link'}
 									</Button>
 								{/if}
-								<Button size="sm" variant="ghost" disabled={busy} onclick={() => update(l.id)}>Update to this version</Button>
+								<Button variant="ghost" disabled={busy} onclick={() => update(l.id)}>Update to this version</Button>
 								{#if confirmRevoke === l.id}
-									<Button size="sm" variant="danger" disabled={busy} onclick={() => revoke(l.id)}>
+									<Button variant="danger" disabled={busy} onclick={() => revoke(l.id)}>
 										Turn off this link for everyone
 									</Button>
-									<Button size="sm" variant="ghost" onclick={() => (confirmRevoke = null)}>Keep it</Button>
+									<Button variant="ghost" onclick={() => (confirmRevoke = null)}>Keep it</Button>
 								{:else}
-									<Button size="sm" variant="ghost" onclick={() => (confirmRevoke = l.id)}>Revoke</Button>
+									<Button variant="ghost" onclick={() => (confirmRevoke = l.id)}>Revoke</Button>
 								{/if}
 							</div>
 						</div>

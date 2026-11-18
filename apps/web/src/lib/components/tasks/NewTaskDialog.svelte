@@ -191,8 +191,8 @@
 				Create more
 			</label>
 			<span class="hint">{createKeys}</span>
-			<Button variant="ghost" size="sm" onclick={() => newTaskDialog.close()}>Cancel</Button>
-			<Button variant="primary" size="sm" loading={saving} disabled={!draft.title.trim()} onclick={create}>
+			<Button variant="ghost" onclick={() => newTaskDialog.close()}>Cancel</Button>
+			<Button variant="primary" loading={saving} disabled={!draft.title.trim()} onclick={create}>
 				Create task
 			</Button>
 		</div>

@@ -100,7 +100,7 @@
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 		<div>
-			<Button variant="secondary" size="sm" loading={saving} onclick={retry}>
+			<Button variant="secondary" loading={saving} onclick={retry}>
 				Try again
 			</Button>
 		</div>

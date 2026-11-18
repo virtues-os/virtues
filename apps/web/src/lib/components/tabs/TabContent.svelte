@@ -87,8 +87,8 @@
 				<span class="title">This view didn't load</span>
 				<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
 				<div class="actions">
-					<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
-					<Button size="sm" onclick={() => reloadApp()}>Reload the app</Button>
+					<Button variant="secondary" onclick={() => (attempt += 1)}>Try again</Button>
+					<Button onclick={() => reloadApp()}>Reload the app</Button>
 				</div>
 			</div>
 		{:else if !tabRegistry[tab.type]}

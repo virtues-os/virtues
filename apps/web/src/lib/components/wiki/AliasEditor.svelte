@@ -106,7 +106,7 @@
 			<IconButton
 				icon="mynaui:x"
 				label="Remove alias {alias}"
-				size="xs"
+				size="nested"
 				disabled={saving}
 				onclick={() => remove(alias)}
 			/>

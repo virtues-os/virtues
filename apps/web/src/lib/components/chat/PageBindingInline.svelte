@@ -139,7 +139,7 @@
 			{/if}
 		{:else if entityId}
 			<!-- Binding mode: Open & Edit -->
-			<Button variant="primary" size="sm" onclick={handleBind}>Open & Edit</Button>
+			<Button variant="primary" onclick={handleBind}>Open & Edit</Button>
 		{/if}
 	</div>
 </div>

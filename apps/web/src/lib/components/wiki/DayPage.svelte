@@ -1402,7 +1402,7 @@
 								<div class="section-header-row">
 									<h2 class="section-title">Event timeline</h2>
 									<div class="section-actions">
-										<Button variant="ghost" size="sm" onclick={() => timelineRef?.toggleAll()}>
+										<Button variant="ghost" onclick={() => timelineRef?.toggleAll()}>
 											{timelineRef?.allExpanded ? "Collapse all" : "Expand all"}
 										</Button>
 									</div>

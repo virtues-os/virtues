@@ -178,7 +178,7 @@
 						<IconButton
 							icon="mynaui:eye"
 							label={`Show ${k.name}`}
-							size="sm"
+							size="nested"
 							onclick={(e) => {
 								e.stopPropagation();
 								show(k);
@@ -188,7 +188,7 @@
 					<IconButton
 						icon="mynaui:edit"
 						label={k.is_set ? `Replace ${k.name}` : `Set ${k.name}`}
-						size="sm"
+						size="nested"
 						onclick={(e) => {
 							e.stopPropagation();
 							startReplace(k);
@@ -198,7 +198,7 @@
 						<IconButton
 							icon="mynaui:trash"
 							label={`Remove ${k.name}`}
-							size="sm"
+							size="nested"
 							onclick={(e) => {
 								e.stopPropagation();
 								removing = k;

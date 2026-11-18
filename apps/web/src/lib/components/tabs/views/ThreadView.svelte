@@ -529,7 +529,6 @@
 						<IconButton
 							icon="mynaui:arrow-up"
 							label="Ask, grounded in this thread"
-							size="sm"
 							type="submit"
 							disabled={!askDraft.trim()}
 						/>
@@ -700,9 +699,9 @@
 
 				<div class="ends">
 					{#if archived}
-						<Button variant="secondary" size="sm" onclick={() => reopenProject(detail)}>Reopen</Button>
+						<Button variant="secondary" onclick={() => reopenProject(detail)}>Reopen</Button>
 					{:else}
-						<Button variant="secondary" size="sm" onclick={() => endProject(detail, 'finished')}>Finish the thread</Button>
+						<Button variant="secondary" onclick={() => endProject(detail, 'finished')}>Finish the thread</Button>
 						<TextAction onclick={() => endProject(detail, 'dropped')}>Drop it</TextAction>
 					{/if}
 				</div>

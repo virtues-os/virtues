@@ -7,8 +7,6 @@
 	let labelInput = $state<HTMLInputElement | null>(null);
 	let hrefInput = $state<HTMLInputElement | null>(null);
 
-	/** On touch the panel's buttons are a thumb's 44pt (design.md, "Primitives"): `lg` is 48px, `sm` 32px. */
-	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	// A new link (⌘K on words) has its words and needs an address: the focus
 	// goes there, so a pasted URL lands in it, not over the words. An existing
@@ -65,8 +63,8 @@
 	</label>
 
 	<div class="actions">
-		<Button variant="secondary" size={touch ? "lg" : "sm"} onclick={() => linkEditor.hide()}>Cancel</Button>
-		<Button variant="primary" size={touch ? "lg" : "sm"} onclick={() => linkEditor.save()}>Save</Button>
+		<Button variant="secondary" onclick={() => linkEditor.hide()}>Cancel</Button>
+		<Button variant="primary" onclick={() => linkEditor.save()}>Save</Button>
 	</div>
 </div>
 

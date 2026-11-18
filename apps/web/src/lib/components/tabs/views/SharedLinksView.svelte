@@ -154,7 +154,7 @@
 						<IconButton
 							icon={copied === p.id ? 'mynaui:check' : 'mynaui:copy'}
 							label={copied === p.id ? 'Copied' : `Copy the link to ${p.title}`}
-							size="sm"
+							size="nested"
 							onclick={(e) => {
 								e.stopPropagation();
 								copy(p);
@@ -164,7 +164,7 @@
 					<IconButton
 						icon="mynaui:unlink"
 						label={`Turn off the link to ${p.title}`}
-						size="sm"
+						size="nested"
 						onclick={(e) => {
 							e.stopPropagation();
 							revoking = p;

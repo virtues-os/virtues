@@ -184,7 +184,7 @@
 		{/snippet}
 	</Popover>
 	{#if active && removable}
-		<IconButton icon="mynaui:x" label="Remove filter" size="xs" onclick={onClear} />
+		<IconButton icon="mynaui:x" label="Remove filter" size="nested" onclick={onClear} />
 	{/if}
 </span>
 

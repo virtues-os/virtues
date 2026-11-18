@@ -214,7 +214,7 @@
 	{:else if loadFailed}
 		<p class="note-error" role="alert">Your server couldn't load {name}'s memory.</p>
 		<div>
-			<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else if notes.length === 0}
 		<p class="empty">Nothing yet. What {name} decides to keep from your chats appears here.</p>
@@ -229,7 +229,7 @@
 					{#if removing[m.id]}
 						<div class="note-removed">
 							<p class="note-status" role="status">Removed.</p>
-							<Button variant="ghost" size="sm" onclick={() => undo(m.id)}>Undo</Button>
+							<Button variant="ghost" onclick={() => undo(m.id)}>Undo</Button>
 						</div>
 					{:else if drafts[m.id] !== undefined}
 						<label class="sr-only" for={fieldId(m.id)}>Note</label>
@@ -253,13 +253,13 @@
 							<IconButton
 								icon="mynaui:edit"
 								label="Edit note"
-								size="sm"
+								size="nested"
 								onclick={() => startEdit(m)}
 							/>
 							<IconButton
 								icon="mynaui:x"
 								label="Remove note"
-								size="sm"
+								size="nested"
 								onclick={() => remove(m)}
 							/>
 						</div>

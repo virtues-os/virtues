@@ -273,10 +273,10 @@
 							this page, and {other.name}'s page goes away. You can't undo this.
 						</p>
 						<div class="same-actions">
-							<Button variant="primary" size="sm" onclick={() => confirmMerge(other)} loading={merging}>
+							<Button variant="primary" onclick={() => confirmMerge(other)} loading={merging}>
 								Merge into {page.name}
 							</Button>
-							<Button variant="ghost" size="sm" onclick={() => (confirming = null)} disabled={merging}>
+							<Button variant="ghost" onclick={() => (confirming = null)} disabled={merging}>
 								Cancel
 							</Button>
 						</div>
@@ -305,7 +305,7 @@
 							if (e.key === "Escape") bondEditing = false;
 						}}
 					/>
-					<Button variant="secondary" size="sm" onclick={saveBond} loading={bondSaving}>
+					<Button variant="secondary" onclick={saveBond} loading={bondSaving}>
 						Save
 					</Button>
 				{:else if bond}

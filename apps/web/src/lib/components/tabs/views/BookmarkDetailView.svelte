@@ -168,7 +168,7 @@
 					<span>Saved</span>
 				{/if}
 				{#if dirty && !savingNote}
-					<Button variant="secondary" size="sm" onclick={saveNote}
+					<Button variant="secondary" onclick={saveNote}
 						>Save note</Button
 					>
 				{/if}

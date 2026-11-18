@@ -87,7 +87,7 @@
 		<p class="label">Changed lately</p>
 		<div class="failed">
 			<span>Your server couldn't load what changed lately.</span>
-			<Button variant="ghost" size="sm" onclick={load}>Try again</Button>
+			<Button variant="ghost" onclick={load}>Try again</Button>
 		</div>
 	</div>
 {:else if lately}

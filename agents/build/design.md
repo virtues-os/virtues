@@ -270,6 +270,26 @@ pages that claim the same width start their text at different x. When a
 layout responds to width, use a container query, not a media query: in a
 split the pane runs out of room, not the window.
 
+### Controls
+
+Every box you click is one of three heights, from `themes.css`:
+
+| Token | Height | For |
+|---|---|---|
+| `--control-h` | 34px | every control: a Button, an IconButton, a field, a select, a tab, the header's glass buttons |
+| `--control-nested-h` | 20px | a control inside a card, a row or a field: a tab's ×, a row's ⋯, Copy code |
+| `--control-touch-h` | 44px | a control on a touch screen |
+
+Under `(pointer: coarse)` a Button, a field and a select grow to 44px
+themselves. A field's text grows to 16px there too, because iOS zooms the
+page into any field set smaller. An IconButton chooses its size
+(`size="nested"`, `size="touch"`), since a nested one stays small and takes a
+44px hit area around it instead. Sidebar rows are 32px with 2px between
+them, so a row lands every 34px.
+
+```specimen Controls
+```
+
 ### Radius
 
 | Token | Size | Used by |
@@ -613,11 +633,11 @@ gap is open work.
 
 | Primitive | Job | Today | Decided |
 |---|---|---|---|
-| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `danger` destroys something and is never also primary; it is red ink and an edge at rest and fills only under the pointer, so it never looks like the primary. | `--radius-md`; 32, 40, 48px. 73 files, beside about 485 hand-styled `<button>`s. | One control height, 34px. |
-| `IconButton` | A button with no words. `label` is required and feeds `aria-label` and `title`. | 20, 24, 28, 44px; ghost, secondary, danger. 35 files. | 20px nested, 34px control, 44px touch. |
+| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `danger` destroys something and is never also primary; it is red ink and an edge at rest and fills only under the pointer, so it never looks like the primary. | `--radius-md`; 34px, 44px on touch. 73 files, beside about 485 hand-styled `<button>`s. | Kept. |
+| `IconButton` | A button with no words. `label` is required and feeds `aria-label` and `title`. | `nested` 20px, `control` 34px (the default), `touch` 44px; ghost, secondary, danger. 35 files. | Kept. |
 | `TextAction` | A button with no box: a quiet link in `--color-primary`. `inline` keeps `font: inherit` mid-sentence. | 33 files. | Kept. |
-| `Input`, `Textarea` | Text fields with label, help and validation. | 12 and 3 files, beside about 100 raw fields. | Input at 34px. |
-| `Switch`, `Choice` | A toggle and a select. | Live under `settings/`. | Promote to `lib/components`. |
+| `Input`, `Textarea` | Text fields with label, help and validation. | 34px, 44px on touch; 14px text, 16px on touch. 12 and 3 files, beside about 100 raw fields. | Kept; the raw fields move onto them. |
+| `Switch`, `Choice` | A toggle and a select. | Live under `settings/`. Choice is 34px on the field edge. | Promote to `lib/components`. |
 | Checkbox | A box you tick. | None: `TaskCheck`, `TaskCard` and `ReviewAsk` each build `role=checkbox`, beside about 10 native ones. | Add one. |
 | Segmented control | Two to five exclusive choices in a row. | Six separate builds (ContextViewPanel, DayPage, TimelineScrubber, DisplaySettingsPopover, IconPicker, ThreadsView). | Add one. |
 | Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, `timeline/Pill`, and `.chip` in 13 files. | One Chip. |

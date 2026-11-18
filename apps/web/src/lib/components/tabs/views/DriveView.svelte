@@ -528,20 +528,17 @@
 	<div class="flex items-center gap-2">
 		<Button
 			variant="ghost"
-			size="sm"
 			icon="mynaui:trash"
 			onclick={navigateToTrash}>Trash</Button
 		>
 		<Button
 			variant="ghost"
-			size="sm"
 			icon="mynaui:folder-plus"
 			onclick={() => (showNewFolderModal = true)}
 			>New folder</Button
 		>
 		<Button
 			variant="primary"
-			size="sm"
 			icon="mynaui:upload"
 			disabled={uploading}
 			onclick={() => fileInput?.click()}>Upload</Button
@@ -784,7 +781,7 @@
 							<IconButton
 								icon="mynaui:dots-vertical"
 								label="Actions for {file.filename}"
-								size="sm"
+								size="nested"
 								haspopup="menu"
 								onclick={(e) => {
 									e.stopPropagation();
@@ -838,14 +835,12 @@
 	{#snippet footer()}
 		<Button
 			variant="secondary"
-			size="sm"
 			onclick={() => {
 				showNewFolderModal = false;
 				newFolderName = "";
 			}}>Cancel</Button
 		>
 		<Button
-			size="sm"
 			loading={creatingFolder}
 			disabled={!newFolderName.trim()}
 			onclick={handleCreateFolder}>Create</Button

@@ -229,7 +229,7 @@
 >
 	{#snippet actions()}
 		{#if rows.length > 0}
-			<Button variant="danger" size="sm" icon="mynaui:trash" disabled={busy} onclick={emptyAll}>
+			<Button variant="danger" icon="mynaui:trash" disabled={busy} onclick={emptyAll}>
 				Empty
 			</Button>
 		{/if}
@@ -259,7 +259,7 @@
 			<IconButton
 				icon="mynaui:undo"
 				label={`Restore ${row.title}`}
-				size="sm"
+				size="nested"
 				disabled={busy}
 				onclick={(e) => {
 					e.stopPropagation();
@@ -269,7 +269,7 @@
 			<IconButton
 				icon="mynaui:trash"
 				label={`Delete ${row.title} forever`}
-				size="sm"
+				size="nested"
 				variant="danger"
 				disabled={busy}
 				onclick={(e) => {

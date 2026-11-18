@@ -358,11 +358,14 @@
 		border-radius: var(--radius-lg);
 	}
 
+	/* Its first line sits where an Input's text sits (design.md, "Controls"):
+	   a 21px line in 6px of padding fills one 34px control. On a touch screen
+	   the text is 16px, below which iOS zooms the page into the field. */
 	.textarea-field {
 		width: 100%;
-		padding: 10px 14px;
+		padding: 6px 12px;
 		font-family: var(--font-sans);
-		font-size: 15px;
+		font-size: var(--text-label);
 		line-height: 1.5;
 		color: var(--color-foreground);
 		background: var(--color-surface);
@@ -598,5 +601,11 @@
 
 	.textarea-wrapper.focused .focus-ring {
 		opacity: 1;
+	}
+
+	@media (pointer: coarse) {
+		.textarea-field {
+			font-size: 16px;
+		}
 	}
 </style>

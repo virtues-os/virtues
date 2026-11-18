@@ -248,7 +248,7 @@
 	{#if phase === 'error'}
 		<p class="field-error">Your server couldn't load the rules.</p>
 		<div>
-			<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else}
 		{#if rows.length}
@@ -258,7 +258,7 @@
 						{#if row.removing}
 							<span class="removed" role="status">Removed.</span>
 							<span class="actions">
-								<Button variant="ghost" size="sm" onclick={() => undo(row)}>Undo</Button>
+								<Button variant="ghost" onclick={() => undo(row)}>Undo</Button>
 							</span>
 						{:else}
 							<span class="kind">{KIND_LABEL[row.kind]}</span>
@@ -278,13 +278,13 @@
 									<IconButton
 										icon="mynaui:edit"
 										label="Edit rule"
-										size="sm"
+										size="nested"
 										onclick={() => startEdit(row)}
 									/>
 									<IconButton
 										icon="mynaui:x"
 										label="Remove rule"
-										size="sm"
+										size="nested"
 										onclick={() => remove(row)}
 									/>
 								</span>
@@ -316,7 +316,7 @@
 					onkeydown={addKeydown}
 				/>
 			</label>
-			<Button variant="secondary" size="sm" disabled={!ready || !addText.trim()} onclick={add}>
+			<Button variant="secondary" disabled={!ready || !addText.trim()} onclick={add}>
 				Add rule
 			</Button>
 		</div>

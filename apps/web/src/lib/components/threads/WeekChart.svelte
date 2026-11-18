@@ -109,8 +109,8 @@
 <div class="week" role="grid" tabindex="-1" aria-label="This week by thread" onmouseleave={() => onHover(null)}>
 	<div class="head" role="row">
 		<span class="nav" role="columnheader">
-			<IconButton icon="mynaui:chevron-left" label="Previous week" size="sm" onclick={onPrev} />
-			<IconButton icon="mynaui:chevron-right" label="Next week" size="sm" onclick={onNext} />
+			<IconButton icon="mynaui:chevron-left" label="Previous week" onclick={onPrev} />
+			<IconButton icon="mynaui:chevron-right" label="Next week" onclick={onNext} />
 		</span>
 		{#each days as iso (iso)}
 			{@const l = dayLabel(iso)}

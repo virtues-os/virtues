@@ -153,7 +153,6 @@
 		<span>Versions</span>
 		<Button
 			variant="secondary"
-			size="sm"
 			icon="mynaui:plus"
 			loading={saving}
 			onclick={handleSave}
@@ -213,7 +212,6 @@
 					{#if tree}
 						<Button
 							variant="ghost"
-							size="sm"
 							loading={restoringId === version.id}
 							disabled={restoringId !== null}
 							onclick={() => handleRestore(version)}

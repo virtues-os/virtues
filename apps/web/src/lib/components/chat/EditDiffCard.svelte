@@ -105,7 +105,7 @@
 				<IconButton
 					icon="mynaui:external-link"
 					label="Open page"
-					size="sm"
+					size="nested"
 					onclick={handleViewPage}
 				/>
 			{/if}

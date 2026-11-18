@@ -109,7 +109,7 @@
 			<IconButton
 				icon="mynaui:sparkles"
 				label="Ask AI"
-				size={touch ? "touch" : "md"}
+				size={touch ? "touch" : "control"}
 				onclick={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -124,7 +124,7 @@
 				icon={btn.icon}
 				label={btn.label}
 				shortcut={btn.shortcut ? shortcuts.format(btn.shortcut) : undefined}
-				size={touch ? "touch" : "md"}
+				size={touch ? "touch" : "control"}
 				pressed={!!activeMarks[btn.mark]}
 				onclick={(e) => handleButtonClick(e, btn.mark)}
 			/>

@@ -77,7 +77,7 @@
 >
 	{#snippet actions()}
 		{#if source}
-			<Button variant="primary" size="sm" onclick={() => void connect()}>{connectLabel}</Button>
+			<Button variant="primary" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	{/snippet}
 

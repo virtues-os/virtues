@@ -67,9 +67,9 @@
 	{#snippet children()}
 		<div class="calendar" role="dialog" aria-label="Go to a day">
 			<div class="head">
-				<IconButton icon="mynaui:chevron-left" label="Previous month" size="sm" onclick={() => shift(-1)} />
+				<IconButton icon="mynaui:chevron-left" label="Previous month" size="nested" onclick={() => shift(-1)} />
 				<span class="month">{monthLabel}</span>
-				<IconButton icon="mynaui:chevron-right" label="Next month" size="sm" onclick={() => shift(1)} />
+				<IconButton icon="mynaui:chevron-right" label="Next month" size="nested" onclick={() => shift(1)} />
 			</div>
 			<div class="dow">
 				{#each ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as d (d)}<span>{d}</span>{/each}

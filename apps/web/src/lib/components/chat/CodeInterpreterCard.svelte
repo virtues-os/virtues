@@ -124,7 +124,7 @@
 						? "mynaui:check"
 						: "mynaui:copy"}
 					label={copySuccess ? "Copied" : "Copy output"}
-					size="sm"
+					size="nested"
 					onclick={handleCopy}
 				/>
 			{/if}

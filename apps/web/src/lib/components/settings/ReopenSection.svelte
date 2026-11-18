@@ -68,16 +68,16 @@
 				run virtues pair on your server and enter the code in the app.
 			</p>
 			<div class="row">
-				<Button variant="danger" size="sm" loading={busy} onclick={go}>
+				<Button variant="danger" loading={busy} onclick={go}>
 					Unpair everything
 				</Button>
-				<Button variant="ghost" size="sm" disabled={busy} onclick={() => (armed = false)}>
+				<Button variant="ghost" disabled={busy} onclick={() => (armed = false)}>
 					Cancel
 				</Button>
 			</div>
 		</div>
 	{:else}
-		<Button variant="secondary" size="sm" class="self-start" onclick={() => (armed = true)}>
+		<Button variant="secondary" class="self-start" onclick={() => (armed = true)}>
 			Put this server back into setup
 		</Button>
 	{/if}

@@ -209,7 +209,7 @@
 		</div>
 
 		<div class="head-actions">
-			<Button variant="secondary" size="sm" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
+			<Button variant="secondary" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
 				>New chat</Button
 			>
 			<Popover bind:open={overflowOpen} placement="bottom-end">
@@ -284,7 +284,7 @@
 			You {dropped ? 'dropped' : 'finished'} this thread on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
 			Its chats and items are all here. Reopen it to add more.
 		</span>
-		<Button variant="secondary" size="sm" onclick={() => reopenProject(project)}>Reopen</Button>
+		<Button variant="secondary" onclick={() => reopenProject(project)}>Reopen</Button>
 	</div>
 {/if}
 

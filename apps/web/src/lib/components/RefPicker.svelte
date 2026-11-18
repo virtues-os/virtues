@@ -333,13 +333,12 @@
 		<div class="footer">
 			{#if mode === 'multi' && selectedItems.length > 0}
 				<span class="selection-count">{selectedItems.length} selected</span>
-				<Button variant="primary" size="sm" onclick={handleConfirm}>
+				<Button variant="primary" onclick={handleConfirm}>
 					Add selected
 				</Button>
 			{:else if footerAction}
 				<Button
 					variant={footerAction.variant === 'destructive' ? 'danger' : 'ghost'}
-					size="sm"
 					class="ml-auto"
 					icon={footerAction.icon}
 					onclick={footerAction.action}

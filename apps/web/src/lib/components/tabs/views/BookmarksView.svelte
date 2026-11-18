@@ -302,7 +302,6 @@
 			/>
 			<Button
 				variant="secondary"
-				size="sm"
 				type="submit"
 				icon="mynaui:plus"
 				loading={saving}

@@ -71,15 +71,15 @@
 	{:else if error}
 		<p class="status error">{error}</p>
 		<div class="actions">
-			<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
-			<Button variant="ghost" size="sm" onclick={ondismiss}>Close</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
+			<Button variant="ghost" onclick={ondismiss}>Close</Button>
 		</div>
 	{:else if draft && draft.changes.length === 0}
 		<h2>{assistantName} didn't find a setting for that</h2>
 		{#if draft.note}<p class="note">{draft.note}</p>{/if}
 		<div class="actions">
-			<Button variant="secondary" size="sm" onclick={() => askVirtues(text)}>Ask in a chat</Button>
-			<Button variant="ghost" size="sm" onclick={ondismiss}>Close</Button>
+			<Button variant="secondary" onclick={() => askVirtues(text)}>Ask in a chat</Button>
+			<Button variant="ghost" onclick={ondismiss}>Close</Button>
 		</div>
 	{:else if draft}
 		<h2>{assistantName} drafted {draft.changes.length === 1 ? 'a change' : 'these changes'}</h2>
@@ -103,11 +103,11 @@
 			{/each}
 		</ul>
 		<div class="actions">
-			<Button variant="primary" size="sm" loading={applying} onclick={apply}>
+			<Button variant="primary" loading={applying} onclick={apply}>
 				{draft.changes.length === 1 ? 'Apply' : 'Apply all'}
 			</Button>
-			<Button variant="secondary" size="sm" onclick={() => onedit(draft!.changes[0].setting_id)}>Edit first</Button>
-			<Button variant="ghost" size="sm" onclick={ondismiss}>Not this</Button>
+			<Button variant="secondary" onclick={() => onedit(draft!.changes[0].setting_id)}>Edit first</Button>
+			<Button variant="ghost" onclick={ondismiss}>Not this</Button>
 			<span class="aside">Nothing changes until you apply. You can undo it in Changed lately.</span>
 		</div>
 	{/if}

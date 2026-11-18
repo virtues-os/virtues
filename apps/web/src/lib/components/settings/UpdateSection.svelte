@@ -270,7 +270,7 @@
 <section class="updates">
 	<header>
 		<h3>Updates</h3>
-		<Button variant="secondary" size="sm" icon="mynaui:refresh" {loading} onclick={check}>
+		<Button variant="secondary" icon="mynaui:refresh" {loading} onclick={check}>
 			Check again
 		</Button>
 	</header>
@@ -287,7 +287,7 @@
 				{#if restart.detail}
 					<p class="how">Your server said: {restart.detail}</p>
 				{/if}
-				<Button variant="secondary" size="sm" onclick={() => (restart = null)}>Done</Button>
+				<Button variant="secondary" onclick={() => (restart = null)}>Done</Button>
 			{:else if restart.phase === 'back'}
 				<p>
 					<Icon icon="mynaui:check" width="14" />
@@ -414,7 +414,6 @@
 				</p>
 				<Button
 					variant="primary"
-					size="sm"
 					class="self-start"
 					icon={staged ? 'mynaui:refresh-alt' : 'mynaui:download'}
 					disabled={!!restart}

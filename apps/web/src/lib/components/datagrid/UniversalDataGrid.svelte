@@ -927,7 +927,7 @@
 				{#if bulkActions}
 					{@render bulkActions(selectedItems, clearSelection)}
 				{/if}
-				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
+				<Button variant="ghost" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
 				<SearchField bind:value={searchQuery} bind:input={searchInputEl} placeholder={searchPlaceholder} />
@@ -1072,9 +1072,9 @@
 			<Icon icon="mynaui:danger-circle" width="24" />
 			<span>{effectiveError}</span>
 			{#if serverMode}
-				<Button variant="secondary" size="sm" onclick={retryServer}>Retry</Button>
+				<Button variant="secondary" onclick={retryServer}>Retry</Button>
 			{:else if onRetry}
-				<Button variant="secondary" size="sm" onclick={onRetry}>Retry</Button>
+				<Button variant="secondary" onclick={onRetry}>Retry</Button>
 			{/if}
 		</div>
 	{:else if displayedItems.length === 0 && !isNarrowed}
@@ -1087,7 +1087,7 @@
 			<Icon icon="mynaui:search" width="32" />
 			{#if searchQuery.trim()}
 				<p>No results for "{searchQuery}"</p>
-				<Button variant="secondary" size="sm" onclick={() => (searchQuery = '')}>
+				<Button variant="secondary" onclick={() => (searchQuery = '')}>
 					Clear search
 				</Button>
 			{:else}
@@ -1483,7 +1483,6 @@
 		<div class="pagination">
 			<Button
 				variant="secondary"
-				size="sm"
 				disabled={currentPage <= 1 || (serverMode && serverLoading)}
 				onclick={() => currentPage--}
 			>
@@ -1502,7 +1501,6 @@
 			{/if}
 			<Button
 				variant="secondary"
-				size="sm"
 				disabled={currentPage >= totalPages || (serverMode && serverLoading)}
 				onclick={() => currentPage++}
 			>

@@ -533,7 +533,7 @@
 	>
 		{#snippet rowActions(row: Row)}
 			{#if row.source}
-				<Button variant="secondary" size="sm" onclick={() => void connect(row.source!)}>
+				<Button variant="secondary" onclick={() => void connect(row.source!)}>
 					{connectLabel(row)}
 				</Button>
 			{:else if row.service?.id}
@@ -542,7 +542,6 @@
 				{#if service.needsSignIn}
 					<Button
 						variant="secondary"
-						size="sm"
 						loading={busy === id}
 						disabled={busy !== null}
 						onclick={() => void signInAgain(service)}
@@ -561,7 +560,6 @@
 				{@const registry = row.service.registry}
 				<Button
 					variant="secondary"
-					size="sm"
 					loading={busy === registry}
 					disabled={busy !== null}
 					onclick={() => void connectService({ registry }, registry)}
@@ -598,7 +596,6 @@
 							</div>
 							<Button
 								variant="secondary"
-								size="sm"
 								loading={busy === l.registry}
 								disabled={busy !== null}
 								onclick={() => void connectService({ registry: l.registry }, l.registry)}

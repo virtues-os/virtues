@@ -1,8 +1,8 @@
 <script lang="ts">
-	/** IconButton in each size and variant, and as a pressed toggle. */
+	/** IconButton at its three sizes in each variant, and as a pressed toggle. */
 	import IconButton from './IconButton.svelte';
 
-	const SIZES = ['xs', 'sm', 'md', 'touch'] as const;
+	const SIZES = ['nested', 'control', 'touch'] as const;
 	const VARIANTS = ['ghost', 'secondary', 'danger'] as const;
 	let pinned = $state(true);
 </script>
@@ -19,6 +19,7 @@
 		{/each}
 	{/each}
 	<div class="label">pressed</div>
+	<div></div>
 	<div>
 		<IconButton icon="mynaui:pin" label={pinned ? 'Unpin' : 'Pin'} pressed={pinned} onclick={() => (pinned = !pinned)} />
 	</div>
@@ -27,7 +28,7 @@
 <style>
 	.grid {
 		display: grid;
-		grid-template-columns: 96px repeat(4, 56px);
+		grid-template-columns: 96px repeat(3, 64px);
 		align-items: center;
 		gap: 12px;
 	}

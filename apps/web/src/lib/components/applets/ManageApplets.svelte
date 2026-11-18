@@ -330,7 +330,6 @@
 					<IconButton
 						icon="mynaui:dots-vertical"
 						label="More"
-						size="md"
 						variant="secondary"
 						expanded={moreMenuOpen}
 						haspopup="menu"
@@ -473,7 +472,7 @@
 
 	{#if finished.length > 0}
 		<div class="finished-row">
-			<Button variant="secondary" size="sm" onclick={() => (showFinished = !showFinished)}>
+			<Button variant="secondary" onclick={() => (showFinished = !showFinished)}>
 				{showFinished ? 'Hide finished' : `Show finished (${finished.length})`}
 			</Button>
 		</div>

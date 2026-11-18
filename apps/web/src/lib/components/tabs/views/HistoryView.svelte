@@ -114,7 +114,7 @@
 	maxWidth="full"
 >
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={handleNewChat}
+		<Button variant="secondary" icon="mynaui:plus" onclick={handleNewChat}
 			>New Chat</Button
 		>
 	{/snippet}

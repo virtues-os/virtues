@@ -177,7 +177,7 @@
 					{/if}
 				</p>
 				<div class="acts">
-					<Button variant="secondary" size="sm" onclick={run}>{detail.action}</Button>
+					<Button variant="secondary" onclick={run}>{detail.action}</Button>
 					{#if !detail.is_dismissed}
 						<TextAction onclick={notNow}>Not now</TextAction>
 					{/if}

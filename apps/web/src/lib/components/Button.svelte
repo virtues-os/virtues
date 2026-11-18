@@ -15,7 +15,8 @@
 	 * was speaking the same language as everything around it.
 	 *
 	 * Shape is design.md, "Primitives": a box at `--radius-md`, one filled
-	 * claret action per page. The sizes are the 8pt grid either side of that.
+	 * claret action per page. One height, `--control-h` (34px), and 44px on a
+	 * touch screen.
 	 *
 	 * `variant` is a claim about the button's job, not its color:
 	 *
@@ -47,7 +48,6 @@
 	 */
 	let {
 		variant = "primary",
-		size = "md",
 		disabled = false,
 		loading = false,
 		icon,
@@ -57,7 +57,6 @@
 		children,
 	}: {
 		variant?: "primary" | "secondary" | "ghost" | "danger";
-		size?: "sm" | "md" | "lg";
 		disabled?: boolean;
 		/** Working. Holds its size, stops taking clicks, and says `aria-busy`. */
 		loading?: boolean;
@@ -74,7 +73,6 @@
 	{type}
 	class="v-btn {className}"
 	data-variant={variant}
-	data-size={size}
 	data-loading={loading ? "true" : undefined}
 	disabled={disabled || loading}
 	aria-busy={loading || undefined}
@@ -178,23 +176,19 @@
 		cursor: progress;
 	}
 
-	/* Sizes — 8pt grid, with the grammar's 40px in the middle. */
-	.v-btn[data-size="sm"] {
-		height: 32px;
-		padding: 0 14px;
-		font-size: 13px;
+	/* One height (design.md, "Controls"): the 34px every box you click
+	   shares, and the thumb's 44px on a touch screen. */
+	.v-btn {
+		height: var(--control-h);
+		padding: 0 16px;
+		font-size: var(--text-label);
 	}
 
-	.v-btn[data-size="md"] {
-		height: 40px;
-		padding: 0 22px;
-		font-size: 14px;
-	}
-
-	.v-btn[data-size="lg"] {
-		height: 48px;
-		padding: 0 28px;
-		font-size: 15px;
+	@media (pointer: coarse) {
+		.v-btn {
+			height: var(--control-touch-h);
+			padding: 0 20px;
+		}
 	}
 
 	/* Claret (`--color-secondary`) is the page's single filled action, and is

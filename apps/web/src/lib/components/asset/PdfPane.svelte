@@ -753,7 +753,6 @@
 		<IconButton
 			icon="mynaui:chevron-up"
 			label="Previous page"
-			size="sm"
 			onclick={() => scrollToPage(currentPage - 1)}
 		/>
 		<input
@@ -766,14 +765,13 @@
 		<IconButton
 			icon="mynaui:chevron-down"
 			label="Next page"
-			size="sm"
 			onclick={() => scrollToPage(currentPage + 1)}
 		/>
 		<div class="pdf-toolbar-spacer"></div>
-		<IconButton icon="mynaui:search-minus" label="Zoom out" size="sm" onclick={() => zoomBy(-1)} />
+		<IconButton icon="mynaui:search-minus" label="Zoom out" onclick={() => zoomBy(-1)} />
 		<span class="pdf-zoom-label">{Math.round(zoom * 100)}%</span>
-		<IconButton icon="mynaui:search-plus" label="Zoom in" size="sm" onclick={() => zoomBy(1)} />
-		<IconButton icon="mynaui:search" label="Find in document (⌘F)" size="sm" onclick={openFind} />
+		<IconButton icon="mynaui:search-plus" label="Zoom in" onclick={() => zoomBy(1)} />
+		<IconButton icon="mynaui:search" label="Find in document (⌘F)" onclick={openFind} />
 		<button
 			class="pdf-btn"
 			class:active={railOpen}
@@ -805,18 +803,16 @@
 			<IconButton
 				icon="mynaui:chevron-up"
 				label="Previous match (⇧⏎)"
-				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex - 1)}
 			/>
 			<IconButton
 				icon="mynaui:chevron-down"
 				label="Next match (⏎)"
-				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex + 1)}
 			/>
-			<IconButton icon="mynaui:x" label="Close find (Esc)" size="sm" onclick={closeFind} />
+			<IconButton icon="mynaui:x" label="Close find (Esc)" onclick={closeFind} />
 		</div>
 	{/if}
 
@@ -877,7 +873,7 @@
 					<IconButton
 						icon="mynaui:download"
 						label="Export highlights as markdown"
-						size="xs"
+						size="nested"
 						onclick={exportHighlights}
 					/>
 				{/if}
@@ -957,7 +953,7 @@
 			<IconButton
 				icon="mynaui:trash"
 				label="Delete highlight"
-				size="xs"
+				size="nested"
 				variant="danger"
 				onclick={removeAnno}
 			/>

@@ -366,12 +366,12 @@
 <svelte:window onkeydown={onKey} />
 
 {#snippet newTaskButton()}
-	<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>
+	<Button variant="secondary" icon="mynaui:plus" onclick={newTaskHere}>
 		New task<kbd class="key">C</kbd>
 	</Button>
 {/snippet}
 {#snippet newThreadButton()}
-	<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
+	<Button variant="secondary" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
 {/snippet}
 
 {#snippet weekBlock()}
@@ -482,7 +482,7 @@
 									</p>
 								</div>
 								<div class="ins-acts">
-									<Button variant="secondary" size="sm" onclick={() => runNote(n)}>{n.action}</Button>
+									<Button variant="secondary" onclick={() => runNote(n)}>{n.action}</Button>
 									<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
 								</div>
 							</li>
@@ -615,10 +615,10 @@
 				<div class="ph">
 					<span class="kind">Thread</span>
 					<span class="pager">
-						<Button variant="secondary" size="sm" onclick={() => openProject(shown)}>Open</Button>
+						<Button variant="secondary" onclick={() => openProject(shown)}>Open</Button>
 						<span class="count">{shownIndex + 1} of {rows.length}</span>
-						<IconButton icon="mynaui:chevron-up" label="Previous thread" size="sm" onclick={() => step(-1)} />
-						<IconButton icon="mynaui:chevron-down" label="Next thread" size="sm" onclick={() => step(1)} />
+						<IconButton icon="mynaui:chevron-up" label="Previous thread" onclick={() => step(-1)} />
+						<IconButton icon="mynaui:chevron-down" label="Next thread" onclick={() => step(1)} />
 					</span>
 				</div>
 

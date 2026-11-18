@@ -113,10 +113,10 @@
 	>
 		{#each shown as a (a.id)}
 			{#if a.groupStart}<span class="sep"></span>{/if}
-			<IconButton icon={a.icon} label={a.label} size={touch ? "touch" : "md"} pressed={a.checked} onclick={() => run(a)} />
+			<IconButton icon={a.icon} label={a.label} size={touch ? "touch" : "control"} pressed={a.checked} onclick={() => run(a)} />
 		{/each}
 		<span class="sep"></span>
-		<IconButton icon="mynaui:dots-vertical" label="More table actions" size={touch ? "touch" : "md"} haspopup="menu" onclick={more} />
+		<IconButton icon="mynaui:dots-vertical" label="More table actions" size={touch ? "touch" : "control"} haspopup="menu" onclick={more} />
 	</div>
 </FloatingContent>
 

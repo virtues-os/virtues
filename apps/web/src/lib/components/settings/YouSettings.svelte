@@ -84,7 +84,7 @@
 	     them would overwrite what the server holds. -->
 	<div class="load-error" role="alert">
 		<p>Your server couldn't load your profile.</p>
-		<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
+		<Button variant="secondary" onclick={load}>Try again</Button>
 	</div>
 {:else}
 	<SettingRow id="full-name" label={label('full-name')} forId="profile-full-name">

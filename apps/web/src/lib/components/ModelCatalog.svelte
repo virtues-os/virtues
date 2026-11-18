@@ -272,7 +272,6 @@
 			<div>
 				<Button
 					variant="ghost"
-					size="sm"
 					loading={modelSlots.loading}
 					onclick={() => modelSlots.load(true)}>Check again</Button
 				>
@@ -371,14 +370,12 @@
 									<span class="chosen">Chosen for {slot.phrase}</span>
 									<Button
 										variant="ghost"
-										size="sm"
 										onclick={() => modelSlots.choose(slot, null)}
 										>Go back to the recommended model</Button
 									>
 								{:else}
 									<Button
 										variant="secondary"
-										size="sm"
 										onclick={() => modelSlots.choose(slot, m.model_id)}
 										>Use for {slot.phrase}</Button
 									>

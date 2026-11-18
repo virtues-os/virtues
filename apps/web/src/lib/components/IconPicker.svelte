@@ -363,7 +363,7 @@
 			{#if visibleIcons.length === 0}
 				<div class="empty">No icons found</div>
 			{:else if hasMoreIcons}
-				<Button variant="secondary" size="sm" class="w-full mt-2" onclick={() => iconsPage++}>
+				<Button variant="secondary" class="w-full mt-2" onclick={() => iconsPage++}>
 					Load more
 				</Button>
 			{/if}
@@ -387,7 +387,7 @@
 			{:else if visibleEmojis.length === 0}
 				<div class="empty">No emoji found</div>
 			{:else if hasMoreEmojis}
-				<Button variant="secondary" size="sm" class="w-full mt-2" onclick={() => emojiPage++}>
+				<Button variant="secondary" class="w-full mt-2" onclick={() => emojiPage++}>
 					Load more
 				</Button>
 			{/if}

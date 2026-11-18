@@ -63,8 +63,8 @@
 	<div class="head">
 		<span class="title">{title}</span>
 		<span class="nav">
-			<IconButton icon="mynaui:chevron-left" label="Previous month" size="sm" onclick={() => step(-1)} />
-			<IconButton icon="mynaui:chevron-right" label="Next month" size="sm" disabled={month >= today.slice(0, 7)} onclick={() => step(1)} />
+			<IconButton icon="mynaui:chevron-left" label="Previous month" size="nested" onclick={() => step(-1)} />
+			<IconButton icon="mynaui:chevron-right" label="Next month" size="nested" disabled={month >= today.slice(0, 7)} onclick={() => step(1)} />
 		</span>
 	</div>
 	<div class="grid">

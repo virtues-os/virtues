@@ -1628,13 +1628,13 @@
 	<div class="date" bind:this={dateWrap}>
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
 			<div class="date-row">
-				<IconButton icon="mynaui:chevron-left" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<IconButton icon="mynaui:chevron-left" label="Previous day" onclick={() => (date = stepDay(date, -1))} />
 				<!-- Calendar's ‹ Today ›: a button between the arrows, there on
 				     every day and greyed out on today, so it never reads as the
 				     date's label and the › never moves. -->
 				<span class="date-today"><Pill disabled={date === today} onclick={() => (date = today)}>Today</Pill></span>
-				<IconButton icon="mynaui:chevron-right" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
-				<IconButton icon="mynaui:calendar" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
+				<IconButton icon="mynaui:chevron-right" label="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
+				<IconButton icon="mynaui:calendar" label="Show the month" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>

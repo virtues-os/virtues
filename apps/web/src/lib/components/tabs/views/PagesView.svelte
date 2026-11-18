@@ -183,7 +183,6 @@
 	{#snippet actions()}
 		<Button
 			variant="secondary"
-			size="sm"
 			icon="mynaui:plus"
 			loading={creating}
 			onclick={createNewPage}>New page</Button

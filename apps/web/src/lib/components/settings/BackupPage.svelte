@@ -61,7 +61,7 @@
 	{#if failed}
 		<div class="note">
 			<p>Your server couldn't read its backup status.</p>
-			<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else if status}
 		<p class="headline">{headline}</p>

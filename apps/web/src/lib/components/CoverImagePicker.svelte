@@ -372,7 +372,6 @@
 							{#each UNSPLASH_TOPICS as topic}
 								<Button
 									variant="secondary"
-									size="sm"
 									onclick={() => selectTopic(topic)}
 								>
 									{topic}

@@ -36,7 +36,7 @@
 />
 
 {#snippet retry()}
-	<Button variant="secondary" size="sm" onclick={onRetry}>
+	<Button variant="secondary" onclick={onRetry}>
 		<Icon icon="mynaui:refresh" width="14" />
 		Retry
 	</Button>

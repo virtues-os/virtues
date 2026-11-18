@@ -118,7 +118,7 @@
 				     not hold, and a save from there would overwrite what it does. -->
 				<div class="load-error" role="alert">
 					<p>Your server couldn't load {spoken}'s name and notes.</p>
-					<Button variant="secondary" size="sm" onclick={loadAssistant}>Try again</Button>
+					<Button variant="secondary" onclick={loadAssistant}>Try again</Button>
 				</div>
 			{/if}
 			<div class="block" id="setting-assistant-name"><AssistantNameSettings bind:name disabled={assistant !== 'ready'} /></div>

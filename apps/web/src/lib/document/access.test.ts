@@ -706,7 +706,7 @@ describe('the selection toolbar', () => {
 		const bar = read('../components/SelectionToolbar.svelte');
 		const buttons = bar.match(/<IconButton[^>]*>/g) ?? [];
 		expect(buttons.length).toBe(2);
-		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "control"\}/);
 		expect(bar).toMatch(/\.selection-toolbar \{[^}]*padding: 4px;[^}]*border: 1px solid/);
 		expect(bar).toMatch(/placement: 'top', offset: TOOLBAR_OFFSET/);
 		expect(TOUCH_TOOLBAR_HEIGHT).toBeGreaterThanOrEqual(44 + 2 * 4 + 2 * 1);
@@ -1130,12 +1130,12 @@ describe('on a phone', () => {
 		const bar = read('../components/pages/TableMenu.svelte');
 		const buttons = bar.match(/<IconButton [^>]*>/g) ?? [];
 		expect(buttons.length).toBeGreaterThan(0);
-		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "control"\}/);
 		expect(bar).toMatch(/const touch = typeof window !== "undefined" && !!window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches;/);
 		const selection = read('../components/SelectionToolbar.svelte');
 		const selectionButtons = selection.match(/<IconButton[^>]*>/g) ?? [];
 		expect(selectionButtons.length).toBeGreaterThan(0);
-		for (const b of selectionButtons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		for (const b of selectionButtons) expect(b).toMatch(/size=\{touch \? "touch" : "control"\}/);
 	});
 
 	// The selection toolbar's Ask AI and `/ai` open the prompt on a phone,
@@ -1143,12 +1143,14 @@ describe('on a phone', () => {
 	it('the Ask AI prompt’s actions and the link panel’s buttons are 44pt on touch', () => {
 		const coarse = read('../components/pages/AiPromptPopover.svelte').match(/@media \(pointer: coarse\) \{([\s\S]*?)\n\t\}/g) ?? [];
 		expect(coarse.some((block) => block.includes('.ai-prompt-action {') && /min-height: 44px;/.test(block))).toBe(true);
+		// A Button is 44px on a touch screen by itself (design.md, "Controls"),
+		// so the panel's two buttons need no size of their own.
 		const panel = read('../components/pages/LinkEditorPopover.svelte');
 		const buttons = panel.match(/<Button [^>]*>/g) ?? [];
 		expect(buttons).toHaveLength(2);
-		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "lg" : "sm"\}/);
-		expect(panel).toMatch(/const touch = typeof window !== "undefined" && !!window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches;/);
-		expect(read('../components/Button.svelte')).toMatch(/\.v-btn\[data-size="lg"\] \{\s+height: 48px;/);
+		for (const b of buttons) expect(b).not.toMatch(/size=/);
+		expect(read('../components/Button.svelte')).toMatch(/@media \(pointer: coarse\) \{\s+\.v-btn \{\s+height: var\(--control-touch-h\);/);
+		expect(read('../../themes.css')).toMatch(/--control-touch-h: 44px;/);
 	});
 
 	// A long press opens these menus on a phone; `/` and `@` open the others.
@@ -1165,7 +1167,7 @@ describe('on a phone', () => {
 		const find = read('../components/pages/FindBar.svelte');
 		const buttons = find.match(/<IconButton [^>]*>/g) ?? [];
 		expect(buttons.length).toBeGreaterThan(0);
-		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "control"\}/);
 		expect(find).toMatch(/const touch = typeof window !== "undefined" && !!window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches;/);
 	});
 

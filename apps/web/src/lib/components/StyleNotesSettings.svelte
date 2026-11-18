@@ -128,7 +128,7 @@
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 		<div>
-			<Button variant="secondary" size="sm" loading={saving} onclick={retry}>
+			<Button variant="secondary" loading={saving} onclick={retry}>
 				Try again
 			</Button>
 		</div>
@@ -146,7 +146,7 @@
 	</div>
 	{#if !previewOpen}
 		<div>
-			<Button variant="ghost" size="sm" onclick={() => (previewOpen = true)}>Show a sample reply</Button>
+			<Button variant="ghost" onclick={() => (previewOpen = true)}>Show a sample reply</Button>
 		</div>
 	{:else}
 		<div class="sample" aria-live="polite" aria-busy={previewing}>
@@ -154,7 +154,7 @@
 			{#if previewError}
 				<p class="field-error">{previewError}</p>
 				<div>
-					<Button variant="secondary" size="sm" onclick={() => { previewedFor = null; retries += 1; }}>Try again</Button>
+					<Button variant="secondary" onclick={() => { previewedFor = null; retries += 1; }}>Try again</Button>
 				</div>
 			{:else if preview}
 				<p class="sample-reply" class:stale={previewing}>{preview.reply}</p>

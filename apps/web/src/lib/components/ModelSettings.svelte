@@ -66,7 +66,7 @@
 	{#if !modelSlots.loaded && modelSlots.error}
 		<p class="load-error" role="alert">{modelSlots.error}</p>
 		<div>
-			<Button variant="secondary" size="sm" onclick={() => modelSlots.load(true)}>
+			<Button variant="secondary" onclick={() => modelSlots.load(true)}>
 				Try again
 			</Button>
 		</div>
@@ -136,7 +136,7 @@
 
 		{#if modelSlots.models.length}
 			<div>
-				<Button variant="secondary" size="sm" onclick={openCatalog}>
+				<Button variant="secondary" onclick={openCatalog}>
 					Compare every model
 				</Button>
 			</div>

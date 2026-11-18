@@ -29,13 +29,23 @@
 </select>
 
 <style>
+	/* A control (design.md, "Controls"): 34px tall, on the field edge that
+	   holds 3:1 against the page. */
 	select {
 		font: inherit;
-		font-size: 13px;
-		padding: 4px 8px;
+		font-size: var(--text-label);
+		height: var(--control-h);
+		padding: 0 8px;
 		border-radius: var(--radius-md);
-		border: 1px solid var(--color-border);
-		background: var(--color-background);
+		border: 1px solid var(--color-border-field);
+		background: var(--color-surface);
 		color: var(--color-foreground);
+	}
+
+	@media (pointer: coarse) {
+		select {
+			height: var(--control-touch-h);
+			font-size: 16px;
+		}
 	}
 </style>

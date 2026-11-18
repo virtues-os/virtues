@@ -27,7 +27,6 @@
 		{#if note.action_route !== here}
 			<Button
 				variant="secondary"
-				size="sm"
 				onclick={() => windowShellStore.openTabFromRoute(note.action_route, { focusExisting: true })}
 			>
 				{note.action}

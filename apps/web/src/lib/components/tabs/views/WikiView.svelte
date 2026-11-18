@@ -556,7 +556,6 @@
 							     most are often the ones you never email. -->
 							<Button
 								variant="secondary"
-								size="sm"
 								icon="mynaui:user-plus"
 								onclick={addPerson}>New person</Button
 							>

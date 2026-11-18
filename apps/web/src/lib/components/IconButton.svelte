@@ -20,8 +20,9 @@
 	 *
 	 * WHAT COLLAPSED, and to what:
 	 *
-	 *   size    the four real clusters, not ten sizes. 16/18/20 → `xs`;
-	 *           24/26 → `sm`; 28/30/32 → `md`; 36/44 → `touch`.
+	 *   size    three, from design.md, "Controls": `control` (34px, the
+	 *           default), `nested` (20px, a control inside a card, row or
+	 *           field) and `touch` (44px, chrome made for a thumb).
 	 *   radius  6px at every size. Six radii, one answer — the shell's radius
 	 *           (design.md), and already the plurality of what shipped.
 	 *   ink     `--color-foreground-muted`, the same ink `Button variant="ghost"`
@@ -70,7 +71,7 @@
 	let {
 		icon,
 		label,
-		size = "md",
+		size = "control",
 		variant = "ghost",
 		pressed,
 		expanded,
@@ -88,8 +89,8 @@
 		 * one ("Close", "Add filter"). Becomes `aria-label` and `title`.
 		 */
 		label: string;
-		/** ~20 / 24 / 28 / 44px. `touch` is a painted size, not a hit area — see the CSS. */
-		size?: "xs" | "sm" | "md" | "touch";
+		/** 34px, 20px inside a card, row or field, or 44px for a thumb. `touch` is a painted size, not a hit area; see the CSS. */
+		size?: "control" | "nested" | "touch";
 		variant?: "ghost" | "secondary" | "danger";
 		/** A toggle's state. Renders `aria-pressed`; omit entirely for a plain button. */
 		pressed?: boolean;
@@ -180,30 +181,22 @@
 		cursor: not-allowed;
 	}
 
-	/* Sizes — the four clusters the tree actually had. Every value is a
-	   multiple of 4; 28px is the shell's own tab height and 44px is the touch
-	   floor, so neither is invented here. */
-	.v-iconbtn[data-size="xs"] {
-		width: 20px;
-		height: 20px;
+	/* Sizes (design.md, "Controls"). */
+	.v-iconbtn[data-size="nested"] {
+		width: var(--control-nested-h);
+		height: var(--control-nested-h);
 		font-size: 14px;
 	}
 
-	.v-iconbtn[data-size="sm"] {
-		width: 24px;
-		height: 24px;
-		font-size: 16px;
-	}
-
-	.v-iconbtn[data-size="md"] {
-		width: 28px;
-		height: 28px;
+	.v-iconbtn[data-size="control"] {
+		width: var(--control-h);
+		height: var(--control-h);
 		font-size: 16px;
 	}
 
 	.v-iconbtn[data-size="touch"] {
-		width: 44px;
-		height: 44px;
+		width: var(--control-touch-h);
+		height: var(--control-touch-h);
 		font-size: 20px;
 	}
 

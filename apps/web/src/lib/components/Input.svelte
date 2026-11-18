@@ -410,11 +410,15 @@
 		border-radius: var(--radius-lg);
 	}
 
+	/* A control's height (design.md, "Controls"): 34px, and 44px with 16px
+	   text on a touch screen, where iOS zooms the page into any field set
+	   smaller than 16px. */
 	.input-field {
 		width: 100%;
-		padding: 10px 14px;
+		height: var(--control-h);
+		padding: 0 12px;
 		font-family: var(--font-sans);
-		font-size: 15px;
+		font-size: var(--text-label);
 		color: var(--color-foreground);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-field);
@@ -423,6 +427,13 @@
 		transition: border-color 0.25s ease;
 		position: relative;
 		z-index: 1;
+	}
+
+	@media (pointer: coarse) {
+		.input-field {
+			height: var(--control-touch-h);
+			font-size: 16px;
+		}
 	}
 
 	/* Remove number input spinners */
