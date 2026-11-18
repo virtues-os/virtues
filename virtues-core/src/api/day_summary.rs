@@ -1397,6 +1397,11 @@ struct Move {
 /// crucially, a mostly-stationary window (standing at a till) yields NO stretch, so
 /// the detective has no license to call it transit.
 async fn day_movement_segments(pool: &PgPool, start_str: &str, end_str: &str) -> Result<Vec<Move>> {
+    // What the assistant may read (Settings · Your data): a withheld kind
+    // gives this nothing, so it never reaches the model or wiki_events.
+    if crate::api::model_access::is_withheld(pool, "data_location_point").await? {
+        return Ok(Vec::new());
+    }
     Ok({
         use sqlx::Row;
         let rows = sqlx::query(
@@ -1535,6 +1540,11 @@ async fn day_device_presence(
         String,
     )>,
 > {
+    // What the assistant may read (Settings · Your data): a withheld kind
+    // gives this nothing, so it never reaches the model or wiki_events.
+    if crate::api::model_access::is_withheld(pool, "data_activity_app_session").await? {
+        return Ok(Vec::new());
+    }
     Ok({
         use sqlx::Row;
 
@@ -1676,6 +1686,11 @@ async fn day_message_bursts(
     start_str: &str,
     end_str: &str,
 ) -> Result<Vec<MessageBurst>> {
+    // What the assistant may read (Settings · Your data): a withheld kind
+    // gives this nothing, so it never reaches the model or wiki_events.
+    if crate::api::model_access::is_withheld(pool, "data_communication_message").await? {
+        return Ok(Vec::new());
+    }
     Ok({
         use sqlx::Row;
 
@@ -1901,6 +1916,9 @@ async fn build_dossier(
     tz_label: Option<&str>,
     tz: Option<&Tz>,
 ) -> Result<String> {
+    // What the assistant may read (Settings · Your data): a withheld kind
+    // gives this nothing, so it never reaches the model or wiki_events.
+    let withheld = crate::api::model_access::withheld_tables(pool).await?;
     Ok({
         use sqlx::Row;
 
@@ -1925,10 +1943,12 @@ async fn build_dossier(
           AND er.entity_type = 'place' \
          LEFT JOIN wiki_places p ON p.id = er.entity_id \
          WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
+         AND NOT $3::boolean \
          ORDER BY v.started_at",
         )
         .bind(start_str)
         .bind(end_str)
+        .bind(withheld.contains("data_location_visit"))
         .fetch_all(pool)
         .await?;
         let mut visits: Vec<Visit> = Vec::with_capacity(visit_rows.len());
@@ -2010,10 +2030,12 @@ async fn build_dossier(
          FROM data_calendar_event \
          WHERE started_at >= $1::timestamptz AND started_at <= $2::timestamptz \
            AND (status IS NULL OR status <> 'cancelled') \
+         AND NOT $3::boolean \
          ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
+    .bind(withheld.contains("data_calendar_event"))
     .fetch_all(pool)
     .await?;
         for r in &cal {
@@ -2067,10 +2089,12 @@ async fn build_dossier(
          FROM data_health_sleep \
          WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
            AND deleted_at_source IS NULL \
+         AND NOT $3::boolean \
          ORDER BY started_at",
         )
         .bind(start_str)
         .bind(end_str)
+        .bind(withheld.contains("data_health_sleep"))
         .fetch_all(pool)
         .await?;
         for r in &sleep {
@@ -2090,10 +2114,12 @@ async fn build_dossier(
             "SELECT started_at, ended_at, speaker_mode, content \
          FROM data_audio_session \
          WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+         AND NOT $3::boolean \
          ORDER BY started_at",
         )
         .bind(start_str)
         .bind(end_str)
+        .bind(withheld.contains("data_audio_session"))
         .fetch_all(pool)
         .await?;
         for r in &audio {
@@ -2129,10 +2155,12 @@ async fn build_dossier(
          FROM data_audio_recording \
          WHERE metadata->>'muted_by' IS NOT NULL \
            AND started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+         AND NOT $3::boolean \
          ORDER BY started_at",
         )
         .bind(start_str)
         .bind(end_str)
+        .bind(withheld.contains("data_audio_recording"))
         .fetch_all(pool)
         .await?;
         {
@@ -2209,10 +2237,12 @@ async fn build_dossier(
          FROM data_financial_transaction \
          WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
            AND is_archived IS NOT TRUE \
+         AND NOT $3::boolean \
          ORDER BY occurred_at",
         )
         .bind(start_str)
         .bind(end_str)
+        .bind(withheld.contains("data_financial_transaction"))
         .fetch_all(pool)
         .await?;
         for r in &txns {
@@ -2601,6 +2631,11 @@ async fn store_structured_events(
 /// Returns the name of the place of the longest visit when the owner named it,
 /// or None: an unnamed place's coordinates are not a location to print.
 async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Result<Option<String>> {
+    // What the assistant may read (Settings · Your data): a withheld kind
+    // gives this nothing, so it never reaches the model or wiki_events.
+    if crate::api::model_access::is_withheld(pool, "data_location_visit").await? {
+        return Ok(None);
+    }
     Ok({
         use sqlx::Row;
         // `data_location_visit.place_name` is never populated by entity resolution —

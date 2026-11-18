@@ -87,6 +87,9 @@ pub fn routes() -> Router<AppState> {
         // What the assistant can do: one switch per capability.
         .route("/api/settings/capabilities", get(list_capabilities_handler))
         .route("/api/settings/capabilities/:id", put(set_capability_handler))
+        // What the assistant may read: one switch per kind of record.
+        .route("/api/settings/reading", get(list_reading_handler))
+        .route("/api/settings/reading/:id", put(set_reading_handler))
         // A sample reply in the style notes being typed.
         .route("/api/settings/style-preview", post(style_preview_handler))
         // Models API
@@ -270,6 +273,7 @@ pub async fn update_profile_handler(
     Json(request): Json<crate::api::profile::UpdateProfileRequest>,
 ) -> Response {
     let pool = state.db.pool();
+    let _saving = crate::api::settings_changes::saving().await;
     // The record before the save, for Changed lately. If it can't be read
     // there is nothing to compare against: the save goes ahead, unrecorded.
     let before = match crate::api::profile::get_profile(pool).await {
@@ -303,6 +307,7 @@ pub async fn update_assistant_profile_handler(
     Json(request): Json<crate::api::assistant_profile::UpdateAssistantProfileRequest>,
 ) -> Response {
     let pool = state.db.pool();
+    let _saving = crate::api::settings_changes::saving().await;
     // The record before the save, for Changed lately. If it can't be read
     // there is nothing to compare against: the save goes ahead, unrecorded.
     let before = match crate::api::assistant_profile::get_assistant_profile(pool).await {
@@ -375,6 +380,20 @@ pub async fn set_capability_handler(
     Json(body): Json<SetCapabilityBody>,
 ) -> Response {
     api_response(crate::api::capabilities::set(state.db.pool(), &id, body.on).await)
+}
+
+/// GET /api/settings/reading — each kind of record, and whether the assistant may read it.
+pub async fn list_reading_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::model_access::list(state.db.pool()).await)
+}
+
+/// PUT /api/settings/reading/:id — let the assistant read a kind of record, or stop it. Returns them all.
+pub async fn set_reading_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetCapabilityBody>,
+) -> Response {
+    api_response(crate::api::model_access::set(state.db.pool(), &id, body.on).await)
 }
 
 #[derive(Deserialize)]
@@ -634,7 +653,7 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
     if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
             StatusCode::OK,
-            Json(serde_json::json!({ "error": "Connect your Virtues account to see your balance." })),
+            Json(serde_json::json!({ "unlinked": true, "error": "Connect your Virtues account to see your balance." })),
         )
             .into_response();
     }

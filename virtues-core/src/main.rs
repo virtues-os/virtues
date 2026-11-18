@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("reset")
                 | Some("configure-inference")
                 | Some("reindex")
+                | Some("export")
                 | Some("warm-models")
         );
         let data_verb = std::env::args()
@@ -507,6 +508,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Pull the recordings that predate the lake into it. Needs only a pool (and
     // STORAGE_PATH from the box env), so it runs here rather than paying for the
     // whole client stack.
+    // `virtues export` needs only a pool and the lake.
+    if let Some(Commands::Export { folder, skip_files }) = &cli.command {
+        let folder = folder.clone().unwrap_or_else(virtues::cli::export::default_folder);
+        match virtues::cli::export::run(&folder, *skip_files).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: export failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if let Some(Commands::LakeAdopt { dry_run }) = &cli.command {
         match virtues::cli::lake_adopt::run(*dry_run).await {
             Ok(()) => return Ok(()),

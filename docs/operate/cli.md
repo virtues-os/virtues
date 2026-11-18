@@ -90,12 +90,20 @@ server, and `virtues activate` installs what it staged.
 sudo virtues backup     # snapshot the server into one tarball
 sudo virtues restore <tarball>     # replace this server's state from one
 virtues volumes ls                 # registered backup destinations
+sudo virtues export [folder]       # everything as readable files
 ```
 
 The backup contains the encryption key needed to read its own contents, which
 makes the tarball **as sensitive as the server itself**. See
 [Backup & restore](/docs/operate/backup-and-restore) before you rely on any of
 this.
+
+`virtues export` writes a copy you can read without Virtues: each kind of
+record as JSON lines in `records/`, your pages as Markdown in `pages/`, and
+your recordings, photos and documents in `files/`. Keys, passwords and
+sign-ins are left out, and the copy isn't encrypted, so keep it somewhere only
+you can read. Without a folder it writes to `/var/lib/virtues/exports/`; the
+folder must be new or empty. `--skip-files` leaves out `files/`.
 
 ## Maintenance
 

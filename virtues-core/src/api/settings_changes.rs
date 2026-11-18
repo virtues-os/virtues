@@ -36,6 +36,8 @@ pub const PROFILE_FIELDS: &[(&str, &str)] = &[
     ("occupation", "occupation"),
     ("employer", "employer"),
     ("home_timezone", "home"),
+    ("units", "units"),
+    ("keep_recordings_days", "keep-recordings"),
 ];
 
 /// The theme lives in the assistant profile's `ui_preferences` (what
@@ -63,6 +65,10 @@ pub const ASSISTANT_FIELDS: &[(&str, &str)] = &[
 /// whole from a profile save.
 const CAPABILITIES_FIELD: &str = "enabled_tools";
 
+/// What the assistant may read: rows hold only the kind one switch changed
+/// (`api::model_access::set`).
+const READING_FIELD: &str = "reading";
+
 /// Fields an undo may set back to nothing: model slots store NULL for "the
 /// Virtues default", and the profile's text fields and birth date can be
 /// cleared. The others treat a missing value as "leave it", so a change from
@@ -78,6 +84,7 @@ const NULLABLE_FIELDS: &[&str] = &[
     "employer",
     "home_timezone",
     "birth_date",
+    "keep_recordings_days",
 ];
 
 /// How far back the list reaches, and how many changes it shows.
@@ -104,6 +111,16 @@ pub fn diff_fields(before: &Value, after: &Value, fields: &[(&'static str, &'sta
             (old_value != new_value).then_some(FieldChange { setting_id, field, old_value, new_value })
         })
         .collect()
+}
+
+/// One save of the two profiles at a time. Each save reads the record before
+/// it, writes, and records the difference; holding this across all three
+/// keeps a second save from landing in between and being recorded as part of
+/// the first. Every profile save in this process takes it.
+static SAVING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub async fn saving() -> tokio::sync::MutexGuard<'static, ()> {
+    SAVING.lock().await
 }
 
 /// Record one change the owner made. The save has already happened when
@@ -171,6 +188,10 @@ pub struct Lately {
 
 /// Whether an undo can write `old_value` back to `field`.
 fn undoable(field: &str, old_value: &Value) -> bool {
+    if field == READING_FIELD {
+        // A switch that was at its default holds null; putting it back means its default.
+        return old_value.is_object();
+    }
     if field == CAPABILITIES_FIELD || field == THEME_FIELD {
         return old_value.is_object() || old_value.is_string();
     }
@@ -207,6 +228,18 @@ async fn current_value(pool: &PgPool, field: &str, recorded_new: &Value) -> Resu
     if field == THEME_FIELD {
         let profile = serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?;
         return Ok(theme_of(&profile));
+    }
+    if field == READING_FIELD {
+        let states = crate::api::model_access::list(pool).await?;
+        let keys = recorded_new.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
+        return Ok(Value::Object(
+            keys.into_iter()
+                .map(|k| {
+                    let on = states.iter().find(|s| s.id == k).map(|s| Value::Bool(s.on)).unwrap_or(Value::Null);
+                    (k, on)
+                })
+                .collect(),
+        ));
     }
     let profile = if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
         serde_json::to_value(crate::api::profile::get_profile(pool).await?)?
@@ -288,6 +321,7 @@ pub async fn lately(db: &Database) -> Result<Lately> {
 
 /// Write a change's old value back and mark the change undone.
 pub async fn undo(pool: &PgPool, id: i64) -> Result<()> {
+    let _saving = saving().await;
     let row: Option<(String, Option<Value>, Option<Value>, Option<DateTime<Utc>>)> =
         sqlx::query_as("SELECT field, old_value, new_value, undone_at FROM app_settings_changes WHERE id = $1")
             .bind(id)
@@ -336,6 +370,14 @@ async fn write_back(pool: &PgPool, field: &str, old_value: Value) -> Result<()> 
     if field == CAPABILITIES_FIELD {
         // A capability change holds only its own tools; put those back.
         crate::api::capabilities::apply(pool, &old_value).await?;
+        return Ok(());
+    }
+    if field == READING_FIELD {
+        for (kind, was) in old_value.as_object().into_iter().flatten() {
+            // `null` was the kind's default; the default is what it held.
+            let default_on = crate::api::model_access::KINDS.iter().find(|k| k.id == kind).is_some_and(|k| k.default_on);
+            crate::api::model_access::set(pool, kind, was.as_bool().unwrap_or(default_on)).await?;
+        }
         return Ok(());
     }
     if field == THEME_FIELD {
@@ -558,6 +600,7 @@ pub struct ApplyChange {
 /// Save drafted changes the owner accepted, checked again, and record them
 /// as the assistant's.
 pub async fn apply_draft(pool: &PgPool, changes: Vec<ApplyChange>) -> Result<()> {
+    let _saving = saving().await;
     let current = current_values(pool).await?;
     let mut profile = serde_json::Map::new();
     let mut assistant = serde_json::Map::new();

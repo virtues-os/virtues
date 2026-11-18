@@ -88,6 +88,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{ id: 'keys', label: 'Keys', icon: 'mynaui:key', glyph: 'keys', href: '/virtues/keys', group: 'Your data' },
 		// Every link the owner has shared, live or ended.
 		{ id: 'shared', label: 'Shared links', icon: 'mynaui:share', glyph: 'shared', href: '/virtues/shared', group: 'Your data' },
+		{ id: 'data', label: 'Your data', icon: 'mynaui:database', href: '/virtues/data', group: 'Your data' },
 		{ id: 'backup', label: 'Backup', icon: 'mynaui:archive', href: '/virtues/backup', group: 'Your data' },
 		{ id: 'server', label: 'Updates and network', icon: 'mynaui:refresh', href: '/virtues/server', group: 'Your server' },
 		// The machine itself, measured.

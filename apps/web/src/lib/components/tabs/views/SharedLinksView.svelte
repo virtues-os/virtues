@@ -11,7 +11,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { Button, Page } from '$lib';
+	import { Button } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { listPublications, revokePublication, type Publication } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -29,10 +30,6 @@
 		!p.revoked_at && (!p.expires_at || new Date(p.expires_at).getTime() > Date.now());
 	const live = $derived(all.filter(isLive));
 	const ended = $derived(all.filter((p) => !isLive(p)));
-
-	const description = $derived(
-		live.length === 1 ? '1 link working' : `${live.length} links working`
-	);
 
 	async function load() {
 		error = null;
@@ -118,14 +115,13 @@
 	];
 </script>
 
-<Page title="Shared links" {description} maxWidth="full">
+<SettingsPage title="Shared links" lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once." width="full">
 	{#if !loading && all.length === 0 && !error}
 		<div class="empty">
 			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
 			<p class="empty-body">
-				Share a page, a chat, or an applet that shows a page. Every link you make appears
-				here, and you can turn any of them off.
+				Share a page, a chat, or an applet that shows a page, and the link appears here.
 			</p>
 		</div>
 	{:else}
@@ -140,6 +136,7 @@
 			loadingMessage="Loading shared links…"
 			searchPlaceholder="Search shared links…"
 			defaultViewMode="table"
+			showCounts={false}
 			onItemClick={openApplet}
 			onRetry={load}
 		>
@@ -188,7 +185,6 @@
 			>
 				<Icon icon={endedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
 				<span>Turned off or expired</span>
-				<span class="ended-count">{ended.length}</span>
 			</button>
 			{#if endedOpen}
 				<ul class="ended-list">
@@ -207,7 +203,7 @@
 			{/if}
 		</section>
 	{/if}
-</Page>
+</SettingsPage>
 
 <Modal open={revoking !== null} onClose={() => (revoking = null)} title="Turn off this link?" width="sm">
 	{#if revoking}
@@ -283,9 +279,6 @@
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
-	}
-	.ended-count {
-		font-variant-numeric: tabular-nums;
 	}
 	.ended-list {
 		list-style: none;

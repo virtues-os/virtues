@@ -1,38 +1,19 @@
 <!--
-	Settings › the assistant's page › Compare all models (`/virtues/assistant/models`).
+	Settings › the assistant's page › Compare every model (`/virtues/assistant/models`).
 
 	The catalog has its own page because it is a table of a few hundred rows,
 	and the Assistant page is a form. The Models section there links here.
-	The way back sits above the title: the shell draws no back control.
 -->
 <script lang="ts">
-	import { Button, Page, PageHeading } from "$lib";
 	import ModelCatalog from "$lib/components/ModelCatalog.svelte";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-
-	function backToAssistant() {
-		windowShellStore.navigate("/virtues", { label: "Settings" });
-	}
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 </script>
 
-<Page maxWidth="full">
-	{#snippet heading()}
-		<div class="back">
-			<Button variant="ghost" size="sm" icon="mynaui:arrow-left" onclick={backToAssistant}>
-				Back to Assistant
-			</Button>
-		</div>
-		<PageHeading
-			title="All models"
-			description="Every language model you can choose, with list prices per million tokens."
-		/>
-	{/snippet}
-
+<SettingsPage
+	title="Every model"
+	lede="Every language model you can choose, with list prices per million tokens."
+	back={{ route: "/virtues/assistant", label: "Assistant" }}
+	width="full"
+>
 	<ModelCatalog />
-</Page>
-
-<style>
-	.back {
-		margin-bottom: 8px;
-	}
-</style>
+</SettingsPage>

@@ -51,7 +51,7 @@
 
 	<p class="sub">
 		Unpairs every device and puts your server back into setup. Your record, your
-		connected accounts and your subscription stay exactly as they are.
+		connected accounts and your subscription stay as they are.
 	</p>
 
 	{#if error}
@@ -84,8 +84,8 @@
 </section>
 
 <style>
-	/* Inside Devices' `<Page>` now, which owns the gutter — this only needs the
-	   rule and the air that separate it from the device list above. */
+	/* At the foot of the landing page, which owns the gutter; this only needs
+	   the rule and the air that separate it from the links above. */
 	.reopen {
 		display: flex;
 		flex-direction: column;

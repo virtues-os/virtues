@@ -205,9 +205,16 @@ async fn window_ontologies(
     let mut present = Vec::new();
 
     // `source_ontologies` lands in `wiki_events`, which the assistant reads,
-    // so an ontology the owner has not opened to it must not show up here
-    // even as a name.
-    for ont in registered_ontologies().into_iter().filter(|o| o.is_model_visible()) {
+    // so a kind the owner has withheld from it (`api::model_access`) must not
+    // show up here even as a name. Unreadable switches name nothing.
+    let withheld = match crate::api::model_access::withheld_tables(pool).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(error = %e, "dayline: what the assistant may read is unreadable; naming no sources");
+            return present;
+        }
+    };
+    for ont in registered_ontologies().into_iter().filter(|o| !withheld.contains(o.table_name)) {
         // Interpolated identifiers are compile-time constants from the
         // registry, never user input. The window is bound.
         let sql = format!(

@@ -27,6 +27,12 @@
 	import type { GridQuery, GridPage } from "$lib/components/datagrid/types";
 	import { formatMicrosPrecise } from "$lib/utils/currency";
 	import { getAiCallsPage, type AiCallRow } from "$lib/api/client";
+	import { modelSlots } from "$lib/stores/modelSlots.svelte";
+
+	// Model names in the list come from the catalog.
+	$effect(() => {
+		if (!modelSlots.loaded && !modelSlots.loading) void modelSlots.load();
+	});
 
 	// No props: the grid pages itself off the server, so this section has
 	// nothing to learn from the tab it sits in.
@@ -124,12 +130,10 @@
 <!-- No <Page>: the last chapter of Billing. See BillingView. -->
 <section class="chapter">
 	<h2 class="settings-label">AI calls</h2>
-	<!-- Names its relation to the wallet ledger above it. Two lists of
-	     spending on one page, with nothing saying how they differ, is how you
-	     get a reader adding them together. -->
+	<!-- Says how it relates to the wallet ledger above, so the two lists of
+	     spending are not read as separate charges. -->
 	<p class="chapter-lede">
-		Every AI call, one per line. The Usage lines under Wallet activity above are
-		these, added up.
+		Every AI call, newest first. The usage lines under Money in and out are these, added up.
 	</p>
 	<UniversalDataGrid
 		items={[]}
@@ -142,11 +146,12 @@
 		loadingMessage="Reading the call log…"
 		searchPlaceholder="Search by purpose or model…"
 		defaultViewMode="table"
+		showCounts={false}
 	>
 		{#snippet tableRow(call: AiCallRow)}
 			<td class="cell when">{fmtWhen(call.created_at)}</td>
 			<td class="cell">{call.feature ? featureLabel(call.feature) : "—"}</td>
-			<td class="cell mono">{call.model ?? "—"}</td>
+			<td class="cell">{call.model ? modelSlots.nameOf(call.model) : "—"}</td>
 			<td class="cell num hide-mobile">{tokens(call).toLocaleString()}</td>
 			<td class="cell num" class:muted={call.route === "byo"}>{cost(call)}</td>
 		{/snippet}
@@ -178,11 +183,6 @@
 		padding-left: 0;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
-	}
-	.cell.mono {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
 	}
 	.cell.num {
 		font-variant-numeric: tabular-nums;

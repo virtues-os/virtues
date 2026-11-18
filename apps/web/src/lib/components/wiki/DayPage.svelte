@@ -17,6 +17,8 @@
 
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
+	import { units } from "$lib/stores/units.svelte";
+	import { formatTemperature } from "$lib/utils/units";
 	import { fade } from "$lib/utils/transitions";
 	import { lightUp } from "$lib/utils/lit";
 	import { browser } from "$app/environment";
@@ -574,11 +576,11 @@
 		if (browser && page?.date) loadFacts(currentDateSlug);
 	});
 
-	const fahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
-	/** "73° / 51°" under the title; left out, never "no data", when the day has none. */
+	/** "73° / 51°" under the title, in the owner's units (Settings · Profile);
+	 *  left out, never "no data", when the day has none. */
 	const weather = $derived(
 		facts?.temperature_high_c != null && facts?.temperature_low_c != null
-			? `${fahrenheit(facts.temperature_high_c)}° / ${fahrenheit(facts.temperature_low_c)}°`
+			? `${formatTemperature(facts.temperature_high_c, units.current)} / ${formatTemperature(facts.temperature_low_c, units.current)}`
 			: null,
 	);
 

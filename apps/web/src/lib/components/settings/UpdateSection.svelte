@@ -309,17 +309,13 @@
 		<dl class="facts">
 			<dt>Running</dt>
 			<dd class="running">
-				<!-- RELEASE IDENTITY, not the build counter. This row used to
-				     print `current` (the crate version), which is the same
-				     string on every prerelease build — so a box on `edge` was
-				     told it was running "0.3.0", the number of a release it is
-				     ahead of. `codename::version()` exists precisely so every
-				     surface says the same word; this one wasn't asking. -->
+				<!-- The release name (`codename::version()`), which every surface
+				     shows. The crate version is the same on every prerelease
+				     build, so it would name a release this box is ahead of. -->
 				<span class="ver">{status.running_version}</span>
 				{#if status.running_channel && status.running_channel !== 'stable'}
 					<span class="track">{status.running_channel}</span>
 				{/if}
-				<span class="counter">build {status.current}</span>
 			</dd>
 			<dt>Channel</dt>
 			<dd>
@@ -517,10 +513,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.counter {
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-	}
 
 	.ahead {
 		color: var(--color-foreground-muted);

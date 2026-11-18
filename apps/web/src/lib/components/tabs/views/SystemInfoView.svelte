@@ -1,11 +1,13 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page } from "$lib";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { apiGet } from "$lib/api/client";
 	import { onMount } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { formatTemperature } from "$lib/utils/units";
+	import { units } from "$lib/stores/units.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -25,7 +27,6 @@
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
-	let live = $state(false); // a successful poll happened recently
 
 	// ─── /health (service liveness) ─────────────────────────────────────────
 	let serverStatus = $state("unknown");
@@ -79,10 +80,24 @@
 		if (h > 0) return `${h}h ${m}m`;
 		return `${m}m`;
 	}
-	function ghz(mhz: number): string {
-		if (!mhz) return "—";
-		return (mhz / 1000).toFixed(2) + " GHz";
+	// A processor that doesn't report its clock reads as its cores alone.
+	function cores(cpu: { logical_cores: number; frequency_mhz: number }): string {
+		const n = `${cpu.logical_cores} cores`;
+		return cpu.frequency_mhz ? `${n} · ${(cpu.frequency_mhz / 1000).toFixed(2)} GHz` : n;
 	}
+	const temp = (c: number) => formatTemperature(c, units.current, { scale: true });
+
+	// Volumes that share one container (APFS's / and /System/Volumes/Data)
+	// report the same space; each disk is shown once, under its shortest mount.
+	const disks = $derived.by(() => {
+		const seen = new Map<string, NonNullable<typeof t>["disks"][number]>();
+		for (const d of t?.disks ?? []) {
+			const key = `${d.total}:${d.available}`;
+			const kept = seen.get(key);
+			if (!kept || d.mount.length < kept.mount.length) seen.set(key, d);
+		}
+		return [...seen.values()];
+	});
 
 	// Pressure → semantic class (calm neutral → warning → error). We never
 	// assign arbitrary colors; utilization is genuinely semantic.
@@ -223,7 +238,6 @@
 				detail ? { processes: 1 } : undefined,
 			);
 			t = d;
-			live = true;
 			cpuHist = push(cpuHist, Math.round(d.cpu?.usage_pct ?? 0));
 			memHist = push(
 				memHist,
@@ -232,7 +246,6 @@
 			if (d.gpu?.usage_pct != null) gpuHist = push(gpuHist, Math.round(d.gpu.usage_pct));
 			netHist = push(netHist, (d.network?.rx_per_sec ?? 0) + (d.network?.tx_per_sec ?? 0));
 		} catch (e) {
-			live = false;
 			console.error("telemetry failed", e);
 		}
 	}
@@ -285,24 +298,16 @@
 	</div>
 {/snippet}
 
-<Page title="System" description="Your server, examined." maxWidth="full">
-	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
-	     (no border, no hover, nothing to press); Detail ACTS. A status light
-	     styled like a button invites clicks that do nothing, which is why the
-	     pill keeps its own shape rather than joining the row. -->
+<SettingsPage
+	title="How your server is doing"
+	lede="Its processor, memory, storage and services, now and over the last day."
+	width="full"
+>
 	{#snippet actions()}
-		<div class="head-actions">
-			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
-			<button
-				class="detail-btn"
-				class:on={detail}
-				onclick={toggleDetail}
-				aria-pressed={detail}
-			>
-				<Icon icon="mynaui:terminal" width="14" />
-				<span>Detail</span>
-			</button>
-		</div>
+		<button class="detail-btn" class:on={detail} onclick={toggleDetail} aria-pressed={detail}>
+			<Icon icon="mynaui:terminal" width="14" />
+			<span>Detail</span>
+		</button>
 	{/snippet}
 
 	{#if loading}
@@ -310,16 +315,9 @@
 			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else}
-		<!--
-		  ORDER IS THE NARRATIVE. Four questions, asked the way an operator asks
-		  them: is it healthy (vitals, thermal, service) · what is it doing
-		  (processes, inference) · what is it holding (storage, backup) · what is
-		  it (host, least consulted, so last).
-		
-		  It used to run vitals, inference, backup, storage, host, processes,
-		  thermal, service — which is not an order, and left thermal and service
-		  (both health) separated from vitals by five unrelated chapters.
-		-->
+		<!-- In the order an operator asks: is it healthy (vitals, thermal,
+		     service), what is it doing (processes, inference), what is it
+		     holding (storage, backup), and what is it (host). -->
 		<!-- ─── VITALS ─────────────────────────────────────────────────── -->
 		<section class="chapter">
 			<h2 class="settings-label">Vitals</h2>
@@ -330,7 +328,7 @@
 					String(cpuPct),
 					"%",
 					cpuHist,
-					t?.cpu ? `${t.cpu.logical_cores} cores · ${ghz(t.cpu.frequency_mhz)}` : "",
+					t?.cpu ? cores(t.cpu) : "",
 				)}
 				{@render vital(
 					"Memory",
@@ -348,17 +346,11 @@
 						"%",
 						gpuHist,
 						gpuPct == null
-							? "warming…"
+							? "Starting"
 							: t.gpu.offload_active
-								? "GPU offload active"
-								: "⚠ CPU fallback",
+								? "Search runs on it"
+								: "Search runs on the processor instead",
 					)}
-				{:else}
-					<div class="vital muted-vital">
-						<div class="vital-head"><span class="vital-name">Graphics</span></div>
-						<div class="vital-figure"><span class="vital-big mono dim">CPU</span></div>
-						<div class="vital-sub">No discrete GPU detected</div>
-					</div>
 				{/if}
 				{@render vital(
 					"Network",
@@ -392,11 +384,11 @@
 				<div class="cols">
 					<div class="col">
 						{#each t.thermal as s}
-							{@render ledger(s.label, `${s.temp_c.toFixed(1)} °C`, true, pressure(s.temp_c))}
+							{@render ledger(s.label, temp(s.temp_c), true, pressure(s.temp_c))}
 						{/each}
 					</div>
 					<div class="col">
-						{#if t.gpu?.temp_c != null}{@render ledger("GPU temp", `${t.gpu.temp_c.toFixed(1)} °C`, true)}{/if}
+						{#if t.gpu?.temp_c != null}{@render ledger("GPU temperature", temp(t.gpu.temp_c), true)}{/if}
 						{#if t.gpu?.power_mw != null}{@render ledger("GPU power", `${(t.gpu.power_mw / 1000).toFixed(2)} W`, true)}{/if}
 						{#if t.gpu?.mem_total}{@render ledger("GPU memory", `${bytesStr(t.gpu.mem_used ?? 0)} / ${bytesStr(t.gpu.mem_total)}`, true)}{/if}
 					</div>
@@ -421,7 +413,7 @@
 								<div class="history-head">
 									<span class="vital-name">{chart.label}</span>
 									<span class="vital-pct mono"
-										>{(chart.series.at(-1) ?? 0).toFixed(0)}{chart.pct ? "%" : " °C"}</span
+										>{chart.pct ? `${(chart.series.at(-1) ?? 0).toFixed(0)}%` : temp(chart.series.at(-1) ?? 0)}</span
 									>
 								</div>
 								<svg class="spark tall" viewBox="0 0 240 36" preserveAspectRatio="none">
@@ -499,7 +491,9 @@
 		{/if}
 
 		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
-		{#if t?.inference}
+		<!-- Operator detail, like the process list: the Search page says
+		     where search runs in plain words. -->
+		{#if detail && t?.inference}
 			<section class="chapter">
 				<h2 class="settings-label">Inference</h2>
 				<div class="cols">
@@ -508,14 +502,14 @@
 						{@render ledger("Precision", t.inference.precision, true)}
 						{@render ledger(
 							"Models",
-							t.inference.models_baked ? "all baked" : "incomplete",
+							t.inference.models_baked ? "All downloaded" : "Some missing",
 							false,
 							t.inference.models_baked ? "ok" : "warn",
 						)}
 						{#if t.gpu}
 							{@render ledger(
 								"Offload",
-								t.gpu.offload_active ? "GPU active" : "CPU fallback",
+								t.gpu.offload_active ? "On the GPU" : "On the CPU",
 								false,
 								t.gpu.offload_active ? "ok" : "crit",
 							)}
@@ -523,10 +517,10 @@
 					</div>
 					<div class="col">
 						{#each t.inference.models as m}
-							{@render ledger(m.name, m.source === "baked" ? "● on disk" : "○ missing", true, m.source === "baked" ? "ok" : "warn")}
+							{@render ledger(m.name, m.source === "baked" ? "Downloaded" : "Missing", true, m.source === "baked" ? "ok" : "warn")}
 						{/each}
 						{#each t.services as s}
-							{@render ledger(`${s.name} sidecar`, s.up ? "listening" : "down", true, s.up ? "ok" : "crit")}
+							{@render ledger(`${s.name} service`, s.up ? "Running" : "Stopped", true, s.up ? "ok" : "crit")}
 						{/each}
 					</div>
 				</div>
@@ -534,11 +528,11 @@
 		{/if}
 
 		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
-		{#if t?.disks?.length}
+		{#if disks.length}
 			<section class="chapter">
 				<h2 class="settings-label">Storage</h2>
 				<div class="drives">
-					{#each t.disks as d}
+					{#each disks as d (d.mount)}
 						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
 						<div class="drive">
 							<div class="drive-head">
@@ -602,15 +596,9 @@
 		</section>
 
 	{/if}
-</Page>
+</SettingsPage>
 
 <style>
-	/* ─── Head actions ─────────────────────────────────────────────────── */
-	.head-actions {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-	}
 	.detail-btn {
 		display: inline-flex;
 		align-items: center;
@@ -636,45 +624,6 @@
 		color: var(--color-foreground);
 	}
 
-	.live {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: var(--foreground-subtle);
-	}
-	.live .dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--foreground-disabled, var(--foreground-subtle));
-	}
-	.live.on .dot {
-		background: var(--success);
-		animation: breathe 3s var(--ease-in-out-quad, ease-in-out) infinite;
-	}
-	@keyframes breathe {
-		0%, 100% { opacity: 0.35; }
-		50% { opacity: 1; }
-	}
-	.toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		font-size: 12px;
-		color: var(--foreground-muted);
-		padding: 4px 9px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		transition: all var(--duration-fast) ease;
-	}
-	.toggle:hover { color: var(--foreground); border-color: var(--border-strong, var(--foreground-subtle)); }
-	.toggle.active {
-		color: var(--foreground);
-		border-color: var(--foreground-subtle);
-		background: var(--surface-elevated);
-	}
 
 	/* ─── Chapters ─────────────────────────────────────────────────────── */
 
@@ -688,10 +637,9 @@
 	/* ─── Vitals grid ──────────────────────────────────────────────────── */
 	.vitals-grid {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 14px;
 	}
-	@media (max-width: 880px) { .vitals-grid { grid-template-columns: repeat(2, 1fr); } }
 	.vital {
 		border: 1px solid var(--border-subtle, var(--border));
 		border-radius: var(--radius-xl);
@@ -716,14 +664,12 @@
 		color: var(--foreground);
 		font-feature-settings: "tnum";
 	}
-	.vital-big.dim { color: var(--foreground-muted); font-size: 22px; }
 	.vital-unit { font-size: 12px; color: var(--foreground-subtle); }
 	.vital-sub {
 		font-size: 11px;
 		color: var(--foreground-muted);
 		min-height: 14px;
 	}
-	.muted-vital .vital-sub { padding-top: 4px; }
 
 	.spark { width: 100%; height: 24px; display: block; }
 	.spark.tall { height: 36px; }

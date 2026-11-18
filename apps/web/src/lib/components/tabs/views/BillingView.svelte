@@ -7,7 +7,8 @@
 	 * (settings/BillingSettings.svelte); bringing your own AI is its own page
 	 * (settings/ByoPage.svelte).
 	 */
-	import { Page, TextAction } from '$lib';
+	import { TextAction } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import { formatDate } from '$lib/utils/dateUtils';
@@ -21,6 +22,7 @@
 		expires_at: string | null;
 		entries: LedgerEntry[];
 		error?: string;
+		unlinked?: boolean;
 	};
 	let usage = $state<Usage | null>(null);
 	let usageLoading = $state(true);
@@ -33,15 +35,21 @@
 	 * the reader's only clue is an absence they have to notice.
 	 */
 	let usageError = $state<string | null>(null);
+	/** No Virtues account is connected, so there is no wallet to read. */
+	let unlinked = $state(false);
 
 	async function loadUsage() {
 		usageLoading = true;
 		usageError = null;
+		unlinked = false;
 		try {
 			const data = await getBillingUsage<Usage>();
 			// The server answers 200 with an `error` body when it cannot reach
 			// the wallet, so a thrown error is not the only failure shape.
-			if (data.error) {
+			if (data.unlinked) {
+				unlinked = true;
+				usage = null;
+			} else if (data.error) {
 				usageError = data.error;
 				usage = null;
 			} else {
@@ -144,19 +152,26 @@
 
 </script>
 
-<Page title="What AI has cost" description="This month, day by day, by kind of work, and every call." maxWidth="full">
+<SettingsPage
+	title="What AI has cost"
+	lede="The last two weeks day by day, each kind of work, and every call."
+	back={{ route: '/virtues/billing', label: 'Billing' }}
+	width="full"
+>
 <div class="plan-sections">
 	<!-- ─── THE MONTH ─────────────────────────────────────────────────────
 	     The two figures and the wallet's money in and out. Auto top-up, the
 	     rule that refills the balance, is a row on the Settings page. -->
 	<section class="chapter chapter-figures">
 		{#if usageLoading && !usage && !usageError}
-			<p class="chapter-lede">Reading your wallet…</p>
+			<p class="chapter-lede">Reading your balance…</p>
+		{:else if unlinked}
+			<p class="chapter-lede">Connect your Virtues account in Billing to see your balance and what you've paid.</p>
 		{:else if usageError}
 			<!-- The report stands where the numbers would be: one plain line,
 			     then the server's words small. -->
 			<p class="note note-error note-figure">
-				Your server couldn't read the wallet.
+				Your server couldn't read your balance.
 				<span class="error-code">{usageError}</span>
 				<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
 			</p>
@@ -184,7 +199,7 @@
 			<!-- Money in and out. The itemized AI calls that make up the
 			     `Usage` lines are the last chapter of the page; this is the
 			     account statement, not the receipt. -->
-			<h3 class="subhead">Wallet activity</h3>
+			<h3 class="subhead">Money in and out</h3>
 			{#if usage.entries.length > 0}
 				<div class="entries">
 					{#each usage.entries.slice(0, 15) as e (e.ts + e.kind + e.micros)}
@@ -213,12 +228,12 @@
 			<div>
 				<h2 class="settings-label">Usage</h2>
 				<p class="chapter-lede">
-					Here is what this month cost, day by day and by what it was for. We count calls
-					on your own key but don't price them, since only your provider knows the price.
+					Each day of the last two weeks, and what the money went to. Calls on your own key
+					are counted but not priced, since only your provider knows the price.
 				</p>
 			</div>
 			{#if totalCalls > 0}
-				<a class="see-all" href="#calls">See all {totalCalls} calls →</a>
+				<a class="see-all" href="#calls">Every call</a>
 			{/if}
 		</div>
 		{#if summaryError}
@@ -282,7 +297,7 @@
 	<!-- The itemization, last. -->
 	<div id="calls"><UsageView /></div>
 </div>
-</Page>
+</SettingsPage>
 
 <style>
 	/* ─── Chapters ──────────────────────────────────────────────────────────

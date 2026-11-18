@@ -9,6 +9,9 @@
 	import Input from '$lib/components/Input.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
+	import Choice from '$lib/components/settings/Choice.svelte';
+	import { units } from '$lib/stores/units.svelte';
+	import type { Units } from '$lib/utils/units';
 	import { getProfile, updateProfile, type Profile } from '$lib/api/client';
 	import { findSetting, titleOf } from '$lib/settings';
 
@@ -56,6 +59,24 @@
 	}
 
 	const label = (id: string) => titleOf(findSetting(id)?.title ?? id, assistantName);
+
+	const UNITS = [
+		{ value: 'us', label: 'US: miles, pounds, °F' },
+		{ value: 'metric', label: 'Metric: km, kg, °C' },
+	] as const satisfies readonly { value: Units; label: string }[];
+	let unitsError = $state<string | null>(null);
+
+	async function chooseUnits(next: Units) {
+		const was = units.current;
+		units.set(next);
+		unitsError = null;
+		try {
+			await updateProfile({ units: next });
+		} catch {
+			units.set(was);
+			unitsError = "Your server couldn't save your units. Try again.";
+		}
+	}
 </script>
 
 {#if phase === 'error'}
@@ -77,8 +98,8 @@
 		</div>
 	</SettingRow>
 	<SettingRow id="birthday" label={label('birthday')} forId="profile-birthday">
-		<div class="field">
-			<Input id="profile-birthday" type="date" bind:value={values.birth_date} disabled={phase !== 'ready'} autoSave onSave={(v) => save('birth_date', v)} />
+		<div class="field date" class:empty={!values.birth_date}>
+			<Input id="profile-birthday" type="date" placeholder="Add" bind:value={values.birth_date} disabled={phase !== 'ready'} autoSave onSave={(v) => save('birth_date', v)} />
 		</div>
 	</SettingRow>
 	<SettingRow id="occupation" label={label('occupation')} forId="profile-occupation">
@@ -95,6 +116,9 @@
 		<div class="field">
 			<Input id="profile-home" bind:value={values.home_timezone} placeholder="Europe/Lisbon" disabled={phase !== 'ready'} autoSave onSave={(v) => save('home_timezone', v)} />
 		</div>
+	</SettingRow>
+	<SettingRow id="units" label={label('units')} help={unitsError ?? `For distances, weights and temperatures, here and in what ${assistantName} writes.`} forId="profile-units">
+		<Choice id="profile-units" value={units.current} options={UNITS} disabled={phase !== 'ready'} onchange={chooseUnits} />
 	</SettingRow>
 {/if}
 
@@ -119,6 +143,16 @@
 	.field :global(.input-wrapper:not(.focused) .placeholder) {
 		left: auto;
 		right: 36px;
+	}
+
+	/* An empty date reads "Add" like the other rows, not the browser's
+	   mm/dd/yyyy; the calendar button shows on hover and while editing. */
+	.field.date.empty :global(.input-wrapper:not(.focused) input::-webkit-datetime-edit) {
+		color: transparent;
+	}
+
+	.field.date :global(.input-wrapper:not(.hovered):not(.focused) input::-webkit-calendar-picker-indicator) {
+		opacity: 0;
 	}
 
 	.load-error {

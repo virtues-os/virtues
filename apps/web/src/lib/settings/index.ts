@@ -4,8 +4,7 @@
  * Settings opens on a landing page (settings/SettingsLanding.svelte): the
  * search field, what needs you, Changed lately, and a link to each page
  * (`LANDING`). Each section is a page of its own (settings/SettingsSection
- * .svelte) at its `route`; Your data has no page, and its links go straight
- * to the pages that hold it. This list is what the pages, the search field
+ * .svelte) at its `route`. This list is what the pages, the search field
  * and the ⌘K palette all read, so a setting is added, renamed or moved here
  * once. Each entry says what the setting is called on its own, the words
  * people type for it, which section it belongs to, what kind of row it is,
@@ -58,7 +57,7 @@ export interface Setting {
 export const SECTIONS: readonly Section[] = [
 	{ id: 'you', title: 'Profile', lede: 'What {name} knows about you to start with. Your pages and day summaries use it too.', route: '/virtues/profile' },
 	{ id: 'assistant', title: '{name}', lede: 'How it talks to you, what it can do, and the models it runs on.', route: '/virtues/assistant' },
-	{ id: 'data', title: 'Your data', lede: "What {name} remembers, the keys your server keeps, what you've shared, and its backups.", route: null },
+	{ id: 'data', title: 'What {name} may read', lede: 'Which of your records {name} sees, how long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: 'Your subscription, what AI may spend, and what it has cost.', route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
@@ -72,6 +71,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'occupation', title: 'Work', section: 'you', kind: 'control', words: ['occupation', 'job', 'role'], route: '/virtues/profile' },
 	{ id: 'employer', title: 'Where you work', section: 'you', kind: 'control', words: ['employer', 'company', 'job'], route: '/virtues/profile' },
 	{ id: 'home', title: 'Where you live', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'location'], route: '/virtues/profile' },
+	{ id: 'units', title: 'Units', section: 'you', kind: 'control', words: ['miles', 'kilometres', 'kilometers', 'km', 'fahrenheit', 'celsius', 'metric', 'imperial', 'pounds', 'temperature', 'distance'], route: '/virtues/profile' },
 
 	// The assistant
 	{ id: 'assistant-name', title: "{name}'s name", section: 'assistant', kind: 'control', words: ['assistant', 'rename', 'call it'], route: '/virtues/assistant' },
@@ -87,6 +87,9 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/shared' },
 	{ id: 'backup', title: 'Backup', section: 'data', kind: 'page', words: ['backup', 'drive', 'restore', 'copy', 'recovery key', 'disaster'], route: '/virtues/backup' },
+	{ id: 'model-reading', title: 'What {name} may read', section: 'data', kind: 'control', words: ['privacy', 'access', 'hide', 'messages', 'health', 'location', 'money', 'cycle', 'period', 'see my'], route: '/virtues/data' },
+	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
+	{ id: 'export', title: 'Export everything', section: 'data', kind: 'action', words: ['download', 'copy', 'takeout', 'leave', 'my data', 'json'], route: '/virtues/data' },
 
 	// Appearance
 	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues/appearance' },
@@ -174,6 +177,7 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	{
 		title: 'Your data',
 		links: [
+			{ label: 'What {name} may read', blurb: 'Records it sees, recordings, a full copy', route: '/virtues/data' },
 			{ label: 'What {name} remembers', blurb: 'Notes from your chats', route: '/virtues/assistant/memory' },
 			{ label: 'Keys', blurb: 'What your applets sign in with', route: '/virtues/keys' },
 			{ label: 'Shared links', blurb: "Everything you've shared", route: '/virtues/shared' },
@@ -183,7 +187,7 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	{
 		title: 'Your server',
 		links: [
-			{ label: 'Updates and network', blurb: 'Versions, reaching it from away', route: '/virtues/server' },
+			{ label: 'Updates and network', blurb: 'Updates, reaching it from away', route: '/virtues/server' },
 			{ label: 'Devices', blurb: 'Everything paired with it', route: '/virtues/devices' },
 			{ label: "How it's doing", blurb: 'Storage, memory, the last day', route: '/virtues/system' },
 			{ label: 'Search', blurb: 'Where search runs', route: '/virtues/search' },

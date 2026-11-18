@@ -1,6 +1,6 @@
 <!--
 	Every model the box's catalog lists, as a table to compare and choose from.
-	It is the page behind "Compare all" in the Assistant page's Models section,
+	It is the page behind "Compare every model" in the Assistant page's Models section,
 	and the two write through one store, `modelSlots`.
 
 	Every fact here is the gateway's, fetched live. Nothing on this page is
@@ -292,6 +292,7 @@
 		loadingMessage="Loading the models"
 		searchPlaceholder="Search models"
 		defaultViewMode="table"
+		showCounts={false}
 	>
 		{#snippet tableRow(m: ModelRow)}
 			{@const marks = roleMarks(m)}

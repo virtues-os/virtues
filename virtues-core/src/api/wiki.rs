@@ -1074,16 +1074,21 @@ const ENTITY_RECORDS_MAX_LIMIT: i64 = 100;
 /// `None` when the entity has no refs in any renderable table.
 ///
 /// All subqueries bind the entity id as `$1`; callers add outer binds from $2.
-async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<String>> {
+async fn entity_records_union(
+    pool: &PgPool,
+    entity_id: &str,
+    withheld: &std::collections::BTreeSet<String>,
+) -> Result<Option<String>> {
     use virtues_registry::ontologies::registered_ontologies;
 
-    let tables: Vec<String> = sqlx::query_scalar(
+    let mut tables: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT source_table FROM wiki_refs WHERE entity_id = $1",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list entity ref tables: {}", e)))?;
+    tables.retain(|t| !withheld.contains(t));
 
     let mut subqueries: Vec<String> = Vec::new();
     for table in &tables {
@@ -1186,10 +1191,37 @@ pub async fn get_entity_records_page(
     types: &[String],
     newest_first: bool,
 ) -> Result<EntityRecordsPage> {
+    entity_records_page(pool, entity_id, offset, limit, search, types, newest_first, &Default::default()).await
+}
+
+/// An entity's records for a model to read: the same page, without the kinds
+/// the owner withheld (Settings · Your data).
+pub async fn entity_records_page_for_model(
+    pool: &PgPool,
+    entity_id: &str,
+    offset: i64,
+    limit: i64,
+    newest_first: bool,
+) -> Result<EntityRecordsPage> {
+    let withheld = crate::api::model_access::withheld_tables(pool).await?;
+    entity_records_page(pool, entity_id, offset, limit, "", &[], newest_first, &withheld).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn entity_records_page(
+    pool: &PgPool,
+    entity_id: &str,
+    offset: i64,
+    limit: i64,
+    search: &str,
+    types: &[String],
+    newest_first: bool,
+    withheld: &std::collections::BTreeSet<String>,
+) -> Result<EntityRecordsPage> {
     let limit = limit.clamp(1, ENTITY_RECORDS_MAX_LIMIT);
     let offset = offset.max(0);
 
-    let Some(union) = entity_records_union(pool, entity_id).await? else {
+    let Some(union) = entity_records_union(pool, entity_id, withheld).await? else {
         return Ok(EntityRecordsPage { items: Vec::new(), total: 0 });
     };
 
@@ -1230,7 +1262,7 @@ pub async fn get_entity_record_facets(
 ) -> Result<Vec<EntityRecordFacet>> {
     use sqlx::Row;
 
-    let Some(union) = entity_records_union(pool, entity_id).await? else {
+    let Some(union) = entity_records_union(pool, entity_id, &Default::default()).await? else {
         return Ok(Vec::new());
     };
 

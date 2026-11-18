@@ -67,20 +67,23 @@ over with the introduction at the foot.
 Each section is a page with a link back to Settings, a serif title, one
 sentence and rows: Profile at `/virtues/profile`, the assistant at
 `/virtues/assistant`, Appearance, Billing, and Updates and network at
-`/virtues/server`. Your data has no page; its links go to What the assistant
-remembers, Keys and Shared links. The sections and their rows:
+`/virtues/server`. What the assistant may read is a page at `/virtues/data`
+with its switches, keep recordings and export everything; Your data's other
+links go to What the assistant remembers, Keys and Shared links. Every page,
+including the ones a row opens, has the same top (`settings/SettingsPage.svelte`):
+a link back, the title, one sentence. The sections and their rows:
 
 | Page | Rows ("planned" where not built yet) |
 |---|---|
-| Profile | Your name; what the assistant calls you; birthday; work; where you work; where you live (the time zone); units (planned) |
+| Profile | Your name; what the assistant calls you; birthday; work; where you work; where you live (the time zone); units, which the app and the assistant both use |
 | The assistant (titled with its name) | Its name; how it talks to you, with a sample reply on request; what it can do: search the web, use your browser, make and change applets, write in your pages; subjects it never raises; models; suggested questions; what it remembers (opens) |
 | Appearance | Theme; glass; reading font; text size; reduce motion |
 | Billing | Subscription (Stripe); balance; auto top-up; the two spending limits; bring your own AI (opens); what AI has cost (opens) |
 | Updates and network | Updates, with install updates on their own and which updates ("Released", "Early, may break"); reach your server away from home |
 
 The landing page's links: You (Profile, the assistant, Appearance, Billing);
-Your data (what the assistant remembers, Keys, Shared links, Backup; planned:
-what the assistant may read, keep recordings, export everything); Your server
+Your data (what the assistant may read, what it remembers, Keys, Shared
+links, Backup); Your server
 (Updates and network, Devices, How it's doing, Search).
 
 Rows are 56px with a hairline between them: the label and one line of help on
@@ -96,9 +99,6 @@ data / Backup) lead back to the landing page.
 - What the assistant remembers: the notes list.
 - Every model: the catalog, which becomes the only other way to pick a model,
   writing the same two choices as the selects.
-- What the assistant may read (planned): one switch per source. Turning one off
-  hides it from the assistant; the server keeps collecting it. Cycle is off
-  unless you turn it on.
 - Backup: how old the newest backup is, each drive, and the commands that set it
   up and restore (built; no buttons, because each step runs on the server).
 - Bring your own AI: the endpoint, key and model fields. The key is stored in
@@ -200,9 +200,17 @@ your server heard it" labels on the device page.
    preview (`api/style_preview.rs`: the chat's own character lines and the
    notes being typed, on the chat model, about an invented week) and Backup
    as a page (`/virtues/backup`: status, drives, and the commands that set it
-   up and restore; System links there). Left: units, what it may read
-   (server-enforced, as cycle data is today), keep recordings, export
-   everything.
+   up and restore; System links there). Units (the profile's `units`: the
+   chat and day write-up prompts, and distances and temperatures in the
+   app). Keep recordings (`api/recordings.rs`: the sweeper deletes audio
+   past the choice once it is transcribed; transcripts stay). Export
+   everything (`virtues export`, `cli/export.rs`). What the assistant may
+   read (`api/model_access.rs`: one switch per kind of record; an off kind
+   leaves the SQL role's grants and catalog, search results, the day
+   write-up, suggestions, the chat's circumstances and coverage, entity
+   articles, bookmark enrichment and Send iMessage). Not gated: what was
+   already written into the wiki before a switch went off, and the
+   deterministic dayline scoring that reads heart rate and sleep.
 8. **⌘K.** The Settings group, `#settings`, controls in the palette. Built:
    typing in ⌘K lists up to three matching settings under Settings, `#settings`
    lists them all, Return opens a setting's page at its row, and Theme and

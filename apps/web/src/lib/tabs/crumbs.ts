@@ -101,7 +101,12 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 	const settingsRow = rowForRoute(SETTINGS_MODE, path);
 	if (settingsRow) {
 		const root: Crumb = { label: 'Settings', route: '/virtues', menu: { kind: 'mode', mode: 'settings' } };
-		const crumbs = inRow(root, settingsRow, path, title);
+		// A Settings tab is labelled "Settings · Billing", or just "Settings"
+		// when opened from its address; only the part after the dot names the
+		// page, and a page a row opens (Billing / What AI has cost) has no
+		// crumb of its own without it.
+		const page = title.replace(/^Settings(?: · )?/, '');
+		const crumbs = inRow(root, settingsRow, path, page);
 		// The landing page's heading sits between Settings and the page
 		// (Settings / Your server / Devices), linked to the landing page,
 		// where that heading's links are.

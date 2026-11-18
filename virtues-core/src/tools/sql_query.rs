@@ -150,10 +150,16 @@ impl SqlQueryTool {
         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to list tables: {}", e)))?;
 
         let metadata = get_table_metadata();
+        let withheld = self.withheld().await?;
         let mut tables = Vec::new();
 
         for row in rows {
             let table_name: String = row.get("name");
+            // A kind of record the owner withheld from the assistant
+            // (`api::model_access`) is not named, as though it were absent.
+            if withheld.contains(&table_name) {
+                continue;
+            }
 
             // A table the catalog has no description for is NOT advertised.
             //
@@ -210,12 +216,27 @@ impl SqlQueryTool {
         })))
     }
 
+    /// The tables the owner has withheld from the assistant. A failed read
+    /// fails the call: the catalog never opens what it can't check.
+    async fn withheld(&self) -> Result<std::collections::BTreeSet<String>, ToolError> {
+        crate::api::model_access::withheld_tables(self.pool.as_ref())
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Couldn't read what the assistant may see: {e}")))
+    }
+
     /// Get schema for one or more tables
     async fn get_schema(&self, tables: &[String]) -> Result<ToolResult, ToolError> {
         let metadata = get_table_metadata();
+        let withheld = self.withheld().await?;
         let mut result_tables = serde_json::Map::new();
 
         for table in tables {
+            if withheld.contains(table) {
+                return Err(ToolError::InvalidParameters(format!(
+                    "'{table}' is not in the queryable catalog. Call list_tables \
+                     to see what is available."
+                )));
+            }
             // The catalog is the fence — the same one `list_tables` and
             // `explain_failure` apply. There used to be a `data_*`/`wiki_*`
             // prefix check in front of it, which refused `app_pages` while the

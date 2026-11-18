@@ -1323,13 +1323,23 @@ async fn build_system_prompt_blocks(
                     }
                 };
                 let narrative_identity = build_narrative_identity(pool).await;
-                Some(build_personalized_prompt(
+                // The owner's units (Settings · Profile). A failed read is
+                // logged and the head goes out without the sentence.
+                let units = match crate::api::profile::get_units(pool).await {
+                    Ok(units) => format!("\n\n{}", units.instruction()),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "units unavailable; prompt carries no units sentence");
+                        String::new()
+                    }
+                };
+                let head = build_personalized_prompt(
                     assistant_name,
                     user_name,
                     style_notes.as_deref(),
                     mode,
                     &narrative_identity,
-                ))
+                );
+                Some(format!("{head}{units}"))
             }),
         },
         // The precedence ladder, stated once. GPT-5-era guidance and our own

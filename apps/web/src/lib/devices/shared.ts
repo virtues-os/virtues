@@ -12,7 +12,6 @@ import {
 } from '$lib/tauri/bridge';
 import { confirmAction } from '$lib/stores/dialog.svelte';
 import { isTauri } from '$lib/utils/platform';
-import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { toast } from 'svelte-sonner';
 
 export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli' | 'agent';
@@ -333,16 +332,6 @@ export function collectorOf<D extends Pick<Device, 'id' | 'installed_by'>>(
  */
 export function deviceHref(device: Pick<Device, 'id' | 'is_current'>): string {
 	return device.is_current ? '/virtues/devices/this' : `/virtues/devices/${device.id}`;
-}
-
-/**
- * Back to the list, from any of the three screens that a device row can open
- * (the box-side detail, This Mac, This device). Shared because two of those
- * three are platform panels that predate the list having pages under it, and
- * arriving at one with no way back was the first thing wrong with the drill-down.
- */
-export function backToDevices(): void {
-	windowShellStore.navigate('/virtues/devices', { label: 'Settings' });
 }
 
 /**

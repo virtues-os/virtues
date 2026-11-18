@@ -1,27 +1,13 @@
 <!--
-  Settings, at the foot of the page: run the introduction again.
+  Settings, at the foot of the landing page: run the introduction again.
 
-  The letter has been re-readable from this page for a while (the link beside
-  this). What had no door at all was replaying the WALK — putting the letter
-  back in its gate position and reopening the steps that were set aside. It
-  was reachable only by hand:
+  It deletes nothing, so it runs in one click. Getting started's steps are
+  derived from rows on every read, so a step that is done comes back as done;
+  the only stored fact is the skip list, and this clears it, so a step set
+  aside comes back.
 
-      POST /api/setup/skip-onboarding {"skipped": false}
-
-  which is what we were doing one beta tester at a time.
-
-  IT DELETES NOTHING, and the copy says so plainly, because every other
-  "start over" in this app is destructive by comparison. Getting-started's
-  steps are DERIVED from rows on every read, so a step that is genuinely done
-  — a name and a birth date on file, a source flowing, a document written —
-  comes straight back as done. The only stored fact is the skip list, and this
-  clears it. Someone who set integrations aside in week one and now wants them
-  gets the step back; nobody loses a thing.
-
-  NAMED AWAY FROM "START OVER" DELIBERATELY. The Settings page already has a
-  "Start over", just above this, and it means unpair every device. Two buttons with one
-  name, one of which signs you out of your own box, is the kind of collision
-  that only shows up in a support thread.
+  Its name stays apart from "Start over" just above it, which unpairs every
+  device.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -32,7 +18,6 @@
 		skipOnboarding,
 	} from '$lib/api/client';
 
-	let armed = $state(false);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 
@@ -63,32 +48,16 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			busy = false;
-			armed = false;
 		}
 	}
 </script>
 
 <div class="field">
-	{#if !armed}
-		<button type="button" class="again" onclick={() => (armed = true)}>
-			Run the introduction again
-			<Icon icon="mynaui:arrow-right" width="14" />
-		</button>
-		<span class="field-hint">
-			Opens the letter, and reopens any step you set aside. This deletes nothing. Your
-			record, your sources and your subscription are untouched.
-		</span>
-	{:else}
-		<div class="confirm">
-			<button type="button" class="again go" disabled={busy} onclick={run}>
-				{busy ? 'Opening…' : 'Open the letter'}
-			</button>
-			<button type="button" class="cancel" disabled={busy} onclick={() => (armed = false)}>
-				Cancel
-			</button>
-		</div>
-		<span class="field-hint">You will land on the founder's letter, where you started.</span>
-	{/if}
+	<button type="button" class="again" disabled={busy} onclick={run}>
+		{busy ? 'Opening…' : 'Run the introduction again'}
+		<Icon icon="mynaui:arrow-right" width="14" />
+	</button>
+	<span class="field-hint">Opens the introduction, with any step you set aside. Nothing is deleted.</span>
 
 	{#if error}
 		<span class="err">{error}</span>
@@ -125,25 +94,6 @@
 	.again:disabled {
 		color: var(--color-foreground-muted);
 		cursor: default;
-	}
-
-	.confirm {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
-
-	.cancel {
-		background: none;
-		border: none;
-		padding: 0;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-
-	.cancel:hover {
-		color: var(--color-foreground);
 	}
 
 	.field-hint {

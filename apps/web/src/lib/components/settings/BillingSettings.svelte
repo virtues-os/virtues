@@ -229,7 +229,14 @@
 	});
 
 	// ─── Balance ───────────────────────────────────────────────────────────
-	type Usage = { balance_micros: number; month_to_date_micros: number; expires_at: string | null; error?: string };
+	type Usage = {
+		balance_micros: number;
+		month_to_date_micros: number;
+		expires_at: string | null;
+		error?: string;
+		/** No Virtues account is connected, so there is no balance to read. */
+		unlinked?: boolean;
+	};
 	let usage = $state<Usage | null>(null);
 	let usageError = $state<string | null>(null);
 
@@ -239,7 +246,11 @@
 			const data = await getBillingUsage<Usage>();
 			// The server answers 200 with an `error` body when it cannot reach
 			// the wallet, so a thrown error is not the only failure shape.
-			if (data.error) {
+			// Not connected: the subscription row above offers to connect, and
+			// there is no balance to show yet.
+			if (data.unlinked) {
+				usage = null;
+			} else if (data.error) {
 				usageError = data.error;
 				usage = null;
 			} else {
@@ -356,10 +367,9 @@
 		<span class="value mono">{formatMicrosPrecise(usage.balance_micros)}</span>
 	</SettingRow>
 {:else if usageError && (isSubscribed || standingUnknown)}
-	<SettingRow id="balance" label="Balance" help="Your server couldn't read the balance.">
+	<SettingRow id="balance" label="Balance" help="Your server couldn't read the balance. {usageError}">
 		<button class="btn-quiet" onclick={() => void loadUsage()}>Check again</button>
 	</SettingRow>
-	<p class="note note-error"><span class="error-code">{usageError}</span></p>
 {/if}
 
 {#if autoTopup}

@@ -9,7 +9,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Page } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import { formatDate } from '$lib/utils/dateUtils';
 	import { BUILD, buildLabel } from '$lib/build';
 	import {
@@ -60,27 +60,15 @@
 	}
 </script>
 
-<Page
-	title="Software"
-	description="What each part of the app runs. Updates are in Settings."
-	maxWidth="reading"
+<SettingsPage
+	title="Your server"
+	lede="The version each part of the app runs. They can differ. Updates are in Updates and network."
+	back={{ route: '/virtues/devices', label: 'Devices' }}
 >
-
 	<section class="artifacts">
-		<h3>Artifacts</h3>
-		<p class="sub">
-			Three pieces with three version numbers. They can differ. This is where you find out by how much.
-		</p>
-
 		<dl class="ledger">
-			<!--
-				The version goes FIRST, because the sentence above promises three
-				version numbers and this row used to open with a build date — the
-				one artifact of the three whose version was missing, on the page
-				whose whole job is telling you which versions are in play. It is
-				the same string "Running" shows above; repeated here so the three
-				can be read against each other in one column.
-			-->
+			<!-- The version first, the same string Updates shows, so the three
+			     parts read against each other in one column. -->
 			<dt>Server</dt>
 			<dd class="mono">
 				{version || '—'}
@@ -106,7 +94,7 @@
 						? shell.servingBundle
 							? `ota ${shell.servingBundle.slice(0, 8)}`
 							: 'bundled'
-						: 'served by the box'}
+						: 'from your server'}
 				</span>
 				{#if staged}
 					<span class="staged">
@@ -123,7 +111,6 @@
 				<dt>App</dt>
 				<dd class="mono">
 					{shell.appVersion}
-					<span class="dim"> · surface {shell.commandSurface}</span>
 				</dd>
 			{/if}
 		</dl>
@@ -138,27 +125,13 @@
 			<p class="ota-note">{otaNote}</p>
 		{/if}
 	</section>
-</Page>
+</SettingsPage>
 
 <style>
 	.artifacts {
 		margin-top: 2.5rem;
 		padding-top: 1.5rem;
 		border-top: 1px solid var(--color-border);
-	}
-
-	h3 {
-		font-size: 14px;
-		font-weight: 600;
-		margin: 0;
-	}
-
-	.sub {
-		margin: 6px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		max-width: 60ch;
 	}
 
 	.ledger {

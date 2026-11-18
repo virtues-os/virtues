@@ -12,7 +12,8 @@
 	import { onMount } from 'svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { Button, Input, Page } from '$lib';
+	import { Button, Input } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import {
 		deleteKey,
@@ -138,13 +139,15 @@
 	];
 </script>
 
-<Page title="Keys" description="Keys your applets use. Values show only when you ask." maxWidth="full">
+<SettingsPage
+	title="Keys"
+	lede="What your applets sign in with, such as an API key. An applet gets only the keys it lists, and the assistant sees their names, never their values."
+	width="full"
+>
+	{#snippet actions()}
+		<Button variant="primary" onclick={startAdd}>Add a key</Button>
+	{/snippet}
 	<section class="block">
-		<h2 class="block-title">Keys</h2>
-		<p class="block-body">
-			Named values that applets need, such as an API key. An applet gets only the keys it
-			lists, and the assistant sees their names, never their values.
-		</p>
 		{#if actionError}
 			<p class="form-error">{actionError}</p>
 		{/if}
@@ -159,13 +162,10 @@
 			loadingMessage="Loading keys…"
 			searchPlaceholder="Search keys…"
 			defaultViewMode="table"
+			showCounts={false}
 			onItemClick={startReplace}
 			onRetry={load}
 		>
-			{#snippet toolbarActions()}
-				<Button variant="secondary" size="sm" onclick={startAdd}>Add a key</Button>
-			{/snippet}
-
 			{#snippet tableRow(k: KeyRow)}
 				<td class="col-name"><code>{k.name}</code></td>
 				<td class="col-dim" class:attention={!k.is_set}>{k.is_set ? 'Set' : 'Not set'}</td>
@@ -209,7 +209,7 @@
 			{/snippet}
 		</UniversalDataGrid>
 	</section>
-</Page>
+</SettingsPage>
 
 <Modal
 	open={editing !== null}
@@ -280,12 +280,6 @@
 <style>
 	.block {
 		margin-bottom: 2.5rem;
-	}
-	.block-title {
-		margin: 0 0 0.25rem;
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--color-foreground);
 	}
 	.block-body {
 		margin: 0 0 1rem;

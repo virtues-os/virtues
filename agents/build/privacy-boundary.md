@@ -52,6 +52,15 @@ code a provider list in copy.
 - **BYO AI moves the boundary to the owner's vendor.** Calls go to their
   endpoint under their terms; ZDR enforcement is ours only on the hosted path.
   Never claim BYO is more private (see [`byo-ai-plan.md`](../plan/byo-ai-plan.md)).
+- **A kind the owner withholds stops going out.** Settings · Your data has
+  one switch per kind of record (`api/model_access.rs`). An off kind is
+  revoked from the SQL tool's role and left out of search results, the day
+  write-up, suggestions, the chat's circumstances and entity articles. What
+  the wiki already wrote from it before the switch went off still reaches a
+  model through the wiki. Cycle and symptoms are off until the owner turns
+  them on.
+- **Export writes on the box.** `virtues export` writes plain files to a
+  folder on the server; nothing is uploaded.
 - **A local model keeps only its own slot's calls on the box.** A slot pointed at a local
   endpoint keeps that slot's inference on the box; titles, summaries and
   transcription still go wherever their own slots point.
@@ -64,7 +73,8 @@ code a provider list in copy.
   still depends on the provider keeping its promise.
 - **"Coordinates never leave."** The day write-up reduces GPS to distance and
   pace on the box, but chat's `sql_query` can read `data_location_point`, so a
-  question about where you were sends coordinates.
+  question about where you were sends coordinates, unless the owner has
+  turned off Places you've been.
 - **"Blind relay" or "no records"** as unqualified properties. The relay sees
   which device keys talk, from which addresses, and how much passes when;
   "keeps no records" is an operational description, not an attested property.

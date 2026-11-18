@@ -500,7 +500,11 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     // sweep and revoked, in one transaction so there is no moment at boot when
     // they are readable. The list rides in a transaction-local setting because
     // a DO block takes no parameters.
-    let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
+    // What the owner has not opened to the assistant (`api::model_access`):
+    // the kinds they turned off in Settings, and cycle data until they turn
+    // it on. Unreadable switches fail the sweep, leaving the grants as they
+    // were rather than opening anything.
+    let opt_in: Vec<String> = crate::api::model_access::withheld_tables(pool).await?.into_iter().collect();
     let mut tx = pool
         .begin()
         .await
@@ -573,8 +577,17 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .await
     .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
 
-    // Table names are compile-time constants from the registry.
+    // Table names are compile-time constants (`api::model_access::KINDS`);
+    // one a box does not have yet has nothing to revoke.
     for table in &opt_in {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(format!("public.{table}"))
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| crate::error::Error::Database(format!("checking {table} failed: {e}")))?;
+        if !exists {
+            continue;
+        }
         sqlx::query(&format!("REVOKE ALL ON public.{table} FROM virtues_face_reader"))
             .execute(&mut *tx)
             .await

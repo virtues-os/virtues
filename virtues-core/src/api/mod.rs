@@ -17,6 +17,8 @@ pub mod devices;
 pub mod pair;
 pub mod passwords;
 pub mod settings_byo;
+pub mod model_access;
+pub mod recordings;
 pub mod settings_changes;
 pub mod style_preview;
 pub mod setup;

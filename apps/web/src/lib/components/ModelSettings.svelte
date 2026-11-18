@@ -137,7 +137,7 @@
 		{#if modelSlots.models.length}
 			<div>
 				<Button variant="secondary" size="sm" onclick={openCatalog}>
-					Compare all {modelSlots.models.length} models
+					Compare every model
 				</Button>
 			</div>
 		{/if}
@@ -194,7 +194,7 @@
 		background: var(--color-surface);
 		color: var(--color-foreground);
 		/* One width for every role, so the selects line up as a column. */
-		width: 18rem;
+		width: 20rem;
 		max-width: 100%;
 		min-width: 0;
 	}

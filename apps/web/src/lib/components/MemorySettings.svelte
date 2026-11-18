@@ -203,12 +203,6 @@
 <svelte:window onpagehide={sendPendingRemovals} />
 
 <section aria-busy={loading}>
-	<h2 class="settings-label">Memory</h2>
-	<p class="sec-hint">
-		What {name} picked up in your chats and keeps in mind for the next one. A note you edit
-		becomes yours, and {name} won't change it.
-	</p>
-
 	{#if loading}
 		<ul class="notes" aria-hidden="true">
 			{#each [72, 56, 64] as width (width)}

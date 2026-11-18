@@ -16,6 +16,7 @@
 	  Billing      /virtues/billing        — subscription, balance, limits
 	  Cost         /virtues/billing/cost   — what AI has cost, and every call
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
+	  Your data    /virtues/data           — keep recordings, export everything
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
 	  Server       /virtues/server         — updates, and reaching it from away
 	  Keys         /virtues/keys           — the named keys applets use
@@ -167,6 +168,7 @@
 		| 'profile'
 		| 'appearance'
 		| 'server'
+		| 'data'
 		| 'backup'
 		| 'assistant'
 		| 'billing'
@@ -182,6 +184,7 @@
 		'profile',
 		'appearance',
 		'server',
+		'data',
 		'backup',
 		'assistant',
 		'billing',
@@ -216,6 +219,8 @@
 			<SettingsSection section="appearance" />
 		{:else if section === 'server'}
 			<SettingsSection section="server" />
+		{:else if section === 'data'}
+			<SettingsSection section="data" />
 		{:else if section === 'backup'}
 			<BackupPage />
 		{:else if section === 'assistant'}

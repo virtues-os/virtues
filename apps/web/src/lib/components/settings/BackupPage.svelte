@@ -11,7 +11,7 @@
 	 * server stopped, so this page cannot do any of them for you.
 	 */
 	import { onMount } from 'svelte';
-	import { Page } from '$lib';
+	import SettingsPage from './SettingsPage.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getBackupStatus, type BackupStatus } from '$lib/api/client';
 
@@ -57,7 +57,7 @@
 	});
 </script>
 
-<Page title="Backup" maxWidth="reading">
+<SettingsPage title="Backup">
 	{#if failed}
 		<div class="note">
 			<p>Your server couldn't read its backup status.</p>
@@ -110,7 +110,7 @@
 			holds, how to check one opens, and restoring from a file.
 		</p>
 	{/if}
-</Page>
+</SettingsPage>
 
 <style>
 	.headline {

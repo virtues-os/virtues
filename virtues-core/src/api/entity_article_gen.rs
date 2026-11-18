@@ -332,7 +332,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
     // newest records are the last two days of it, and an article drawn from
     // those described a relationship that ended long ago as ongoing. So: how
     // it began, evenly spaced moments through the middle, and how it stands.
-    let total = super::wiki::get_entity_records_page(pool, &entity.id, 0, 1, "", &[], true)
+    let total = super::wiki::entity_records_page_for_model(pool, &entity.id, 0, 1, true)
         .await?
         .total;
     if total > 0 {
@@ -344,9 +344,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         for (heading, sample) in sample_offsets(total, DOSSIER_RECORDS as i64) {
             let mut lines = Vec::new();
             for (offset, limit) in sample {
-                let page = super::wiki::get_entity_records_page(
-                    pool, &entity.id, offset, limit, "", &[], false,
-                )
+                let page = super::wiki::entity_records_page_for_model(pool, &entity.id, offset, limit, false)
                 .await?;
                 lines.extend(page.items.iter().map(record_line));
             }

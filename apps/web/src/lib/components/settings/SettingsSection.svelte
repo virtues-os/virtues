@@ -22,15 +22,18 @@
 	import UpdateSection from './UpdateSection.svelte';
 	import NetworkSection from './NetworkSection.svelte';
 	import SettingRow from './SettingRow.svelte';
+	import SettingsPage from './SettingsPage.svelte';
 	import LinkRow from './LinkRow.svelte';
 	import YouSettings from './YouSettings.svelte';
 	import BillingSettings from './BillingSettings.svelte';
 	import AppearanceSettings from './AppearanceSettings.svelte';
 	import CapabilitiesSettings from './CapabilitiesSettings.svelte';
+	import DataSettings from './DataSettings.svelte';
+	import ReadingSettings from './ReadingSettings.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
 	import { getThemeChoice, setTheme, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
-	import { openSettingsPage, takePendingSetting } from '$lib/settings/focus';
+	import { takePendingSetting } from '$lib/settings/focus';
 
 	let { section: id }: { section: SectionId } = $props();
 
@@ -105,16 +108,7 @@
 	}
 </script>
 
-<div class="page">
-	<button type="button" class="back" onclick={() => openSettingsPage('/virtues', spoken)}>
-		<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
-			<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M15 6l-6 6l6 6" />
-		</svg>
-		Settings
-	</button>
-	<h1>{titleOf(section.title, spoken)}</h1>
-	<p class="lede">{titleOf(section.lede, spoken)}</p>
-
+<SettingsPage title={titleOf(section.title, spoken)} lede={titleOf(section.lede, spoken)} assistantName={spoken}>
 	<div class="rows">
 		{#if id === 'you'}
 			<YouSettings assistantName={spoken} />
@@ -133,7 +127,7 @@
 			</div>
 			<CapabilitiesSettings assistantName={spoken} />
 			<div class="block" id="setting-subjects"><RulesSettings assistantName={spoken} /></div>
-			<!-- The catalog is reached from inside this block ("Compare all"). -->
+			<!-- The catalog is reached from inside this block ("Compare every model"). -->
 			<div class="block" id="setting-models"><ModelSettings assistantName={spoken} /></div>
 			<div class="block" id="setting-suggested-questions"><SuggestionsSettings assistantName={spoken} /></div>
 			<LinkRow id="memory" label={title('memory')} help="Notes {spoken} keeps from your chats. Edit one and it becomes yours." href="/virtues/assistant/memory" />
@@ -147,55 +141,17 @@
 			<div class="block" id="setting-limit-run"><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
 			<LinkRow id="byo-ai" label={title('byo-ai')} help="Send AI calls to your own provider and key instead of paying through Virtues." href="/virtues/billing/byo" />
 			<LinkRow id="ai-cost" label={title('ai-cost')} help="The last two weeks day by day, each kind of work, and every call." href="/virtues/billing/cost" />
+		{:else if id === 'data'}
+			<ReadingSettings assistantName={spoken} />
+			<DataSettings />
 		{:else if id === 'server'}
 			<div class="block" id="setting-updates"><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>
-			<div class="block" id="setting-reach"><NetworkSection /></div>
+			<NetworkSection />
 		{/if}
 	</div>
-</div>
+</SettingsPage>
 
 <style>
-	.page {
-		max-width: var(--page-reading);
-		margin: 0 auto;
-		padding: 32px 32px 96px;
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		margin: 0 0 20px -4px;
-		padding: 4px;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: none;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		transition: color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.back:hover {
-		color: var(--color-foreground);
-		transition-duration: var(--motion-hover-in);
-	}
-
-	h1 {
-		font-size: 2.5rem;
-		font-weight: 400;
-		line-height: 1.1;
-		margin: 0;
-	}
-
-	.lede {
-		margin: 8px 0 24px;
-		font-size: 15px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
 	.rows {
 		border-top: 1px solid var(--color-border-subtle);
 	}
@@ -228,11 +184,5 @@
 		margin: 0;
 		font-size: 13px;
 		color: var(--color-error);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.back {
-			transition: none;
-		}
 	}
 </style>

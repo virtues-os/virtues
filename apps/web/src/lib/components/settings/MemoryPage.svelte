@@ -5,7 +5,7 @@
 	 * from a row).
 	 */
 	import { onMount } from 'svelte';
-	import { Page } from '$lib';
+	import SettingsPage from './SettingsPage.svelte';
 	import MemorySettings from '$lib/components/MemorySettings.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
 	import { findSetting, titleOf } from '$lib/settings';
@@ -24,6 +24,11 @@
 	const spoken = $derived(name.charAt(0).toUpperCase() + name.slice(1));
 </script>
 
-<Page title={titleOf(findSetting('memory')?.title ?? '', spoken)} maxWidth="reading">
+<SettingsPage
+	title={titleOf(findSetting('memory')?.title ?? '', spoken)}
+	lede="What {spoken} picked up in your chats and keeps in mind for the next one. A note you edit becomes yours, and {spoken} won't change it."
+	back={{ route: '/virtues/assistant', label: spoken }}
+	assistantName={spoken}
+>
 	<MemorySettings assistantName={spoken} />
-</Page>
+</SettingsPage>

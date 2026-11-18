@@ -16,7 +16,8 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Badge } from "$lib";
+	import { Button, Badge } from "$lib";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import UniversalDataGrid, {
@@ -308,17 +309,10 @@
 	];
 </script>
 
-<!--
-	The page's own heading, not a hand-rolled one. This view used to draw its
-	own `<h1 class="text-2xl font-semibold">` inside a bare `<Page>` with its own
-	measure and padding — so Devices was a sans 24px heading in a 3xl column
-	while every neighbouring room was a serif 30px heading in a 6xl one, for no
-	reason anyone chose.
--->
-<Page
+<SettingsPage
 	title="Devices"
-	description="Your server, and every app, browser and sensor paired to it."
-	maxWidth="full"
+	lede="Your server, and every app, browser and sensor paired to it."
+	width="full"
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>
@@ -342,6 +336,7 @@
 		loading={res.loading}
 		error={res.error}
 		onRetry={reloadAll}
+		showCounts={false}
 		emptyIcon="mynaui:mobile"
 		emptyMessage="No paired devices. Run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
@@ -487,8 +482,7 @@
 			{/if}
 		{/snippet}
 	</UniversalDataGrid>
-
-</Page>
+</SettingsPage>
 
 <Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">
 	<div class="add-choices">

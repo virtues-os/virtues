@@ -22,7 +22,8 @@
 	 * `deleteByoKey`); the app signs it, so neither has an extra step.
 	 */
 	import { onMount } from 'svelte';
-	import { Button, Input, Badge, Page } from '$lib';
+	import { Button, Input, Badge } from '$lib';
+	import SettingsPage from './SettingsPage.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getByoKey, setByoKey, deleteByoKey } from '$lib/api/client';
 	import { toast } from 'svelte-sonner';
@@ -61,16 +62,16 @@
 		{ key: 'coding', label: 'Coding', placeholder: 'provider/model', note: '' },
 		{
 			key: 'lite',
-			label: 'Lite',
+			label: 'Background work',
 			placeholder: 'provider/model',
-			note: 'Titles, summaries, and background jobs. High volume, so favor something cheap and quick.',
+			note: 'Titles, summaries and applets. These run often, so pick something cheap and quick.',
 		},
 		{ key: 'image', label: 'Image', placeholder: 'provider/model', note: '' },
 		{
 			key: 'omni',
 			label: 'Audio',
 			placeholder: 'provider/model',
-			note: 'Transcription, and usually the largest line item. The model has to hear muffled, in-pocket audio and make sense of the scene. Speech-to-text models will not do, and most chat models refuse audio outright. In practice a Gemini Flash model is the one workable choice.',
+			note: 'Transcription, usually the largest cost. The model has to make sense of muffled, in-pocket audio, which speech-to-text models and most chat models cannot do.',
 		},
 	] as const;
 
@@ -185,25 +186,24 @@
 	}
 </script>
 
-<Page
+<SettingsPage
 	title="Bring your own AI"
-	description={status?.configured && status.endpoint_url
+	lede={status?.configured && status.endpoint_url
 		? `Every AI call goes to ${byoHost(status.endpoint_url)}${status.default_model ? `, using ${status.default_model} by default` : ''}.`
 		: 'Send every AI call to an endpoint of your own instead of the subscription.'}
-	maxWidth="reading"
+	back={{ route: '/virtues/billing', label: 'Billing' }}
 >
 	<p class="prose-note">
-		Any endpoint that speaks OpenAI-style chat completions with a bearer token works. That covers
-		gateways like Vercel AI Gateway, OpenRouter, and LiteLLM, a provider's own API, and a local
-		server such as Ollama or llama.cpp. AWS Bedrock signs requests instead of taking a key, so it
-		needs a gateway in front. Your key is stored encrypted on your server. To change it, the Virtues
-		app on one of your paired devices signs the request with that device's own key. Maps, web
-		search, photos, and bank connections are not AI calls and stay on the subscription.
+		Any endpoint that speaks OpenAI-style chat completions with a bearer token works: a gateway
+		such as OpenRouter or LiteLLM, a provider's own API, or a local server such as Ollama. Your key
+		is stored encrypted on your server, and changing it takes the Virtues app on one of your paired
+		devices. Maps, web search, photos and bank connections are not AI calls and stay on the
+		subscription.
 	</p>
 	<p class="prose-note warn">
-		One caution. A key from your employer sends your personal life through systems they can read.
-		Your own key lets you choose the vendor and pay the bill directly, but it adds no privacy.
-		Whoever runs the endpoint still sees every call.
+		A key from your employer sends your personal life through systems they can read. Your own key
+		lets you pick the vendor and pay it directly, but whoever runs the endpoint still sees every
+		call.
 	</p>
 
 	{#if loading}
@@ -259,23 +259,20 @@
 			</div>
 		</div>
 	{/if}
-</Page>
+</SettingsPage>
 
 {#snippet keyForm()}
 	<div class="space-y-3">
 		<div>
 			<label class="block text-xs text-foreground-muted mb-1" for="byo-url">Endpoint URL</label>
-			<Input id="byo-url" bind:value={endpointUrl} placeholder="https://ai-gateway.vercel.sh/v1/chat/completions" />
-			<p class="text-xs text-foreground-muted mt-1.5">
-				Any endpoint that speaks OpenAI-style <code>/chat/completions</code> with a bearer token.
-			</p>
+			<Input id="byo-url" bind:value={endpointUrl} placeholder="https://openrouter.ai/api/v1/chat/completions" />
 		</div>
 		<div>
 			<label class="block text-xs text-foreground-muted mb-1" for="byo-context-window">Context window (tokens)</label>
 			<Input id="byo-context-window" bind:value={contextWindow} placeholder="Optional, e.g. 32000" />
 			<p class="text-xs text-foreground-muted mt-1.5">
 				Set this for a local or small model, so long chats are summarized before they overflow it.
-				Blank: your server goes by the model id, and assumes 200k when it can't tell.
+				Left blank, your server reads it from the model id, or assumes 200,000.
 			</p>
 		</div>
 		<div>
