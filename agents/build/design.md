@@ -69,8 +69,9 @@ primaries first.
 ```specimen Contrast
 ```
 
-Every token below is defined once in `:root` for Light and overridden once
-for Dark, in `apps/web/src/themes.css`. A theme name stored before the cut
+The tokens below live in `apps/web/src/themes.css`. A BASE `:root` block holds
+the values every theme starts from; Oxford's block applies to `:root` as well,
+so Light is the default, and Asgard's blocks override them for Dark. A theme name stored before the cut
 lands on Light or Dark by its darkness (`RETIRED_THEMES` in `theme.ts`), so
 nobody on a dark theme is dropped onto a white page.
 
@@ -93,17 +94,17 @@ inside `themes.css` only.
 
 ### Color
 
-| Role | Token | Light | Use |
-|---|---|---|---|
-| Desk | `--desk` | `#F5F4F2` | The window's ground, behind the cards. |
-| Page | `--page` | `#FFFFFF` | A card: the pane you work in. |
-| Ink | `--color-foreground` | `#1A2030` | Text. |
-| Muted, subtle | `--color-foreground-muted`, `--color-foreground-subtle` | | Secondary text, captions. Three inks, no others. |
-| Hairline | `--color-border` | `#E3E1DD` | A framed block's edge. Decoration, held to no contrast minimum. |
-| Field edge | `--color-border-field` | `#8F8A82` | A text field's edge at rest (Input, Textarea, SearchField). It shows where a field is, so it holds 3:1 against the page in both themes. |
-| Accent | `--color-primary` | `#1D4572` | Means *now* or *pressable*. |
-| Filled action | `--color-secondary` | `#9A2B2E` | The single primary Button on a page. |
-| Status | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | | A state a person can act on. |
+| Role | Token | Use |
+|---|---|---|
+| Desk | `--desk` | The window's ground, behind the cards. |
+| Page | `--page` | A card: the pane you work in. |
+| Ink | `--color-foreground` | Text. |
+| Muted, subtle | `--color-foreground-muted`, `--color-foreground-subtle` | Secondary text, captions. Three inks, no others. |
+| Hairline | `--color-border` | A framed block's edge. Decoration, held to no contrast minimum. |
+| Field edge | `--color-border-field` | A text field's edge at rest (Input, Textarea, SearchField). It shows where a field is, so it holds 3:1 against the page in both themes. |
+| Accent | `--color-primary` | Means *now* or *pressable*. |
+| Filled action | `--color-secondary` | The single primary Button on a page. |
+| Status | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | A state a person can act on. |
 
 ```specimen Colors
 ```
@@ -131,9 +132,9 @@ gets one small mark, not a red border, a red fill and red text.
 on light vanishes.
 
 **Color literals stay in `themes.css`.** A chart's own paint is the exception,
-and even there the values are read from tokens. The two canvas files
-(`wiki/LifelineCanvas.svelte`, `wiki/LifelineMap.svelte`) read tokens with
-`getComputedStyle` and keep a literal only as the fallback.
+and even there the values are read from tokens. Canvas code, which cannot
+resolve `var()`, reads tokens with `getComputedStyle` and keeps a literal only
+as the fallback.
 
 ### Grays
 
@@ -173,15 +174,15 @@ CDN or a system font.
 
 **The scale has seven steps.** Every font size in the app is one of them.
 
-| Token | Size | Face | Used for |
-|---|---|---|---|
-| `--text-title` | 36px | serif | A page title. |
-| `--text-heading` | 22px | serif | A section title, a step's heading. Also `--md-h2-size`. |
-| `--text-lead` | 18px | serif | The box's line: a list row, a card's question, a caption under a chart. |
-| `--text-body` | 16px | serif or sans | What you read and what you type. |
-| `--text-label` | 14px | sans | A row, a button, a link, a menu item, a field. Also `--chrome-label-font-size`. |
-| `--text-small` | 13px | sans | A label, a quiet verb, a note, a date, a chart's readout. |
-| `--text-caption` | 12px | sans | A tab, a group heading, a hint. |
+| Token | Face | Used for |
+|---|---|---|
+| `--text-title` | serif | A page title. |
+| `--text-heading` | serif | A section title, a step's heading. Also `--md-h2-size`. |
+| `--text-lead` | serif | The box's line: a list row, a card's question, a caption under a chart. |
+| `--text-body` | serif or sans | What you read and what you type. |
+| `--text-label` | sans | A row, a button, a link, a menu item, a field. Also `--chrome-label-font-size`. |
+| `--text-small` | sans | A label, a quiet verb, a note, a date, a chart's readout. |
+| `--text-caption` | sans | A tab, a group heading, a hint. |
 
 ```specimen Type
 ```
@@ -235,10 +236,9 @@ wiki and pages. The derivation is the comment above the registration in
 
 #### In the chrome
 
-The serif is for writing: a page's title, a page or thread in the sidebar,
-and a pin of either. A chat is a conversation, so its row stays sans, as do
-places and verbs (New chat, Threads). Recent has no glyphs, so the face is
-what tells a page from a chat there.
+The chrome is set in the sans. The one serif in it is "Virtues" beside the ∴
+when the sidebar is open. Reading text and page titles are serif on the
+paper.
 
 #### The Avenir license is unresolved
 
@@ -274,11 +274,11 @@ split the pane runs out of room, not the window.
 
 Every box you click is one of three heights, from `themes.css`:
 
-| Token | Height | For |
-|---|---|---|
-| `--control-h` | 34px | every control: a Button, an IconButton, a field, a select, a tab, the header's glass buttons |
-| `--control-nested-h` | 20px | a control inside a card, a row or a field: a tab's ×, a row's ⋯, Copy code |
-| `--control-touch-h` | 44px | a control on a touch screen |
+| Token | For |
+|---|---|
+| `--control-h` | every control: a Button, an IconButton, a field, a select, a tab, the header's glass buttons |
+| `--control-nested-h` | a control inside a card, a row or a field: a tab's ×, a row's ⋯, Copy code |
+| `--control-touch-h` | a control on a touch screen |
 
 Under `(pointer: coarse)` a Button, a field and a select grow to 44px
 themselves. A field's text grows to 16px there too, because iOS zooms the
@@ -292,14 +292,17 @@ them, so a row lands every 34px.
 
 ### Radius
 
-| Token | Size | Used by |
-|---|---|---|
-| `--radius-xs` | 2px | a drop line's end |
-| `--radius-sm` | 4px | a box inside a box, such as a tab's × |
-| `--radius-md` | 8px | controls, menus, popovers, rows (`--card-radius`) |
-| `--radius-lg` | 10px | the glass controls in the header |
-| `--radius-xl` | 12px | a pane, the sidebar's glass, a card in the pane, a home tile |
-| `--radius-full` | pill | tabs, the composer, the search field |
+| Token | Used by |
+|---|---|
+| `--radius-xs` | a drop line's end |
+| `--radius-sm` | a box inside a box, such as a tab's × |
+| `--radius-md` | controls, menus, popovers, rows (`--card-radius`) |
+| `--radius-lg` | a tab, the header's glass controls, a text field, the search field |
+| `--radius-xl` | a pane, the sidebar's glass, a card in the pane, a home tile |
+| `--radius-full` | a pill: a badge, a chip, a toggle's track |
+
+The composer is the one exception today: `ChatInput.svelte` gives it its own
+16px radius, which is off this scale.
 
 ```specimen Radius
 ```
@@ -309,10 +312,11 @@ length.
 
 ### Elevation
 
-**One shadow.** `--shadow-float` (`0 4px 16px` at 15%) is on every layer that
-floats over a page: menus, popovers, dialogs. Glass carries its own lift
-(`--lq-lift`), described under [Glass](#glass). Nothing else casts a shadow:
-not a card in the pane, not the chrome.
+**One shadow.** `--shadow-float` is on every layer that floats over a page:
+menus, popovers, dialogs. Glass carries its own lift (`--lq-lift`), described
+under [Glass](#glass). Nothing else casts a shadow: not a card in the pane, not
+the chrome. Two layers still break this today: `Modal` draws its own deeper
+shadow, and the search palette adds a second one to `--shadow-float`.
 
 **Separation goes whitespace, then a step of 3 to 5% lightness, then
 elevation.** Stop at the first one that works. Do not reach for a 1px rule.
@@ -325,15 +329,16 @@ depth from sliding.
 
 The shell's tokens, always on `--ease-premium`:
 
-| Token | Value | For |
-|---|---|---|
-| `--motion-hover-in` | 80ms | a hover coming on |
-| `--motion-hover-out` | 200ms | going off: instant on, gentle off, so running the pointer down a list leaves a short trail |
-| `--motion-press` | 60ms | sinking on press |
-| `--motion-release` | 180ms | springing back |
-| `--motion-state` | 150ms | a selection changing, a group folding |
-| `--motion-enter` | 180ms | a popover or menu appearing |
-| `--motion-layout` | 300ms | a pane resizing, a tab opening or closing |
+| Token | For |
+|---|---|
+| `--motion-hover-in` | a hover coming on |
+| `--motion-hover-out` | going off: instant on, gentle off, so running the pointer down a list leaves a short trail |
+| `--motion-press` | sinking on press |
+| `--motion-release` | springing back |
+| `--motion-state` | a selection changing, a group folding |
+| `--motion-enter` | a popover or menu appearing |
+| `--motion-exit` | it leaving, on `--ease-exit`, which speeds up as it goes |
+| `--motion-layout` | a pane resizing, a tab opening or closing |
 
 ```specimen Motion
 ```
@@ -341,17 +346,18 @@ The shell's tokens, always on `--ease-premium`:
 The sidebar opens in 440ms with its glass on a small spring and closes in
 260ms (`data-sidebar-motion` on the root). Leaving is quicker than arriving.
 
-Square controls sink to 94% while pressed. Rows and tabs take the press fill
-only, because a wide row that shrinks reads as a wobble.
+A pressed control sinks a little: an IconButton to 94%, the ∴ and the
+header's corner buttons to 92%, a tab to 97%. Rows take the press fill only,
+because a wide row that shrinks reads as a wobble.
 
-In the pane, three keyframe animations, each from-only so the resting state
-is the stylesheet's:
+**A page arrives rather than cutting** (`lib/tabs/arrive.ts`): when a tab's
+page changes it rises a few pixels as it fades up, quickly enough that
+opening still feels instant. A page opened from search comes up further, on a
+soft spring. Home and a new chat keep still, because a fading ancestor cuts
+glass off from what it frosts.
 
-| Name | Where | Shape |
-|---|---|---|
-| `arrive` | a page's blocks, staggered 60ms | opacity from 0, 6px up, 500ms |
-| `wipe` | a chart's tracks, first draw | a clip from the left, 660ms |
-| `pulse` | the now-marker | one slow breath at 3.4s; nothing else pulses |
+**Only work loops.** A loading browser page and a page the AI is writing
+pulse until they finish. Nothing loops for decoration.
 
 **Look for layout jumps.** A placeholder takes the real layout's shape. Pin
 the height of anything whose contents swap. Don't start in a state you are
@@ -375,13 +381,13 @@ The window has three materials: the desk, paper and glass.
 
 `--desk` is the ground. The window header and the sidebar sit on it. Along
 the bottom of the whole window, behind everything, is the painting
-(`routes/(app)/+layout.svelte`). It is in full color, and the panes cover
-most of it.
+(`routes/(app)/+layout.svelte`). It is in full color in Light; Dark dims it
+through `--window-scene-filter`. The panes cover most of it.
 
 ### Paper
 
 A pane is a sheet of paper (`--page`) at `--radius-xl`, standing
-`--window-air` (12px) in from the window's edges and `--pane-gap` (10px) from
+`--window-air` in from the window's edges and `--pane-gap` from
 the sidebar and from the other pane in a split. A card separates from the
 desk by tone, not a line: the desk is a step darker than the page in both
 themes. Home has no paper: its tiles stand on the desk.
@@ -397,17 +403,18 @@ not add a second glass.
 
 - **Clear** (`.lq`): small controls.
 - **Regular** (`.lq-regular`): surfaces that hold text, such as the sidebar
-  and the home tiles. A flat 62% fill, because a gradient this tall shows
-  bands in Chrome.
+  and the home tiles. Less see-through than clear, and a flat fill, because a
+  gradient this tall shows bands in Chrome. Dark's is denser than Light's.
 - **Selected inside glass** is a flat tint, never a second pane of glass. No
   card on a card, no shadow on a shadow.
-- The rim is a bright top line, a faint light ring and a soft inner shade.
-  The lift is a faint outline, a contact shadow and one wide soft shadow.
+- The rim (`--lq-rim`) and the lift (`--lq-lift`) are set per theme in
+  `themes.css`; Dark's are plainer than Light's.
 
 **The Glass setting** (Settings, Appearance) is None, Low, Medium or High,
 per browser (`lib/stores/glass.svelte.ts`, `data-glass` on the root, set
-before first paint in `app.html`). It maps to `--lq-see` (0, 0.5, 1, 1.4), and
-every fill thins by its share times `--lq-see`. None also drops the backdrop
+before first paint in `app.html`). Every fill thins by its share times
+`--lq-see`, which is 1 at Medium; Low and High set it lower and higher in
+`app.css`. None swaps the fills for the plain surface and drops the backdrop
 filters. `prefers-reduced-transparency` means None.
 
 **A backdrop root turns glass into a flat tint.** Any ancestor with
@@ -424,8 +431,9 @@ displacement in `backdrop-filter`.
 
 ### Window header
 
-The header row is `--chrome-row-h` (54px). Its controls are `--chrome-tab-h`
-(34px) with 10px of air above and below, so the panes start 54px down. In the
+The header row is `--chrome-row-h` tall. Its controls are `--control-h`, with
+the rest of the row split as air above and below them, so the panes start
+one header row down. In the
 Mac app the traffic lights sit on the row's center line (`CENTRE_Y` in
 `src-tauri/src/traffic_lights.rs`, 27), so a change to the row height changes
 that constant too.
@@ -446,15 +454,15 @@ From left to right:
 
 ### Sidebar
 
-Closed, the sidebar is a floating glass rail `--rail-w` (44px) wide that
+Closed, the sidebar is a floating glass rail `--rail-w` wide that
 fits its icons. Open, it is a full-height panel of regular glass. Both reach
 up into the header row. Every row stands 4px in from the glass with 10px of
 padding, open or closed, so icons and the ∴ sit 14px in and nothing moves
 sideways when it toggles. Closing shrinks the width and the height together.
 
-Rows are `--sidebar-interactive-height` (32px), 2px apart, so a row lands
-every 34px. The ∴ row is as tall as a row and stands 16px above the doors,
-the same 16px as from the doors to Pinned.
+Rows are `--sidebar-interactive-height`, 2px apart, so a row lands every
+`--control-h`. The ∴ is a control (`--chrome-tab-h`), 2px taller than a row,
+and stands 16px above the doors, the same 16px as from the doors to Pinned.
 
 The sidebar is one list (`HomePanel`):
 
@@ -471,8 +479,10 @@ The sidebar is one list (`HomePanel`):
    mark. Drag a Recent row or a tab into Pinned to pin it; a line shows the
    gap it will land in. A pinned thread takes a dropped row or tab, which
    files it there.
-3. **Recent**: the ten newest chats and pages, newest first, then "See all".
-   No glyphs: chats are set in the sans and pages in the serif.
+3. **Recent**: chats, pages, threads and applets you opened or changed,
+   newest first, with pinned things left out (`lib/sidebar/recents.svelte.ts`).
+   It shows as many as fit, up to ten, then "See all". A filter in the
+   group's heading narrows it to one kind and is remembered.
 
 Every group folds from its label and the fold is remembered. A group with
 nothing in it is not drawn.
@@ -487,10 +497,13 @@ glyph becomes its solid version (`SOLID_GLYPHS` and `fillable` in
 
 ### Tabs
 
-Tabs are pills (`--radius-full`) sized to their labels. The selected tab is
-on the same glass as the sidebar, as a flat fill. Tabs you are not on have no
-fill until you point at them. In a split, the active tab of the pane you are
-not working in dims its ink.
+Every tab is the same width whatever its title (`WindowTabBar`), at
+`--radius-lg`, so the strip reads as a row of equal slots and a tab does not
+jump when its chat names itself. The selected tab is on the sidebar's glass
+(`.lq-selected`). Tabs you are not on have no fill until you point at them.
+Pointing at a tab opens its hover card (`TabHoverCard`) with the full title
+and its actions. In a split, the active tab of the pane you are not working
+in dims its ink.
 
 - **Switching tabs is instant.** Fill and ink change in one frame; only the
   hover fades.
@@ -498,9 +511,8 @@ not working in dims its ink.
   `--motion-layout`: the space opens and the neighbors glide aside, then the
   tab fades in; closing reverses it. Tabs already open when the window loads
   do not animate.
-- **A crowded strip compacts, then scrolls.** The tabs you are not on drop to
-  their icons. Past that the strip scrolls, and an edge fades over 32px while
-  there are tabs beyond it.
+- **A crowded strip shrinks its tabs together**, down to their icons, then
+  scrolls.
 - **A tab carries the sidebar's marks.** A chat that is replying shows the
   working ∴ in place of its icon. A reply that landed in the background puts
   the unread dot on the icon's corner. A title that does not fit fades over
@@ -520,19 +532,22 @@ its own).
   opens a menu of them. The last segment is the page: double-click to rename
   it in place, right-click for its actions. The page's title is that segment,
   so a page draws no title row of its own.
-- **Right**: the page's status (`usePageStatus`), such as "Saved" or
-  "Offline", then what the page lets you do: controls handed over with
+- **Right**: the page's status (`usePageStatus`), such as "Saving",
+  "Offline" or "Couldn't save" (a saved page shows nothing), then what the
+  page lets you do: controls handed over with
   `usePageActions`, then buttons from `paneActions.set`, two inline and the
   rest behind a `···`.
 
-The status says the page's state. It never says where work runs.
+The status says the page's state, and for an applet which model slot runs
+it. It never marks work as on or off your server.
 
 The phone has no toolbar. There a page keeps its title and controls at its
 top, and the chat keeps its corner button.
 
 ### Search
 
-The palette (`SearchModal`) opens centred over the panes on a blurred veil.
+The palette (`SearchModal`) opens centred on the window, near the top, on a
+blurred veil.
 On the phone and under reduced transparency the veil has no blur.
 
 ### Glyphs
@@ -542,11 +557,14 @@ own things keep their names in `AtlasIcon`'s table (`atlas:wiki`,
 `atlas:pages`), and each name draws a Myna icon. `scripts/myna-icons.mjs`
 bundles only the icons the source names, so write a name out in full: a name
 built at runtime is not bundled. Older Remix and Phosphor names are mapped in
-`lib/legacyIcons.ts`. Brand marks come from Simple Icons.
+`lib/legacyIcons.ts`. Brand marks come from Simple Icons. The icons a person
+picks for a page, chat, pin or thread come from Lucide (`lib/lucide.ts`,
+`IconPicker`).
 
-**Every icon renders at 1.25px of ink.** `AtlasIcon` derives its stroke from
-its size, so a stroke is never typed by hand. Two glyph sizes: 14px beside
-12px text, and 16px (`SHELL_GLYPH_PX`) in rows and the header.
+**Line icons render at 1.25px of ink.** `AtlasIcon` derives its stroke from
+its size. Two glyph sizes: 14px beside 12px text, and 16px (`SHELL_GLYPH_PX`)
+in rows and the header. A pin's mark is the exception: `PinGlyph` draws it at
+12px with a 1.5px stroke, so it holds up inside its tinted tile.
 
 **Labels lead; icons support them.** A column of identical full-contrast
 icons makes a sidebar look like every other sidebar. Sidebar icons rest at
@@ -625,7 +643,8 @@ remount it to change that phase, or the two chase each other.
 ## Primitives
 
 The parts every page is built from. Each lives in `apps/web/src/lib/` and
-has a specimen on `/design`. When a primitive exists, a page uses it: a hand-made
+should have a specimen on `/design` (`Popover`, `Page`, `SubNav` and
+`Section` do not yet). When a primitive exists, a page uses it: a hand-made
 copy is a regression, however small.
 
 "Today" is what the code does now. "Decided" is where it is going, and the
@@ -643,14 +662,14 @@ gap is open work.
 | Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, `timeline/Pill`, and `.chip` in 13 files. | One Chip. |
 | `MenuItem`, context menu | A row in a menu. | `MenuItem` in 11 files; the context menu positions itself (`contextMenu/fit.ts`). | One menu on `lib/floating`. |
 | `Popover` | Anything anchored to a control. | `lib/floating` in about 24 files; about 15 overlays hand-build their own. | Everything anchored uses it. |
-| `Modal` | A dialog. `DialogHost` draws confirm and prompt on it. | 16 files; SearchModal, MediaLightbox and MobileDrawer build their own. | Kept. |
+| `Modal` | A dialog. `DialogHost` draws confirm and prompt on it. | 16 files; SearchModal, MediaLightbox and MobileDrawer build their own. Its close is a hand-made 28px button, and it draws its own shadow and uses raw `--surface` and `--border`. | Close on `IconButton`, `--shadow-float`, `--color-` tokens. |
 | Tooltip | A name for something whose words are hidden or cut off. | `data-tip` through `TooltipLayer` (29), and the browser's `title=` (185). | `data-tip` only, and only where words are hidden. |
 | `Card` | A framed surface. | 5 files. | Kept. |
 | List row | One row in a list. | `.row` written about 188 times; `SettingRow`, `LinkRow`. `UniversalDataGrid` for list pages (19 files). | One row primitive; the grid stays for list pages. |
 | `SubNav` | In-page tabs, route-driven. | 1 file. | Kept. |
 | Section label | The heading of a group of rows. | `Section` in 4 files; `.eyebrow`, `.group-label`, `.section-title`, `.kicker` in 26. | One label. |
 | `EmptyState`, `LoadingState`, `ErrorState` | What a page shows when there is nothing yet. | Built on `StateBlock`; used in 1, 3 and 3 files, beside 26 hand-made empty states and the spinner icon placed by hand in 31. | Kept, and used. |
-| `Page` | The page frame and its width. | 32 files. | Kept. |
+| `Page` | The page frame and its width. | About 20 files. | Kept. |
 
 Dead code to delete: `floating/Dropdown`, `floating/Tooltip`,
 `floating/composites/Select` and `UniversalPicker` have no users.
@@ -717,12 +736,12 @@ lines above and below.
 
 Every drag uses the same marks, from `themes.css`:
 
-| Token | Value | For |
-|---|---|---|
-| `--drop-line` | `--color-primary` | where a dragged thing will land between others |
-| `--drop-line-width` | 2px | that line, with a 1px radius |
-| `--drop-tint` | primary at 15% | a thing or zone that will take the drop |
-| `--drag-source-opacity` | 0.4 | the dragged thing's place while it is away |
+| Token | For |
+|---|---|
+| `--drop-line` | where a dragged thing will land between others |
+| `--drop-line-width` | that line, with a 1px radius |
+| `--drop-tint` | a thing or zone that will take the drop |
+| `--drag-source-opacity` | the dragged thing's place while it is away |
 
 - **The thing in your hand looks like itself**: the whole pill, with its
   fill. Set the dragged look before the browser takes its snapshot, and dim
@@ -822,7 +841,9 @@ Kept for the reasoning. Don't rebuild one without answering why it went.
   read as a second mark.
 - **Sidebar hover fills and a pointer-following glow.** The icon filling in
   replaced both.
-- **A "∴ Virtues" lockup and New chat beside the ∴.**
+- **A "∴ Virtues" logo lockup in the header row, and New chat beside the
+  ∴.** The ∴ widening into the sidebar's first row, with "Virtues" on the
+  labels' line, replaced both.
 - **The home page** (`/home`, 2026-10-06). Home and chat had become one
   place, and the page was a second front door. Today's streams live on the
   Timeline, and a day's account is the wiki's day article.

@@ -45,14 +45,9 @@ SRC="apps/web/src"
 # Color literals: `src/themes.css` and `src/app.css` are where literals are
 # SUPPOSED to live — they define the tokens everything else must reference.
 #
-# `wiki/LifelineCanvas.svelte` and `wiki/LifelineMap.svelte` are the two files
-# that paint into a canvas 2D context. `ctx.fillStyle` cannot resolve `var()`,
-# so they read the token with `getComputedStyle().getPropertyValue('--x')` and
-# need a literal as the fallback when the property is empty. That is the
-# correct pattern, not debt. Named, not globbed, and deliberately short:
-# `DaylineChart.svelte` (56 hex), `DaylineStrip.svelte` (13) and
-# `ChapterLifeline.svelte` (2) are SVG and CSS, which take `var()` fine — their
-# literals are real debt and stay in the baseline where they can be paid down.
+# Canvas code reads tokens with `getComputedStyle().getPropertyValue('--x')`,
+# since `ctx.fillStyle` cannot resolve `var()`, and keeps a literal only as the
+# fallback. It lives in `.ts` files, which this lint does not scan.
 #
 # Mono: `themes.css` declares `--font-mono`.
 #
@@ -68,7 +63,7 @@ SRC="apps/web/src"
 # Deliberately NOT exempt: `chat/PageEditResult.svelte`, whose `.result-title`
 # is a page TITLE wearing a mono stack — that is exactly the kicker the grammar
 # names, and it stays in the baseline where it can be paid down.
-COLOR_EXEMPT='apps/web/src/themes.css apps/web/src/app.css apps/web/src/lib/components/wiki/LifelineCanvas.svelte apps/web/src/lib/components/wiki/LifelineMap.svelte'
+COLOR_EXEMPT='apps/web/src/themes.css apps/web/src/app.css'
 MONO_EXEMPT='apps/web/src/themes.css'
 MONO_LITERAL_EXEMPT="$MONO_EXEMPT apps/web/src/app.css apps/web/src/lib/components/tabs/views/DeveloperTerminalView.svelte apps/web/src/lib/components/applets/AppletSource.svelte apps/web/src/lib/components/chat/CodeInterpreterCard.svelte apps/web/src/lib/components/chat/EditDiffCard.svelte apps/web/src/lib/components/asset/TextPane.svelte"
 
