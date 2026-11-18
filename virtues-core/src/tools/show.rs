@@ -127,8 +127,7 @@ pub async fn execute(
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
     let trimmed = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let purpose = trimmed(&args.purpose).map(|p| purpose_named(&p)).transpose()?;
-    let named_mark = trimmed(&args.mark);
+    let (purpose, named_mark) = purpose_and_mark(trimmed(&args.purpose), trimmed(&args.mark))?;
     let fields = ChartFields {
         split_at: trimmed(&args.split_at),
         split_label: trimmed(&args.split_label),
@@ -225,6 +224,23 @@ pub async fn execute(
     }
     shaped.insert("note".into(), json!(note));
     Ok(ToolResult::success(Value::Object(shaped)))
+}
+
+/// The call's purpose and mark. A mark's name given as the purpose
+/// (`purpose: "cumulative"`) is read as that mark with its first purpose:
+/// models do write it, and refusing it only buys a retry.
+fn purpose_and_mark(
+    purpose: Option<String>,
+    mark: Option<String>,
+) -> Result<(Option<&'static chart_marks::ChartPurpose>, Option<String>), ToolError> {
+    let Some(p) = purpose else { return Ok((None, mark)) };
+    if chart_marks::purpose(&p).is_none() {
+        if let Some(m) = chart_marks::mark(&p) {
+            let first = m.purposes.first().and_then(|id| chart_marks::purpose(id));
+            return Ok((first, mark.or(Some(p))));
+        }
+    }
+    Ok((Some(purpose_named(&p)?), mark))
 }
 
 fn purpose_named(id: &str) -> Result<&'static chart_marks::ChartPurpose, ToolError> {
@@ -1093,5 +1109,15 @@ mod tests {
     fn a_bar_chart_keeps_a_column_named_date() {
         let (columns, _) = mark_columns("bar", cols(&["date", "Steps"]), vec![]);
         assert_eq!(columns, cols(&["date", "Steps"]));
+    }
+
+    #[test]
+    fn a_mark_given_as_the_purpose_is_read_as_that_mark() {
+        let (p, m) = purpose_and_mark(Some("cumulative".into()), None).unwrap();
+        assert_eq!((p.map(|p| p.id), m.as_deref()), (Some("change_over_time"), Some("cumulative")));
+        // A mark the call names itself wins over the one in purpose.
+        let (_, m) = purpose_and_mark(Some("cumulative".into()), Some("line".into())).unwrap();
+        assert_eq!(m.as_deref(), Some("line"));
+        assert!(purpose_and_mark(Some("vibes".into()), None).is_err());
     }
 }
