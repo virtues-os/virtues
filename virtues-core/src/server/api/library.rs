@@ -85,6 +85,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/threads", get(list_threads_handler).post(create_thread_handler))
         .route("/api/threads/week", get(thread_week_handler))
         .route("/api/notes", get(notes_handler))
+        .route("/api/notes/:key", get(note_handler))
         .route("/api/notes/:key/dismiss", post(dismiss_note_handler).delete(restore_note_handler))
         .route(
             "/api/threads/:id",
@@ -474,6 +475,11 @@ pub async fn thread_week_handler(
 /// GET /api/notes - What your server noticed about your tasks and threads
 pub async fn notes_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::notes::notes(state.db.pool()).await)
+}
+
+/// GET /api/notes/:key - One note and what it rests on
+pub async fn note_handler(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    api_response(crate::api::notes::note(state.db.pool(), &key).await)
 }
 
 /// POST /api/notes/:key/dismiss - Not now

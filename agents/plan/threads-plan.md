@@ -293,6 +293,13 @@ starts. Read `.claude/rules/migrations.md` first.
    kept per condition. They show in the door's Insights view, in a thread's
    or task's preview, as a mark on their rows, and on home's notes line. The
    sentence is fixed wording; a model writing it is still to do.
+   An insight's page is built (`InsightView.svelte`, `GET /api/notes/:key`):
+   what it is about, the sentence, when it leaves, its action and "Not now",
+   then "Why your server raised it" with the rule in one line and the
+   evidence (the overlapping entries on a timeline, or the days up to a due
+   date with nothing set aside), and how it was found in the side column.
+   "Why this?" in the door's previews opens it. Still to do on it: what
+   acting changes, its history, and "Fewer like this".
    The first rule needs no model to find: a
    clash between two calendar entries in different threads, or a dated task
    with no time set aside before its date. A model writes the sentence only.

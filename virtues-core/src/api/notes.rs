@@ -47,6 +47,48 @@ pub struct Note {
     /// The one thing to do about it, and where that is.
     pub action: String,
     pub action_route: String,
+    /// When its moment passes and it leaves on its own.
+    pub until: DateTime<Utc>,
+}
+
+/// One note with what it rests on, for its page.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteDetail {
+    #[serde(flatten)]
+    pub note: Note,
+    /// Set aside with "Not now". Its page still opens.
+    pub is_dismissed: bool,
+    /// The kind, in words: "A calendar clash".
+    pub kind_label: &'static str,
+    /// Why it was raised, in one sentence.
+    pub why: String,
+    /// How it was found.
+    pub found_by: &'static str,
+    /// The calendar entries it rests on.
+    pub events: Vec<NoteEvent>,
+    /// The task it is about, when it is about one.
+    pub task: Option<NoteTask>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NoteEvent {
+    pub id: String,
+    pub title: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub thread_id: String,
+    pub thread_name: String,
+    pub thread_icon: Option<String>,
+    pub thread_color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NoteTask {
+    pub id: String,
+    pub title: String,
+    pub due_on: NaiveDate,
+    pub thread_id: String,
+    pub thread_name: String,
 }
 
 pub async fn notes(pool: &PgPool) -> Result<Vec<Note>> {
@@ -54,6 +96,13 @@ pub async fn notes(pool: &PgPool) -> Result<Vec<Note>> {
 }
 
 pub async fn notes_at(pool: &PgPool, now: DateTime<Utc>) -> Result<Vec<Note>> {
+    let (mut out, dismissed) = every_note(pool, now).await?;
+    out.retain(|n| !dismissed.contains(&n.key));
+    Ok(out)
+}
+
+/// Every note whose condition holds, and the keys set aside.
+async fn every_note(pool: &PgPool, now: DateTime<Utc>) -> Result<(Vec<Note>, Vec<String>)> {
     let zone = crate::timezone::home_timezone_or_utc(pool, now.date_naive()).await;
     let tz = zone.parse::<chrono_tz::Tz>().ok();
     let today = tz.map(|tz| now.with_timezone(&tz).date_naive()).unwrap_or_else(|| now.date_naive());
@@ -64,8 +113,76 @@ pub async fn notes_at(pool: &PgPool, now: DateTime<Utc>) -> Result<Vec<Note>> {
     let dismissed: Vec<String> = sqlx::query_scalar("SELECT key FROM app_note_dismissals")
         .fetch_all(pool)
         .await?;
-    out.retain(|n| !dismissed.contains(&n.key));
-    Ok(out)
+    Ok((out, dismissed))
+}
+
+/// One note and what it rests on. A note whose condition has cleared is
+/// gone, and says so.
+pub async fn note(pool: &PgPool, key: &str) -> Result<NoteDetail> {
+    note_at(pool, key, Utc::now()).await
+}
+
+pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<NoteDetail> {
+    let (all, dismissed) = every_note(pool, now).await?;
+    let note = all.into_iter().find(|n| n.key == key).ok_or_else(|| {
+        crate::error::Error::NotFound(
+            "This note has gone: what it was about has changed or its moment has passed.".into(),
+        )
+    })?;
+    let is_dismissed = dismissed.contains(&note.key);
+    let mut parts = note.key.split(':');
+    let kind = parts.next().unwrap_or_default();
+    if kind == "clash" {
+        let ids: Vec<String> = parts.map(str::to_string).collect();
+        let events: Vec<NoteEvent> = sqlx::query_as(
+            "SELECT DISTINCT ON (e.id) e.id, e.title, e.started_at, e.ended_at,
+                    t.id AS thread_id, t.name AS thread_name, t.icon AS thread_icon, t.accent_color AS thread_color
+             FROM data_calendar_event e
+             JOIN app_thread_items i ON i.url = '/record/calendar_event/' || e.id
+             JOIN app_threads t ON t.id = i.thread_id AND t.deleted_at IS NULL
+             WHERE e.id = ANY($1)
+             ORDER BY e.id, i.added_at",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await?;
+        let mut events = events;
+        events.sort_by_key(|e| e.started_at);
+        return Ok(NoteDetail {
+            why: "Two entries on your calendar overlap, and they belong to different threads.".into(),
+            kind_label: "A calendar clash",
+            found_by: "A rule that compares your calendar entries. The sentence is fixed wording.",
+            note,
+            is_dismissed,
+            events,
+            task: None,
+        });
+    }
+    let task_id = parts.next().unwrap_or_default().to_string();
+    let task: Option<NoteTask> = sqlx::query_as(
+        "SELECT t.id, t.title, t.due_on, th.id AS thread_id, th.name AS thread_name
+         FROM app_tasks t JOIN app_threads th ON th.id = t.thread_id
+         WHERE t.id = $1 AND t.due_on IS NOT NULL",
+    )
+    .bind(&task_id)
+    .fetch_optional(pool)
+    .await?;
+    let why = match &task {
+        Some(t) => format!(
+            "It is due soon, and nothing on your calendar is filed in {} between now and then.",
+            t.thread_name
+        ),
+        None => "It is due soon, and nothing on your calendar is set aside for it.".into(),
+    };
+    Ok(NoteDetail {
+        why,
+        kind_label: "No time set aside",
+        found_by: "A rule that compares a task's day with the calendar entries in its thread. The sentence is fixed wording.",
+        note,
+        is_dismissed,
+        events: Vec::new(),
+        task,
+    })
 }
 
 /// Set a note aside. Its condition changing makes a new note, which shows.
@@ -141,6 +258,7 @@ async fn clashes(pool: &PgPool, now: DateTime<Utc>, tz: Option<chrono_tz::Tz>) -
                 when: at_label(start, tz),
                 action: "See the day".into(),
                 action_route: format!("/day/day_{}", day.format("%Y-%m-%d")),
+                until: start,
             }
         })
         .collect())
@@ -188,6 +306,7 @@ async fn unplanned(pool: &PgPool, now: DateTime<Utc>, today: NaiveDate, zone: &s
             when: format!("By {}", day),
             action: "Open the task".into(),
             action_route: format!("/task/{id}"),
+            until: end_of_day,
         });
     }
     Ok(out)
@@ -276,7 +395,20 @@ mod tests {
         restore(&pool, &clash.key).await.unwrap();
         assert!(notes_at(&pool, now).await.unwrap().iter().any(|n| n.kind == "clash"));
 
-        // Once both events have passed, the clash has gone on its own.
+        // Its page has both events, in order, with their threads, and still
+        // opens once it is set aside.
+        dismiss(&pool, &clash.key).await.unwrap();
+        let detail = note_at(&pool, &clash.key, now).await.unwrap();
+        assert!(detail.is_dismissed);
+        assert_eq!(detail.events.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(), ["Second coat", "Call with the agent"]);
+        assert_eq!(detail.events[1].thread_name, "Plan the trip");
+        let task_note = note_at(&pool, &unplanned[0].key, now).await.unwrap();
+        assert_eq!(task_note.task.as_ref().map(|t| t.thread_name.as_str()), Some("Tax paperwork"));
+        restore(&pool, &clash.key).await.unwrap();
+
+        // Once both events have passed, the clash has gone on its own, and
+        // its page says so.
         assert!(notes_at(&pool, at("2030-01-13T00:00:00Z")).await.unwrap().iter().all(|n| n.kind != "clash"));
+        assert!(note_at(&pool, &clash.key, at("2030-01-13T00:00:00Z")).await.is_err());
     }
 }
