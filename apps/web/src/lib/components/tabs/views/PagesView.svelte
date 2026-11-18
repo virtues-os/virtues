@@ -242,10 +242,18 @@
 		text-align: left;
 	}
 	.group-name.link {
+		/* Room for the focus tint, given back so the name stays aligned. */
+		margin: 0 -0.375rem;
+		padding: 0 0.375rem;
+		border-radius: var(--radius-sm);
 		cursor: pointer;
 	}
 	.group-name.link:hover {
 		color: var(--color-foreground-muted);
+	}
+	/* No focus rings: keyboard focus takes the same tint as a focused row. */
+	.group-name.link:focus-visible {
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 	.group-note {
 		font-size: 0.8125rem;

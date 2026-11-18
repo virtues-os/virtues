@@ -706,16 +706,13 @@
 		focusedIndex = clamped;
 		const item = visualOrder[clamped];
 		if (!item) return;
-		// The DOM order matches the flat order within each group, so target by id.
-		gridEl
-			?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(item.id)}"]`)
-			?.focus({ preventScroll: false });
+		// By position, not id: a row listed in two groups has two copies.
+		gridEl?.querySelector<HTMLElement>(`[data-row-index="${clamped}"]`)?.focus({ preventScroll: false });
 	}
 
 	let gridEl = $state<HTMLElement | null>(null);
 
-	function handleKeyDown(e: KeyboardEvent, item: T) {
-		const index = visualOrder.findIndex((i) => i.id === item.id);
+	function handleKeyDown(e: KeyboardEvent, item: T, index: number) {
 		switch (e.key) {
 			case 'Enter':
 				e.preventDefault();
@@ -885,8 +882,22 @@
 	const visualOrder = $derived(
 		groupedItems.filter((g) => !collapsedGroups.has(g.key)).flatMap((g) => g.items),
 	);
-	/** Row index in visual order, for RowMeta, the stagger, and range selection. */
-	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
+	/**
+	 * Where each open group starts in visual order. A row's index is its
+	 * group's start plus its place in the group, so a row listed in two
+	 * groups (a page in two threads) is two rows to the keyboard, each with
+	 * its own index. Used for RowMeta, the stagger and range selection.
+	 */
+	const groupStart = $derived.by(() => {
+		const starts = new Map<string, number>();
+		let at = 0;
+		for (const g of groupedItems) {
+			if (collapsedGroups.has(g.key)) continue;
+			starts.set(g.key, at);
+			at += g.items.length;
+		}
+		return starts;
+	});
 
 	const isTable = $derived(effectiveViewMode === 'table');
 	const isList = $derived(effectiveViewMode === 'list' && !!listRow);
@@ -1114,16 +1125,17 @@
 					{/if}
 					{#if !closed}
 						<ul class="list-rows">
-							{#each group.items as item (item.id)}
-								{@const i = rowIndexById.get(item.id) ?? 0}
+							{#each group.items as item, j (item.id)}
+								{@const i = (groupStart.get(group.key) ?? 0) + j}
 								<li class="list-item">
 									<button
 										type="button"
 										class="list-row"
 										data-row-id={item.id}
+										data-row-index={i}
 										onclick={() => handleRowClick(item)}
 										oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-										onkeydown={(e) => handleKeyDown(e, item)}
+										onkeydown={(e) => handleKeyDown(e, item, i)}
 										onfocus={() => (focusedIndex = i)}
 										tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
 										aria-label={`Open ${getItemLabel(item)}`}
@@ -1235,8 +1247,8 @@
 								</tr>
 							{/if}
 							{#if !collapsedGroups.has(group.key)}
-						{#each group.items as item (item.id)}
-							{@const i = rowIndexById.get(item.id) ?? 0}
+						{#each group.items as item, j (item.id)}
+							{@const i = (groupStart.get(group.key) ?? 0) + j}
 							{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 							<tr
 								class="data-row"
@@ -1245,6 +1257,7 @@
 								class:animate-in={animateMount && !!tableRow}
 								style:--stagger="{staggerMs(i, 0)}ms"
 								data-row-id={item.id}
+										data-row-index={i}
 								onclick={(e) => {
 									// Shift-click extends a selection rather than opening; without
 									// this the only way to select a range is one row at a time.
@@ -1254,7 +1267,7 @@
 									} else handleRowClick(item);
 								}}
 								oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-								onkeydown={(e) => handleKeyDown(e, item)}
+								onkeydown={(e) => handleKeyDown(e, item, i)}
 								onfocus={() => (focusedIndex = i)}
 								tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
 								role={selectable ? 'row' : 'button'}
@@ -1363,11 +1376,12 @@
 					{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 					<button
 						class="wall-tile"
+						data-row-index={i}
 						class:animate-in={animateMount}
 						style:--stagger="{staggerMs(Math.floor(i / 3), i % 3)}ms"
 						onclick={() => handleRowClick(item)}
 						oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-						onkeydown={(e) => handleKeyDown(e, item)}
+						onkeydown={(e) => handleKeyDown(e, item, i)}
 						aria-label={`Open ${getItemLabel(item)}`}
 					>
 						{@render wallTile(item, meta)}
@@ -1406,8 +1420,8 @@
 						class:board-stack={asBoard}
 						style:--grid-min={gridMinWidth}
 					>
-				{#each group.items as item (item.id)}
-					{@const i = rowIndexById.get(item.id) ?? 0}
+				{#each group.items as item, j (item.id)}
+					{@const i = (groupStart.get(group.key) ?? 0) + j}
 					{@const meta = {
 						rowIndex: Math.floor(i / cardCols),
 						colIndex: i % cardCols,
@@ -1424,11 +1438,12 @@
 					>
 						<button
 							class="card"
+							data-row-index={i}
 							class:animate-in={animateMount}
 							style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 							onclick={() => handleRowClick(item)}
 							oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-							onkeydown={(e) => handleKeyDown(e, item)}
+							onkeydown={(e) => handleKeyDown(e, item, i)}
 							aria-label={`Open ${getItemLabel(item)}`}
 							aria-expanded={expandDetail ? open : undefined}
 						>
