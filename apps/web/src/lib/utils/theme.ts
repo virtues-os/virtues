@@ -269,17 +269,23 @@ export const themeMetadata: Record<ThemeChoice, { icon: string; description: str
 };
 
 // ── Accent ──────────────────────────────────────────────────────────────────
-// The one color a page carries (design.md, "Accent"), picked from swatches
-// that themes.css tunes once for Light and once for Dark. It is saved on the
-// profile beside the theme (`ui_preferences.accent`), cached for app.html's
-// pre-paint, and set as `data-accent` on <html>.
+// The one color a page carries (design.md, "Accent"): a swatch that
+// themes.css tunes once for Light and once for Dark, or a color the person
+// chooses, which tuneAccent fits to both themes here. It is saved on the
+// profile beside the theme (`ui_preferences.accent`, a swatch id or a
+// `#rrggbb`), cached for app.html's pre-paint, and set as `data-accent` on
+// <html>. A chosen color sets `data-accent="custom"` and its two tunings as
+// --accent-light and --accent-dark on <html>.
 
-export type Accent = 'navy' | 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
+export type AccentSwatch = 'navy' | 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
+
+/** A swatch id, or a color the person chose as `#rrggbb`. */
+export type Accent = AccentSwatch | `#${string}`;
 
 export const DEFAULT_ACCENT: Accent = 'navy';
 
 /** Every swatch, in the order the picker shows them. */
-export const ACCENTS: readonly { id: Accent; name: string }[] = [
+export const ACCENTS: readonly { id: AccentSwatch; name: string }[] = [
 	{ id: 'navy', name: 'Navy' },
 	{ id: 'blue', name: 'Blue' },
 	{ id: 'indigo', name: 'Indigo' },
@@ -290,9 +296,18 @@ export const ACCENTS: readonly { id: Accent; name: string }[] = [
 ];
 
 const ACCENT_STORAGE_KEY = 'virtues-accent';
+/** A chosen color's two tunings, "light dark", for app.html's pre-paint. */
+const ACCENT_TUNED_STORAGE_KEY = 'virtues-accent-tuned';
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** Whether a value is a chosen color rather than a swatch. */
+export function isCustomAccent(value: unknown): value is `#${string}` {
+	return typeof value === 'string' && HEX.test(value);
+}
 
 export function isAccent(value: unknown): value is Accent {
-	return typeof value === 'string' && ACCENTS.some((a) => a.id === value);
+	return isCustomAccent(value) || (typeof value === 'string' && ACCENTS.some((a) => a.id === value));
 }
 
 /** The cached accent. */
@@ -306,12 +321,85 @@ export function getAccent(): Accent {
 	}
 }
 
+// Contrast, as WCAG measures it.
+function luminance(hex: string): number {
+	const [r, g, b] = [1, 3, 5].map((i) => {
+		const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+		return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (hi + 0.05) / (lo + 0.05);
+}
+
+function toHsl(hex: string): [number, number, number] {
+	const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const l = (max + min) / 2;
+	if (max === min) return [0, 0, l];
+	const d = max - min;
+	const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+	const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return [h * 60, s, l];
+}
+
+function fromHsl(h: number, s: number, l: number): string {
+	const k = (n: number) => (n + h / 30) % 12;
+	const a = s * Math.min(l, 1 - l);
+	const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+	return '#' + [0, 8, 4].map((n) => Math.round(f(n) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/**
+ * Walk a color's lightness toward `step`'s direction until it clears
+ * `target` against `page`, keeping its hue and saturation.
+ */
+function fit(hex: string, page: string, target: number, step: number): string {
+	const [h, s, l0] = toHsl(hex);
+	let out = hex.toUpperCase();
+	for (let l = l0; contrast(out, page) < target && l >= 0 && l <= 1; l += step) {
+		out = fromHsl(h, s, l);
+	}
+	return out;
+}
+
+/**
+ * A chosen color, fitted to both themes the way the swatches are tuned by
+ * hand: darkened until links and the filled button's white label clear
+ * 4.6:1 on Light's page, and lightened until they clear 7:1 on Dark's,
+ * where the swatches sit. A color that already clears is kept as it is.
+ */
+export function tuneAccent(hex: string): { light: string; dark: string } {
+	return {
+		light: fit(hex, themePreviewColors.oxford.surface, 4.6, -0.005),
+		dark: fit(hex, themePreviewColors.asgard.surface, 7, 0.005)
+	};
+}
+
 /** Paint an accent (visual only, no persistence). */
 export function applyAccent(accent: Accent): void {
 	if (typeof window === 'undefined') return;
-	document.documentElement.setAttribute('data-accent', accent);
+	const root = document.documentElement;
+	let tuned: string | null = null;
+	if (isCustomAccent(accent)) {
+		const { light, dark } = tuneAccent(accent);
+		root.style.setProperty('--accent-light', light);
+		root.style.setProperty('--accent-dark', dark);
+		root.setAttribute('data-accent', 'custom');
+		tuned = `${light} ${dark}`;
+	} else {
+		root.style.removeProperty('--accent-light');
+		root.style.removeProperty('--accent-dark');
+		root.setAttribute('data-accent', accent);
+	}
 	try {
 		localStorage.setItem(ACCENT_STORAGE_KEY, accent);
+		if (tuned) localStorage.setItem(ACCENT_TUNED_STORAGE_KEY, tuned);
+		else localStorage.removeItem(ACCENT_TUNED_STORAGE_KEY);
 	} catch {
 		// Storage disabled: the accent lasts for this page.
 	}

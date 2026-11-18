@@ -1,17 +1,32 @@
 <script lang="ts">
 	/**
-	 * The accent swatches (design.md, "Accent"). Each swatch carries its own
-	 * `data-accent`, so themes.css hands it that swatch's color in the theme
-	 * on screen and no value is copied here. The chosen one wears a ring in
-	 * its own color; the names are in the tooltips and said by each radio.
+	 * The accent swatches (design.md, "Accent"), then one for a color you
+	 * choose. Each swatch carries its own `data-accent`, so themes.css hands
+	 * it that swatch's color in the theme on screen and no value is copied
+	 * here. The last one opens the system color picker: the app takes the
+	 * color live as you move through it and saves it when the picker
+	 * closes, fitted to both themes (tuneAccent). It shows a spectrum until
+	 * you have chosen one, then your color. The chosen swatch wears a ring
+	 * in its own color; the names are in the tooltips and said by each radio.
 	 */
-	import { ACCENTS, setAccent, type Accent } from '$lib/utils/theme';
+	import { ACCENTS, applyAccent, isCustomAccent, setAccent, type Accent } from '$lib/utils/theme';
 
 	let { value, onchange }: { value: Accent; onchange?: (accent: Accent) => void } = $props();
+
+	const custom = $derived(isCustomAccent(value));
+	let input: HTMLInputElement | undefined = $state();
 
 	async function select(accent: Accent) {
 		await setAccent(accent);
 		onchange?.(accent);
+	}
+
+	/** Open the picker on the color you have now. */
+	function seed() {
+		if (!input) return;
+		const now = getComputedStyle(document.documentElement).getPropertyValue('--accent-light').trim();
+		if (custom) input.value = value;
+		else if (now) input.value = now;
 	}
 </script>
 
@@ -31,6 +46,18 @@
 			<span class="dot"></span>
 		</button>
 	{/each}
+	<label class="swatch" class:selected={custom} data-tip="Choose your own" onpointerdown={seed}>
+		<span class="dot" class:spectrum={!custom}></span>
+		<input
+			bind:this={input}
+			type="color"
+			role="radio"
+			aria-checked={custom}
+			aria-label="Choose your own accent"
+			oninput={(e) => applyAccent(e.currentTarget.value as Accent)}
+			onchange={(e) => select(e.currentTarget.value as Accent)}
+		/>
+	</label>
 </div>
 
 <style>
@@ -41,6 +68,7 @@
 	}
 
 	.swatch {
+		position: relative;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -63,6 +91,23 @@
 
 	:global([data-theme="asgard"]) .dot {
 		background: var(--accent-dark);
+	}
+
+	/* Not chosen yet: the whole wheel, so it reads as "any color". */
+	.dot.spectrum,
+	:global([data-theme="asgard"]) .dot.spectrum {
+		background: var(--accent-spectrum);
+	}
+
+	/* The system picker opens from the whole swatch; the field itself is
+	   not drawn. */
+	input[type="color"] {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		opacity: 0;
+		cursor: pointer;
 	}
 
 	.swatch:active .dot {

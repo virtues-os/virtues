@@ -29,8 +29,8 @@
 	}
 	.row {
 		--color-primary: var(--accent-light);
-		--color-primary-hover: color-mix(in srgb, var(--accent-light) 85%, var(--page));
-		--color-primary-active: color-mix(in srgb, var(--accent-light) 80%, var(--foreground));
+		--color-primary-hover: color-mix(in srgb, var(--accent-light) 88%, var(--foreground));
+		--color-primary-active: color-mix(in srgb, var(--accent-light) 78%, var(--foreground));
 		display: grid;
 		grid-template-columns: 24px 96px max-content max-content;
 		align-items: center;
@@ -38,8 +38,8 @@
 	}
 	:global([data-theme="asgard"]) .row {
 		--color-primary: var(--accent-dark);
-		--color-primary-hover: color-mix(in srgb, var(--accent-dark) 85%, var(--page));
-		--color-primary-active: color-mix(in srgb, var(--accent-dark) 80%, var(--foreground));
+		--color-primary-hover: color-mix(in srgb, var(--accent-dark) 88%, var(--foreground));
+		--color-primary-active: color-mix(in srgb, var(--accent-dark) 78%, var(--foreground));
 	}
 	.dot {
 		width: 16px;

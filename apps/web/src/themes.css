@@ -476,6 +476,15 @@
 	--accent-light: #52525B;
 	--accent-dark: #C8C9CE;
 }
+/* A color the person chooses: no rule here. lib/utils/theme.ts fits it to
+   both themes (tuneAccent) and sets --accent-light and --accent-dark on
+   <html> with data-accent="custom". */
+
+/* The picker's "choose your own" swatch before a color is chosen: the
+   whole wheel, so it reads as any color. Decoration, never an accent. */
+:root {
+	--accent-spectrum: conic-gradient(#e5484d, #f5a524, #e8d43a, #30a46c, #12a594, #0090ff, #6e56cf, #d6409f, #e5484d);
+}
 
 /* ===================================
    OXFORD

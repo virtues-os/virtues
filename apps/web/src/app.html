@@ -34,8 +34,16 @@
 					if (sys) t = matchMedia("(prefers-color-scheme: dark)").matches ? "asgard" : "oxford";
 					if (t === "oxford" || t === "asgard") document.documentElement.setAttribute("data-theme", t);
 					// Settings · Appearance · Accent (lib/utils/theme.ts).
+					// A chosen color (`#rrggbb`) paints its cached two tunings.
 					var a = localStorage.getItem("virtues-accent");
-					if (a) document.documentElement.setAttribute("data-accent", a);
+					if (a && a.charAt(0) === "#") {
+						var tuned = (localStorage.getItem("virtues-accent-tuned") || "").split(" ");
+						if (tuned.length === 2) {
+							document.documentElement.style.setProperty("--accent-light", tuned[0]);
+							document.documentElement.style.setProperty("--accent-dark", tuned[1]);
+							document.documentElement.setAttribute("data-accent", "custom");
+						}
+					} else if (a) document.documentElement.setAttribute("data-accent", a);
 					// Settings · Appearance · Glass (stores/glass.svelte.ts).
 					var g = localStorage.getItem("virtues-glass");
 					if (g) document.documentElement.setAttribute("data-glass", g);

@@ -118,19 +118,25 @@ or a second filled button, and it never marks where work ran.
 
 The person picks the accent in Settings, Appearance, from seven swatches: Navy
 (the default), Blue, Indigo, Purple, Pink, Teal and Graphite (`ACCENTS` in
-`lib/utils/theme.ts`). It is saved on the profile beside the theme
-(`ui_preferences.accent`), cached for the pre-paint in `app.html`, and set as
-`data-accent` on `<html>`.
+`lib/utils/theme.ts`), or chooses their own color from the last swatch,
+which opens the system color picker. It is saved on the profile beside the
+theme (`ui_preferences.accent`, a swatch id or a `#rrggbb`), cached for the
+pre-paint in `app.html`, and set as `data-accent` on `<html>`.
 
 - **Each swatch is tuned twice** in `themes.css`, as `--accent-light` and
   `--accent-dark`, so links and the filled button's label clear AA on the
   page in both themes. Light's `--primary` reads `--accent-light` and Dark's
   reads `--accent-dark`. Hover, press and the tint are mixed from it, so a
   swatch is one value per theme.
+- **A chosen color is fitted to both themes.** `tuneAccent` keeps its hue
+  and saturation and moves its lightness: darker until it clears 4.6:1 on
+  Light's page, lighter until it clears 7:1 on Dark's, where the swatches
+  sit. A color that already clears is kept. Both tunings are set on
+  `<html>` as `--accent-light` and `--accent-dark` with
+  `data-accent="custom"`.
 - **No red, green or amber swatch.** Those mean danger, success and warning,
-  and an accent in one of them would make a link read as a state.
-- **Swatches, not a color wheel.** A free pick would fail contrast in one
-  theme or the other.
+  and an accent in one of them would make a link read as a state. A person
+  may still choose one of their own.
 - Every swatch is a plain `[data-accent]` rule as well, so an element can
   show a swatch other than the chosen one: the picker's dots and the
   specimen below do this.
