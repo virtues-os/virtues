@@ -68,7 +68,6 @@ fn provider_cfg(p: &str) -> Option<ProviderCfg> {
             scopes: vec![
                 "https://www.googleapis.com/auth/calendar.readonly".into(),
                 "https://www.googleapis.com/auth/gmail.readonly".into(),
-                "https://www.googleapis.com/auth/drive.readonly".into(),
             ],
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
             token_url: "https://oauth2.googleapis.com/token".into(),
