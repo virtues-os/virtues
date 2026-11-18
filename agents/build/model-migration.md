@@ -5,7 +5,7 @@ The box talks to local inference over loopback HTTP: embedding on `:18181`
 
 | Profile | Server | Files it loads |
 |---|---|---|
-| **Dragon** (`VIRTUES_INFERENCE=dragon`), until it moves | `virtues-qnnd` on the Hexagon NPU, one unit | QAIRT context binaries + tokenizers under `$DATA_DIR/models/qnn/` |
+| **Dragon** (`VIRTUES_INFERENCE=dragon`), installs before the move only | `virtues-qnnd` on the Hexagon NPU, one unit | QAIRT context binaries + tokenizers under `$DATA_DIR/models/qnn/` |
 | **Bundled** (`VIRTUES_INFERENCE=bundled`) | one CPU `llama-server` sidecar, `virtues-embed` (plus `virtues-embed-next` on `:18183` while a model change runs) | GGUFs under `$DATA_DIR/models/` |
 | `make dev` | `llama-server` sidecars the Makefile starts | GGUFs under `.data/models/` |
 
@@ -30,16 +30,13 @@ model while the runtime expects another.
 3. `Makefile` — `EMBED_GGUF` and its download URL, for `make dev`.
 4. `.github/workflows/models-release.yml` — the default `embed_url`.
 
-**QNN context binaries (Dragon):**
+**QNN context binaries (Dragon):** frozen. The installer no longer sets up
+`virtues-qnnd`, and Dragons still on it move to the bundled setup (below), so
+nothing fetches these again. `inference_report.rs` names them
+(`QNN_EMBED_BIN` / `QNN_RERANK_BIN`) only to report what an unmoved Dragon
+runs.
 
-1. `virtues-core/src/inference_report.rs` — `QNN_EMBED_BIN` / `QNN_RERANK_BIN`.
-2. `tools/virtues-installer/src/config.rs` — `qnn_embed_bin` / `qnn_rerank_bin`
-   and `qnn_tokenizers` (fetched into `tok_gte/` and `tok_colbert/`, the layout
-   `crates/virtues-qnnd` loads). The installer writes the binaries' paths into
-   the `virtues-qnnd` unit.
-3. `tools/publish-qnn-models.sh` — the asset names it uploads.
-
-**Both:** the bytes live on the `models-1` GitHub release (`models_base`),
+**GGUFs:** the bytes live on the `models-1` GitHub release (`models_base`),
 SHA-256 sidecars beside them. Assets are immutable: ship a new model under a
 **new file name**, never replace one in place. Older installers still fetch
 the old names, so they stay.

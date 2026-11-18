@@ -29,17 +29,6 @@ pub struct InstallConfig {
     /// `inference_report::{EMBED_GGUF, EMBED_GGUF_SHA256}`, which `virtues
     /// upgrade` uses to move installed boxes to it.
     pub embed_gguf: String,
-    /// QNN context-binary names for the Dragon NPU path (Hexagon v68). These are
-    /// the QAIRT-compiled artifacts the `virtues-qnnd` daemon loads: gte-small
-    /// embed (idx 0) + answerai-colbert-small@256 rerank (idx 1). Fetched from
-    /// the same `models-*` bucket as the GGUFs, SHA-verified. Must agree with the
-    /// tokenizers shipped beside them and with `search::qnn_client` in core.
-    pub qnn_embed_bin: String,
-    pub qnn_rerank_bin: String,
-    /// Tokenizer files for the QNN path (BERT WordPiece), fetched into
-    /// `tok_gte/` and `tok_colbert/` under the QNN models dir. `search::qnn_client`
-    /// loads them by that layout.
-    pub qnn_tokenizers: Vec<(String, String)>,
     /// Production environment URLs. Written into the box's env file so
     /// the runtime daemon talks to the real atlas/virtues-api instead of
     /// the localhost dev defaults baked into the box code.
@@ -72,13 +61,6 @@ impl InstallConfig {
                 )
             }),
             embed_gguf: "embeddinggemma-2-Q8_0.gguf".to_string(),
-            qnn_embed_bin: "gte_v68_vtcm2.bin".to_string(),
-            qnn_rerank_bin: "cb256_v68_vtcm2.bin".to_string(),
-            // (relative-dest, asset-name) — dest is under the QNN models dir.
-            qnn_tokenizers: vec![
-                ("tok_gte/tokenizer.json".to_string(), "tok_gte-tokenizer.json".to_string()),
-                ("tok_colbert/tokenizer.json".to_string(), "tok_colbert-tokenizer.json".to_string()),
-            ],
             atlas_url: "https://atlas.virtues.com".to_string(),
             virtues_api_url: "https://api.virtues.com".to_string(),
         }
@@ -111,12 +93,7 @@ impl InstallConfig {
     /// the release audit test below holds the models release to this list.
     #[cfg(test)]
     pub fn models_release_assets(&self) -> Vec<String> {
-        let mut assets = vec![
-            self.embed_gguf.clone(),
-            self.qnn_embed_bin.clone(),
-            self.qnn_rerank_bin.clone(),
-        ];
-        assets.extend(self.qnn_tokenizers.iter().map(|(_dest, asset)| asset.clone()));
+        let mut assets = vec![self.embed_gguf.clone()];
         assets.extend(["arm64", "x64"].map(Self::pdfium_asset_for));
         assets
     }
@@ -192,9 +169,8 @@ impl InstallConfig {
         self.install_prefix.join("libexec/virtues")
     }
 
-    /// The llama-server binary that hosts both inference sidecars (Dragon
-    /// mode only). Ships in the release tarball (built per-arch in our CI at
-    /// a pinned llama.cpp tag).
+    /// The llama-server binary that hosts the embedding sidecar. Ships in the
+    /// release tarball (built per-arch in our CI at a pinned llama.cpp tag).
     pub fn llama_binary_path(&self) -> PathBuf {
         self.install_prefix.join("bin/llama-server")
     }
@@ -205,38 +181,6 @@ impl InstallConfig {
         self.data_dir.join("models")
     }
 
-    /// The `virtues-qnnd` NPU daemon binary (Dragon only). Ships in the release
-    /// tarball, built for aarch64 by CI against the QAIRT SDK (a build leg that
-    /// only produces a real daemon when `QNN_SDK_ROOT` is set — see
-    /// `crates/virtues-qnnd`).
-    pub fn qnnd_binary_path(&self) -> PathBuf {
-        self.install_prefix.join("bin/virtues-qnnd")
-    }
-
-    /// Where the QNN context binaries + tokenizers live on the box. Matches the
-    /// `VIRTUES_QNND_MODELS_DIR` default that `search::qnn_client` reads.
-    pub fn qnn_models_dir(&self) -> PathBuf {
-        self.models_dir().join("qnn")
-    }
-
-    /// Root of the QAIRT runtime libs this installer fetches and owns, with
-    /// `host/` and `dsp/` beneath it — the two must stay separate directories
-    /// because `LD_LIBRARY_PATH` and `ADSP_LIBRARY_PATH` point at different
-    /// halves of the SDK. Under the models dir so backup/GC treat them like the
-    /// other fetched artifacts. See `qairt.rs` for why we fetch rather than ship.
-    pub fn qnn_managed_lib_dir(&self) -> PathBuf {
-        self.qnn_models_dir().join("lib")
-    }
-
-    /// Directory holding the Qualcomm QAIRT runtime libs (`libQnnHtp.so`,
-    /// `libQnnSystem.so`, the v68 skel/stub) that `virtues-qnnd` dlopen's at
-    /// runtime. These are Qualcomm proprietary — NOT shipped by us — so the
-    /// Dragon's OS image must provide them: either on the default loader path
-    /// (ldconfig, `None` here) or at a directory pinned via `VIRTUES_QNN_LIB_DIR`,
-    /// which the daemon unit adds to `LD_LIBRARY_PATH`.
-    pub fn qnn_lib_dir(&self) -> Option<String> {
-        std::env::var("VIRTUES_QNN_LIB_DIR").ok().filter(|s| !s.trim().is_empty())
-    }
 }
 
 #[cfg(test)]

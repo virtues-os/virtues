@@ -267,8 +267,15 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
 
     // Write + (re)start the unit. restart rather than just enable --now so an
     // installer re-run picks up unit/binary changes.
+    let (threads, pacing) = if dragon_pacing() {
+        (" -t 2", "CPUWeight=20\nCPUAffinity=4 5 6\n")
+    } else {
+        ("", "")
+    };
     let body = EMBED_UNIT_TEMPLATE
         .replace("__SUPP_GROUPS__", &supp_groups)
+        .replace("__THREADS__", threads)
+        .replace("__PACING__", pacing)
         .replace("__BIN__", &bin.display().to_string())
         .replace("__MODEL__", &models_dir.join(&cfg.embed_gguf).display().to_string());
     fs::write("/etc/systemd/system/virtues-embed.service", body)
@@ -276,6 +283,50 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     systemctl(&["daemon-reload"], "Install the inference sidecar unit").await?;
     systemctl(&["enable", "virtues-embed"], "Enable the inference sidecar").await?;
     systemctl(&["restart", "virtues-embed"], "Start the inference sidecar").await
+}
+
+/// Whether this box is a Dragon whose search still runs on `virtues-qnnd`,
+/// from an install before Dragons moved to the CPU. Its search keeps working
+/// on the NPU while the server builds the new model's index, so the installer
+/// leaves its inference alone and hands the move to [`move_off_npu`].
+pub fn npu_still_serving() -> bool {
+    Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
+}
+
+/// Start moving a Dragon's search from the NPU to the CPU, the way its nightly
+/// update would: `virtues configure-inference --recommended` starts the model
+/// beside `virtues-qnnd`, and the server retires qnnd once the new index is
+/// live (`cli::model_set` in core). Never fails the install; the nightly
+/// update starts it if this can't.
+pub async fn move_off_npu(cfg: &InstallConfig) {
+    let mut cmd = Command::new(cfg.binary_path());
+    cmd.args(["configure-inference", "--recommended"]);
+    match cmd.output().await {
+        Ok(o) if o.status.success() => {
+            ui::ok("Search is moving from the NPU to the CPU; it keeps using the NPU until the new index is built")
+        }
+        Ok(o) => ui::warn(&format!(
+            "Couldn't start moving search to the CPU ({}); the next automatic update tries again",
+            String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("no error output").trim()
+        )),
+        Err(e) => ui::warn(&format!(
+            "Couldn't start moving search to the CPU ({e}); the next automatic update tries again"
+        )),
+    }
+}
+
+/// Whether the embedding sidecar runs paced, on a QCM6490 board such as the
+/// Radxa Dragon Q6A, which has no fan. Must match core's
+/// `inference_report::is_dragon_board`, and the flags must match
+/// `cli::model_set::embed_unit_on`, which documents the measurements: two
+/// threads on the 2.4 GHz cores (4 to 6) kept the CPU near 75 °C where four
+/// reached its 90 °C throttle point, and `CPUWeight=20` gives the server the
+/// CPU first. A Dragon Q8B is a different chip with a different core layout,
+/// so it isn't matched.
+fn dragon_pacing() -> bool {
+    std::fs::read("/proc/device-tree/compatible")
+        .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a" || s == b"qcom,qcm6490"))
+        .unwrap_or(false)
 }
 
 /// libpdfium — native PDF text extraction for the `document_extraction`
@@ -288,252 +339,6 @@ pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
     cmd.args(["-R", "virtues:virtues", cfg.pdfium_dir().to_str().unwrap()]);
     let _ = cmd.output().await;
     Ok(())
-}
-
-/// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
-/// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
-/// llama-server sidecar on our board — but serves the SAME llama-compatible
-/// HTTP inference contract on :18181, so the runtime talks to it through
-/// `VIRTUES_EMBED_URL` like any other endpoint. (It also loads a ColBERT
-/// reranker and serves it on :18182; search doesn't call it.)
-///
-/// Depends on two things this installer does NOT produce: the `virtues-qnnd`
-/// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
-/// the Qualcomm QAIRT runtime libs on the Dragon's OS image (proprietary — see
-/// `QNN_UNIT_TEMPLATE`).
-pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
-    let bin = cfg.qnnd_binary_path();
-    if !bin.exists() {
-        return Err(anyhow!(
-            "virtues-qnnd not found at {} — this tarball has no NPU daemon \
-             (the aarch64 build leg needs QNN_SDK_ROOT to produce a real one)",
-            bin.display()
-        ));
-    }
-
-    let qnn_dir = cfg.qnn_models_dir();
-    fs::create_dir_all(&qnn_dir).with_context(|| format!("creating {}", qnn_dir.display()))?;
-
-    // Context binaries + tokenizers (SHA-verified, skipped if already present).
-    for name in [&cfg.qnn_embed_bin, &cfg.qnn_rerank_bin] {
-        crate::download::fetch_asset(cfg, name, qnn_dir.join(name)).await?;
-    }
-    for (dest_rel, asset) in &cfg.qnn_tokenizers {
-        crate::download::fetch_asset(cfg, asset, qnn_dir.join(dest_rel)).await?;
-    }
-
-    let mut cmd = Command::new("chown");
-    cmd.args(["-R", "virtues:virtues", qnn_dir.to_str().unwrap()]);
-    let _ = cmd.output().await;
-
-    // The daemon opens the Hexagon DSP node (`/dev/fastrpc-cdsp`, `render`
-    // group) — the same detection the GPU path uses covers it.
-    let supp_groups = match gpu_access_groups().await.as_slice() {
-        [] => String::new(),
-        groups => format!("SupplementaryGroups={}\n", groups.join(" ")),
-    };
-    // QAIRT runtime libs (Qualcomm-proprietary — not shipped by us). Prefer an
-    // explicit VIRTUES_QNN_LIB_DIR, else auto-detect libQnnHtp.so under the usual
-    // roots (a QAIRT SDK unpack, a Radxa QAIRT install, …). Both
-    // LD_LIBRARY_PATH (host) and ADSP_LIBRARY_PATH (DSP skel) must point there.
-    //
-    // Missing libs is a REFUSAL to install the unit, not a warning we print on
-    // the way past. Enabling a daemon we have just proven cannot load its own
-    // runtime buys nothing and costs a permanent crash loop: `Restart=on-failure`
-    // at `RestartSec=5` is two starts per ten seconds, which never trips
-    // systemd's default rate limit, so it restarts every five seconds forever.
-    // One box ran that loop for ten days — 169k restarts, a 1GB journal, and a
-    // core of CPU burnt continuously — while the installer's warning sat far
-    // above in a scrollback nobody re-read.
-    let qnn_env = match detect_qnn_libs(cfg).await {
-        Some((host, adsp)) => {
-            ui::ok(&format!("QNN runtime libs: {host}"));
-            format!("Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={adsp}\n")
-        }
-        // `detect_qnn_libs` returning None spans two very different worlds: the
-        // Dragon's OS image, where the libs sit on the default loader path
-        // and the unit correctly needs no env at all, and a box that simply has
-        // no QAIRT on it. A bounded `find` cannot tell those apart, so ask the
-        // loader instead — that is the question that actually matters.
-        None if loader_has_lib("libQnnHtp.so").await => {
-            ui::ok("QNN runtime libs: on the default loader path");
-            String::new()
-        }
-        // Nothing on the box: fetch the libs from Qualcomm's own public
-        // distribution. This is the ordinary path for a DIY Dragon — the lab
-        // box only works because someone hand-unpacked a 1.44 GB SDK into
-        // /qairt-extract, which nobody else is going to do.
-        None => match crate::qairt::ensure_libs(cfg).await {
-            Ok((host, dsp)) => format!(
-                "Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={dsp};/usr/lib/dsp/cdsp\n",
-                host = host.display(),
-                dsp = dsp.display(),
-            ),
-            Err(e) => {
-                // A previous install may have left the loop running; stopping
-                // it is the useful half of this branch.
-                systemctl_try(&["disable", "--now", "virtues-qnnd"]).await;
-                ui::warn(&format!(
-                    "could not obtain the QAIRT runtime libs ({e}) — NPU daemon NOT installed, \
-                     so this box has no embedding endpoint and semantic search will \
-                     not work. Unpack the QAIRT Community SDK on the box by hand, point \
-                     VIRTUES_QNN_LIB_DIR at its lib/aarch64-*-linux-*/ directory, and re-run \
-                     this installer."
-                ));
-                return Ok(());
-            }
-        },
-    };
-
-    let body = QNN_UNIT_TEMPLATE
-        .replace("__SUPP_GROUPS__", &supp_groups)
-        .replace("__QNN_ENV__", &qnn_env)
-        .replace("__BIN__", &bin.display().to_string())
-        .replace("__EMBED_BIN__", &qnn_dir.join(&cfg.qnn_embed_bin).display().to_string())
-        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string())
-        .replace("__QNN_DIR__", &qnn_dir.display().to_string());
-    fs::write("/etc/systemd/system/virtues-qnnd.service", body)
-        .context("writing virtues-qnnd.service")?;
-    arm_hardware_watchdog()?;
-
-    // Also applies the watchdog drop-in: `daemon-reload` re-reads system.conf.d
-    // (verified on the lab Dragon; no daemon-reexec needed).
-    systemctl(&["daemon-reload"], "Install NPU daemon unit").await?;
-    systemctl(&["enable", "virtues-qnnd"], "Enable NPU daemon").await?;
-    systemctl(&["restart", "virtues-qnnd"], "Start NPU daemon").await
-}
-
-/// Where the watchdog drop-in lives. Uninstall removes it by this path, which
-/// must match `system_repairs::WATCHDOG_DROPIN` in core.
-const WATCHDOG_DROPIN: &str = "/etc/systemd/system.conf.d/10-virtues-watchdog.conf";
-
-/// Have systemd ping the SoC's hardware watchdog, so a hung kernel reboots the
-/// box instead of waiting for someone to pull the plug.
-///
-/// This lives beside the NPU daemon because the NPU is what hangs the kernel.
-/// Loading a context binary the cDSP can't map crashes the cDSP, and this
-/// kernel's FastRPC driver (6.18.2-3-qcom) then frees reserved DMA pages as the
-/// process exits. The box logged `BUG: Bad page state` sixty times and stopped
-/// answering on every interface. There was no OOM and no panic, so nothing
-/// rebooted it. `qnnd` shares that cDSP, so any Dragon can hit it.
-///
-/// Dragon only, DIY included, because we are the ones driving its NPU. A
-/// server with no NPU work from us keeps its own systemd settings. Skipped
-/// when there is no `/dev/watchdog0`.
-///
-/// 30 s is inside `qcom_wdt`'s 32 s hardware maximum. systemd pings at half the
-/// interval, so a healthy box never comes close. `RebootWatchdogSec` keeps its
-/// default of 10 min, which already covers a hung shutdown.
-fn arm_hardware_watchdog() -> Result<()> {
-    if !Path::new("/dev/watchdog0").exists() {
-        ui::skip("No hardware watchdog on this board");
-        return Ok(());
-    }
-    install_file(WATCHDOG_DROPIN, WATCHDOG_CONF)?;
-    ui::ok("Hardware watchdog on: a hung box reboots itself within 30 s");
-    Ok(())
-}
-
-/// One copy for the installer (fresh installs) and core's `dragon-watchdog`
-/// repair (the existing fleet, on upgrade), so the two can't drift.
-const WATCHDOG_CONF: &str = include_str!("../../../virtues-core/src/cli/watchdog.conf");
-
-/// Host-lib directories inside a QAIRT SDK, best first.
-///
-/// A QAIRT unpack ships the same `libQnnHtp.so` for every target it supports —
-/// the lab Dragon has SIX copies, including `x86_64-linux-clang` and
-/// `aarch64-android`. Order here is deliberate: `aarch64-oe-linux-gcc11.2` is
-/// the variant the lab box has actually been running against (Ubuntu 24.04,
-/// glibc 2.39), so it leads despite "oe" suggesting Yocto. The rest follow as
-/// plausible aarch64-Linux fallbacks.
-const QNN_HOST_LIB_DIRS: &[&str] = &[
-    "aarch64-oe-linux-gcc11.2",
-    "aarch64-ubuntu-gcc9.4",
-    "aarch64-oe-linux-gcc9.3",
-    "aarch64-oe-linux-gcc8.2",
-];
-
-/// The directory containing a named QNN `.so`, via a bounded `find` under the
-/// roots a QAIRT SDK unpack typically lands in (never a full-FS scan).
-///
-/// Ranked, not `head -1`. This used to take whatever the find emitted first,
-/// which is filesystem order — so on a box carrying a full SDK the winner was
-/// arbitrary among six candidates, and two of them (x86_64, android) would have
-/// pointed `LD_LIBRARY_PATH` at libraries that cannot load on this box at all.
-/// It happened to land on a working directory on the lab Dragon; nothing made
-/// that reproducible on the next one.
-async fn find_lib_dir(name: &str) -> Option<String> {
-    let script = format!(
-        "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
-         /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
-         -maxdepth 8 -name {name} 2>/dev/null"
-    );
-    let out = Command::new("bash").arg("-c").arg(&script).output().await.ok()?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    rank_lib_dirs(stdout.lines())
-}
-
-/// Pick the best directory from `find` hits for a QNN `.so`. Split out from the
-/// shell-out so the ranking is testable; see `tests` below for the six-candidate
-/// case the lab Dragon actually presents.
-fn rank_lib_dirs<'a>(hits: impl Iterator<Item = &'a str>) -> Option<String> {
-    let dirs: Vec<&str> = hits
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter_map(|l| Path::new(l).parent()?.to_str())
-        // Wrong-platform builds are never a fallback — a mis-set
-        // LD_LIBRARY_PATH is worse than no LD_LIBRARY_PATH, because the failure
-        // surfaces as an opaque dlopen error at daemon start rather than as the
-        // clean "no libs" refusal.
-        .filter(|d| !d.contains("x86_64") && !d.contains("android") && !d.contains("windows"))
-        .collect();
-
-    // Preferred host triples first.
-    for want in QNN_HOST_LIB_DIRS {
-        if let Some(d) = dirs.iter().find(|d| d.ends_with(want)) {
-            return Some((*d).to_string());
-        }
-    }
-    // The DSP skel arrives through this same function and matches no host
-    // triple; its canonical home is the SDK's unsigned dir. Prefer that over a
-    // loose copy someone left in a working directory.
-    if let Some(d) = dirs.iter().find(|d| d.ends_with("hexagon-v68/unsigned")) {
-        return Some((*d).to_string());
-    }
-    dirs.iter()
-        .find(|d| d.contains("aarch64"))
-        .or_else(|| dirs.first())
-        .map(|d| (*d).to_string())
-}
-
-/// Can the dynamic loader resolve `name` with no help from us? `ldconfig -p`
-/// prints the ld.so cache, which is the same thing the daemon's `dlopen` will
-/// consult — so this answers "would it load if the unit set no LD_LIBRARY_PATH",
-/// which a `find` over candidate directories cannot.
-async fn loader_has_lib(name: &str) -> bool {
-    let script = format!("ldconfig -p 2>/dev/null | grep -qF -- {name}");
-    match Command::new("bash").arg("-c").arg(&script).output().await {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    }
-}
-
-/// Resolve `(LD_LIBRARY_PATH, ADSP_LIBRARY_PATH)` for the QNN daemon. These are
-/// DIFFERENT directories in the QAIRT SDK layout: the host libs (`libQnnHtp.so`,
-/// `libQnnSystem.so`) live under `lib/<host-triple>/`, but the DSP skel the
-/// Hexagon actually loads (`libQnnHtpV68Skel.so`) lives under
-/// `lib/hexagon-v68/unsigned/`. Pointing ADSP at the host dir → "Failed to load
-/// skel" and the daemon dies (learned on-device). LD = host dir; ADSP = skel dir
-/// as a `;`-separated list, with the standard Radxa DSP path `/usr/lib/dsp/cdsp`
-/// appended. `VIRTUES_QNN_LIB_DIR` overrides the host dir. `None` → libs are on
-/// the default loader path (baked image); the unit needs no env.
-async fn detect_qnn_libs(cfg: &InstallConfig) -> Option<(String, String)> {
-    let host = match cfg.qnn_lib_dir() {
-        Some(dir) => dir,
-        None => find_lib_dir("libQnnHtp.so").await?,
-    };
-    let skel = find_lib_dir("libQnnHtpV68Skel.so").await.unwrap_or_else(|| host.clone());
-    Some((host, format!("{skel};/usr/lib/dsp/cdsp")))
 }
 
 /// The standard Linux groups that gate access to GPU device nodes
@@ -579,6 +384,8 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
 /// entirely on a CPU-only host — an undefined supplementary group would make
 /// systemd fail the unit (216/GROUP), which is worse than CPU fallback.
+/// `__THREADS__` and `__PACING__` carry the Dragon's pacing, or nothing
+/// elsewhere (see `dragon_pacing`).
 const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues embedding sidecar (llama-server, embeddinggemma-2)
 Documentation=https://virtues.com/docs
@@ -593,10 +400,10 @@ StartLimitBurst=5
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
+__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0__THREADS__
 Restart=on-failure
 RestartSec=5
-
+__PACING__
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -611,71 +418,6 @@ CapabilityBoundingSet=
 [Install]
 WantedBy=multi-user.target
 "#;
-
-/// The Dragon NPU daemon unit. `virtues-qnnd` loads the two QAIRT context
-/// binaries once and serves the box's llama-compatible HTTP inference contract
-/// on loopback :18181/:18182 (its internal engine loop stays on :7788 — see
-/// `crates/virtues-qnnd`); `--models-dir` points it at the tokenizers shipped
-/// next to the context binaries. `--burst` pins the HTP to its performance
-/// power corners. `__SUPP_GROUPS__` grants access to the DSP device node
-/// (`/dev/fastrpc-cdsp`, `render` group). `__QNN_ENV__` sets both
-/// `LD_LIBRARY_PATH` (host-side `libQnnHtp.so`/`libQnnSystem.so`) and
-/// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
-/// Hexagon) to the detected QAIRT lib dir — verified sufficient on-device. Empty
-/// when the libs are already on the default loader path (the Dragon's OS image).
-///
-/// `StartLimit*` caps the restart loop. Without it `Restart=on-failure` at
-/// `RestartSec=5` is two starts per ten seconds, which stays under systemd's
-/// default burst of five, so a daemon that can never start restarts every five
-/// seconds indefinitely — observed at 169k restarts, a 1GB journal and a core
-/// of CPU burnt. The tradeoff is deliberate: five failures inside five minutes
-/// and the unit stops and stays stopped, which does mean a genuinely transient
-/// failure needs a manual `systemctl reset-failed`. A unit sitting visibly in
-/// `failed` is a better artifact than one hiding a permanent fault behind an
-/// `activating` that never lands.
-const QNN_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues NPU inference daemon (virtues-qnnd, Hexagon v68)
-Documentation=https://virtues.com/docs
-After=network.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=virtues
-Group=virtues
-# The Hexagon DSPs load firmware from the rootfs, but the kernel's first
-# request comes at ~0.8s — before the rootfs is mounted — and NOTHING ever
-# retries: no unit, no udev hook, nothing. Both remoteprocs then sit offline
-# for the life of the boot, and every qnnd start dies in transport setup
-# (QNN error 14001) until StartLimit parks the unit. Found on the first
-# fresh-board master build, 2026-08-18. The `+` prefix runs this as root and
-# outside the sandbox (User=, ProtectKernelTunables= do not apply), which it
-# needs to write /sys; it starts any offline DSP and waits for the fastrpc
-# node to appear before the daemon reaches for it.
-ExecStartPre=+/bin/sh -c 'for r in /sys/class/remoteproc/remoteproc*; do [ "$(cat $r/state 2>/dev/null)" = offline ] && echo start > $r/state || :; done; i=0; while [ ! -e /dev/fastrpc-cdsp ] && [ $i -lt 20 ]; do i=$((i+1)); sleep 0.5; done'
-__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788 --models-dir __QNN_DIR__
-Restart=on-failure
-RestartSec=5
-
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-SystemCallArchitectures=native
-CapabilityBoundingSet=
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-// ────────────────────────────────────────────────────────────────────────
-// Locale — every box surface assumes UTF-8
-// ────────────────────────────────────────────────────────────────────────
 
 /// Ensure the system locale is UTF-8 (`C.UTF-8` — built into glibc on every
 /// target distro; no `locales` package or locale-gen needed).
@@ -1171,31 +913,22 @@ async fn psql_exists(sql: &str) -> Result<bool> {
 const GEMMA_QUERY_PROMPT: &str = "task: search result | query: ";
 const GEMMA_DOC_PROMPT: &str = "title: none | text: ";
 
-/// The inference-related env keys, per mode. Dragon: mode marker + the loopback
-/// daemon URLs. Bundled: the loopback sidecars + Gemma's prompts. Manual: mode
+/// The inference-related env keys, per mode. Bundled: the loopback sidecar +
+/// Gemma's prompts. Manual: mode
 /// marker, the user's endpoint URLs, plus the fingerprint + dims recorded by
 /// `mode::validate_manual` — the runtime re-embeds the probe strings at boot
 /// and refuses to serve search against a silently-swapped model.
 fn inference_env_keys(
-    cfg: &InstallConfig,
     mode: &InferenceMode,
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
+    // A Dragon whose search still runs on its NPU keeps its settings until the
+    // server moves it (`move_off_npu`): the bundled keys written now would
+    // hand qnnd's gte-small EmbeddingGemma's prompts.
+    if matches!(mode, InferenceMode::Bundled) && npu_still_serving() {
+        return Vec::new();
+    }
     match mode {
-        // Dragon: `virtues-qnnd` serves the SAME llama-compatible HTTP contract
-        // as the llama-server sidecar (gte-small 384-d embed on the Hexagon
-        // NPU), so core needs nothing QNN-specific — just the standard URL. No fingerprint pin (it's our compiled model; the
-        // runtime's /v1/models + dim probes cover identity).
-        // VIRTUES_QNND_MODELS_DIR stays for the resolution report (which
-        // context binaries to list) and the daemon's tokenizer default.
-        InferenceMode::Dragon => vec![
-            ("VIRTUES_INFERENCE", "dragon".to_string()),
-            ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
-            (
-                "VIRTUES_QNND_MODELS_DIR",
-                cfg.qnn_models_dir().display().to_string(),
-            ),
-        ],
         // Bundled: the portable CPU llama-server sidecars on loopback, serving
         // EmbeddingGemma 2.
         //
@@ -1305,7 +1038,7 @@ pub async fn write_env_file(
         applet_state_dir = cfg.applet_state_dir().display(),
         applets_bin_dir = cfg.applets_bin_dir().display(),
     );
-    for (k, v) in inference_env_keys(cfg, mode, validation) {
+    for (k, v) in inference_env_keys(mode, validation) {
         body.push_str(&format!("{k}={v}\n"));
     }
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
@@ -1361,7 +1094,7 @@ async fn merge_env_file(
         ("VIRTUES_APPLET_STATE_DIR", cfg.applet_state_dir().display().to_string()),
         ("VIRTUES_APPLETS_BIN_DIR", cfg.applets_bin_dir().display().to_string()),
     ];
-    want.extend(inference_env_keys(cfg, mode, validation));
+    want.extend(inference_env_keys(mode, validation));
 
     let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
     if missing.is_empty() {
@@ -1593,47 +1326,8 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
         issues += 1;
     }
 
-    if let InferenceMode::Dragon = mode {
-        // `install_qnn` declines to install the unit at all when QAIRT is absent,
-        // and says so at length there. Repeating it here as "not responding, check
-        // journalctl" would send the operator to the logs of a unit that does not
-        // exist, so name the real state instead.
-        if !Path::new("/etc/systemd/system/virtues-qnnd.service").exists() {
-            ui::warn(
-                "NPU daemon not installed (no QAIRT runtime on this box) — no embedding \
-                 endpoint, so semantic search is unavailable",
-            );
-            issues += 1;
-        } else {
-            // NPU daemon serving the HTTP contract on loopback. It takes a few
-            // seconds to load both context binaries after `systemctl start` — retry.
-            let mut up = false;
-            // :18181 is the daemon's HTTP contract listener, which only binds after
-            // its internal engine loop came up — so one probe proves the whole chain.
-            for _ in 0..10 {
-                if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
-                    up = true;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            }
-            if up {
-                ui::ok("NPU daemon serving the inference contract on :18181/:18182");
-            } else {
-                ui::warn("virtues-qnnd not responding on :18181 — journalctl -u virtues-qnnd");
-                issues += 1;
-            }
-        }
-        // Context binaries + tokenizers on disk.
-        let qnn_dir = cfg.qnn_models_dir();
-        for f in [cfg.qnn_embed_bin.as_str(), cfg.qnn_rerank_bin.as_str()] {
-            if qnn_dir.join(f).is_file() {
-                ui::ok(&format!("NPU model present: {f}"));
-            } else {
-                ui::warn(&format!("NPU model missing: {} — re-run the installer", qnn_dir.join(f).display()));
-                issues += 1;
-            }
-        }
+    if matches!(mode, InferenceMode::Bundled) && npu_still_serving() {
+        ui::ok("Search stays on the NPU until the new model's index is built");
     } else if let InferenceMode::Bundled = mode {
         // The inference sidecar responding. /health returns 200 only once the
         // model is loaded, so this also catches a bad/missing GGUF. Model load
@@ -1708,7 +1402,6 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 /// unit that stops being installed stops being listed.
 pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode, firewall: &[String]) -> Result<()> {
     let (profile, sidecars): (&str, Vec<&str>) = match mode {
-        InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
         InferenceMode::Bundled => ("bundled", vec!["virtues-embed"]),
         InferenceMode::Manual { .. } => ("manual", vec![]),
     };
@@ -1811,53 +1504,4 @@ fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::rank_lib_dirs;
-
-    /// The exact shape the lab Dragon presents: one QAIRT unpack, six copies of
-    /// `libQnnHtp.so`, emitted by `find` in filesystem order. The old `head -1`
-    /// took whichever came first, so a re-extract could silently hand the daemon
-    /// x86_64 or Android libraries.
-    #[test]
-    fn host_libs_never_resolve_to_the_wrong_platform() {
-        let base = "/qairt-extract/qairt/2.42.0.251225/lib";
-        // Deliberately worst-case order: the two unusable builds lead.
-        let hits = [
-            format!("{base}/x86_64-linux-clang/libQnnHtp.so"),
-            format!("{base}/aarch64-android/libQnnHtp.so"),
-            format!("{base}/aarch64-ubuntu-gcc9.4/libQnnHtp.so"),
-            format!("{base}/aarch64-oe-linux-gcc11.2/libQnnHtp.so"),
-            format!("{base}/aarch64-oe-linux-gcc9.3/libQnnHtp.so"),
-        ];
-        assert_eq!(
-            rank_lib_dirs(hits.iter().map(String::as_str)),
-            Some(format!("{base}/aarch64-oe-linux-gcc11.2")),
-            "must pick the variant proven on-device, not the first find hit"
-        );
-    }
-
-    /// The skel matches no host triple, and boxes accumulate loose copies next
-    /// to the context binaries. The SDK's unsigned dir is the canonical one.
-    #[test]
-    fn skel_prefers_the_sdk_dir_over_a_stray_copy() {
-        let hits = [
-            "/home/radxa/npu/libQnnHtpV68Skel.so",
-            "/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so",
-        ];
-        assert_eq!(
-            rank_lib_dirs(hits.into_iter()),
-            Some("/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned".to_string())
-        );
-    }
-
-    /// An x86-only find result is "no usable libs", which must reach the caller
-    /// as None so install_qnn refuses rather than writing a broken unit.
-    #[test]
-    fn wrong_platform_only_is_not_a_fallback() {
-        let hits = ["/opt/qairt/lib/x86_64-linux-clang/libQnnHtp.so"];
-        assert_eq!(rank_lib_dirs(hits.into_iter()), None);
-    }
 }

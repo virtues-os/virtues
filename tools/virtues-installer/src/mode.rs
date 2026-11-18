@@ -1,14 +1,12 @@
 //! Inference mode resolution + manual-endpoint validation.
 //!
-//! Inference is decided once per install, in three flavors:
+//! Inference is decided once per install, in two flavors:
 //!
-//!   · **Dragon** — our own board (Radxa Dragon Q6A, Hexagon v68 NPU),
-//!     detected from the device tree. Inference is built in: the installer
-//!     provisions the on-box NPU daemon and the runtime talks to it over
-//!     loopback. Zero config.
 //!   · **Bundled (the default)** — a portable CPU-only llama-server we
 //!     build+test in CI, running the recommended embedding model, which
-//!     `virtues upgrade` keeps current. A detected GPU or NPU gets a guide.
+//!     `virtues upgrade` keeps current. A Radxa Dragon, detected from the
+//!     device tree, gets it without a question, paced for a board with no
+//!     fan. A detected GPU or NPU gets a guide.
 //!   · **Manual / bring-your-own** — the user runs their own OpenAI-style
 //!     embedding endpoint on whatever their silicon supports; the installer
 //!     asks for the URL, probes it (auto-detecting the embedding dimension),
@@ -28,11 +26,7 @@ use sha2::{Digest, Sha256};
 use crate::ui;
 
 pub enum InferenceMode {
-    /// Our board (Radxa Dragon Q6A, Hexagon v68 NPU), detected automatically.
-    /// Inference is built in — the installer provisions the on-box NPU daemon
-    /// and the runtime talks to it over loopback.
-    Dragon,
-    /// The default on non-Dragon hardware: a portable **CPU-only**
+    /// The default, and what a Radxa Dragon gets without asking: a portable **CPU-only**
     /// llama-server (the one we build + test in CI — no GPU/driver
     /// babysitting) with our models, zero config. Fine for a box's daily
     /// volume; an accelerator, when present, is faster still, and the
@@ -57,9 +51,11 @@ impl InferenceMode {
         // 1. Env override — the non-interactive path for image builds and
         //    scripted installs.
         match std::env::var("VIRTUES_INFERENCE").ok().as_deref() {
+            // A Dragon runs search on its CPU now. An older script that asks
+            // for the NPU setup gets that.
             Some("dragon") => {
-                ui::ok("Inference mode: dragon (VIRTUES_INFERENCE=dragon)");
-                return Ok(Self::Dragon);
+                ui::ok("Inference mode: bundled local CPU engine (a Dragon runs search on its CPU)");
+                return Ok(Self::Bundled);
             }
             Some("bundled") => {
                 ui::ok("Inference mode: bundled local CPU engine (VIRTUES_INFERENCE=bundled)");
@@ -89,25 +85,11 @@ impl InferenceMode {
             None => {}
         }
 
-        // 2. Board detection — our hardware means inference is built in,
-        //    no questions asked.
+        // 2. Board detection: a Dragon runs search on its CPU, paced for a
+        //    board with no fan (`install::dragon_pacing`), no questions asked.
         if is_dragon() {
-            ui::ok("Dragon detected — inference is built in");
-            return Ok(Self::Dragon);
-        }
-        // When detection MISSES on hardware that smells like ours, say what
-        // was read: a field Dragon fell through to the DIY path on 2026-08-19
-        // and the transcript carried no clue why. This line makes the next
-        // such report self-diagnosing.
-        if let Ok(bytes) = std::fs::read("/proc/device-tree/compatible") {
-            let text = String::from_utf8_lossy(&bytes).replace('\0', " ");
-            if text.to_lowercase().contains("qcom") {
-                ui::warn(&format!(
-                    "board reports \"{}\" — not recognized as a Dragon; if it is one, \
-                     re-run with VIRTUES_INFERENCE=dragon (and tell us that string)",
-                    text.trim()
-                ));
-            }
+            ui::ok("Dragon detected — search runs on its CPU");
+            return Ok(Self::Bundled);
         }
 
         // 3. Interactive flow. cliclack reads /dev/tty directly, so this works
@@ -205,10 +187,9 @@ fn embed_model_from_env() -> String {
         .unwrap_or_else(|| "default".to_string())
 }
 
-/// Are we on our own board? The Dragon device tree carries a
-/// "radxa,dragon…" compatible string (covers the q6a/q8b variants).
-/// `VIRTUES_BOARD=dragon` is the image-build escape hatch — the image is
-/// assembled off-board, where there is no device tree to read.
+/// Is this a Radxa Dragon? Its device tree carries a "radxa,dragon…" compatible
+/// string (covers the q6a/q8b variants). `VIRTUES_BOARD=dragon` says so where
+/// there is no device tree to read.
 fn is_dragon() -> bool {
     if std::env::var("VIRTUES_BOARD").as_deref() == Ok("dragon") {
         return true;
@@ -233,8 +214,8 @@ fn has_tty() -> bool {
 }
 
 /// The "what do I point this at" card shown before the URL prompts. Because we
-/// support exactly one board fully (the Dragon NPU) and can't tune sidecars for
-/// the thousand other SBCs, the bring-your-own path leans on the user knowing
+/// can't tune sidecars for the thousand SBCs we can't test, the bring-your-own
+/// path leans on the user knowing
 /// their own silicon — so this maps common accelerators to a server that lands
 /// on them, lists known-good models (with dims, for picking — we auto-detect the
 /// real dim when we probe), then shows concrete start commands. Everything

@@ -464,11 +464,12 @@ pub const WATCHDOG_CONF: &str = include_str!("watchdog.conf");
 /// and no panic, so nothing rebooted it until someone power-cycled it. `qnnd`
 /// shares that cDSP, so every Dragon can hit it.
 ///
-/// Keyed on the manifest's `profile == "dragon"`, not `appliance()`. The
-/// profile is set whenever the box runs our NPU stack, appliance image or DIY,
-/// while `appliance()` falls back to whether a display unit exists and reads
-/// false on a headless Dragon. A server where we drive no NPU keeps its own
-/// systemd settings. Skipped on a board with no `/dev/watchdog0`.
+/// Keyed on the board (`inference_report::is_dragon_board`), with the
+/// manifest's `profile == "dragon"` for older installs. Search no longer runs
+/// on the NPU, but local mode does (`local_model`), and a Dragon installed
+/// since search moved to its CPU says `bundled` in its manifest. A server
+/// where we drive no NPU keeps its own systemd settings. Skipped on a board
+/// with no `/dev/watchdog0`.
 ///
 /// `daemon-reload` is enough to apply a `system.conf.d` change (checked on the
 /// lab Dragon with `wdctl`); no re-exec. 30 s sits inside `qcom_wdt`'s 32 s
@@ -478,9 +479,8 @@ fn dragon_watchdog(_data_dir: &std::path::Path) -> Outcome {
     use std::path::Path;
     use std::process::Command;
 
-    let is_dragon = crate::install_manifest::get()
-        .as_ref()
-        .is_some_and(|m| m.profile == "dragon");
+    let is_dragon = crate::inference_report::is_dragon_board()
+        || crate::install_manifest::get().as_ref().is_some_and(|m| m.profile == "dragon");
     if !is_dragon || !Path::new("/dev/watchdog0").exists() {
         return Outcome::Converged;
     }

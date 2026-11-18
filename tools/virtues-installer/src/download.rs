@@ -176,8 +176,10 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     if has_llama {
         force_symlink(&current.join("llama-server"), &cfg.llama_binary_path())?;
     }
+    // A Dragon whose search hasn't left the NPU yet runs `virtues-qnnd` from
+    // this path until the server retires it (`cli::model_set` in core).
     if has_qnnd {
-        force_symlink(&current.join("virtues-qnnd"), &cfg.qnnd_binary_path())?;
+        force_symlink(&current.join("virtues-qnnd"), &cfg.install_prefix.join("bin/virtues-qnnd"))?;
     }
     if staged_bins {
         // The bin dir is a single filesystem path (libexec/virtues) regardless
@@ -205,8 +207,7 @@ pub async fn fetch_model(cfg: &InstallConfig, name: &str) -> Result<()> {
 
 /// Download release asset `name` (from the models bucket) to an arbitrary
 /// `dest`, SHA256-verified, skipping if already present. `fetch_model` is the
-/// common case (into the GGUF models dir); the QNN path uses this directly to
-/// place `.bin`s + tokenizers under the QNN models dir with a nested layout.
+/// common case (into the GGUF models dir).
 pub async fn fetch_asset(cfg: &InstallConfig, name: &str, dest: std::path::PathBuf) -> Result<()> {
     if dest.is_file() && fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false) {
         ui::skip(&format!("Model already present: {name}"));
