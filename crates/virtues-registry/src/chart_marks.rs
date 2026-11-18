@@ -104,7 +104,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Actogram",
         kind: "chart",
         purposes: &["daily_rhythm"],
-        line: "a daily window across many days: day, started_at and ended_at",
+        line: "a daily window (first to last, asleep to awake) across days: day, started_at, ended_at",
         max_rows: 400,
     },
     ChartMark {
@@ -128,7 +128,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Stacked area chart",
         kind: "chart",
         purposes: &["change_over_time"],
-        line: "a filled area over time, 1-3 series stacked; when an area chart is asked for",
+        line: "the stacked area chart, a filled area over time with 1-3 series",
         max_rows: 199,
     },
     ChartMark {
@@ -176,7 +176,7 @@ pub const MARKS: &[ChartMark] = &[
         name: "Stacked bar chart",
         kind: "chart",
         purposes: &["part_to_whole"],
-        line: "x, then 2-5 parts",
+        line: "stacked bars, x then 2-5 parts",
         max_rows: 199,
     },
     ChartMark {
