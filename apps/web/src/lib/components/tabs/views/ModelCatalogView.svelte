@@ -22,7 +22,7 @@
 		? `Every language model you can choose for ${slot.phrase}, with list prices per million tokens.`
 		: "Every language model you can choose, with list prices per million tokens."}
 	back={{ route: "/virtues/assistant/spending", label: "Models and spending" }}
-	width="full"
+	width="medium"
 >
 	<ModelCatalog role={slot?.key} />
 </SettingsPage>

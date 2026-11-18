@@ -4,11 +4,13 @@
 	 * Every Settings page has the same top: a link back, the title, one
 	 * sentence. Section pages (SettingsSection) and the pages a row opens
 	 * (Keys, Devices, What AI has cost…) all use this, so the room reads as
-	 * one place, at one width (`--page-settings`). `width` is `full` for a
-	 * page that holds a table, which takes the medium width.
+	 * one place, at one width (`--page-settings`, this room's Reading).
+	 * `width` is `medium` for a page that holds a table. You can change a
+	 * page's width from the page bar (stores/pageWidth.svelte.ts).
 	 */
 	import type { Snippet } from 'svelte';
 	import { openSettingsPage } from '$lib/settings/focus';
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 
 	let {
 		title,
@@ -25,14 +27,16 @@
 		back?: { route: string; label: string };
 		/** For the tab label of the page the back link opens. */
 		assistantName?: string;
-		width?: 'reading' | 'full';
+		width?: 'reading' | 'medium';
 		/** A control beside the title, such as Add a key. */
 		actions?: Snippet;
 		children?: Snippet;
 	} = $props();
+
+	const pageWidth = usePageWidth(() => width, { reading: 'var(--page-settings)' });
 </script>
 
-<div class="page" class:full={width === 'full'}>
+<div class="page" style:max-width={pageWidth.css}>
 	<button type="button" class="back" onclick={() => openSettingsPage(back.route, assistantName)}>
 		<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
 			<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M15 6l-6 6l6 6" />
@@ -51,13 +55,8 @@
 	/* Border-box, as the landing is, so the text column is the same width on both. */
 	.page {
 		box-sizing: border-box;
-		max-width: var(--page-settings);
 		margin: 0 auto;
 		padding: 32px 32px 96px;
-	}
-
-	.page.full {
-		max-width: var(--page-medium);
 	}
 
 	.back {

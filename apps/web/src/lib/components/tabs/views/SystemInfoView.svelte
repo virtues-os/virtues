@@ -301,7 +301,7 @@
 <SettingsPage
 	title="How your server is doing"
 	lede="Its processor, memory, storage and services, now and over the last day."
-	width="full"
+	width="medium"
 >
 	{#snippet actions()}
 		<button class="detail-btn" class:on={detail} onclick={toggleDetail} aria-pressed={detail}>

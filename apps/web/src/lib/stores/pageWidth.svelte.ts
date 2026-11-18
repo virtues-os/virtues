@@ -10,10 +10,8 @@
  *
  * The widths themselves are the `--page-*` tokens in themes.css.
  *
- * TODO(2026-11-18): migrate settings/SettingsPage.svelte,
- * settings/SettingsLanding.svelte and DetailFrame.svelte (tasks, threads,
- * notes). They still cap their columns themselves, so the page bar offers
- * no width there.
+ * TODO(2026-11-18): migrate DetailFrame.svelte (tasks, threads, notes). It
+ * still caps its column itself, so the page bar offers no width there.
  */
 
 import { getContext, setContext, untrack } from "svelte";
@@ -143,11 +141,13 @@ export function kindOf(tab: { type: string; virtuesPage?: string }, isOne: boole
  *
  * `sheet: true` offers the A4 sheet as a fourth width. `part` names the
  * section of a view that draws several under one tab (the wiki room's
- * days, people and years), so each keeps its own choice.
+ * days, people and years), so each keeps its own choice. `reading` is the
+ * view's own reading column, for a room whose rows need more than the
+ * reading measure (Settings, `--page-settings`).
  */
 export function usePageWidth(
 	initial: () => PageWidth | null,
-	opts: { sheet?: boolean; part?: () => string } = {},
+	opts: { sheet?: boolean; part?: () => string; reading?: string } = {},
 ): { readonly width: PageWidthChoice; readonly css: string } {
 	const ctx = getContext<{ tabId: () => string; kind: () => string } | undefined>(PAGE_KIND);
 	const sheet = !!opts.sheet;
@@ -170,7 +170,7 @@ export function usePageWidth(
 			return width;
 		},
 		get css() {
-			return PAGE_WIDTH_CSS[width];
+			return width === "reading" && opts.reading ? opts.reading : PAGE_WIDTH_CSS[width];
 		},
 	};
 }

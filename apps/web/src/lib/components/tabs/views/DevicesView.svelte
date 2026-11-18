@@ -311,7 +311,7 @@
 <SettingsPage
 	title="Devices"
 	lede="Your server, and every app, browser and sensor paired to it."
-	width="full"
+	width="medium"
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>

@@ -297,6 +297,10 @@ button in the page bar. The choice is kept per kind of page on that device.
 | Medium | `--page-medium` | 60rem | a page with a side column |
 | Full | `--page-full` | the whole pane | grids, tables and list pages |
 
+Settings is the one room with its own Reading column: `--page-settings`
+(42.5rem), wide enough for a row's label, help and control side by side.
+`SettingsPage` and the landing pass it to `usePageWidth` as `reading`.
+
 Never cap a page column with a literal or a token directly: the page bar
 can't change a width it doesn't know about. A measure inside the column (a
 paragraph at 60ch, a dialog) is not the page's width and stays as it is.

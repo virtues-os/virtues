@@ -115,7 +115,7 @@
 	];
 </script>
 
-<SettingsPage title="Shared links" lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once." width="full">
+<SettingsPage title="Shared links" lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once." width="medium">
 	{#if !loading && all.length === 0 && !error}
 		<div class="empty">
 			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>

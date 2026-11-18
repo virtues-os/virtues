@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Settings' landing page: the question, the search field, a site map with
@@ -113,9 +114,12 @@
 		query = '';
 		openSetting(settingId, spoken);
 	}
+
+	// Settings' reading column, the width every section page shares.
+	const width = usePageWidth(() => 'reading', { reading: 'var(--page-settings)' });
 </script>
 
-<div class="page">
+<div class="page" style:max-width={width.css}>
 	<h1>What do you want to change?</h1>
 	<!-- Once you type, Esc clears. The wrapper keeps the field its own
 	     height in this column. -->
@@ -204,7 +208,6 @@
 <style>
 	.page {
 		box-sizing: border-box;
-		max-width: var(--page-settings);
 		margin: 0 auto;
 		padding: 44px 32px 32px;
 	}

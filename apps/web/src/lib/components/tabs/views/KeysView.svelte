@@ -142,7 +142,7 @@
 <SettingsPage
 	title="Keys"
 	lede="What your applets sign in with, such as an API key. An applet gets only the keys it lists, and the assistant sees their names, never their values."
-	width="full"
+	width="medium"
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>Add a key</Button>
