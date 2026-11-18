@@ -22,7 +22,7 @@
 	import { isRequest } from '$lib/tasks/requests';
 	import { toast } from 'svelte-sonner';
 	import { notesStore } from '$lib/stores/notes.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import NoteBox from '$lib/components/threads/NoteBox.svelte';
 
 	let { task }: { task: Task } = $props();
 
@@ -55,20 +55,7 @@
 {/if}
 
 {#each notesStore.about(`/task/${task.id}`).slice(0, 2) as n (n.key)}
-	<div class="note">
-		<p class="note-text"><span class="mark" aria-hidden="true"></span>{n.text}</p>
-		<div class="note-acts">
-			<Button variant="secondary" size="sm" onclick={() => windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true })}>
-				{n.action}
-			</Button>
-			<TextAction
-				onclick={() =>
-					windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: n.text, focusExisting: true })}
-				>Why this?</TextAction
-			>
-			<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
-		</div>
-	</div>
+	<div class="note"><NoteBox note={n} /></div>
 {/each}
 
 <div class="chips">
@@ -153,31 +140,6 @@
 	}
 	.note {
 		margin-top: 20px;
-		padding: 12px 16px;
-		border-radius: var(--radius-md);
-		background: var(--hover-bg);
-	}
-	.note-text {
-		display: flex;
-		gap: 12px;
-		margin: 0;
-		font-size: 14px;
-		line-height: 20px;
-		color: var(--color-foreground);
-	}
-	.mark {
-		flex: none;
-		width: 6px;
-		height: 6px;
-		margin-top: 8px;
-		border-radius: 50%;
-		background: var(--color-primary);
-	}
-	.note-acts {
-		display: flex;
-		align-items: center;
-		gap: 16px;
-		margin: 12px 0 0 16px;
 	}
 	.chips {
 		display: flex;

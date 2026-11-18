@@ -7,7 +7,7 @@ import type { TaskEvent } from '$lib/api/client';
 /** The words for each edited field. Every home field reads as "its home". */
 const FIELD_NAMES: Record<string, string> = {
 	title: 'the title',
-	notes: 'the notes',
+	notes: 'the description',
 	assignee: 'who it is for',
 	due_on: 'the date',
 	due_at: 'the time',
@@ -22,12 +22,14 @@ const FIELD_NAMES: Record<string, string> = {
 	result_url: 'the result',
 };
 
-export function eventLine(e: TaskEvent): string {
+/** One event as a line. `source` names the record the task was made from, when it has one. */
+export function eventLine(e: TaskEvent, source?: string): string {
 	const who = e.author === 'assistant' ? 'The assistant' : 'You';
 	const body = e.body as Record<string, unknown>;
 	switch (e.kind) {
 		case 'created':
-			return body.recurred_from ? 'It came back after the last one was finished' : `${who} added this`;
+			if (body.recurred_from) return 'It came back after the last one was finished';
+			return source ? `${who} made this from ${source}` : `${who} added this`;
 		case 'status': {
 			const to = String(body.to ?? '');
 			const said: Record<string, string> = {

@@ -1,14 +1,14 @@
 <script lang="ts">
 	/**
-	 * One task's page. The main column is the task: its check and title, the
-	 * owner's notes, where it came from, a request's result, and its history
-	 * from `app_task_events`, each line signed by who did it. The side column
-	 * holds its home with Move, what else it is about, its due day, how often
-	 * it repeats, and who it is for.
+	 * One task's page. The main column is the task: its check and title, its
+	 * description, any note on it, where it came from, a request's result,
+	 * the owner's own notes, and its history from `app_task_events`, each
+	 * line signed by who did it. The side column holds its home, what else it
+	 * is about, its due day, how often it repeats, and who it is for.
 	 */
 	import type { Tab } from '$lib/tabs/types';
 	import type { Task, TaskEvent, TaskPatch } from '$lib/api/client';
-	import { getTask, listTaskEvents, updateTask } from '$lib/api/client';
+	import { addTaskNote, getTask, listTaskEvents, updateTask } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
@@ -19,7 +19,9 @@
 	import TaskAlsoAbout from '$lib/components/tasks/TaskAlsoAbout.svelte';
 	import TaskActions from '$lib/components/tasks/TaskActions.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
-	import { Button } from '$lib';
+	import TaskSource from '$lib/components/tasks/TaskSource.svelte';
+	import NoteBox from '$lib/components/threads/NoteBox.svelte';
+	import { notesStore } from '$lib/stores/notes.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { identityOf } from '$lib/refs/identity.svelte';
@@ -57,6 +59,11 @@
 	});
 
 	$effect(() => {
+		notesStore.start();
+		return () => notesStore.stop();
+	});
+
+	$effect(() => {
 		if (task && tab.label !== task.title) windowShellStore.updateTab(tab.id, { label: task.title });
 	});
 
@@ -83,10 +90,28 @@
 		if (task && title && title !== task.title) void save({ title }, "Your server couldn't rename that task");
 	}
 
-	function saveNotes(value: string) {
+	function saveDescription(value: string) {
 		const notes = value.trim() || null;
-		if (task && notes !== (task.notes ?? null)) void save({ notes }, "Your server couldn't save those notes");
+		if (task && notes !== (task.notes ?? null)) void save({ notes }, "Your server couldn't save that description");
 	}
+
+	/** Add one of the owner's own notes. Resolves true so the field clears. */
+	async function addNote(value: string): Promise<boolean> {
+		const text = value.trim();
+		if (!task || !text) return false;
+		try {
+			await addTaskNote(task.id, text);
+			history = await listTaskEvents(task.id);
+			return true;
+		} catch (e) {
+			toast.error("Your server couldn't save that note", { description: e instanceof Error ? e.message : undefined });
+			return false;
+		}
+	}
+
+	const ownNotes = $derived(history.filter((e) => e.kind === 'note' && e.author === 'owner'));
+	const otherEvents = $derived(history.filter((e) => !(e.kind === 'note' && e.author === 'owner')));
+	const notes = $derived(task ? notesStore.about(`/task/${task.id}`).slice(0, 2) : []);
 
 	let dueOpen = $state(false);
 	let recurOpen = $state(false);
@@ -103,7 +128,7 @@
 		if (task) history = await listTaskEvents(task.id);
 	}
 
-	const source = $derived(task?.source_url ? identityOf(task.source_url) : null);
+	const sourceTitle = $derived(task?.source_url ? identityOf(task.source_url)?.title : undefined);
 	const recurs = $derived(task ? recurrenceOf(task) : null);
 </script>
 
@@ -136,37 +161,29 @@
 							}}
 						/>
 					{/key}
-					{#if !isRequest(task)}
-						<Button variant="secondary" size="sm" onclick={toggle}>{isClosed(task) ? 'Reopen' : 'Mark done'}</Button>
-					{/if}
 				</div>
 
-				<TaskActions {task} onChanged={reloadHistory} />
-
-				<section class="block">
-					<h2 class="block-title">Notes</h2>
+				<div class="lede">
 					{#key task.id}
 						<TaskComposer
 							value={task.notes ?? ''}
-							label="Notes"
-							placeholder="Add a note for yourself"
+							label="Description"
+							placeholder="Add a description"
 							commitOnBlur
-							onCommit={saveNotes}
+							onCommit={saveDescription}
 						/>
 					{/key}
-				</section>
+					<TaskActions {task} onChanged={reloadHistory} />
+				</div>
 
-				{#if task.source_url && source}
+				{#each notes as n (n.key)}
+					<NoteBox note={n} here={`/task/${task.id}`} />
+				{/each}
+
+				{#if task.source_url}
 					<section class="block">
 						<h2 class="block-title">Where it came from</h2>
-						<button
-							type="button"
-							class="source"
-							onclick={() => windowShellStore.openRouteBeside(task.source_url!)}
-						>
-							<Icon icon={source.icon || 'mynaui:link'} width="16" />
-							<span>{source.title}</span>
-						</button>
+						<TaskSource url={task.source_url} />
 					</section>
 				{/if}
 
@@ -178,15 +195,28 @@
 				{/if}
 
 				<section class="block">
+					<h2 class="block-title">Notes</h2>
+					{#each ownNotes as e (e.id)}
+						<div class="own-note">
+							<p>{String(e.body.text ?? '')}</p>
+							<span class="when">{eventTime(e)}</span>
+						</div>
+					{/each}
+					{#key task.id}
+						<TaskComposer label="Add a note" placeholder="Add a note for yourself" onCommit={addNote} />
+					{/key}
+				</section>
+
+				<section class="block">
 					<h2 class="block-title">History</h2>
-					{#if history.length === 0}
+					{#if otherEvents.length === 0}
 						<p class="quiet">Nothing has happened to it yet.</p>
 					{:else}
 						<ol class="history">
-							{#each history as e (e.id)}
+							{#each otherEvents as e (e.id)}
 								<li>
 									<span class="dot" aria-hidden="true"></span>
-									<span class="line">{eventLine(e)}</span>
+									<span class="line">{eventLine(e, sourceTitle)}</span>
 									<span class="when">{eventTime(e)}</span>
 								</li>
 							{/each}
@@ -196,6 +226,7 @@
 			</main>
 
 			<aside class="side" aria-label="About this task">
+				<p class="psec">Properties</p>
 				<dl class="props">
 					<dt>Home</dt>
 					<dd><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} showIcon plain /></dd>
@@ -322,26 +353,31 @@
 		line-height: 24px;
 		color: var(--color-foreground-muted);
 	}
-	.source {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 12px;
-		margin: 0 -12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		font-size: 15px;
+	.lede {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin-top: -16px;
+	}
+	.own-note {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 8px 0;
+	}
+	.own-note p {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: 16px;
+		line-height: 24px;
 		color: var(--color-foreground);
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
+		white-space: pre-wrap;
 	}
-	.source:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.source :global(svg) {
+	.psec {
+		margin: 0 0 12px;
+		font-size: 12px;
+		line-height: 16px;
 		color: var(--color-foreground-muted);
 	}
 	.result {
@@ -439,7 +475,6 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.source,
 		.fact {
 			transition: none;
 		}

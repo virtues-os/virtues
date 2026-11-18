@@ -81,11 +81,12 @@ function storeIdentity(url: string): Identity | null {
 // ── the box's answer, for what the stores do not hold ──────────────────────
 
 /**
- * Kinds whose name the box holds as a record's own field. A day or a year is
+ * Kinds whose name the box holds as a record's own field, including any
+ * `/record/<ontology>/<id>` row with a title column. A day or a year is
  * named by its date, and a view titles it better ("Wednesday, 30 September")
  * than its id would; an app screen has no record at all.
  */
-const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'thing', 'file']);
+const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'thing', 'file', 'record']);
 
 /** Resolved identities by url, filled in batches as surfaces ask. */
 const resolved = new SvelteMap<string, RefIdentity>();

@@ -133,8 +133,8 @@
 		/>
 		<textarea
 			class="notes"
-			placeholder="Notes"
-			aria-label="Notes"
+			placeholder="Description"
+			aria-label="Description"
 			rows="3"
 			value={draft.notes ?? ''}
 			oninput={(e) => edit({ notes: e.currentTarget.value })}

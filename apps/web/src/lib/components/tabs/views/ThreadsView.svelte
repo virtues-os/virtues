@@ -20,6 +20,7 @@
 	import WeekChart from '$lib/components/threads/WeekChart.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
 	import { TextAction } from '$lib';
+	import NoteBox, { openInsight } from '$lib/components/threads/NoteBox.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { THREAD_ICON } from '$lib/utils/iconHelpers';
@@ -77,10 +78,6 @@
 
 	function runNote(n: Note) {
 		windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true });
-	}
-
-	function openInsight(n: Note) {
-		windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: n.text, focusExisting: true });
 	}
 
 	// ── the week ───────────────────────────────────────────────────────────
@@ -635,14 +632,7 @@
 					<p class="stands">{shown.instructions}</p>
 				{/if}
 				{#each notesStore.about(`/thread/${shown.id}`).slice(0, 2) as n (n.key)}
-					<div class="note">
-						<p class="note-text"><span class="mark" aria-hidden="true"></span>{n.text}</p>
-						<div class="note-acts">
-							<Button variant="secondary" size="sm" onclick={() => runNote(n)}>{n.action}</Button>
-							<TextAction onclick={() => openInsight(n)}>Why this?</TextAction>
-							<TextAction onclick={() => notesStore.dismiss(n)}>Not now</TextAction>
-						</div>
-					</div>
+					<div class="note"><NoteBox note={n} /></div>
 				{/each}
 
 				<div class="chips">
@@ -824,26 +814,6 @@
 	}
 	.note {
 		margin-top: 20px;
-		padding: 12px 16px;
-		border-radius: var(--radius-md);
-		background: var(--hover-bg);
-	}
-	.note-text {
-		display: flex;
-		gap: 12px;
-		margin: 0;
-		font-size: 14px;
-		line-height: 20px;
-		color: var(--color-foreground);
-	}
-	.note-text .mark {
-		margin-top: 8px;
-	}
-	.note-acts {
-		display: flex;
-		align-items: center;
-		gap: 16px;
-		margin: 12px 0 0 16px;
 	}
 	.key {
 		margin-left: 4px;
