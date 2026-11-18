@@ -1,6 +1,6 @@
 /**
- * What a path segment lists when you click it: what is inside it. Projects
- * lists your projects, a project its chats and pages, Settings its rooms by
+ * What a path segment lists when you click it: what is inside it. Threads
+ * lists the door's views, a thread its chats and pages, Settings its rooms by
  * heading. The newest come first and the one you are in is checked. Under
  * them, a row opens the segment itself, and a list that can run long ends in
  * "Search …", which opens the palette already narrowed to that kind.
@@ -11,6 +11,7 @@ import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recent
 import { appletsStore } from '$lib/stores/applets.svelte';
 import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 import { search } from '$lib/stores/search.svelte';
+import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 const LIST_ROWS = 10;
 
@@ -23,7 +24,6 @@ const GLYPH: Record<RecentKind, string> = {
 
 /** The list kinds: the noun for "All …" and the palette scope. */
 const LISTS = {
-	threads: { kind: 'thread', noun: 'threads' },
 	pages: { kind: 'page', noun: 'pages' },
 	applets: { kind: 'applet', noun: 'applets' },
 } as const;
@@ -45,6 +45,8 @@ export function crumbMenuItems(
 	});
 
 	if (menu.kind === 'mode') return modeItems(menu.mode, menu.group, current, open);
+
+	if (menu.kind === 'threads') return threadViewItems(here, open);
 
 	if (menu.kind === 'thread') {
 		const members = recentRows({ pinned: true }).filter(
@@ -77,6 +79,34 @@ export function crumbMenuItems(
 	if (crumb.route) footer.push({ id: 'all', label: `All ${list.noun}`, icon: GLYPH[list.kind], action: () => open(crumb.route!) });
 	footer.push({ id: 'search', label: `Search ${list.noun}…`, icon: 'atlas:search', action: () => search.show(`#${list.noun} `) });
 	return withFooter(rows, footer);
+}
+
+/**
+ * The Threads door's views, the one you are on checked, each with its G
+ * shortcut. The door keeps the view in its route (`?view=`), so on the door
+ * a view changes that tab's route the way the door's own G keys do;
+ * anywhere else under it, the view opens.
+ */
+function threadViewItems(here: string, open: (route: string) => void): ContextMenuItem[] {
+	const [path, query = ''] = here.split('?');
+	const on = path === '/threads' ? (new URLSearchParams(query).get('view') ?? 'overview') : null;
+	const views: { id: string; label: string; key: string }[] = [
+		{ id: 'overview', label: 'Overview', key: 'G O' },
+		{ id: 'tasks', label: 'Tasks', key: 'G T' },
+		{ id: 'threads', label: 'All threads', key: 'G A' },
+	];
+	return views.map((v) => ({
+		id: `view-${v.id}`,
+		label: v.label,
+		shortcut: v.key,
+		checked: on === v.id,
+		action: () => {
+			const route = v.id === 'overview' ? '/threads' : `/threads?view=${v.id}`;
+			const door = on ? windowShellStore.findTab((t) => t.route === here) : null;
+			if (door) windowShellStore.updateTab(door.tab.id, { route });
+			else open(route);
+		},
+	}));
 }
 
 function withFooter(rows: ContextMenuItem[], footer: ContextMenuItem[]): ContextMenuItem[] {

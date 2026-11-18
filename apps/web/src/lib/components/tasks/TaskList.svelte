@@ -48,6 +48,8 @@
 		emptyText = "Nothing here yet.",
 		shownId = null,
 		pinnedId = null,
+		limit = null,
+		keys = true,
 		onPick,
 		onHover,
 	}: {
@@ -67,6 +69,10 @@
 		/** The task the page is showing, and the one it has kept. */
 		shownId?: string | null;
 		pinnedId?: string | null;
+		/** Only the first this many open tasks, in one group, with no Done fold. */
+		limit?: number | null;
+		/** J, K, Enter, X and C. Off where the page has its own keys. */
+		keys?: boolean;
 		onPick?: (t: Task) => void;
 		onHover?: (t: Task | null) => void;
 	} = $props();
@@ -134,13 +140,15 @@
 			tasks: todos.filter((t) => dueGroup(t.due_on, now) === g.id),
 		})).filter((g) => g.tasks.length > 0);
 	});
+	/** The first `limit` open tasks: what is ready, then what is next. */
+	const firstFew = $derived(limit ? [...ready, ...todos, ...working].slice(0, limit) : []);
 	const closed = $derived(tasksStore.closed.filter(inScope));
 	const isEmpty = $derived(scoped.length === 0);
 
 	let doneOpen = $state(false);
 
 	/** Every row on the page in reading order, for j and k. */
-	const order = $derived([
+	const order = $derived(limit ? firstFew.map((t) => t.id) : [
 		...ready.map((t) => t.id),
 		...working.map((t) => t.id),
 		...todos.map((t) => t.id),
@@ -254,7 +262,7 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
-		if (!active || e.defaultPrevented || typing(e.target) || e.altKey || newTaskDialog.isOpen) return;
+		if (!active || !keys || e.defaultPrevented || typing(e.target) || e.altKey || newTaskDialog.isOpen) return;
 		const mod = e.metaKey || e.ctrlKey;
 		const t = focused ? tasksStore.find(focused) : undefined;
 		if (!mod && (e.key === "j" || e.key === "ArrowDown")) {
@@ -304,6 +312,11 @@
 		<p class="quiet">{emptyText}</p>
 	{/if}
 
+	{#if limit}
+		<ul class="rows">
+			{#each firstFew as t (t.id)}{@render row(t)}{/each}
+		</ul>
+	{:else}
 	{#if ready.length > 0}
 		<h3 class="group-label">Ready for you</h3>
 		<ul class="rows">
@@ -338,6 +351,7 @@
 		<ul class="rows">
 			{#each closed as t (t.id)}{@render row(t)}{/each}
 		</ul>
+	{/if}
 	{/if}
 </div>
 

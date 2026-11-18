@@ -90,7 +90,9 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		if (!door.prefixes.some((p) => under(path, p))) continue;
 		const crumbs: Crumb[] = [door.root];
 		if (path !== door.root.route && title && title !== door.root.label) crumbs.push({ label: title });
-		else crumbs[0] = { label: door.root.label };
+		// On the door itself the segment is the page, except where its menu
+		// lists the door's own views (Threads): that menu stays.
+		else crumbs[0] = door.root.menu?.kind === 'threads' ? door.root : { label: door.root.label };
 		return { glyph: door.glyph, crumbs };
 	}
 

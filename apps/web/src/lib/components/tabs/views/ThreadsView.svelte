@@ -18,13 +18,11 @@
 	import type { ProjectSummary, Task, Week } from '$lib/api/client';
 	import { getThreadWeek } from '$lib/api/client';
 	import WeekChart from '$lib/components/threads/WeekChart.svelte';
-	import TaskCheck from '$lib/components/tasks/TaskCheck.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
-	import { toggleTaskDone } from '$lib/tasks/actions';
-	import { dueLabel } from '$lib/tasks/due';
-	import { homeOf, subjectName } from '$lib/tasks/homes';
 	import { TextAction } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
+	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { homeOf, subjectName } from '$lib/tasks/homes';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import TaskList from '$lib/components/tasks/TaskList.svelte';
 	import TaskPreview from '$lib/components/tasks/TaskPreview.svelte';
@@ -124,6 +122,9 @@
 		newTaskDialog.open();
 	}
 
+	/** On the Overview the preview shows whichever kind of row was pointed at last. */
+	let lastKind = $state<'thread' | 'task'>('thread');
+
 	// ── the Tasks view's preview ───────────────────────────────────────────
 	let hoveredTaskId = $state<string | null>(null);
 	let pinnedTaskId = $state<string | null>(null);
@@ -133,10 +134,6 @@
 		if (picked) return picked;
 		return tasksStore.open.find((t) => t.assignee === 'owner') ?? tasksStore.open[0] ?? null;
 	});
-
-	function openTask(t: Task) {
-		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
-	}
 
 	function openById(id: string) {
 		const p = rows.find((r) => r.id === id);
@@ -162,7 +159,13 @@
 	const rows = $derived.by<ProjectSummary[]>(() => {
 		if (listFilter === 'finished') return projectStore.archived;
 		const backlog = listFilter === 'backlog';
-		return projectStore.projects.filter((p) => !!p.is_backlog === backlog);
+		const open = projectStore.projects.filter((p) => !!p.is_backlog === backlog);
+		if (backlog || !week) return open;
+		// Active follows the week's order: threads with time first, then the
+		// quiet ones, so J, K and the pager walk the chart as it is drawn.
+		const busy = (id: string) =>
+			week?.threads.find((t) => t.id === id)?.days.some((d) => d.done_minutes + d.ahead_minutes >= 8) ?? false;
+		return [...open.filter((p) => busy(p.id)), ...open.filter((p) => !busy(p.id))];
 	});
 
 	// ── the preview ─────────────────────────────────────────────────────
@@ -202,10 +205,32 @@
 		document.getElementById(`thread-row-${next.id}`)?.scrollIntoView({ block: 'nearest' });
 	}
 
+	/** G, then O, T or A: the door's views. */
+	let gPressedAt = 0;
+
 	function onKey(e: KeyboardEvent) {
-		if (!active || view === 'tasks' || e.metaKey || e.ctrlKey || e.altKey) return;
+		if (!active || e.metaKey || e.ctrlKey || e.altKey || newTaskDialog.isOpen) return;
 		const target = e.target as HTMLElement | null;
 		if (target?.closest('input, textarea, [contenteditable="true"], [role="menu"]')) return;
+		if (e.key === 'g') {
+			gPressedAt = Date.now();
+			return;
+		}
+		if (Date.now() - gPressedAt < 1200) {
+			const to = ({ o: 'overview', t: 'tasks', a: 'threads' } as const)[e.key as 'o' | 't' | 'a'];
+			gPressedAt = 0;
+			if (to) {
+				e.preventDefault();
+				setView(to);
+				return;
+			}
+		}
+		if (view === 'overview' && e.key === 'c') {
+			e.preventDefault();
+			newTaskHere();
+			return;
+		}
+		if (view === 'tasks') return;
 		if (e.key === 'j' || e.key === 'ArrowDown') {
 			e.preventDefault();
 			step(1);
@@ -267,23 +292,55 @@
 	}
 
 	/**
-	 * The thread as a line of dots, from the day it began to today: one dot
-	 * per chat, page, file or subject in it, placed on the day it arrived.
+	 * The thread as a line, from the day it began to its last planned step:
+	 * a solid dot for each chat, page, file or record on the day it happened,
+	 * a ring for each dated task and planned record still ahead, and a tick
+	 * at today.
 	 */
-	const nodes = $derived.by<number[]>(() => {
-		if (!detail) return [];
-		const start = new Date(detail.created_at).getTime();
-		const end = Date.now();
+	const line = $derived.by(() => {
+		if (!detail) return null;
+		const now = Date.now();
+		const at = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : NaN);
+		const past = [
+			...detail.items.filter((i) => !i.url.startsWith('/chat/')).map((i) => at(i.occurred_at ?? i.added_at)),
+			...(detail.chats ?? []).map((c) => at(c.last_message_at)),
+		].filter((t) => !Number.isNaN(t));
+		const ahead = [
+			...(detail.tasks ?? []).filter((t) => t.due_on).map((t) => at(`${t.due_on}T12:00:00`)),
+			...past.filter((t) => t > now),
+		].filter((t) => t > now);
+		const done = past.filter((t) => t <= now);
+		if (done.length + ahead.length === 0) return null;
+		const start = Math.min(at(detail.created_at), ...done);
+		const end = Math.max(now, ...ahead);
 		const span = Math.max(end - start, 1);
-		const stamps = [
-			...detail.items.filter((i) => !i.url.startsWith('/chat/')).map((i) => i.added_at),
-			...(detail.chats ?? []).map((c) => c.last_message_at),
-		];
-		return stamps
-			.map((s) => new Date(s).getTime())
-			.filter((t) => !Number.isNaN(t))
-			.map((t) => Math.min(100, Math.max(0, ((t - start) / span) * 100)));
+		const x = (t: number) => Math.min(100, Math.max(0, ((t - start) / span) * 100));
+		return {
+			nodes: [...done.map((t) => ({ x: x(t), ahead: false })), ...ahead.map((t) => ({ x: x(t), ahead: true }))],
+			todayX: x(now),
+			from: dayOf(new Date(start).toISOString()),
+			to: ahead.length ? dayOf(new Date(Math.max(...ahead)).toISOString()) : 'Today',
+		};
 	});
+
+	/** What is next: the first dated task, else the first task. */
+	const nextUp = $derived(detail ? nextTask(detail.tasks ?? []) : null);
+
+	/** What is ahead: the soonest planned record, such as a calendar event still to come. */
+	const aheadUp = $derived.by(() => {
+		if (!detail) return null;
+		const now = Date.now();
+		const planned = detail.items
+			.filter((i) => i.occurred_at && new Date(i.occurred_at).getTime() > now)
+			.sort((a, b) => (a.occurred_at ?? '').localeCompare(b.occurred_at ?? ''))[0];
+		return planned ? `${planned.title ?? 'Something planned'}, ${dayOf(planned.occurred_at!)}` : null;
+	});
+
+	/** A home's name for "lives in …". */
+	function livesIn(t: Task): string {
+		const home = homeOf(t);
+		return home ? subjectName(home) : 'no home yet';
+	}
 
 	const tasksHere = $derived([
 		...(detail?.tasks ?? []).map((t) => ({ task: t, also: false })),
@@ -293,16 +350,33 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#snippet newTaskButton()}
+	<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>
+		New task<kbd class="key">C</kbd>
+	</Button>
+{/snippet}
+{#snippet newThreadButton()}
+	<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
+{/snippet}
+
 {#snippet weekBlock()}
 	{#if week && week.threads.length > 0}
 		<WeekChart
 			{week}
 			{shownId}
 			{pinnedId}
+			hoverId={hoveredId}
 			onPrev={() => shiftWeek(-7)}
 			onNext={() => shiftWeek(7)}
-			onHover={(id) => (hoveredId = id)}
-			onPick={(id) => (pinnedId = id)}
+			onHover={(id) => {
+				hoveredId = id;
+				if (id) lastKind = 'thread';
+			}}
+			onPick={(id) => {
+				pinnedId = id;
+				pinnedTaskId = null;
+				lastKind = 'thread';
+			}}
 			onOpen={openById}
 			accepts={(data) => data.types.includes(REF_DRAG_TYPE)}
 			onDropTo={dropOnThread}
@@ -320,21 +394,11 @@
 <div class="door">
 	<div class="main">
 		<Page title="Threads" maxWidth={view === 'tasks' ? 'reading' : 'full'}>
-			{#snippet actions()}
-				{#if view === 'tasks'}
-					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>New task</Button>
-				{:else}
-					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
-				{/if}
-			{/snippet}
-
-			<div class="views" role="tablist" aria-label="Views">
-				<button class="vt" role="tab" aria-selected={view === 'overview'} onclick={() => setView('overview')}>Overview</button>
-				<button class="vt" role="tab" aria-selected={view === 'tasks'} onclick={() => setView('tasks')}>Tasks</button>
-				<button class="vt" role="tab" aria-selected={view === 'threads'} onclick={() => setView('threads')}>Threads</button>
-			</div>
-
 			{#if view === 'tasks'}
+				<div class="hrow">
+					<h2 class="h2">Tasks</h2>
+					{@render newTaskButton()}
+				</div>
 				<TaskList
 					{active}
 					route={tab.route}
@@ -348,30 +412,41 @@
 			{:else if view === 'overview'}
 				<div class="hrow">
 					<h2 class="h2">Tasks</h2>
-					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>New task</Button>
+					{@render newTaskButton()}
 				</div>
-				{#if nextTasks.length === 0}
-					<p class="empty">No tasks yet.</p>
-				{:else}
-					<ul class="next">
-						{#each nextTasks as t (t.id)}
-							{@const home = homeOf(t)}
-							<li class="next-row">
-								<TaskCheck done={false} label={`Complete ${t.title}`} onclick={() => toggleTaskDone(t)} />
-								<button class="next-title" onclick={() => openTask(t)}>{t.title}</button>
-								{#if home}<span class="next-meta">{subjectName(home)}</span>{/if}
-								{#if t.due_on}<span class="next-meta due">{dueLabel(t.due_on, t.due_at)}</span>{/if}
-							</li>
-						{/each}
-					</ul>
+				<TaskList
+					{active}
+					route={tab.route}
+					hideNew
+					limit={5}
+					keys={false}
+					emptyText="No tasks yet."
+					shownId={lastKind === 'task' ? (shownTask?.id ?? null) : null}
+					pinnedId={pinnedTaskId}
+					onPick={(t) => {
+						pinnedTaskId = t.id;
+						pinnedId = null;
+						lastKind = 'task';
+					}}
+					onHover={(t) => {
+						hoveredTaskId = t?.id ?? null;
+						if (t) lastKind = 'task';
+					}}
+				/>
+				{#if nextTasks.length > 0}
 					<div class="all"><TextAction onclick={() => setView('tasks')}>All tasks</TextAction></div>
 				{/if}
 
 				<div class="hrow week-head">
 					<h2 class="h2">Active threads</h2>
+					{@render newThreadButton()}
 				</div>
 				{@render weekBlock()}
 			{:else}
+				<div class="hrow">
+					<h2 class="h2">All threads</h2>
+					{@render newThreadButton()}
+				</div>
 				<div class="filters" role="group" aria-label="Show">
 					{#each FILTERS as f (f.id)}
 						<button class="vt" aria-pressed={filter === f.id} onclick={() => (filter = f.id)}>{f.label}</button>
@@ -473,7 +548,7 @@
 		</Page>
 	</div>
 
-	{#if view === 'tasks'}
+	{#if view === 'tasks' || (view === 'overview' && lastKind === 'task' && shownTask)}
 		<aside class="preview" aria-live="polite" aria-label="Preview">
 			{#if shownTask}
 				<TaskPreview task={shownTask} />
@@ -492,10 +567,10 @@
 				<div class="ph">
 					<span class="kind">Thread</span>
 					<span class="pager">
+						<Button variant="secondary" size="sm" onclick={() => openProject(shown)}>Open</Button>
 						<span class="count">{shownIndex + 1} of {rows.length}</span>
 						<IconButton icon="mynaui:chevron-up" label="Previous thread" size="sm" onclick={() => step(-1)} />
 						<IconButton icon="mynaui:chevron-down" label="Next thread" size="sm" onclick={() => step(1)} />
-						<Button variant="secondary" size="sm" onclick={() => openProject(shown)}>Open</Button>
 					</span>
 				</div>
 
@@ -509,37 +584,35 @@
 					<p class="stands">{shown.instructions}</p>
 				{/if}
 
+				<div class="chips">
+					<span class="chip"><Icon icon="mynaui:circle-half" width="14" />{statusOf(shown)}</span>
+					{#if weekLine(shown.id)}
+						<span class="chip"><Icon icon="mynaui:clock-circle" width="14" />{weekLine(shown.id)}</span>
+					{/if}
+					<span class="chip"><Icon icon="mynaui:calendar" width="14" />Started {dayOf(shown.created_at)}</span>
+					{#if shown.thing_title}
+						<span class="chip"><Icon icon="atlas:things" width="14" />{shown.thing_title}</span>
+					{/if}
+				</div>
+
 				{#if detail}
-					{#if nodes.length > 0}
+					{#if line}
 						<div class="sec">Since it began</div>
-						<div class="line-of-dots" aria-hidden="true">
+						<div class="line-of-dots" style={`--thread: ${projectColor(shown)}`} aria-hidden="true">
 							<span class="rule"></span>
-							{#each nodes as x, i (i)}<span class="node" style={`left: ${x}%`}></span>{/each}
-							<span class="lab start">{dayOf(detail.created_at)}</span>
-							<span class="lab end">Today</span>
+							{#each line.nodes as n, i (i)}<span class="node" class:ahead={n.ahead} style={`left: ${n.x}%`}></span>{/each}
+							<span class="today-tick" style={`left: ${line.todayX}%`}></span>
+							<span class="lab start">{line.from}</span>
+							<span class="lab end">{line.to}</span>
 						</div>
 					{/if}
 
-					<dl class="props">
-						<dt>Status</dt>
-						<dd>{statusOf(shown)}</dd>
-						{#if weekLine(shown.id)}
-							<dt>This week</dt>
-							<dd>{weekLine(shown.id)}</dd>
-						{/if}
-						<dt>Started</dt>
-						<dd>{dayOf(shown.created_at)}</dd>
-						{#if shown.thing_title}
-							<dt>Under</dt>
-							<dd>{shown.thing_title}</dd>
-						{/if}
-						{#if nextTask(detail.tasks ?? [])}
-							<dt>Next</dt>
-							<dd>{nextTask(detail.tasks ?? [])?.title}</dd>
-						{/if}
-						<dt>Adding</dt>
-						<dd>{shown.is_adding_automatic ? 'Automatic' : 'Manual'}</dd>
-					</dl>
+					{#if nextUp || aheadUp}
+						<dl class="lines">
+							{#if nextUp}<dt>Next</dt><dd>{nextUp.title}</dd>{/if}
+							{#if aheadUp}<dt>Ahead</dt><dd>{aheadUp}</dd>{/if}
+						</dl>
+					{/if}
 
 					{#if tasksHere.length > 0}
 						<div class="sec">Tasks here</div>
@@ -551,8 +624,9 @@
 										onclick={() => windowShellStore.openTabFromRoute(`/task/${task.id}`, { label: task.title, focusExisting: true })}
 									>
 										<span class="ring" aria-hidden="true"></span>
-										<span class="task-title">{task.title}</span>
-										{#if also}<span class="also">Also about it</span>{/if}
+										<span class="task-title">
+											{task.title}{#if also}<span class="also"> · lives in {livesIn(task)}</span>{/if}
+										</span>
 									</button>
 								</li>
 							{/each}
@@ -584,13 +658,10 @@
 		height: 100%;
 	}
 
-	.views,
 	.filters {
 		display: flex;
 		gap: 4px;
-	}
-	.filters {
-		margin: 24px 0 8px;
+		margin: 12px 0 8px;
 	}
 	.vt {
 		height: 28px;
@@ -608,13 +679,14 @@
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
 	}
-	.vt[aria-pressed='true'],
-	.vt[aria-selected='true'] {
+	.vt[aria-pressed='true'] {
 		background: var(--active-bg);
 		color: var(--color-foreground);
 	}
-	.views {
-		margin-bottom: 16px;
+	.key {
+		margin-left: 4px;
+		min-width: 20px;
+		height: 20px;
 	}
 	.hrow {
 		display: flex;
@@ -633,46 +705,6 @@
 		font-size: var(--md-h2-size);
 		line-height: 28px;
 		color: var(--color-foreground);
-	}
-	.next {
-		list-style: none;
-		margin: 8px 0 0;
-		padding: 0;
-	}
-	.next-row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-	}
-	.next-title {
-		flex: 1 1 auto;
-		min-width: 0;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		font: inherit;
-		font-size: 15px;
-		color: var(--color-foreground);
-		text-align: left;
-		cursor: pointer;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.next-title:hover {
-		color: var(--color-primary);
-	}
-	.next-meta {
-		flex: none;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		white-space: nowrap;
-	}
-	.next-meta.due {
-		min-width: 72px;
-		text-align: right;
-		font-variant-numeric: tabular-nums;
 	}
 	.all {
 		margin-top: 4px;
@@ -837,8 +869,62 @@
 		left: 0;
 		right: 0;
 		top: 12px;
-		height: 1px;
-		background: var(--color-border);
+		height: 2px;
+		transform: translateY(-50%);
+		background: var(--thread);
+		opacity: 0.35;
+	}
+	.today-tick {
+		position: absolute;
+		top: 4px;
+		width: 2px;
+		height: 16px;
+		transform: translateX(-50%);
+		background: var(--color-foreground);
+	}
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 16px;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		height: 28px;
+		padding: 0 12px;
+		border-radius: var(--radius-md);
+		background: var(--hover-bg);
+		font-size: 12px;
+		color: var(--color-foreground);
+		white-space: nowrap;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		box-sizing: border-box;
+	}
+	.chip :global(svg) {
+		flex: none;
+		color: var(--color-foreground-muted);
+	}
+	.lines {
+		display: grid;
+		grid-template-columns: 56px minmax(0, 1fr);
+		gap: 8px 12px;
+		margin: 20px 0 0;
+		align-items: baseline;
+	}
+	.lines dt {
+		font-size: 12px;
+		line-height: 20px;
+		color: var(--color-foreground-muted);
+	}
+	.lines dd {
+		margin: 0;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
 	}
 	.node {
 		position: absolute;
@@ -847,7 +933,12 @@
 		height: 6px;
 		transform: translate(-50%, -50%);
 		border-radius: 50%;
-		background: var(--color-foreground);
+		background: var(--thread);
+	}
+	.node.ahead {
+		background: var(--desk);
+		border: 1px solid var(--thread);
+		box-sizing: border-box;
 	}
 	.lab {
 		position: absolute;
@@ -862,25 +953,6 @@
 	}
 	.lab.end {
 		right: 0;
-	}
-	.props {
-		display: grid;
-		grid-template-columns: 64px minmax(0, 1fr);
-		gap: 8px 12px;
-		margin: 16px 0 0;
-		align-items: baseline;
-	}
-	.props dt {
-		font-size: 13px;
-		line-height: 20px;
-		color: var(--color-foreground-muted);
-	}
-	.props dd {
-		margin: 0;
-		font-size: 14px;
-		line-height: 20px;
-		color: var(--color-foreground);
-		overflow-wrap: anywhere;
 	}
 	.tasks {
 		list-style: none;

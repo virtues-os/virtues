@@ -12,11 +12,13 @@
 	import { IconButton } from '$lib';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import { dropZone } from '$lib/actions/dropZone';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 
 	let {
 		week,
 		shownId = null,
 		pinnedId = null,
+		hoverId = null,
 		onPrev,
 		onNext,
 		onHover,
@@ -28,6 +30,8 @@
 		week: Week;
 		shownId?: string | null;
 		pinnedId?: string | null;
+		/** The row under the pointer; the others' dots fade while it is. */
+		hoverId?: string | null;
 		onPrev: () => void;
 		onNext: () => void;
 		onHover: (id: string | null) => void;
@@ -77,6 +81,20 @@
 	const busy = $derived(week.threads.filter((t) => minutesOf(t) >= 8));
 	const quiet = $derived(week.threads.filter((t) => minutesOf(t) < 8));
 
+	function hours(minutes: number): string {
+		const h = Math.floor(minutes / 60);
+		const m = minutes % 60;
+		if (h === 0) return `${m} minutes`;
+		return m === 0 ? `${h} hours` : `${h} hours ${m} minutes`;
+	}
+
+	/** What the row says to a screen reader: the week's time, since the dots say it by eye. */
+	function rowLabel(t: Week['threads'][number]): string {
+		const done = t.days.reduce((n, d) => n + d.done_minutes, 0);
+		const ahead = t.days.reduce((n, d) => n + d.ahead_minutes, 0);
+		return `${t.name || 'Untitled thread'}. ${done ? `${hours(done)} done this week` : 'Nothing done this week'}, ${ahead ? `${hours(ahead)} ahead` : 'nothing ahead'}.`;
+	}
+
 	function dropParams(id: string) {
 		return {
 			accepts: (data: DataTransfer) => !!accepts && accepts(data),
@@ -114,6 +132,9 @@
 			class:shown={t.id === shownId}
 			class:pinned={t.id === pinnedId}
 			class:drop-on={dropOn === t.id}
+			class:faded={!!hoverId && hoverId !== t.id}
+			style={`--thread: ${projectColor(t)}`}
+			aria-label={rowLabel(t)}
 			role="row"
 			tabindex="-1"
 			onmouseenter={() => onHover(t.id)}
@@ -285,11 +306,19 @@
 		border-radius: 50%;
 		box-sizing: border-box;
 	}
+	/* A thread's dots are in its own color: solid for time spent, a ring
+	   for time ahead. */
 	.dot.done {
-		background: var(--color-foreground);
+		background: var(--thread, var(--color-foreground));
 	}
 	.dot.ahead {
-		border: 1px solid var(--color-foreground-muted);
+		border: 1px solid var(--thread, var(--color-foreground-muted));
+	}
+	.dot {
+		transition: opacity var(--motion-state) var(--ease-premium);
+	}
+	.row.faded .dot {
+		opacity: 0.22;
 	}
 	.dot.unfiled {
 		background: var(--color-foreground-subtle);
@@ -341,7 +370,8 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.row,
-		.chip {
+		.chip,
+		.dot {
 			transition: none;
 		}
 	}

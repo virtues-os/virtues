@@ -9,7 +9,6 @@
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import DuePicker from '$lib/components/tasks/DuePicker.svelte';
 	import TaskHome from '$lib/components/tasks/TaskHome.svelte';
-	import TaskAlsoAbout from '$lib/components/tasks/TaskAlsoAbout.svelte';
 	import TaskActions from '$lib/components/tasks/TaskActions.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { Button } from '$lib';
@@ -19,6 +18,7 @@
 	import { isClosed, toggleTaskDone } from '$lib/tasks/actions';
 	import { dueLabel } from '$lib/tasks/due';
 	import { recurLabel, recurrenceOf } from '$lib/tasks/recur';
+	import { homeOf, subjectIcon, subjectName } from '$lib/tasks/homes';
 	import { isRequest } from '$lib/tasks/requests';
 	import { toast } from 'svelte-sonner';
 
@@ -27,6 +27,7 @@
 	let dueOpen = $state(false);
 	const recurs = $derived(recurrenceOf(task));
 	const source = $derived(task.source_url ? identityOf(task.source_url) : null);
+	const home = $derived(homeOf(task));
 
 	async function save(patch: TaskPatch, failure = "Your server couldn't change that") {
 		try {
@@ -35,22 +36,15 @@
 			toast.error(failure, { description: e instanceof Error ? e.message : undefined });
 		}
 	}
-
-	function open() {
-		windowShellStore.openTabFromRoute(`/task/${task.id}`, { label: task.title, focusExisting: true });
-	}
 </script>
 
 <div class="ph">
 	<span class="kind">{isRequest(task) ? 'Request' : 'Task'}</span>
-	<span class="buttons">
-		{#if !isRequest(task)}
-			<Button variant="secondary" size="sm" onclick={() => toggleTaskDone(task)}>
-				{isClosed(task) ? 'Reopen' : 'Mark done'}
-			</Button>
-		{/if}
-		<Button variant="secondary" size="sm" onclick={open}>Open</Button>
-	</span>
+	{#if !isRequest(task)}
+		<Button variant="secondary" size="sm" onclick={() => toggleTaskDone(task)}>
+			{isClosed(task) ? 'Mark not done' : 'Mark done'}
+		</Button>
+	{/if}
 </div>
 
 <h2 class="title" class:closed={isClosed(task)}>{task.title}</h2>
@@ -58,18 +52,31 @@
 	<p class="notes">{task.notes}</p>
 {/if}
 
-<dl class="props">
-	<dt>Home</dt>
-	<dd><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} showIcon plain /></dd>
-	<dt>Also about</dt>
-	<dd><TaskAlsoAbout {task} onSave={(p) => save(p)} readonly={isClosed(task)} plain /></dd>
-	<dt>Due</dt>
-	<dd>
+<div class="chips">
+	{#if home}
+		<span class="chip"><Icon icon={subjectIcon(home.kind)} width="14" />{subjectName(home)}</span>
+	{:else}
+		<span class="chip quiet"><Icon icon="atlas:projects" width="14" />No home yet</span>
+	{/if}
+	{#each task.also_about ?? [] as link (link.kind + link.id)}
+		<span class="chip"><Icon icon={subjectIcon(link.kind)} width="14" />Also about {subjectName(link)}</span>
+	{/each}
+	<span class="chip"><Icon icon="mynaui:calendar" width="14" />{task.due_on ? `Due ${dueLabel(task.due_on, task.due_at).toLowerCase()}` : 'No date'}</span>
+	{#if recurs}
+		<span class="chip"><Icon icon="mynaui:refresh" width="14" />{recurLabel(recurs.every, recurs.unit)}</span>
+	{/if}
+	{#if source && task.source_url}
+		<button type="button" class="chip link" onclick={() => windowShellStore.openRouteBeside(task.source_url!)}>
+			<Icon icon={source.icon || 'mynaui:link'} width="14" />{source.title}
+		</button>
+	{/if}
+</div>
+
+{#if !isClosed(task)}
+	<div class="buttons">
 		<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
 			{#snippet trigger({ toggle })}
-				<button type="button" class="fact" onclick={toggle} aria-haspopup="dialog">
-					{task.due_on ? dueLabel(task.due_on, task.due_at) : 'No date'}
-				</button>
+				<Button variant="secondary" size="sm" onclick={toggle}>Change date</Button>
 			{/snippet}
 			{#snippet children({ close })}
 				<DuePicker
@@ -82,21 +89,9 @@
 				/>
 			{/snippet}
 		</Popover>
-	</dd>
-	{#if recurs}
-		<dt>Repeats</dt>
-		<dd class="plain">{recurLabel(recurs.every, recurs.unit)}</dd>
-	{/if}
-	{#if source && task.source_url}
-		<dt>From</dt>
-		<dd>
-			<button type="button" class="fact source" onclick={() => windowShellStore.openRouteBeside(task.source_url!)}>
-				<Icon icon={source.icon || 'mynaui:link'} width="14" />
-				<span>{source.title}</span>
-			</button>
-		</dd>
-	{/if}
-</dl>
+		<span class="move"><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} label="Move" plain /></span>
+	</div>
+{/if}
 
 <div class="actions">
 	<TaskActions {task} />
@@ -120,10 +115,9 @@
 	}
 	.title {
 		margin: 16px 0 0;
-		font-family: var(--font-serif);
-		font-weight: 400;
-		font-size: var(--md-h2-size);
+		font-size: 18px;
 		line-height: 28px;
+		font-weight: 500;
 		color: var(--color-foreground);
 	}
 	.title.closed {
@@ -138,56 +132,56 @@
 		color: var(--color-foreground);
 		white-space: pre-wrap;
 	}
-	.props {
-		display: grid;
-		grid-template-columns: 80px minmax(0, 1fr);
-		gap: 8px 12px;
-		margin: 24px 0 0;
-		align-items: baseline;
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 16px;
 	}
-	.props dt {
-		font-size: 13px;
-		line-height: 24px;
-		color: var(--color-foreground-muted);
-	}
-	.props dd {
-		margin: 0;
-		min-width: 0;
-		line-height: 24px;
-	}
-	.plain {
-		font-size: 14px;
-		color: var(--color-foreground);
-	}
-	.fact {
+	.chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		padding: 0 4px;
-		margin: 0 -4px;
+		gap: 8px;
+		height: 28px;
+		padding: 0 12px;
 		border: 0;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		cursor: pointer;
-		text-align: left;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.fact:hover {
+		border-radius: var(--radius-md);
 		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
+		font: inherit;
+		font-size: 12px;
+		color: var(--color-foreground);
+		white-space: nowrap;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		box-sizing: border-box;
 	}
-	.source :global(svg) {
+	.chip :global(svg) {
 		flex: none;
 		color: var(--color-foreground-muted);
+	}
+	.chip.quiet {
+		color: var(--color-foreground-muted);
+	}
+	.chip.link {
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.chip.link:hover {
+		background: var(--active-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.buttons {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		margin-top: 20px;
 	}
 	.actions {
 		margin-top: 24px;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.fact {
+		.chip.link {
 			transition: none;
 		}
 	}

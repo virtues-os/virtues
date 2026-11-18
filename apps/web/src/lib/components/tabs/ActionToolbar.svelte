@@ -43,6 +43,8 @@
 	const path = $derived(paneActions.crumbsFor(tab.id) ?? crumbsForRoute(tab.route, title));
 	/** Which segment is the page itself, or -1 when the path leaves it out. */
 	const pageAt = $derived(path.withoutPage ? -1 : path.crumbs.length - 1);
+	/** A door whose segment lists its own views (Threads) opens that menu on its own page too. */
+	const listsViews = (crumb: { menu?: { kind: string } }) => crumb.menu?.kind === 'threads';
 	const pinnable = $derived(canPin(tab.route));
 	const pinned = $derived(pinnable && isPinned(tab.route));
 
@@ -193,7 +195,7 @@
 		<nav class="crumbs" aria-label="Where this page is" bind:this={crumbsEl}>
 			{#each path.crumbs as crumb, i (i)}
 				{#if i > 0}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
-				{#if crumb.menu && i !== pageAt}
+				{#if crumb.menu && (i !== pageAt || listsViews(crumb))}
 					<button
 						class="crumb link menu"
 						class:root={i === 0}

@@ -20,7 +20,9 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { toast } from 'svelte-sonner';
-	import { uploadDriveFile, addProjectItem, reextractDriveFile, getProjectGraph } from '$lib/api/client';
+	import { uploadDriveFile, addProjectItem, reextractDriveFile, getProjectGraph, getThreadWeek } from '$lib/api/client';
+	import type { ThreadWeek } from '$lib/api/client';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { newTaskDialog } from '$lib/stores/newTask.svelte';
 	import { dropZone, hasFiles } from '$lib/actions/dropZone';
@@ -106,6 +108,40 @@
 	$effect(() => {
 		void detail?.items.length;
 		if (threadId) loadPeople();
+	});
+
+	// ── this week ──────────────────────────────────────────────────────────
+	let weekRow = $state<ThreadWeek | null>(null);
+	$effect(() => {
+		const id = threadId;
+		void detail?.items.length;
+		if (!id) return;
+		getThreadWeek()
+			.then((w) => {
+				const row = w.threads.find((t) => t.id === id) ?? null;
+				const any = row?.days.some((d) => d.done_minutes + d.ahead_minutes > 0);
+				weekRow = any ? row : null;
+			})
+			.catch((e) => {
+				// An aid, not the content: the page stands without it.
+				console.error('[ThreadView] week failed:', e);
+				weekRow = null;
+			});
+	});
+
+	function hoursText(minutes: number): string {
+		const h = Math.floor(minutes / 60);
+		const m = minutes % 60;
+		if (h === 0) return `${m} m`;
+		return m === 0 ? `${h} h` : `${h} h ${m} m`;
+	}
+
+	/** "6 h done, 6 h 30 m ahead", saying only what is there. */
+	const weekHours = $derived.by(() => {
+		if (!weekRow) return '';
+		const done = weekRow.days.reduce((n, d) => n + d.done_minutes, 0);
+		const ahead = weekRow.days.reduce((n, d) => n + d.ahead_minutes, 0);
+		return [done ? `${hoursText(done)} done` : null, ahead ? `${hoursText(ahead)} ahead` : null].filter(Boolean).join(', ');
 	});
 
 	// ── where it stands ────────────────────────────────────────────────────
@@ -326,7 +362,18 @@
 		label: string;
 		icon: string;
 		kind: 'record' | 'task';
+		/** What it is, in a few words: "Calendar event", "Page", "Task". */
+		meta: string;
 		open: () => void;
+	}
+
+	/** What a member is, from its route. */
+	function memberKind(url: string): string {
+		if (url.startsWith('/record/calendar_event/')) return 'Calendar event';
+		if (url.startsWith('/record/')) return 'Record';
+		if (/^https?:\/\//.test(url)) return 'Link';
+		const kinds: Record<string, string> = { page: 'Page', drive: 'File', person: 'Person', place: 'Place', org: 'Organization', thing: 'Thing', day: 'Day' };
+		return kinds[url.split('/')[1] ?? ''] ?? 'Added';
 	}
 
 	function localDay(d: Date): string {
@@ -348,6 +395,7 @@
 				label: memberName(i),
 				icon: memberIcon(i.url),
 				kind: 'record' as const,
+				meta: memberKind(i.url),
 				open: () => openUrl(i.url),
 			})),
 			...chats.map((c) => ({
@@ -356,6 +404,7 @@
 				label: c.title || 'Untitled chat',
 				icon: c.icon || 'mynaui:message',
 				kind: 'record' as const,
+				meta: 'Chat',
 				open: () => openUrl(`/chat/${c.id}`),
 			})),
 		];
@@ -368,6 +417,7 @@
 				label: t.title,
 				icon: 'mynaui:circle',
 				kind: 'task' as const,
+				meta: t.thread_id === threadId ? 'Task' : 'Task, also about this thread',
 				open: () => openTask(t),
 			}));
 		const all = [...records, ...dated].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
@@ -382,6 +432,7 @@
 					label: t.title,
 					icon: 'mynaui:circle',
 					kind: 'task' as const,
+					meta: 'A task with no date yet',
 					open: () => openTask(t),
 				})),
 		};
@@ -409,13 +460,7 @@
 			<main class="main">
 				<ProjectHeader project={detail} />
 
-				<section class="block" aria-labelledby="stands-h">
-					<div class="block-head">
-						<h2 id="stands-h" class="block-title">Where it stands</h2>
-						{#if !standsEditing && !archived}
-							<TextAction onclick={() => (standsEditing = true)}>Edit</TextAction>
-						{/if}
-					</div>
+				<section class="stands-block" aria-label="Where it stands">
 					{#if standsEditing}
 						<!-- svelte-ignore a11y_autofocus -->
 						<textarea
@@ -438,8 +483,12 @@
 						></textarea>
 					{:else if detail.current_status}
 						<p class="stands">{detail.current_status}</p>
-					{:else}
-						<p class="quiet">Nothing written yet. Edit to say where this is now, in one sentence.</p>
+						<p class="stands-meta">
+							{detail.current_status_at ? `Written ${longDay(detail.current_status_at)}` : 'Written by you'}
+							{#if !archived}· <TextAction inline onclick={() => (standsEditing = true)}>Edit</TextAction>{/if}
+						</p>
+					{:else if !archived}
+						<TextAction onclick={() => (standsEditing = true)}>Say where this stands</TextAction>
 					{/if}
 				</section>
 
@@ -488,44 +537,27 @@
 				</form>
 
 				<section class="block" aria-labelledby="line-h">
-					<h2 id="line-h" class="block-title">The thread</h2>
+					<div class="block-head">
+						<h2 id="line-h" class="block-title">The thread</h2>
+						<span class="since">Since {longDay(detail.created_at)}</span>
+					</div>
 					{#if line.past.length + line.ahead.length + line.undated.length === 0}
 						<p class="quiet">What you add to this thread, and its dated tasks, line up here by day.</p>
 					{:else}
 						<ol class="line">
 							{#each line.past as e (e.key)}
-								<li class="entry">
-									<span class="date">{shortDay(e.date)}</span>
-									<span class="node" class:task={e.kind === 'task'}></span>
-									<button class="entry-label" onclick={e.open}>
-										<Icon icon={e.icon} width="14" />
-										<span>{e.label}</span>
-									</button>
-								</li>
+								{@render entry(e, false)}
 							{/each}
 							<li class="entry today" aria-label="Today">
 								<span class="date">Today</span>
-								<span class="node today-node"></span>
-								<span></span>
+								<span class="today-dot"></span>
+								<span class="today-rule"></span>
 							</li>
 							{#each line.ahead as e (e.key)}
-								<li class="entry ahead">
-									<span class="date">{shortDay(e.date)}</span>
-									<span class="node" class:task={e.kind === 'task'} class:planned={e.kind === 'record'}></span>
-									<button class="entry-label" onclick={e.open}>
-										{#if e.kind === 'record'}<Icon icon={e.icon} width="14" />{/if}
-										<span>{e.label}</span>
-									</button>
-								</li>
+								{@render entry(e, true)}
 							{/each}
 							{#each line.undated as e (e.key)}
-								<li class="entry ahead">
-									<span class="date">No date</span>
-									<span class="node task"></span>
-									<button class="entry-label" onclick={e.open}>
-										<span>{e.label}</span>
-									</button>
-								</li>
+								{@render entry(e, true, 'No date')}
 							{/each}
 						</ol>
 					{/if}
@@ -533,6 +565,7 @@
 			</main>
 
 			<aside class="side" aria-label="About this thread">
+				<div class="psec">Properties</div>
 				<dl class="props">
 					<dt>Status</dt>
 					<dd>
@@ -547,6 +580,20 @@
 					</dd>
 					<dt>Started</dt>
 					<dd>{longDay(detail.created_at)}</dd>
+					{#if weekRow}
+						<dt>This week</dt>
+						<dd>
+							<span class="mini" style={`--thread: ${projectColor(detail)}`} aria-hidden="true">
+								{#each weekRow.days as d (d.date)}
+									<span class="mini-day">
+										{#each Array(Math.min(12, Math.round(d.done_minutes / 15))) as _, i (i)}<span class="mini-dot"></span>{/each}
+										{#each Array(Math.min(12, Math.round(d.ahead_minutes / 15))) as _, i (i)}<span class="mini-dot ahead"></span>{/each}
+									</span>
+								{/each}
+							</span>
+							<span class="hint">{weekHours}</span>
+						</dd>
+					{/if}
 					{#if detail.thing_title}
 						<dt>Under</dt>
 						<dd>{detail.thing_title}</dd>
@@ -559,29 +606,37 @@
 							{/each}
 						</dd>
 					{/if}
-					<dt>Adding</dt>
-					<dd>
-						<span class="seg" role="group" aria-label="Adding">
-							<button
-								class="vt"
-								aria-pressed={!detail.is_adding_automatic}
-								disabled={archived}
-								onclick={() => setProps({ is_adding_automatic: false })}>Manual</button
-							>
-							<button
-								class="vt"
-								aria-pressed={!!detail.is_adding_automatic}
-								disabled={archived}
-								onclick={() => setProps({ is_adding_automatic: true })}>Automatic</button
-							>
-						</span>
-						<span class="hint">
-							{detail.is_adding_automatic
-								? 'Your server also files what it is sure belongs here.'
-								: 'Only what you add is filed here.'}
-						</span>
-					</dd>
 				</dl>
+
+				<div class="psec">Adding</div>
+				<div class="opts" role="radiogroup" aria-label="Adding">
+					<button
+						class="opt"
+						role="radio"
+						aria-checked={!detail.is_adding_automatic}
+						disabled={archived}
+						onclick={() => setProps({ is_adding_automatic: false })}
+					>
+						<span class="radio" aria-hidden="true"></span>
+						<span>
+							<span class="opt-title">Manual</span>
+							<span class="opt-sub">Only what you add is filed here.</span>
+						</span>
+					</button>
+					<button
+						class="opt"
+						role="radio"
+						aria-checked={!!detail.is_adding_automatic}
+						disabled={archived}
+						onclick={() => setProps({ is_adding_automatic: true })}
+					>
+						<span class="radio" aria-hidden="true"></span>
+						<span>
+							<span class="opt-title">Automatic</span>
+							<span class="opt-sub">Your server also files what it is sure belongs here, and asks about the rest.</span>
+						</span>
+					</button>
+				</div>
 
 				<section
 					class="materials"
@@ -597,15 +652,13 @@
 					}}
 				>
 					<div class="block-head">
-						<h2 id="materials-h" class="side-title">Materials</h2>
+						<h2 id="materials-h" class="psec flush">Materials</h2>
 						{#if !archived}
-							<IconButton icon="mynaui:plus" label="Add a chat, page, person, file, or link" size="sm" onclick={openPicker} />
+							<TextAction onclick={openPicker}>Add</TextAction>
 						{/if}
 					</div>
-					{#if chats.length === 0 && memberItems.length === 0}
-						<p class="hint">
-							{archived ? 'Nothing was added here.' : 'Drop chats, pages and files here, or add them with +.'}
-						</p>
+					{#if chats.length === 0 && memberItems.length === 0 && archived}
+						<p class="hint">Nothing was added here.</p>
 					{:else}
 						<ul class="members">
 							{#each chats as c (c.id)}
@@ -640,6 +693,9 @@
 							{/each}
 						</ul>
 					{/if}
+					{#if !archived}
+						<div class="drop"><Icon icon="mynaui:upload" width="14" />Drop chats, pages or files here</div>
+					{/if}
 				</section>
 
 				<div class="ends">
@@ -656,6 +712,19 @@
 		<div class="state">Thread not found.</div>
 	{/if}
 </div>
+
+{#snippet entry(e: LineEntry, ahead: boolean, dateText?: string)}
+	<li class="entry" class:ahead>
+		<span class="date">{dateText ?? shortDay(e.date)}</span>
+		<span class="node" class:ahead>
+			{#if e.kind === 'task'}<span class="mini-ring"></span>{:else}<Icon icon={e.icon} width="14" />{/if}
+		</span>
+		<button class="entry-label" onclick={e.open}>
+			<span class="entry-title">{e.label}</span>
+			<span class="entry-meta">{e.meta}</span>
+		</button>
+	</li>
+{/snippet}
 
 {#if pickerPos}
 	<RefPicker
@@ -832,30 +901,33 @@
 		visibility: hidden;
 	}
 
-	/* The thread as a line: dates on the left, a node per entry, solid down
-	   to today and dashed after it. */
+	/* The thread as a line: dates on the left, a round node with what each
+	   entry is, solid down to today and dashed after it. */
+	.since {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
 	.line {
 		list-style: none;
-		margin: 8px 0 0;
+		margin: 12px 0 0;
 		padding: 0;
-		position: relative;
 	}
 	.entry {
 		display: grid;
-		grid-template-columns: 72px 16px minmax(0, 1fr);
+		grid-template-columns: 72px 24px minmax(0, 1fr);
 		align-items: center;
 		gap: 12px;
-		min-height: 36px;
+		min-height: 48px;
 		position: relative;
 	}
 	.entry::before {
 		content: '';
 		position: absolute;
-		left: calc(72px + 12px + 8px);
+		left: calc(72px + 12px + 12px);
 		top: 0;
 		bottom: 0;
-		width: 0;
-		border-left: 1px solid var(--color-border);
+		border-left: 2px solid var(--color-border);
+		transform: translateX(-1px);
 	}
 	.entry.ahead::before {
 		border-left-style: dashed;
@@ -867,12 +939,41 @@
 		bottom: 50%;
 	}
 	.date {
-		font-size: 13px;
+		font-size: 12px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 		text-align: right;
 	}
 	.node {
+		display: inline-grid;
+		place-items: center;
+		width: 24px;
+		height: 24px;
+		border-radius: 50%;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		box-sizing: border-box;
+		color: var(--color-foreground-muted);
+		position: relative;
+		z-index: 1;
+	}
+	.node.ahead {
+		background: var(--color-page);
+	}
+	.mini-ring {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		border: 1px solid var(--color-foreground-muted);
+		box-sizing: border-box;
+	}
+	.entry.today {
+		min-height: 32px;
+	}
+	.entry.today .date {
+		color: var(--color-foreground);
+	}
+	.today-dot {
 		justify-self: center;
 		width: 8px;
 		height: 8px;
@@ -881,34 +982,13 @@
 		position: relative;
 		z-index: 1;
 	}
-	.node.task {
-		background: var(--color-page);
-		border: 1px solid var(--color-foreground-muted);
-		box-sizing: border-box;
-		width: 10px;
-		height: 10px;
-	}
-	/* A record still ahead, such as a planned calendar event: solid edge,
-	   empty middle, so it reads as booked but not yet spent. */
-	.node.planned {
-		background: var(--color-page);
-		border: 2px solid var(--color-foreground);
-		box-sizing: border-box;
-	}
-	.today-node {
-		width: 12px;
-		height: 12px;
-		background: var(--color-page);
-		border: 1px dotted var(--color-primary);
-		box-sizing: border-box;
-	}
-	.entry.today .date {
-		color: var(--color-primary);
+	.today-rule {
+		border-top: 1px dashed var(--color-foreground-subtle);
 	}
 	.entry-label {
 		display: flex;
-		align-items: center;
-		gap: 8px;
+		flex-direction: column;
+		align-items: flex-start;
 		min-width: 0;
 		padding: 4px 8px;
 		margin-left: -8px;
@@ -916,24 +996,141 @@
 		border-radius: var(--radius-md);
 		background: transparent;
 		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
 		text-align: left;
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
-	.entry-label span {
+	.entry-label:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.entry-title {
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
 	}
-	.entry-label :global(svg) {
-		flex: none;
+	.entry-meta {
+		font-size: 12px;
+		line-height: 16px;
 		color: var(--color-foreground-muted);
 	}
-	button.entry-label:hover {
+
+	.stands-block {
+		margin-top: -8px;
+	}
+	.stands-meta {
+		margin: 4px 0 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.psec {
+		margin: 0 0 8px;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		line-height: 16px;
+		font-weight: 400;
+		color: var(--color-foreground-muted);
+	}
+	.psec.flush {
+		margin: 0;
+	}
+	.mini {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 4px;
+		height: 28px;
+		vertical-align: middle;
+	}
+	.mini-day {
+		display: flex;
+		flex-wrap: wrap-reverse;
+		align-content: flex-start;
+		gap: 4px;
+		width: 16px;
+	}
+	.mini-dot {
+		width: 4px;
+		height: 4px;
+		border-radius: 50%;
+		background: var(--thread);
+	}
+	.mini-dot.ahead {
+		background: transparent;
+		border: 1px solid var(--thread);
+		box-sizing: border-box;
+	}
+	.opts {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.opt {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		width: 100%;
+		padding: 8px 12px;
+		border: 0;
+		border-radius: var(--radius-md);
+		background: transparent;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.opt:hover:not(:disabled) {
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
+	}
+	.opt[aria-checked='true'] {
+		background: var(--active-bg);
+	}
+	.opt:disabled {
+		cursor: default;
+	}
+	.opt:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+	.radio {
+		flex: none;
+		width: 14px;
+		height: 14px;
+		margin-top: 4px;
+		border-radius: 50%;
+		border: 1px solid var(--color-foreground-muted);
+		box-sizing: border-box;
+	}
+	.opt[aria-checked='true'] .radio {
+		border: 4px solid var(--color-foreground);
+	}
+	.opt-title {
+		display: block;
+		font-size: 14px;
+		line-height: 20px;
+		color: var(--color-foreground);
+	}
+	.opt-sub {
+		display: block;
+		margin-top: 4px;
+		font-size: 12px;
+		line-height: 16px;
+		color: var(--color-foreground-muted);
+	}
+	.drop {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 8px;
+		padding: 12px;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-md);
+		font-size: 12px;
+		color: var(--color-foreground-muted);
 	}
 
 	/* The side column. */
@@ -1008,14 +1205,6 @@
 		font-size: 13px;
 		line-height: 20px;
 		color: var(--color-foreground-muted);
-	}
-	.side-title {
-		margin: 0;
-		font-family: var(--font-serif-ui);
-		font-weight: 400;
-		font-size: 18px;
-		line-height: 28px;
-		color: var(--color-foreground);
 	}
 	.materials {
 		padding: 12px;
