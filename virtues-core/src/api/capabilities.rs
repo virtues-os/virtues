@@ -85,6 +85,11 @@ pub async fn list(pool: &PgPool) -> Result<Vec<CapabilityState>> {
 
 /// Turns a capability on or off. Returns every switch.
 pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<CapabilityState>> {
+    set_by(pool, id, on, "owner").await
+}
+
+/// [`set`], naming who made the change.
+pub async fn set_by(pool: &PgPool, id: &str, on: bool, actor: &str) -> Result<Vec<CapabilityState>> {
     let tools = capabilities()
         .into_iter()
         .find(|(c, _)| *c == id)
@@ -94,7 +99,7 @@ pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<CapabilityStat
     for tool in tools {
         switches.insert(tool.to_string(), Value::Bool(on));
     }
-    let after = apply(pool, &Value::Object(switches)).await?;
+    let after = apply_by(pool, &Value::Object(switches), actor).await?;
     Ok(states(&after))
 }
 
@@ -106,6 +111,12 @@ pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<CapabilityStat
 /// The read and the write share a row lock, so two switches flipped at once
 /// (two tabs, or a switch and an Undo) both land.
 pub async fn apply(pool: &PgPool, switches: &Value) -> Result<Value> {
+    apply_by(pool, switches, "owner").await
+}
+
+/// [`apply`], naming who made the change: 'owner', or 'assistant' for a
+/// switch the owner applied from a Settings draft.
+pub async fn apply_by(pool: &PgPool, switches: &Value, actor: &str) -> Result<Value> {
     let mut tx = pool.begin().await?;
     let (before,): (Value,) =
         sqlx::query_as("SELECT enabled_tools FROM app_assistant_profile LIMIT 1 FOR UPDATE")
@@ -121,7 +132,7 @@ pub async fn apply(pool: &PgPool, switches: &Value) -> Result<Value> {
     tx.commit().await?;
     let (old, new) = (subset(&before, switches), subset(&after, switches));
     if old != new {
-        crate::api::settings_changes::record(pool, "capabilities", "enabled_tools", &old, &new)
+        crate::api::settings_changes::record_by(pool, actor, "capabilities", "enabled_tools", &old, &new)
             .await;
     }
     Ok(after)

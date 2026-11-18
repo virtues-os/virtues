@@ -123,6 +123,12 @@ pub async fn list(pool: &PgPool) -> Result<Vec<KindState>> {
 /// Turns a kind on or off, records it for Changed lately, and re-applies the
 /// database grants so the SQL tool's role follows at once.
 pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<KindState>> {
+    set_by(pool, id, on, "owner").await
+}
+
+/// [`set`], naming who made the change: 'owner', or 'assistant' for a switch
+/// the owner applied from a Settings draft.
+pub async fn set_by(pool: &PgPool, id: &str, on: bool, actor: &str) -> Result<Vec<KindState>> {
     if !KINDS.iter().any(|k| k.id == id) {
         return Err(Error::InvalidInput(format!("No kind of record is called {id}.")));
     }
@@ -143,7 +149,7 @@ pub async fn set(pool: &PgPool, id: &str, on: bool) -> Result<Vec<KindState>> {
     tx.commit().await?;
     crate::server::faces::ensure_applet_db_grants(pool).await?;
     if was != Some(on) {
-        crate::api::settings_changes::record(pool, "model-reading", "reading", &json!({ id: was }), &json!({ id: on }))
+        crate::api::settings_changes::record_by(pool, actor, "model-reading", "reading", &json!({ id: was }), &json!({ id: on }))
             .await;
     }
     Ok(states(&after))

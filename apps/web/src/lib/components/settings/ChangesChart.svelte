@@ -7,6 +7,9 @@
 	 *
 	 * `listed` are the changes the list under the chart shows, drawn a little
 	 * larger; `hot` is the one under the pointer in that list, ringed.
+	 * Pointing at a dot names its change (`label`), and clicking it calls
+	 * `onpick`, so the list can show it. The list stays the way to reach a
+	 * change by keyboard; the dots are for the pointer.
 	 * There is no count anywhere: the dots are the record.
 	 */
 	import type { SettingsChange } from '$lib/api/client';
@@ -15,7 +18,19 @@
 		changes,
 		listed = [],
 		hot = null,
-	}: { changes: SettingsChange[]; listed?: string[]; hot?: string | null } = $props();
+		label,
+		onpick,
+	}: {
+		changes: SettingsChange[];
+		listed?: string[];
+		hot?: string | null;
+		/** A change in words, for the dot's tip. */
+		label: (change: SettingsChange) => string;
+		onpick: (id: string) => void;
+	} = $props();
+
+	/** The dot under the pointer, named above it. */
+	let tip = $state<{ id: string; x: number; y: number; text: string } | null>(null);
 
 	const DAYS = 28;
 	const HEIGHT = 60;
@@ -89,17 +104,29 @@
 			{/each}
 			{#each dots as dot (dot.change.id)}
 				{@const big = listed.includes(dot.change.id)}
-				{#if hot === dot.change.id}
+				{@const pointed = hot === dot.change.id || tip?.id === dot.change.id}
+				{#if pointed}
 					<circle class="ring" cx={x(dot.ago)} cy={dot.cy} r="7" />
 				{/if}
 				<circle
 					class="dot"
 					class:recent={dot.ago < 7}
-					class:hot={hot === dot.change.id}
+					class:hot={pointed}
 					class:more={dot.more}
 					cx={x(dot.ago)}
 					cy={dot.cy}
 					r={big ? 3.6 : 3}
+				/>
+				<!-- A wider target than the dot, for the pointer. -->
+				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+				<circle
+					class="hit"
+					cx={x(dot.ago)}
+					cy={dot.cy}
+					r="6"
+					onmouseenter={() => (tip = { id: dot.change.id, x: x(dot.ago), y: dot.cy, text: `${dayLabel(dot.ago)} · ${label(dot.change)}` })}
+					onmouseleave={() => (tip = null)}
+					onclick={() => onpick(dot.change.id)}
 				/>
 			{/each}
 			{#each weeks as start (start)}
@@ -107,11 +134,15 @@
 			{/each}
 			<text class="label" x={width} y={HEIGHT - 4} text-anchor="end">Today</text>
 		</svg>
+		{#if tip}
+			<div class="tip" style:left="{Math.min(Math.max(tip.x, 100), width - 100)}px" style:top="{tip.y - 30}px">{tip.text}</div>
+		{/if}
 	{/if}
 </div>
 
 <style>
 	.chart {
+		position: relative;
 		height: 60px;
 		margin: 12px 0 8px;
 	}
@@ -156,6 +187,26 @@
 		stroke: var(--color-primary);
 		stroke-width: 1.25;
 		opacity: 0.45;
+	}
+
+	.hit {
+		fill: transparent;
+		cursor: pointer;
+	}
+
+	.tip {
+		position: absolute;
+		transform: translateX(-50%);
+		max-width: 320px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		background: var(--color-foreground);
+		color: var(--color-background);
+		font-size: 12px;
+		pointer-events: none;
 	}
 
 	.label {

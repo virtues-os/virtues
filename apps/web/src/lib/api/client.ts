@@ -3059,6 +3059,8 @@ export interface SettingsChange {
 	kind: 'setting' | 'paired';
 	/** The setting's id in `lib/settings`, for a setting. */
 	setting_id: string | null;
+	/** The stored field it wrote, for a setting. */
+	field: string | null;
 	old_value: unknown;
 	new_value: unknown;
 	/** The device's name, for a pairing. */
@@ -3127,23 +3129,48 @@ export function previewStyle(notes: string, signal?: AbortSignal): Promise<Style
 	});
 }
 
-/** One change the assistant proposes, in stored form (`api/settings_changes.rs`). */
+/** One change the settings agent proposes, in stored form (`api/settings_draft.rs`). */
 export interface SettingsDraftChange {
 	setting_id: string;
 	field: string;
 	old_value: unknown;
 	new_value: unknown;
+	/** Appearance: the page applies it, not the server. */
+	in_app: boolean;
+	/** What happens that you should know before applying, in a sentence. */
+	consequence: string | null;
+	/** False when what it does can't be put back. */
+	can_undo: boolean;
 }
 
+/** The settings agent's card for what was typed. `kind` says which card. */
 export interface SettingsDraft {
+	kind: 'change' | 'choose' | 'open' | 'answer' | 'none';
 	changes: SettingsDraftChange[];
-	/** One sentence, shown when nothing could be drafted. */
+	/** For `choose`: one change per option. */
+	options: SettingsDraftChange[];
+	/** For `open`: the page to send you to, and why. `{name}` is the assistant's name. */
+	open: { setting_id: string; reason: string } | null;
+	answer: string | null;
+	/** For `answer`: the settings it is about. */
+	about: string[];
+	/** One sentence, shown when nothing else came back. */
 	note: string | null;
 }
 
-/** Ask the assistant to draft settings changes from what was typed. Saves nothing. */
-export function draftSettings(text: string): Promise<SettingsDraft> {
-	return apiSend<SettingsDraft>('POST', '/settings/draft', { text });
+/** The appearance values this browser has, which the server can't see. */
+export interface AppearanceValues {
+	theme: string;
+	accent: string;
+	glass: string;
+	text_size: string;
+	reading_font: string;
+	reduce_motion: boolean;
+}
+
+/** Ask the settings agent for a card from what was typed. Saves nothing. */
+export function draftSettings(text: string, app: AppearanceValues): Promise<SettingsDraft> {
+	return apiSend<SettingsDraft>('POST', '/settings/draft', { text, app });
 }
 
 /** Save drafted changes the owner accepted, recorded as the assistant's. */

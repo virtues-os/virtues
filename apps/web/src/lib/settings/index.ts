@@ -167,11 +167,13 @@ export interface LandingLink {
 
 /**
  * The landing page's site map, one line per party: the assistant, you, and
- * your server. The landing page shows your name in place of "You".
+ * your server. `title` names the group in crumbs and in search results;
+ * `heading` labels its line on the landing page.
  */
-export const LANDING: readonly { title: string; links: readonly LandingLink[] }[] = [
+export const LANDING: readonly { title: string; heading: string; links: readonly LandingLink[] }[] = [
 	{
 		title: 'Assistant',
+		heading: 'Your assistant',
 		links: [
 			{ label: 'Voice', route: '/virtues/assistant', setting: 'style' },
 			{ label: 'Data access', route: '/virtues/data' },
@@ -182,6 +184,7 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	},
 	{
 		title: 'You',
+		heading: 'Your profile',
 		links: [
 			{ label: 'Profile', route: '/virtues/profile' },
 			{ label: 'Appearance', route: '/virtues/appearance' },
@@ -190,6 +193,7 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	},
 	{
 		title: 'Your server',
+		heading: 'Your server',
 		links: [
 			{ label: 'Status', route: '/virtues/system' },
 			{ label: 'Devices', route: '/virtues/devices' },

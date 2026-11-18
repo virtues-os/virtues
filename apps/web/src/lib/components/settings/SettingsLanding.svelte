@@ -1,38 +1,31 @@
 <script lang="ts">
 	/**
-	 * Settings' landing page: the question, the search field, what changed
-	 * lately, and at the foot a site map with a button for every page, one
-	 * line each for the assistant, you and your server (`LANDING` in
-	 * lib/settings). It fits on one screen.
+	 * Settings' landing page: the question, the search field, a site map with
+	 * a button for every page, one line each for your assistant, your profile
+	 * and your server (`LANDING` in lib/settings), and what changed lately.
+	 * It fits on one screen.
 	 *
 	 * Typing lists the matching settings from every page in place of the
 	 * rest, grouped by the page each lives on. ↑ and ↓ pick one and Return
-	 * opens it on its page. Return with none picked asks the assistant to
-	 * draft the change (DraftCard); Esc closes the draft, then clears the
-	 * field.
+	 * opens it on its page. Return with none picked asks the settings agent
+	 * (DraftCard), which answers with a card. Editing the text closes the
+	 * card; Esc closes it, then clears the field.
 	 */
 	import { onMount } from 'svelte';
 	import ChangedLately from './ChangedLately.svelte';
 	import DraftCard from './DraftCard.svelte';
 	import SearchField from '$lib/components/SearchField.svelte';
-	import { getAssistantProfile, getProfile } from '$lib/api/client';
+	import { getAssistantProfile } from '$lib/api/client';
 	import { LANDING, matchSettings, settingPlace, titleOf, type LandingLink, type Setting } from '$lib/settings';
 	import { openSetting, openSettingsPage } from '$lib/settings/focus';
 
 	let name = $state('Ari');
-	/** Your name heads your line of the site map; "You" until it loads, or if none is set. */
-	let yourName = $state('You');
 
 	onMount(() => {
 		void getAssistantProfile<{ assistant_name?: string | null }>()
 			.then((p) => (name = p.assistant_name?.trim() || 'Ari'))
 			.catch(() => {
 				// The default name stands in; nothing on this page saves it.
-			});
-		void getProfile()
-			.then((p) => (yourName = p.full_name?.trim() || p.preferred_name?.trim() || 'You'))
-			.catch(() => {
-				// "You" stands in; the line's links work the same.
 			});
 	});
 
@@ -77,6 +70,13 @@
 	let draftKey = $state(0);
 	// Bumped after a change is applied or undone, so Changed lately reloads.
 	let version = $state(0);
+	/** Set after an apply, so Changed lately lights its newest row. */
+	let justApplied = $state(false);
+
+	// Editing the text makes the card's answer stale, so it closes.
+	$effect(() => {
+		if (draftText !== null && query.trim() !== draftText) draftText = null;
+	});
 
 	function onSearchKey(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown' && results.length) {
@@ -103,10 +103,11 @@
 	function draftApplied() {
 		draftText = null;
 		query = '';
+		justApplied = true;
 		version += 1;
 	}
 
-	function editFirst(settingId: string) {
+	function openFromCard(settingId: string) {
 		draftText = null;
 		query = '';
 		openSetting(settingId, spoken);
@@ -137,12 +138,12 @@
 	</div>
 
 	{#if typing && !draftText}
-		<p class="hint">↑ ↓ to pick a setting, and Return to open it. Or write what you want, like “keep answers short”, and Return asks {spoken} to draft it.</p>
+		<p class="hint">↑ ↓ to pick a setting, and Return to open it. Or write what you want or ask a question, like “keep answers short”, and Return asks {spoken}.</p>
 	{/if}
 
 	{#if draftText}
 		{#key draftKey}
-			<DraftCard text={draftText} assistantName={spoken} onapplied={draftApplied} ondismiss={() => (draftText = null)} onedit={editFirst} />
+			<DraftCard text={draftText} assistantName={spoken} matches={results} onapplied={draftApplied} ondismiss={() => (draftText = null)} onopen={openFromCard} />
 		{/key}
 	{:else if typing}
 		<div id="settings-results" class="results" role="listbox" aria-label="Matching settings">
@@ -176,12 +177,10 @@
 	{/if}
 
 	{#if !typing && !draftText}
-		{#key version}<ChangedLately assistantName={spoken} />{/key}
-
-		<footer class="map">
+		<div class="map">
 			{#each LANDING as group (group.title)}
-				<nav aria-label={group.title === 'You' ? yourName : group.title}>
-					<h2>{group.title === 'You' ? yourName : group.title}</h2>
+				<nav aria-label={group.heading}>
+					<h2>{group.heading}</h2>
 					<div class="buttons">
 						{#each group.links as link (link.label)}
 							<a
@@ -195,18 +194,15 @@
 					</div>
 				</nav>
 			{/each}
-		</footer>
+		</div>
+
+		{#key version}<ChangedLately assistantName={spoken} lit={justApplied} />{/key}
 	{/if}
 </div>
 
 <style>
-	/* The site map sits at the foot of the screen; a short window lets it
-	   follow the list instead. */
 	.page {
 		box-sizing: border-box;
-		display: flex;
-		flex-direction: column;
-		min-height: 100%;
 		/* Wider than reading width so each line of the site map fits on one row. */
 		max-width: 680px;
 		margin: 0 auto;
@@ -293,8 +289,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
-		margin-top: auto;
-		padding-top: 48px;
+		margin-top: 40px;
 	}
 
 	.map nav {

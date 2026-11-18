@@ -2,13 +2,14 @@
 // days read as a person says them.
 import { describe, expect, it } from 'vitest';
 import type { SettingsChange } from '$lib/api/client';
-import { addedText, changeRowId, describeChange, displayValue, whenLabel } from './changes';
+import { changeRowId, describeChange, displayValue, mergeChanges, textDiff, whenLabel } from './changes';
 
 function change(setting_id: string, new_value: unknown, extra: Partial<SettingsChange> = {}): SettingsChange {
 	return {
 		id: 'setting:7',
 		kind: 'setting',
 		setting_id,
+		field: null,
 		old_value: null,
 		new_value,
 		label: null,
@@ -50,6 +51,11 @@ describe('describeChange', () => {
 	it('quotes a short value and says when one was cleared', () => {
 		expect(describeChange(change('preferred-name', 'Nick'))).toBe('Changed to Nick');
 		expect(describeChange(change('employer', null))).toBe('Cleared');
+	});
+
+	it('names an appearance choice in words', () => {
+		expect(describeChange(change('reading-font', 'sans'))).toBe('Changed to Sans serif');
+		expect(describeChange(change('glass', 'none'))).toBe('Changed to None');
 	});
 
 	it('names the units', () => {
@@ -96,17 +102,66 @@ describe('displayValue', () => {
 		expect(displayValue('employer', null)).toBe('Not set');
 		expect(displayValue('preferred-name', 'Nick')).toBe('Nick');
 	});
+
+	it('names choices and switches in words', () => {
+		expect(displayValue('theme', 'asgard')).toBe('Dark');
+		expect(displayValue('text-size', 'l')).toBe('Large');
+		expect(displayValue('reduce-motion', true)).toBe('On');
+		expect(displayValue('keep-recordings', null)).toBe('Forever');
+		expect(displayValue('keep-recordings', 30)).toBe('30 days');
+		expect(displayValue('accent', 'teal')).toBe('Teal');
+	});
 });
 
-describe('addedText', () => {
-	it('finds what a draft added to the end of a note', () => {
-		expect(addedText('No lists.', 'No lists. Keep answers short.')).toEqual({ kept: 'No lists.', added: ' Keep answers short.' });
+describe('textDiff', () => {
+	it('marks what a draft added to a note', () => {
+		expect(textDiff('No lists.', 'No lists. Keep answers short.')).toEqual([
+			{ text: 'No lists.', kind: 'kept' },
+			{ text: 'Keep answers short.', kind: 'added' },
+		]);
 	});
 
-	it('is null for a rewrite, an unchanged note, or a first note', () => {
-		expect(addedText('No lists.', 'Short answers.')).toBeNull();
-		expect(addedText('No lists.', 'No lists.')).toBeNull();
-		expect(addedText(null, 'Short answers.')).toBeNull();
+	it('marks what a rewrite takes out, in reading order', () => {
+		expect(textDiff('Use British spelling. Keep answers short.', 'Keep answers short. Write in paragraphs.')).toEqual([
+			{ text: 'Use British spelling.', kind: 'removed' },
+			{ text: 'Keep answers short.', kind: 'kept' },
+			{ text: 'Write in paragraphs.', kind: 'added' },
+		]);
+	});
+
+	it('reads a first note as all added, and is null for a value that is not text', () => {
+		expect(textDiff(null, 'Short answers.')).toEqual([{ text: 'Short answers.', kind: 'added' }]);
+		expect(textDiff('x', 5)).toBeNull();
+	});
+});
+
+describe('mergeChanges', () => {
+	const at = (hour: number) => new Date(2026, 2, 12, hour, 0).toISOString();
+
+	it('shows a run of changes to one setting on one day as the change they add up to', () => {
+		const merged = mergeChanges([
+			change('style', 'C', { id: 'setting:3', field: 'style_notes', old_value: 'B', occurred_at: at(11) }),
+			change('style', 'B', { id: 'setting:2', field: 'style_notes', old_value: 'A', occurred_at: at(10) }),
+		]);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({ id: 'setting:3', old_value: 'A', new_value: 'C' });
+	});
+
+	it('leaves out a run that ends where it started, and keeps other settings', () => {
+		const merged = mergeChanges([
+			change('theme', 'oxford', { id: 'setting:4', field: 'ui_preferences.theme', old_value: 'asgard', occurred_at: at(12) }),
+			change('units', 'metric', { id: 'setting:9', field: 'units', old_value: 'us', occurred_at: at(11) }),
+			change('theme', 'asgard', { id: 'setting:3', field: 'ui_preferences.theme', old_value: 'oxford', occurred_at: at(10) }),
+		]);
+		expect(merged.map((c) => c.id)).toEqual(['setting:9']);
+	});
+
+	it('keeps changes to different switches of one setting apart', () => {
+		const merged = mergeChanges([
+			change('model-reading', { health: false }, { id: 'setting:6', field: 'reading', occurred_at: at(11) }),
+			change('model-reading', { money: false }, { id: 'setting:5', field: 'reading', occurred_at: at(10) }),
+		]);
+		expect(merged).toHaveLength(2);
 	});
 });
 

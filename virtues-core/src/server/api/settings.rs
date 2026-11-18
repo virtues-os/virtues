@@ -339,16 +339,19 @@ pub async fn settings_changes_handler(State(state): State<AppState>) -> Response
 #[derive(Deserialize)]
 pub struct SettingsDraftBody {
     text: String,
+    /// The appearance values the page has now, which live in the browser.
+    #[serde(default)]
+    app: serde_json::Value,
 }
 
-/// POST /api/settings/draft — what the assistant would change. Saves nothing.
+/// POST /api/settings/draft — the settings agent's card for what was typed. Saves nothing.
 pub async fn settings_draft_handler(State(state): State<AppState>, Json(body): Json<SettingsDraftBody>) -> Response {
-    api_response(crate::api::settings_changes::draft(state.db.pool(), &body.text).await)
+    api_response(crate::api::settings_draft::draft(state.db.pool(), &body.text, &body.app).await)
 }
 
 #[derive(Deserialize)]
 pub struct ApplySettingsDraftBody {
-    changes: Vec<crate::api::settings_changes::ApplyChange>,
+    changes: Vec<crate::api::settings_draft::ApplyChange>,
 }
 
 /// POST /api/settings/draft/apply — save the drafted changes the owner accepted.
@@ -357,7 +360,7 @@ pub async fn apply_settings_draft_handler(
     Json(body): Json<ApplySettingsDraftBody>,
 ) -> Response {
     api_response(
-        crate::api::settings_changes::apply_draft(state.db.pool(), body.changes)
+        crate::api::settings_draft::apply_draft(state.db.pool(), body.changes)
             .await
             .map(|()| serde_json::json!({ "ok": true })),
     )

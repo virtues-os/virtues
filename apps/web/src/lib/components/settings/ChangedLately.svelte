@@ -2,8 +2,12 @@
 	/**
 	 * Changed lately, on Settings' landing page (`GET /api/settings/changes`):
 	 * the settings you changed and the devices you paired in the last four
-	 * weeks, as a line of days (ChangesChart) over the newest few. A change
-	 * that can be put back has Undo; anything else opens where it lives.
+	 * weeks, as a line of days (ChangesChart) over the newest few, one
+	 * sentence each with when it happened after it. A run of changes to one
+	 * setting on one day shows as the change it adds up to (`mergeChanges`).
+	 * The newest change to a setting has Undo; anything else opens where it
+	 * lives. Pointing at a dot names its change, and clicking it finds the
+	 * change in the list.
 	 *
 	 * What needs you is not here: it is on the new-chat page and in the Mac
 	 * app's notifications (`api/attention.rs`), and it is fixed on the page
@@ -24,9 +28,16 @@
 		type SettingsLately,
 	} from '$lib/api/client';
 	import { findSetting, titleOf } from '$lib/settings';
-	import { changeRowId, describeChange, whenLabel } from '$lib/settings/changes';
+	import { changeRowId, changeSentence, mergeChanges, whenAt } from '$lib/settings/changes';
 
-	let { assistantName }: { assistantName: string } = $props();
+	let {
+		assistantName,
+		lit = false,
+	}: {
+		assistantName: string;
+		/** Light the newest change for a moment: it was just applied. */
+		lit?: boolean;
+	} = $props();
 
 	let lately = $state<SettingsLately | null>(null);
 	let loadError = $state(false);
@@ -40,7 +51,10 @@
 	const FIRST = 4;
 	let showAll = $state(false);
 
-	const shown = $derived(lately ? (showAll ? lately.changes : lately.changes.slice(0, FIRST)) : []);
+	const changes = $derived(lately ? mergeChanges(lately.changes) : []);
+	const shown = $derived(showAll ? changes : changes.slice(0, FIRST));
+	/** The change just applied, lit until the light fades. */
+	let fresh = $state<string | null>(null);
 
 	async function load() {
 		loadError = false;
@@ -51,7 +65,24 @@
 		}
 	}
 
-	onMount(load);
+	onMount(async () => {
+		await load();
+		if (lit && changes[0]) {
+			fresh = changes[0].id;
+			setTimeout(() => (fresh = null), 3000);
+		}
+	});
+
+	/** A dot was clicked: show the whole list and point at its row. */
+	function find(id: string) {
+		showAll = true;
+		hot = id;
+		requestAnimationFrame(() => document.getElementById(rowId(id))?.scrollIntoView({ block: 'nearest' }));
+	}
+
+	const rowId = (id: string) => `change-${id.replace(':', '-')}`;
+
+	const sentence = (change: SettingsChange) => changeSentence(change, assistantName);
 
 	function nameOf(change: SettingsChange): string {
 		if (change.kind === 'paired') return change.label ?? 'A device';
@@ -87,7 +118,7 @@
 <section class="lately" aria-labelledby="changed-lately">
 	<div class="head">
 		<h2 id="changed-lately">Changed lately</h2>
-		{#if lately && lately.changes.length > FIRST}
+		{#if changes.length > FIRST}
 			<button type="button" class="link" onclick={() => (showAll = !showAll)}>{showAll ? 'Show fewer' : 'See all'}</button>
 		{/if}
 	</div>
@@ -95,25 +126,28 @@
 	{#if loadError}
 		<div class="failed">
 			<span>Your server couldn't load what changed lately.</span>
-			<Button variant="ghost" onclick={load}>Try again</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else if lately}
-		<ChangesChart changes={lately.changes} listed={shown.map((c) => c.id)} {hot} />
-		{#if lately.changes.length}
+		<ChangesChart {changes} listed={shown.map((c) => c.id)} hot={hot ?? fresh} label={(c) => `${nameOf(c)} ${sentence(c)}`} onpick={find} />
+		{#if changes.length}
 			<ul>
 				{#each shown as change (change.id)}
 					<!-- Pointer or focus on a row rings its dot; the row's button is what acts. -->
 					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 					<li
+						id={rowId(change.id)}
+						class:hot={hot === change.id}
+						class:fresh={fresh === change.id}
 						onmouseenter={() => (hot = change.id)}
 						onmouseleave={() => (hot = null)}
 						onfocusin={() => (hot = change.id)}
 						onfocusout={() => (hot = null)}
 					>
-						<span class="when">{whenLabel(change.occurred_at)}</span>
 						<span class="what">
 							<span class="name">{nameOf(change)}</span>
-							<span class="sub">{describeChange(change)}{change.actor === 'assistant' ? `, with ${assistantName}` : ''}</span>
+							<span class="sub">{sentence(change)}</span>
+							<span class="when">· {whenAt(change.occurred_at)}</span>
 						</span>
 						{#if change.can_undo}
 							<button type="button" class="link" disabled={undoing === change.id} onclick={() => undo(change)}>
@@ -160,22 +194,36 @@
 
 	li {
 		display: grid;
-		grid-template-columns: 88px minmax(0, 1fr) auto;
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: baseline;
 		gap: 16px;
-		padding: 4px 0;
+		margin: 0 -8px;
+		padding: 4px 8px;
+		border-radius: var(--radius-md);
+		transition: background var(--motion-hover-out) var(--ease-premium);
+	}
+
+	li.hot {
+		background: var(--color-surface-elevated);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	/* The change just applied: lit, then fading back over a few seconds. */
+	li.fresh {
+		background: var(--color-primary-subtle);
+		transition: none;
 	}
 
 	.when {
+		flex: none;
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
-		white-space: nowrap;
 	}
 
 	.what {
 		display: flex;
 		align-items: baseline;
-		gap: 8px;
+		gap: 6px;
 		min-width: 0;
 		white-space: nowrap;
 	}
@@ -206,6 +254,12 @@
 
 	.link:hover:not(:disabled) {
 		text-decoration: underline;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		li {
+			transition: none;
+		}
 	}
 
 	.link:disabled {

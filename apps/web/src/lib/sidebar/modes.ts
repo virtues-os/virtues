@@ -13,6 +13,7 @@
  */
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
+import { LANDING } from '$lib/settings';
 
 export interface ModeRow {
 	id: string;
@@ -64,46 +65,58 @@ export interface SidebarMode {
 	rows: ModeRow[];
 }
 
+/** Each Settings page's glyph in the crumb menus, and the Remix name kept beside it. */
+const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
+	'/virtues/assistant': { icon: 'mynaui:sparkles', glyph: 'assistant' },
+	'/virtues/data': { icon: 'mynaui:database' },
+	'/virtues/assistant/memory': { icon: 'mynaui:bookmark' },
+	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
+	'/virtues/appearance': { icon: 'mynaui:sun' },
+	'/virtues/billing': { icon: 'mynaui:credit-card', glyph: 'billing' },
+	'/virtues/system': { icon: 'mynaui:servers', glyph: 'system' },
+	'/virtues/devices': { icon: 'mynaui:mobile', glyph: 'devices' },
+	'/virtues/server': { icon: 'mynaui:refresh' },
+	'/virtues/backup': { icon: 'mynaui:archive' },
+	'/virtues/keys': { icon: 'mynaui:key', glyph: 'keys' },
+	'/virtues/shared': { icon: 'mynaui:share', glyph: 'shared' },
+	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
+	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
+};
+
+function settingsRow(href: string, label: string, group: string): ModeRow {
+	return { id: href.slice('/virtues/'.length).replace(/\//g, '-'), label, href, group, ...(SETTINGS_ICONS[href] ?? { icon: 'mynaui:cog' }) };
+}
+
 /**
- * Settings' pages in three groups, for the crumbs on those pages: You, Your
- * data, Your server. The landing page's site map groups them differently
- * (LANDING in lib/settings); the TODO below retires these rows.
+ * Settings' pages, for the crumbs on those pages and the menus the crumbs
+ * open. They come from the landing page's site map (LANDING in lib/settings),
+ * so a page sits under the same heading in both: Assistant, You, Your server.
+ *
+ * One row per page. A site-map link that names a row on a page (Voice,
+ * Spending limits) points at a page another link already lists, so the page
+ * goes under its plain link where it has one (Billing, under You), and
+ * otherwise under its group's name (the assistant's page is "Assistant").
  */
-// TODO(2026-11-17): migrate the crumbs off these rows. Settings' pages are
-// listed in lib/settings (its landing links to each) and Sources is its own
-// room with tabs; these rows stay only because tabs/crumbs.ts builds
-// Settings' crumbs from them.
+function settingsRows(): ModeRow[] {
+	const rows: ModeRow[] = [];
+	for (const group of LANDING) {
+		for (const { route } of group.links) {
+			if (rows.some((r) => r.href === route)) continue;
+			const plain = LANDING.flatMap((g) => g.links.filter((l) => l.route === route && !l.setting).map((l) => ({ g, l })))[0];
+			if (plain && plain.g !== group) continue;
+			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
+		}
+	}
+	// Pages the site map leaves out: search settings are found by searching,
+	// and Applets is reached from the Applets door.
+	rows.push(settingsRow('/virtues/search', 'Search', 'Your server'), settingsRow('/virtues/applets', 'Applets', 'Your server'));
+	return rows;
+}
+
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
-	rows: [
-		// "Profile", not "You": the wiki has the other "You", the narrative
-		// identity, and two rows with one label in two rooms is a question the
-		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/profile', group: 'You' },
-		{ id: 'assistant', label: 'Assistant', icon: 'mynaui:sparkles', glyph: 'assistant', href: '/virtues/assistant', group: 'You' },
-		{ id: 'appearance', label: 'Appearance', icon: 'mynaui:sun', href: '/virtues/appearance', group: 'You' },
-		// Subscription, balance and limits; what AI has cost is its sub-page.
-		{ id: 'billing', label: 'Billing', icon: 'mynaui:credit-card', glyph: 'billing', href: '/virtues/billing', group: 'You' },
-		// The named keys applets use. Values show only when asked for.
-		{ id: 'keys', label: 'Keys', icon: 'mynaui:key', glyph: 'keys', href: '/virtues/keys', group: 'Your data' },
-		// Every link the owner has shared, live or ended.
-		{ id: 'shared', label: 'Shared links', icon: 'mynaui:share', glyph: 'shared', href: '/virtues/shared', group: 'Your data' },
-		{ id: 'data', label: 'Your data', icon: 'mynaui:database', href: '/virtues/data', group: 'Your data' },
-		{ id: 'backup', label: 'Backup', icon: 'mynaui:archive', href: '/virtues/backup', group: 'Your data' },
-		{ id: 'server', label: 'Updates and network', icon: 'mynaui:refresh', href: '/virtues/server', group: 'Your server' },
-		// The machine itself, measured.
-		{ id: 'system', label: "How it's doing", icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Your server' },
-		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
-		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Your server' },
-		// Every participant, the server first: the release it runs is a fact
-		// about a device.
-		{ id: 'devices', label: 'Devices', icon: 'mynaui:mobile', glyph: 'devices', href: '/virtues/devices', group: 'Your server' },
-		// Every applet on the server, built-in ones included: when each runs and
-		// how its runs went. The Applets page in Home is where you use them;
-		// this is where you check them.
-		{ id: 'applets', label: 'Applets', icon: 'atlas:applets', glyph: 'applets', href: '/virtues/applets', group: 'Your server' },
-	],
+	rows: settingsRows(),
 };
 
 /**
