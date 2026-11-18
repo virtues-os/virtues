@@ -274,12 +274,13 @@ export const themeMetadata: Record<ThemeChoice, { icon: string; description: str
 // profile beside the theme (`ui_preferences.accent`), cached for app.html's
 // pre-paint, and set as `data-accent` on <html>.
 
-export type Accent = 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
+export type Accent = 'navy' | 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
 
-export const DEFAULT_ACCENT: Accent = 'blue';
+export const DEFAULT_ACCENT: Accent = 'navy';
 
 /** Every swatch, in the order the picker shows them. */
 export const ACCENTS: readonly { id: Accent; name: string }[] = [
+	{ id: 'navy', name: 'Navy' },
 	{ id: 'blue', name: 'Blue' },
 	{ id: 'indigo', name: 'Indigo' },
 	{ id: 'purple', name: 'Purple' },
