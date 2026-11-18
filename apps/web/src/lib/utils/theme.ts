@@ -264,7 +264,7 @@ export const themePreviewColors: Record<
 /** Icon and one line for each choice in the ⌘K theme list. */
 export const themeMetadata: Record<ThemeChoice, { icon: string; description: string }> = {
 	oxford: { icon: 'mynaui:sun', description: 'Dark ink on white' },
-	asgard: { icon: 'mynaui:moon', description: 'Light ink on graphite' },
+	asgard: { icon: 'mynaui:moon', description: 'Light ink on near-black' },
 	system: { icon: 'mynaui:circle-half', description: 'Follows your device' }
 };
 

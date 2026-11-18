@@ -238,12 +238,6 @@
 	}
 }
 
-/* Main content area background */
-.app-content {
-	background-image: var(--background-image, none);
-	background-attachment: fixed;
-}
-
 /* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
    where it's a system font. Three static weights cover regular/medium/bold.
 

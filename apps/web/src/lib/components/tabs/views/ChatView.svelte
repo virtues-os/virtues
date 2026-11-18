@@ -3040,8 +3040,6 @@
 		   phone override below sets its own. */
 		padding-bottom: 1.5rem;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
 		/* Docked resting state. The empty state centers itself relative to this same

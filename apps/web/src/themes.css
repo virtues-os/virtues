@@ -11,9 +11,10 @@
    Match system picks one of them from prefers-color-scheme
    (lib/utils/theme.ts).
 
-   The BASE block below holds the values every theme starts from. Oxford's
-   block applies to :root as well, so a page with no data-theme, or with a
-   name that no longer exists, paints Oxford.
+   The BASE block below holds what both themes share and the defaults Dark
+   overrides (the wash, the glass). Every color a theme sets is in its own
+   block. Oxford's block applies to :root as well, so a page with no
+   data-theme, or with a name that no longer exists, paints Oxford.
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
@@ -37,11 +38,6 @@
 	   hover in every dark theme. Every theme defines --surface-elevated. */
 	--color-background-hover: var(--surface-elevated);
 	--color-background-secondary: var(--surface-elevated);
-
-	/* Background Treatment (gradient/texture support) */
-	--color-background-image: var(--background-image);
-	--color-surface-elevated-image: var(--surface-elevated-image);
-	--color-surface-elevated-size: var(--surface-elevated-size);
 
 	/* Content Colors */
 	--color-foreground: var(--foreground);
@@ -76,15 +72,6 @@
 	/* Selection/Highlight Colors */
 	--color-highlight: var(--highlight);
 	--color-highlight-foreground: var(--highlight-foreground);
-
-	/* Diff Colors */
-	--color-diff-add: var(--diff-add);
-	--color-diff-add-bg: var(--diff-add-bg);
-	--color-diff-remove: var(--diff-remove);
-	--color-diff-remove-bg: var(--diff-remove-bg);
-
-	/* Background Inverse - For intentionally dark backgrounds */
-	--color-background-inverse: var(--background-inverse);
 
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
@@ -334,89 +321,15 @@
 
 /* ===================================
    BASE
-   The values every theme starts from. Oxford and Asgard override
-   them below
+   What both themes share, and the defaults Asgard overrides. No theme
+   colors: those are in each theme's own block
    =================================== */
 :root {
-	/* Code Syntax Highlighting */
-	--shiki-theme: github-light;
-
-
-	/* Surface Colors - One paper, top to bottom.
-	   Every surface is the same pure white, including --surface-elevated, which
-	   is what the sidebar sits on. Previous themes gave the rail a 4% step so it
-	   read as a separate region; here the seam is carried by a single hairline
-	   border and the pane card's shadow instead. With no tint anywhere, spacing
-	   and type do the organising — which is the whole point of the register, and
-	   the hardest one to fake. */
-	--background: #FFFFFF;
-	--surface: #FFFFFF;
-	--surface-elevated: #FFFFFF;
-	/* The desk: the ground the cards stand on, under the sidebar and the
-	   window header. Only the work is raised: the step between the desk and
-	   --page separates a card, and a faint hairline gives it a clean edge.
-	   Each theme's desk is a step below its page: about 7 L* in Light and
-	   about 5 in Dark. */
-	--desk: #F0F0F2;
 	/* The hairline: 9% of the theme's ink over its page, so every theme gets
 	   one in its own hue without a value of its own. Mixed over the page, it
 	   lands darker than a light card and lighter than a dark one. It resolves
 	   on <html>, where `data-theme` lands, so it reads that theme's colors. */
 	--card-edge: color-mix(in srgb, var(--foreground) 9%, var(--page));
-	--surface-overlay: #FFFFFF;
-	/* The page is the surface unless a theme says otherwise. It resolves here,
-	   on <html>, which is also where `data-theme` lands, so every theme's own
-	   --surface is the one it reads. */
-	--page: var(--surface);
-
-	/* Background Treatment - Nothing. No texture, no wash. */
-	--background-image: none;
-	--surface-elevated-image: none;
-	--surface-elevated-size: auto;
-
-	/* Content Colors - Four steps of graphite, never pure black.
-	   #000 on #FFF is a harsher contrast than print ever uses; the ink here is
-	   a near-black with a trace of blue so it sits with the accent. */
-	--foreground: #17171A;
-	--foreground-muted: #3F3F46;
-	--foreground-subtle: #71717A;
-	--foreground-disabled: #A1A1AA;
-
-
-	/* Status Colors - Semantic only, and muted enough to sit on paper */
-	--success: #1A7F45;
-	--success-subtle: #E6F4EC;
-	--warning: #A56800;
-	--warning-subtle: #FBF0DC;
-	--error: #C4322B;
-	--error-subtle: #FBE9E7;
-	--info: #0A84FF;
-	--info-subtle: #EAF3FF;
-
-	/* Border Colors - Hairlines. On white these are the only structure there
-	   is, so they are neutral and thin rather than tinted: a coloured rule
-	   reads far louder than a coloured fill of the same saturation. */
-	--border: #E7E7E9;
-	--border-subtle: #F1F1F3;
-	--border-strong: #D4D4D8;
-	/* A text field's edge at rest: the line that shows where a field is, so
-	   it holds 3:1 against the page (WCAG 1.4.11). The hairline above is
-	   decoration and holds no minimum. */
-	--border-field: #8F8A82;
-	--border-focus: #0A84FF;
-
-	/* Selection/Highlight - A soft wash of the one accent */
-	--highlight: rgba(10, 132, 255, 0.15);
-	--highlight-foreground: #17171A;
-
-	/* Diff Colors */
-	--diff-add: #1A7F45;
-	--diff-add-bg: #E6F4EC;
-	--diff-remove: #C4322B;
-	--diff-remove-bg: #FBE9E7;
-
-	/* Background Inverse - Graphite, never pure black */
-	--background-inverse: #17171A;
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
@@ -570,6 +483,9 @@
    =================================== */
 :root,
 [data-theme="oxford"] {
+	/* Native controls, scrollbars and form fills draw light. */
+	color-scheme: light;
+
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
@@ -590,11 +506,6 @@
 	   as one paper on the warm ground; a card on it lifts by its border. */
 	--page: var(--surface);
 
-	/* Background Treatment - Flat warm ivory */
-	--background-image: none;
-	--surface-elevated-image: none;
-	--surface-elevated-size: auto;
-
 	/* Content Colors - Navy-black ink on ivory */
 	--foreground: #1A2030;
 	--foreground-muted: #3E4459;
@@ -604,13 +515,15 @@
 
 	/* The accent (design.md, "Accent"): the one color a page carries, for
 	   what is pressable and what is now, and the fill of the page's one
-	   filled button. It is the person's pick from the swatches below, in
-	   this theme's tuning. Hover moves toward the page, press toward the
-	   ink, and the tint is a wash of it on the page, so every swatch gets
-	   all four from one value. */
+	   filled button. It is the person's pick from the swatches above, in
+	   this theme's tuning. Hover and press move toward the ink, so the
+	   filled button's label gains contrast as you press it in both themes
+	   (darker under white in Light, lighter under the dark label in Dark),
+	   and the tint is a wash of it on the page. Every swatch gets all four
+	   from one value. */
 	--primary: var(--accent-light);
-	--primary-hover: color-mix(in srgb, var(--primary) 85%, var(--page));
-	--primary-active: color-mix(in srgb, var(--primary) 80%, var(--foreground));
+	--primary-hover: color-mix(in srgb, var(--primary) 88%, var(--foreground));
+	--primary-active: color-mix(in srgb, var(--primary) 78%, var(--foreground));
 	--primary-subtle: color-mix(in srgb, var(--primary) 10%, var(--page));
 
 	/* Status Colors */
@@ -645,14 +558,6 @@
 	--highlight: rgba(244, 215, 120, 0.42);
 	--highlight-foreground: #1A2030;
 
-	/* Diff Colors */
-	--diff-add: #2E6B43;
-	--diff-add-bg: #E3EDE5;
-	--diff-remove: #9A2B2E;
-	--diff-remove-bg: #F6E3E2;
-
-	/* Background Inverse - Deep navy, never black */
-	--background-inverse: #14203A;
 }
 
 
@@ -661,6 +566,9 @@
    Dark
    =================================== */
 [data-theme="asgard"] {
+	/* Native controls, scrollbars and form fills draw dark. */
+	color-scheme: dark;
+
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
 
@@ -686,21 +594,17 @@
 	   the mixes in the Light block. */
 	--primary: var(--accent-dark);
 
-	/* Status Colors */
-	--success: #3FA266;
+	/* Status Colors. All three clear AA on the page and on their own tint,
+	   and error is at least as loud as warning: success 7.4:1, warning
+	   7.9:1, error 7.2:1 on the page; 6.4, 6.5 and 6.4 on their tints. */
+	--success: #4CB878;
 	--success-subtle: #1a251e;
-	--warning: #F1B367;
+	--warning: #D99E55;
 	--warning-subtle: #2d2415;
-	--error: #E34671;
+	--error: #F47C95;
 	--error-subtle: #2d1a1f;
 	--info: #88C0D0;
 	--info-subtle: #1a2a2d;
-
-	/* Diff-specific colors (available as CSS vars) */
-	--diff-add: #306A47;
-	--diff-add-bg: #1a251e;
-	--diff-remove: #A14958;
-	--diff-remove-bg: #2d1a1f;
 
 	/* Border Colors */
 	/* Quiet hairlines: on near-black a brighter line is the loudest thing
@@ -710,13 +614,12 @@
 	--border-strong: #34363B;
 	--border-field: #66686e; /* 3.3:1 on the page */
 
-	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
-	 * against the near-black ground. */
-	--highlight: rgba(136, 192, 208, 0.28);
-	--highlight-foreground: #D4D4D4;
-
-	/* Background Inverse */
-	--background-inverse: #121315;
+	/* Selection/Highlight - the same yellow highlighter as Light, thinner,
+	   so it reads as a mark on the near-black page and the text on it keeps
+	   full ink (9:1). Never the accent: a marked passage must not look like
+	   a link. */
+	--highlight: rgba(244, 215, 120, 0.22);
+	--highlight-foreground: #EDEDEF;
 }
 
 /* ===================================
@@ -789,6 +692,9 @@
 	--lq-hover-wash: inset 0 0 0 100vmax rgb(255 255 255 / 0.04);
 	--lq-glint: rgb(255 255 255 / 0.1);
 	--window-scene-filter: brightness(0.55) saturate(0.8);
+	/* The one floating shadow, deep enough to show on near-black. At
+	   Light's 15% a menu had no edge but its fill. */
+	--shadow-float: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

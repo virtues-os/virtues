@@ -439,7 +439,6 @@
 	class:desk={!mobileLayout.isMobile}
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
-	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
 	<!-- The painting along the bottom of the whole window, behind the
 	     sidebar and the panes alike. It does not move between pages: the
@@ -474,9 +473,6 @@
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:split-desk={!mobileLayout.isMobile}
 		class:is-mobile={mobileLayout.isMobile}
-		style={mobileLayout.isMobile
-			? "background-image: var(--background-image); background-blend-mode: multiply;"
-			: undefined}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}

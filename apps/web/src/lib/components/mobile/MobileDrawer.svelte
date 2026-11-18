@@ -312,8 +312,6 @@
 		   the viewport's top bar, and the two bars are meant to share a
 		   baseline — the » lands where the ghost/compose control sits. */
 		background-color: var(--color-surface);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		color: var(--color-foreground);
 	}
 

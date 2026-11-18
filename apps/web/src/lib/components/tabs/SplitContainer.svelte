@@ -603,8 +603,6 @@
 		min-width: 0;
 		overflow: hidden;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		border: 1px solid var(--card-edge);
 		border-radius: var(--radius-xl);
 		transition:
@@ -673,8 +671,6 @@
 	.in-motion .tab-slot:not([data-motion="leave"]) {
 		z-index: 1;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 	}
 
 	/* The card that opens out of a tab when it becomes a pane
