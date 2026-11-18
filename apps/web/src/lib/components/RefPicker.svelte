@@ -507,7 +507,7 @@
 	.checkbox.checked {
 		background: var(--color-primary);
 		border-color: var(--color-primary);
-		color: white;
+		color: var(--color-surface);
 	}
 
 	.item-name {

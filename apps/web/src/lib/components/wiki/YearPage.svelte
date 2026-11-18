@@ -347,7 +347,7 @@
 	}
 
 	.failed {
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 		font-size: 0.875rem;
 	}
 

@@ -1620,7 +1620,7 @@
 		font-size: 10px;
 		font-weight: 600;
 		line-height: 1;
-		color: white;
+		color: var(--color-surface);
 		background: var(--color-primary);
 		border-radius: var(--radius-full);
 		box-sizing: border-box;

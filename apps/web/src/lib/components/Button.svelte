@@ -253,7 +253,9 @@
 	}
 
 	.v-btn[data-variant="danger"]:active:not(:disabled) {
-		background: color-mix(in srgb, var(--color-error) 85%, black);
+		/* Toward the ink, not toward black: in Dark that lightens the red
+		   instead of sinking it into the ground. */
+		background: color-mix(in srgb, var(--color-error) 85%, var(--color-foreground));
 		border-color: transparent;
 		color: var(--color-surface);
 	}

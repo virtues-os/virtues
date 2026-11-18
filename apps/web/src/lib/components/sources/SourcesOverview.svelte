@@ -485,7 +485,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 	.muted {
@@ -501,7 +501,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		font-size: 0.8125rem;
-		background: var(--color-muted, #f3f4f6);
+		background: var(--color-surface-elevated);
 		color: var(--color-foreground, #111827);
 	}
 	.notice.ok {

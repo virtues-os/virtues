@@ -413,7 +413,7 @@
 	.save-error {
 		margin: 0 0 0.75rem;
 		font-size: 0.75rem;
-		color: var(--color-danger, #dc2626);
+		color: var(--color-error);
 	}
 
 	/* ── Wall tiles ───────────────────────────────────────────────────────

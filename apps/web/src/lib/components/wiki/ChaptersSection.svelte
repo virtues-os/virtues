@@ -184,7 +184,7 @@
 
 	.failed {
 		font-size: 0.75rem;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 
 	.chapters-room {
@@ -253,7 +253,7 @@
 	}
 
 	.chapter:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.chapter-line {

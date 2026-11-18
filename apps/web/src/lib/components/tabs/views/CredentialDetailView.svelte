@@ -248,7 +248,7 @@
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.state.error {
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 	}
 
 	.back {

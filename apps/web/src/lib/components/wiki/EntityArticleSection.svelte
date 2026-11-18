@@ -186,7 +186,7 @@
 	.article-error {
 		margin: 0.5rem 0 0;
 		font-size: 0.75rem;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 
 	.colophon {

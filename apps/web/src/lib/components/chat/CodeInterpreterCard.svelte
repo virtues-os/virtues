@@ -220,12 +220,12 @@
 		background: var(--color-surface);
 		border: none;
 		cursor: pointer;
-		color: var(--color-text);
+		color: var(--color-foreground);
 		transition: background 0.15s ease;
 	}
 
 	.card-header:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.header-left {
@@ -305,7 +305,7 @@
 		padding: 0.75rem;
 		white-space: pre-wrap;
 		word-break: break-word;
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	/* Output view */
@@ -319,7 +319,7 @@
 	}
 
 	.output-view.error {
-		background: rgba(var(--color-error-rgb, 239, 68, 68), 0.05);
+		background: color-mix(in srgb, var(--color-error) 5%, transparent);
 	}
 
 	.output-text {
@@ -327,7 +327,7 @@
 		padding: 0.75rem;
 		white-space: pre-wrap;
 		word-break: break-word;
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	.output-view.error .output-text {

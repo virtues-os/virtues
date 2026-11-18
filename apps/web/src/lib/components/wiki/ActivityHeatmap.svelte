@@ -937,7 +937,7 @@
 		transition:
 			background-color 320ms var(--ease-premium) var(--delay),
 			transform 420ms var(--spring) var(--delay),
-			opacity 360ms var(--ease-enter) var(--delay);
+			opacity 360ms var(--ease-premium) var(--delay);
 	}
 	.grid[data-highlight] .cell:not([data-empty]) {
 		opacity: 0.2;
@@ -1096,7 +1096,7 @@
 		opacity: 1;
 		transform: translateX(-50%) scale(1);
 		transition:
-			opacity var(--duration-fast) var(--ease-enter),
+			opacity var(--duration-fast) var(--ease-premium),
 			transform 280ms var(--spring);
 	}
 	.tip-body {

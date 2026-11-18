@@ -277,7 +277,7 @@
 		padding: 0.3rem 0.7rem;
 		border-radius: var(--radius-full);
 		background: var(--color-primary);
-		color: var(--color-on-primary, #fff);
+		color: var(--color-surface);
 		font-size: 0.75rem;
 		font-weight: 500;
 		white-space: nowrap;

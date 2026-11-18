@@ -1102,7 +1102,7 @@
 		font-weight: 600;
 		border-radius: var(--radius-lg);
 		background: var(--color-primary);
-		color: var(--color-on-primary, #fff);
+		color: var(--color-surface);
 	}
 
 	/* Annotation rail — fixed-width index of every highlight in the file. */
@@ -1401,6 +1401,6 @@
 		font-size: 0.8125rem;
 	}
 	.pdf-status.error {
-		color: var(--color-danger, #e5484d);
+		color: var(--color-error);
 	}
 </style>

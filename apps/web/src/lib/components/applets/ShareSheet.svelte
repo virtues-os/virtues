@@ -564,7 +564,7 @@
 		font-size: 0.8125rem;
 		color: var(--color-error);
 		padding: 0.5rem 0.625rem;
-		background: var(--color-error-bg);
+		background: var(--color-error-subtle);
 		border-radius: var(--radius-md);
 	}
 </style>

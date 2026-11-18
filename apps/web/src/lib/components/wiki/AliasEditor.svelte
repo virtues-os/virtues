@@ -178,6 +178,6 @@
 	.alias-error {
 		margin-top: 0.25rem;
 		font-size: 12px;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 </style>

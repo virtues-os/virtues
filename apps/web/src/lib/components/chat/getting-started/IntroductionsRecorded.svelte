@@ -68,7 +68,7 @@
 		margin: 0;
 	}
 	dt {
-		color: var(--color-foreground-tertiary, #8a8a8a);
+		color: var(--color-foreground-subtle);
 	}
 	dd {
 		color: var(--color-foreground);

@@ -260,7 +260,7 @@
 	padding: 0 4px;
 	border-radius: var(--radius-md);
 	background: var(--color-primary);
-	color: var(--color-primary-foreground, var(--color-background));
+	color: var(--color-surface);
 	font-family: var(--font-sans);
 	font-size: 0.6875rem;
 	font-weight: 600;

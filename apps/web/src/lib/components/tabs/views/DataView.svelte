@@ -122,7 +122,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--color-danger, #c0392b);
+		color: var(--color-error);
 	}
 
 	.head {

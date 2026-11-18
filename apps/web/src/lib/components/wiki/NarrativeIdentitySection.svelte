@@ -267,7 +267,7 @@
 	}
 
 	.btn:hover:not(:disabled) {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.btn:disabled {

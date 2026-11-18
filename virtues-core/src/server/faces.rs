@@ -665,26 +665,32 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
 "#;
 
 pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables + minimal base. */
+/* The app's two themes (agents/build/design.md, "Themes"): Light is
+   Oxford and Dark is Asgard, with their values copied from
+   apps/web/src/themes.css. --color-accent is the app's --color-primary,
+   kept under the name applets already use. */
 :root {
   --color-surface: #ffffff;
-  --color-surface-elevated: #f3f4f6;
-  --color-foreground: #111827;
-  --color-foreground-subtle: #6b7280;
-  --color-border: #e5e7eb;
-  --color-accent: #1d4ed8;
-  --color-success: #047857;
-  --color-error: #b91c1c;
+  --color-surface-elevated: #f4f3f0;
+  --color-foreground: #1a2030;
+  --color-foreground-subtle: #626779;
+  --color-border: #e3e1dd;
+  --color-accent: #1d4572;
+  --color-primary: #1d4572;
+  --color-success: #2e6b43;
+  --color-error: #b42318;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --color-surface: #0b0f1a;
-  --color-surface-elevated: #161b28;
-  --color-foreground: #e5e7eb;
-  --color-foreground-subtle: #9ca3af;
-  --color-border: #253044;
-  --color-accent: #60a5fa;
-  --color-success: #34d399;
-  --color-error: #f87171;
+  --color-surface: #171718;
+  --color-surface-elevated: #1e1f22;
+  --color-foreground: #d4d4d4;
+  --color-foreground-subtle: #828282;
+  --color-border: #2e3034;
+  --color-accent: #88c0d0;
+  --color-primary: #88c0d0;
+  --color-success: #3fa266;
+  --color-error: #e34671;
   color-scheme: dark;
 }
 html, body {

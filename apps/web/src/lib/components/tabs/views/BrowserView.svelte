@@ -509,9 +509,9 @@
 		background: var(--color-background-hover);
 	}
 	.bar-btn.primary {
-		background: var(--primary);
-		border-color: var(--primary);
-		color: white;
+		background: var(--color-primary);
+		border-color: var(--color-primary);
+		color: var(--color-surface);
 	}
 
 	/* The page is native and draws over .slot; the frame shows around it. */

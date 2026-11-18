@@ -294,6 +294,6 @@
 		font-size: 0.8125rem;
 	}
 	.asset-status.error {
-		color: var(--color-danger, #e5484d);
+		color: var(--color-error);
 	}
 </style>

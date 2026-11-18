@@ -229,6 +229,6 @@
 	.failed {
 		margin: 0.375rem 0 0;
 		font-size: 0.75rem;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 </style>

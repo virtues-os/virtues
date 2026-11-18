@@ -624,7 +624,7 @@
 	}
 
 	.cv-compact-btn:hover:not(:disabled) {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.cv-compact-btn:disabled {
