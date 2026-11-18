@@ -2,8 +2,8 @@
 
 This file is the Virtues design system: its tokens, materials, shell, page
 grammar, primitives and prohibitions. It is the only design document. The
-gallery at `/components` renders the parts, and will render this file beside
-them once it moves to `/design`.
+app renders it at `/design`, with the live parts placed in it (see
+[How /design works](#how-design-works)).
 
 The app stores one person's mail, money, health and days. It should look
 calm and finished, because people have to trust it with that. Jittery
@@ -14,6 +14,26 @@ Order of precedence: the owner's instructions, then this file, then taste.
 Check every claim here against the code before you build on it. When this
 file and the CSS disagree, the CSS is what ships and this file is the bug.
 Every number below was read off the tree on 2026-11-17.
+
+### How /design works
+
+`/design` is a page in the app (`DesignView`) that renders this file, read
+from the repo at build time. Editing the file is editing the page.
+
+- **A token named in backticks shows its current value beside it** on the
+  page, read from the cascade and read again when the theme changes. When
+  the text claims one number and the chip shows another, the text is stale.
+- **A specimen is a `*.specimen.svelte` file kept beside its component**
+  (`Button.specimen.svelte` next to `Button.svelte`), found by
+  `lib/design/specimens.ts` with no list to maintain. A fenced block with
+  the language `specimen` and the file's name, and nothing inside, places
+  it here. The page names any specimen this file does not place, and any
+  block whose specimen does not exist.
+- **A new primitive gets a specimen and a block in the same change.** A
+  primitive nobody can see gets rebuilt by hand in the next view that needs
+  it.
+- The sun and moon in the page's toolbar preview Light and Dark without
+  saving. Leaving the page puts back the theme you chose.
 
 ---
 
@@ -44,6 +64,9 @@ primaries first.
 | Light | Oxford | The default. `DEFAULT_THEME` in `virtues-registry` must match `DEFAULT_THEMES.light` in `lib/utils/theme.ts`. |
 | Dark | Asgard | Derived from the same tokens, never ported from a reference. |
 | Match system | Oxford or Asgard | Follows `prefers-color-scheme`. |
+
+```specimen Contrast
+```
 
 Every token below is defined once in `:root` for Light and overridden once
 for Dark, in `apps/web/src/themes.css`. A theme name stored before the cut
@@ -79,6 +102,9 @@ inside `themes.css` only.
 | Accent | `--color-primary` | `#1D4572` | Means *now* or *pressable*. |
 | Filled action | `--color-secondary` | `#9A2B2E` | The single primary Button on a page. |
 | Status | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | | A state a person can act on. |
+
+```specimen Colors
+```
 
 **One accent, with two meanings.** `--color-primary` is the only color a page
 carries, and it means *now* (a live marker, the open clip) or *pressable* (a
@@ -120,6 +146,9 @@ steps, no others:
 | Selected | `--active-bg` | 12% | where you are |
 | Press | `--press-bg` | 16% | held down, only while pressed |
 
+```specimen Ramp
+```
+
 **Never use a surface token for an interaction state.** `--surface-elevated`
 is a step of about 4% from the page, which is too small to see. That bug
 shipped twice: dead hovers across 39 rules, and an active tab drawn white on
@@ -151,6 +180,9 @@ CDN or a system font.
 | `--text-label` | 14px | sans | A row, a button, a link, a menu item, a field. Also `--chrome-label-font-size`. |
 | `--text-small` | 13px | sans | A label, a quiet verb, a note, a date, a chart's readout. |
 | `--text-caption` | 12px | sans | A tab, a group heading, a hint. |
+
+```specimen Type
+```
 
 A chart's SVG may set its own tick and lane labels below 12px. Nothing else
 may. The markdown sizes (`--md-*` in `themes.css`) are the one definition both
@@ -216,9 +248,11 @@ design decision.
 
 ### Spacing
 
-**An 8pt grid.** Gaps are 8, 12, 16, 20, 24, 32, 40, 48, 56 or 64px. A turn
-opens 48px below the last. `design-lint.sh` counts off-grid padding, margin
-and gap (`off-grid`).
+**A 4pt grid, set mostly in eights.** Gaps between blocks are 8, 12, 16,
+20, 24, 32, 40, 48, 56 or 64px; 4px is for the inside of something small,
+such as a chip. A turn opens 48px below the last. `design-lint.sh` counts any
+padding, margin or gap in px that is not a multiple of 4 (`off-grid`), and
+allows two exceptions: 6px and 22px.
 
 **Page widths.** Three, in `themes.css`, set through `Page`'s `maxWidth`:
 
@@ -244,6 +278,9 @@ split the pane runs out of room, not the window.
 | `--radius-lg` | 10px | the glass controls in the header |
 | `--radius-xl` | 12px | a pane, the sidebar's glass, a card in the pane, a home tile |
 | `--radius-full` | pill | tabs, the composer, the search field |
+
+```specimen Radius
+```
 
 A radius is one of these, 0, or 50% for a dot. Write the token, not the
 length.
@@ -276,6 +313,9 @@ The shell's tokens, always on `--ease-premium`:
 | `--motion-enter` | 180ms | a popover or menu appearing |
 | `--motion-layout` | 300ms | a pane resizing, a tab opening or closing |
 
+```specimen Motion
+```
+
 The sidebar opens in 440ms with its glass on a small spring and closes in
 260ms (`data-sidebar-motion` on the root). Leaving is quicker than arriving.
 
@@ -305,6 +345,9 @@ answer (`no-reduced-motion`).
 ## Materials
 
 The window has three materials: the desk, paper and glass.
+
+```specimen Materials
+```
 
 ### Desk
 
@@ -560,7 +603,7 @@ remount it to change that phase, or the two chase each other.
 ## Primitives
 
 The parts every page is built from. Each lives in `apps/web/src/lib/` and
-appears in the gallery. When a primitive exists, a page uses it: a hand-made
+has a specimen on `/design`. When a primitive exists, a page uses it: a hand-made
 copy is a regression, however small.
 
 "Today" is what the code does now. "Decided" is where it is going, and the
@@ -589,6 +632,41 @@ gap is open work.
 
 Dead code to delete: `floating/Dropdown`, `floating/Tooltip`,
 `floating/composites/Select` and `UniversalPicker` have no users.
+
+### What they look like
+
+```specimen Button
+```
+
+```specimen IconButton
+```
+
+```specimen TextAction
+```
+
+```specimen Input
+```
+
+```specimen Switch
+```
+
+```specimen MenuItem
+```
+
+```specimen Modal
+```
+
+```specimen Card
+```
+
+```specimen Badge
+```
+
+```specimen StateBlock
+```
+
+```specimen TooltipLayer
+```
 
 **On touch screens, enlarge the control itself.** Under `(pointer: coarse)`
 a list row zeroes its own padding and the button inside it takes that

@@ -177,4 +177,10 @@
 	.choice.selected .name {
 		color: var(--color-foreground);
 	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.frame {
+			transition: none;
+		}
+	}
 </style>

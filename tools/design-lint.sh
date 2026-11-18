@@ -90,24 +90,9 @@ describe() {
     esac
 }
 
-# `routes/(public)/components/` is the design gallery: a workbench that renders
-# every primitive, every token and a contrast matrix. It is a TOOL, not a
-# product surface, and the page grammar governs pages. It legitimately needs
-# what the grammar forbids — mono for token names and hex values, sub-11px type
-# for a dense matrix, off-grid gaps in a spec table — and linting it would
-# force the one page that makes design debt visible to fake compliance.
-# Excluded whole rather than per-rule, because no rule applies to it.
-#
-# `serif-impossible` below depends on this exclusion for correctness, not only
-# for noise: that page renders "Faked bold" and "Faked italic" side by side as
-# SPECIMENS of the very thing the rule forbids, to show what a browser does
-# with a one-cut family. Flagging a demonstration of a bug as the bug is how a
-# lint teaches people to delete the explanation. If this exclusion is ever
-# narrowed, those two lines need `design-ok:` first.
 file_list() {
     find "$SRC" -type f \( -name '*.svelte' -o -name '*.css' \) \
         ! -name '*.test.ts' \
-        ! -path '*/routes/(public)/components/*' \
         | LC_ALL=C sort
 }
 
