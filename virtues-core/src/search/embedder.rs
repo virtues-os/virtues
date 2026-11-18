@@ -352,13 +352,20 @@ impl HttpEmbedder {
         {
             Ok(r) => r.status(),
             Err(e) => {
+                // The unit that serves the endpoint differs by profile, as in
+                // `virtues doctor`: a Dragon has no virtues-embed unit at all.
+                let unit = if crate::inference_report::is_dragon_profile() {
+                    "virtues-qnnd"
+                } else {
+                    "virtues-embed"
+                };
                 return Err(anyhow!(e)).with_context(|| {
                     format!(
                         "embedding endpoint unreachable at {base_url} — \
                          nothing accepted a connection; \
-                         check: systemctl status virtues-embed"
+                         check: systemctl status {unit}"
                     )
-                })
+                });
             }
         };
         if !health_status.is_success() {
