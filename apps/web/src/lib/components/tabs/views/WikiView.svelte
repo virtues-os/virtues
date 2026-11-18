@@ -710,6 +710,8 @@
 	/* Years: a plain index, set to the reading measure. */
 	.measure {
 		max-width: var(--page-reading);
+		width: 100%;
+		margin: 0 auto;
 		padding: 1.5rem 0;
 	}
 
