@@ -152,10 +152,12 @@
 	}
 
 	/* The strips end where the panes do, the window's air in from the
-	   edge. The last one's tabs stop short of the corner: its two buttons,
-	   the gap between them, and the gap before them. */
+	   edge. The last one's tabs stop short of the corner (HeaderCorner): its
+	   three buttons, the two 8px gaps between them, and the 8px gap before
+	   them. The tab bar paints above the corner, so a button it overlaps
+	   cannot be clicked; change this when the corner gains or loses one. */
 	.strip:last-child {
-		padding-right: calc(2 * var(--chrome-tab-h) + 16px);
+		padding-right: calc(3 * var(--chrome-tab-h) + 24px);
 	}
 
 	.corner {
