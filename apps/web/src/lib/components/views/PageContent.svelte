@@ -16,7 +16,7 @@
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import { identityOf } from "$lib/refs/identity.svelte";
-	import { clothFor } from "$lib/sidebar/pin-colors";
+	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
 	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
 	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -631,6 +631,23 @@
 		});
 	});
 
+	// An icon or color picked elsewhere (a tab, a pin, the sidebar) reaches
+	// the heading, so the page, its tab and its pin show one icon. Without
+	// this the heading kept the icon it loaded with, and the next title save
+	// sent that old icon back over the new one.
+	$effect(() => {
+		const id = pageData?.id;
+		if (!id) return;
+		const stored = pagesStore.pages.find((p) => p.id === id);
+		if (!stored) return;
+		const storedIcon = stored.icon ?? null;
+		const storedColor = stored.icon_color ?? null;
+		untrack(() => {
+			if (icon !== storedIcon) icon = storedIcon;
+			if (iconColor !== storedColor) iconColor = storedColor;
+		});
+	});
+
 	async function save() {
 		if (!pageData || saving) return;
 
@@ -738,7 +755,10 @@
 			// title, icon and cover together, and picking a color shouldn't drag
 			// a half-typed title to the server with it.
 			iconColor = value;
-			if (pageData) void pagesStore.savePage(pageData.id, { icon_color: value });
+			if (pageData) {
+				pagesStore.updatePageLocally(pageData.id, { icon_color: value });
+				void pagesStore.savePage(pageData.id, { icon_color: value });
+			}
 		}}
 		label={identityOf(`/page/${pageId}`).title}
 		autoColor={clothFor({ url: `/page/${pageId}` })}
@@ -897,7 +917,11 @@
 										title="Change icon"
 									>
 										{#if icon && icon.includes(":")}
-											<Icon {icon} width="28" />
+											<Icon
+												{icon}
+												width="28"
+												style={iconColor ? `color: ${accentCss(iconColor)}` : undefined}
+											/>
 										{:else if icon}
 											<span class="page-icon-emoji"
 												>{icon}</span
