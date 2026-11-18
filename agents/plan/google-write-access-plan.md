@@ -34,8 +34,8 @@ We looked for a way out and there is none for the app as it is built.
   Model calls go box → `api.virtues.com` → Vercel AI Gateway → provider
   (`routes/ai.rs`), and chat and suggestions put email subjects and previews in
   those calls.
-- **We already need it.** The app asks for `gmail.readonly` and
-  `drive.readonly` today, and both are restricted.
+- **We already need it.** The app asks for `gmail.readonly` today, and it is
+  restricted.
 
 The assessment costs less than its reputation. MailMate's developer posted
 Tier 2 quotes of about $540 to $1,800 a year at Google's negotiated rate, and
@@ -52,7 +52,6 @@ itself (`agents/plan/mcp-plan.md`).
 |---|---|---|---|
 | `gmail.readonly` | `gmail.modify` | Restricted | Google's table: "Read, compose, and send emails". That covers archiving, labels and drafts, so we do not also ask for `gmail.compose`. It cannot permanently delete. It does allow sending; we choose not to build a send tool (see "Tools"). |
 | `calendar.readonly` | `calendar.readonly` and `calendar.events` | Sensitive | `calendar.events` covers events only. The sync walks `users/me/calendarList` and the account lookup reads `calendars/primary`, and neither is covered by it, so `calendar.readonly` stays. Sensitive scopes need ordinary review, not the assessment. |
-| `drive.readonly` | dropped | Restricted | No applet syncs Drive. The only use is the account lookup in `virtues-core/src/api/source_auth.rs` (`account_lookup::GOOGLE`), which Gmail's profile and the primary calendar already cover. Google asks for a feature behind every restricted scope. |
 
 Checked against Google's Gmail and Calendar scope pages on 2026-10-31.
 
@@ -94,8 +93,8 @@ the proxy's client.
 - **7 of the 100-user cap are used.** Google counts the cap over the project's
   lifetime and never resets it.
 - **Data Access declares only `calendar.readonly`**, with no justification
-  and no video. `gmail.readonly` and `drive.readonly` are requested in
-  `oauth.rs` but not declared, which is why every Gmail sign-in counts against
+  and no video. `gmail.readonly` is requested in `oauth.rs` but not
+  declared, which is why every Gmail sign-in counts against
   the cap.
 - **The production client also lists `localhost` redirect URIs** (ports 5173,
   8000 and 9000). Move them to a separate development client before
