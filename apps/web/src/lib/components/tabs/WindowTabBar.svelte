@@ -29,6 +29,8 @@
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { routeToEntityId } from "$lib/utils/urlUtils";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
+	import TabHoverCard, { type TabCardAction } from "./TabHoverCard.svelte";
+	import { isPinned, togglePin } from "$lib/pins/pinAction";
 	import { cubicBezier, easePremium, motionMs } from "$lib/utils/motion";
 
 	const FLIP_DURATION_MS = 150;
@@ -548,6 +550,108 @@
 		};
 	}
 
+	/**
+	 * The card under a tab (TabHoverCard): the whole title and the tab's
+	 * actions. It waits CARD_DELAY_MS so passing along the strip shows
+	 * nothing. Once one has shown, the next tab's opens at once, as the
+	 * tooltip does. Leaving the tab gives you CARD_GRACE_MS to reach the card.
+	 */
+	const CARD_DELAY_MS = 700;
+	const CARD_GRACE_MS = 150;
+	let cardTabId = $state<string | null>(null);
+	let cardAnchor = $state<HTMLElement | null>(null);
+	let cardTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function armCard(e: PointerEvent, tabId: string) {
+		if (e.pointerType === "touch" || mobileLayout.isMobile) return;
+		if (dndManager.session || renamingTabId || contextMenu.visible) return;
+		const node = e.currentTarget as HTMLElement;
+		clearTimeout(cardTimer);
+		const open = () => {
+			cardTabId = tabId;
+			cardAnchor = node;
+		};
+		if (cardTabId) open();
+		else cardTimer = setTimeout(open, CARD_DELAY_MS);
+	}
+
+	function leaveCard() {
+		clearTimeout(cardTimer);
+		cardTimer = setTimeout(closeCard, cardTabId ? CARD_GRACE_MS : 0);
+	}
+
+	function keepCard() {
+		clearTimeout(cardTimer);
+	}
+
+	function closeCard() {
+		clearTimeout(cardTimer);
+		cardTimer = undefined;
+		cardTabId = null;
+		cardAnchor = null;
+	}
+
+	// A drag, a rename, a menu, or the tab closing takes the card away.
+	$effect(() => {
+		if (dndManager.session || renamingTabId || contextMenu.visible) closeCard();
+	});
+	$effect(() => {
+		if (cardTabId && !tabs.some((t) => t.id === cardTabId)) closeCard();
+	});
+	onMount(() => () => clearTimeout(cardTimer));
+
+	const cardTab = $derived(cardTabId ? tabs.find((t) => t.id === cardTabId) : undefined);
+
+	function cardActions(tab: Tab): TabCardAction[] {
+		const actions: TabCardAction[] = [];
+		const look = tabLook(tab);
+		const act = (run: () => void) => () => {
+			closeCard();
+			run();
+		};
+		if (tab.route) {
+			const pinned = isPinned(tab.route);
+			actions.push({
+				id: "pin",
+				label: pinned ? "Unpin" : "Pin",
+				icon: pinned ? "mynaui:pin-solid" : "mynaui:pin",
+				on: pinned,
+				run: act(() => {
+					togglePin({ url: tab.route, label: look.title, icon: tab.icon }).catch((err) =>
+						console.error("[WindowTabBar] pin failed:", err),
+					);
+				}),
+			});
+		}
+		if (!tab.pinned && ownedRef(tab.route ?? "")) {
+			actions.push({
+				id: "rename",
+				label: "Rename",
+				icon: "mynaui:edit",
+				run: act(() => {
+					renamingTabId = tab.id;
+					renameValue = look.title;
+				}),
+			});
+		}
+		actions.push({
+			id: "compact",
+			label: tab.pinned ? "Expand" : "Compact",
+			icon: "mynaui:move-horizontal",
+			run: act(() => windowShellStore.togglePin(tab.id)),
+		});
+		if (isSplitMode || tabs.length > 1) {
+			const toRight = paneId !== "right";
+			actions.push({
+				id: "move-across",
+				label: toRight ? "Move to right side" : "Move to left side",
+				icon: toRight ? "mynaui:panel-right" : "mynaui:panel-left",
+				run: act(() => windowShellStore.moveTabAcross(tab.id)),
+			});
+		}
+		return actions;
+	}
+
 	function handleRenameCancel() {
 		renamingTabId = null;
 		renameValue = "";
@@ -685,6 +789,9 @@
 				onoutroend={recountAfterFold}
 				onclick={() =>
 					tab.id !== renamingTabId && handleTabClick(tab.id)}
+				onpointerenter={(e) => armCard(e, tab.id)}
+				onpointerleave={leaveCard}
+				onpointerdown={closeCard}
 				ondblclick={(e) => handleDoubleClick(e, tab.id)}
 				onauxclick={(e) => handleMiddleClick(e, tab.id)}
 				oncontextmenu={(e) => handleContextMenu(e, tab.id)}
@@ -692,8 +799,6 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				data-tip={tab.id !== renamingTabId ? identity.title : ""}
-				data-tip-clipped
 				role="button"
 				tabindex="0"
 			>
@@ -788,6 +893,16 @@
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
 
+	{#if cardTab && cardAnchor}
+		<TabHoverCard
+			anchor={cardAnchor}
+			title={tabLook(cardTab).title}
+			actions={cardActions(cardTab)}
+			onenter={keepCard}
+			onleave={leaveCard}
+		/>
+	{/if}
+
 
 </div>
 
@@ -860,12 +975,14 @@
 		font-size: 13px;
 		cursor: pointer;
 		white-space: nowrap;
-		/* Sized to its label up to 200px, so the gaps between tabs are even
-		   and the + sits one gap after the last. Past that the tabs shrink
-		   together, down to their icon. */
-		max-width: 200px;
+		/* Every tab is the same width whatever its title, so the strip reads
+		   as a row of equal slots and a tab does not jump when its chat names
+		   itself. The title fades where it is cut and the hover card shows it
+		   whole. In a crowded strip the tabs shrink together, down to their
+		   icon. */
+		flex: 0 1 200px;
+		width: 200px;
 		min-width: 36px;
-		flex-shrink: 1;
 		/* Switching tabs moves the glass at once, as in a browser: the glass,
 		   its edge and the ink change in one frame (`.tab.active`). Only the
 		   hover wash fades. Opening and closing a tab are transitions
@@ -1018,6 +1135,8 @@
 	   in the window — a theme accent asserting meaning where the only fact is
 	   "this tab is short". Narrow is legible from being narrow. */
 	.tab.pinned {
+		flex: 0 0 auto;
+		width: auto;
 		min-width: auto;
 		max-width: none;
 		padding: 0 8px;
@@ -1158,6 +1277,11 @@
 	   but it can't be seen or pressed. */
 	.tab.renaming .tab-close {
 		visibility: hidden;
+	}
+
+	/* The field takes the label's room, so the hidden × stays at the end. */
+	.tab.renaming .rename-sizer {
+		flex: 1;
 	}
 
 	.tab.renaming,
