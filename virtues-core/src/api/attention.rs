@@ -124,12 +124,12 @@ async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
     items
 }
 
-/// `(applet id, name, run id, error)` for each applet that is on and whose
-/// latest finished run failed. It stays until a run succeeds, or the owner
-/// turns the applet off.
-async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Option<String>)>> {
+/// `(applet id, name, error)` for each applet that is on and whose latest
+/// finished run failed. It stays until a run succeeds, or the owner turns the
+/// applet off.
+async fn failed_applets(db: &Database) -> Result<Vec<(String, String, Option<String>)>> {
     Ok(sqlx::query_as(
-        "SELECT a.id, a.name, r.id, r.error FROM app_applets a \
+        "SELECT a.id, a.name, r.error FROM app_applets a \
          JOIN LATERAL (SELECT id, status, error FROM app_applet_runs \
                         WHERE applet_id = a.id AND status IN ('success', 'error', 'budget_exceeded') \
                         ORDER BY started_at DESC LIMIT 1) r ON true \
@@ -144,7 +144,9 @@ async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Op
 /// recur across applets. Anything else is quoted as the run reported it.
 fn plain_failure(error: &str) -> Option<&'static str> {
     let e = error.to_ascii_lowercase();
-    if e.contains("failed to spawn") {
+    if e.contains("embedding endpoint unreachable") {
+        Some("Your server's embedding service isn't answering")
+    } else if e.contains("failed to spawn") {
         Some("Its program is missing from your server")
     } else if e.contains("timed out") || e.contains("timeout") {
         Some("It ran out of time")
@@ -157,8 +159,8 @@ fn plain_failure(error: &str) -> Option<&'static str> {
     }
 }
 
-fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, String, Option<String>)>) {
-    for (id, name, run_id, error) in rows {
+fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Option<String>)>) {
+    for (id, name, error) in rows {
         let why = error
             .as_deref()
             .map(|e| match plain_failure(e) {
@@ -169,8 +171,11 @@ fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String
                 }
             })
             .filter(|e| !e.is_empty());
+        // Keyed by the applet, not the run: a scheduled applet that keeps
+        // failing makes a new run every few minutes, and the Mac app notifies
+        // each new key. One failure episode is one notification.
         items.push(AttentionItem {
-            key: format!("applet:{run_id}"),
+            key: format!("applet:{id}"),
             kind: "applet",
             title: format!("{name} didn't finish its last run"),
             body: match why {
@@ -777,7 +782,7 @@ mod tests {
     #[test]
     fn an_applet_item_opens_its_applet_and_says_what_happened() {
         let mut items = vec![];
-        failed_applet_items(&mut items, vec![("applet_user__tides".into(), "Tides".into(), "run_1".into(), Some("its SQL failed: relation does not exist\nmore".into()))]);
+        failed_applet_items(&mut items, vec![("applet_user__tides".into(), "Tides".into(), Some("its SQL failed: relation does not exist\nmore".into()))]);
         new_applet_items(&mut items, vec![
             ("applet_morning_examen".into(), "Morning examen".into(), "run_2".into(), Some("Tuesday, 3 March".into()), None),
             ("applet_user__garden".into(), "Garden".into(), "run_3".into(), None, Some("The tomatoes are ready.\nAnd more.".into())),
@@ -790,8 +795,14 @@ mod tests {
 
         // A failure that recurs across applets is said in plain words.
         let mut items = vec![];
-        failed_applet_items(&mut items, vec![("a".into(), "Weather sync".into(), "run_9".into(), Some("failed to spawn action command: No such file or directory (os error 2)".into()))]);
+        failed_applet_items(&mut items, vec![("a".into(), "Weather sync".into(), Some("failed to spawn action command: No such file or directory (os error 2)".into()))]);
         assert_eq!(items[0].body, "Its program is missing from your server. Open it to see what happened.");
+        assert_eq!(items[0].key, "applet:a", "one key per applet, so a run that fails again is not a new notice");
+
+        // The embedder's startup error names a Linux command; the notice says what is wrong.
+        let mut items = vec![];
+        failed_applet_items(&mut items, vec![("e".into(), "Embedding index".into(), Some("Error: embedding endpoint unreachable at http://127.0.0.1:18181 — nothing accepted a connection; check: systemctl status virtues-embed".into()))]);
+        assert_eq!(items[0].body, "Your server's embedding service isn't answering. Open it to see what happened.");
     }
 
     /// A scheduled run with something to read is in the Inbox until the
