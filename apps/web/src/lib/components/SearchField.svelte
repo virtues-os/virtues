@@ -12,7 +12,8 @@
 	ignores the app's type and color.
 -->
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
+	import type { HTMLInputAttributes } from 'svelte/elements';
 	import Icon from '$lib/components/Icon.svelte';
 	import '$lib/document/caret.css';
 
@@ -21,13 +22,24 @@
 		placeholder = 'Search',
 		label,
 		input = $bindable<HTMLInputElement | null>(null),
-	}: {
+		size = 'md',
+		onkeydown,
+		trailing,
+		...rest
+	}: Omit<HTMLInputAttributes, 'size' | 'value' | 'type' | 'onkeydown'> & {
 		value?: string;
 		placeholder?: string;
 		/** The field's accessible name. Defaults to the placeholder. */
 		label?: string;
 		/** The input element, for a consumer that moves focus into it. */
 		input?: HTMLInputElement | null;
+		/** `md` for a list's toolbar, `lg` for a page whose field is the page. */
+		size?: 'md' | 'lg';
+		/** Runs before the field's own keys. Call preventDefault to keep Esc. */
+		onkeydown?: (e: KeyboardEvent) => void;
+		/** Shown at the field's end in place of the clear button, such as a
+		    key hint. */
+		trailing?: Snippet;
 	} = $props();
 
 	/** Matches `caret.ts`: solid while moving, breathing after this long still. */
@@ -72,6 +84,11 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
+		onkeydown?.(e);
+		if (e.defaultPrevented) {
+			schedule();
+			return;
+		}
 		if (e.key === 'Escape' && value) {
 			e.preventDefault();
 			e.stopPropagation();
@@ -111,9 +128,10 @@
 	const showBar = $derived(focused && collapsed && !composing);
 </script>
 
-<div class="search-field doc-caret-host">
-	<Icon icon="mynaui:search" width="16" class="search-field-icon" />
+<div class="search-field doc-caret-host" class:lg={size === 'lg'}>
+	<Icon icon="mynaui:search" width={size === 'lg' ? '20' : '16'} class="search-field-icon" />
 	<input
+		{...rest}
 		type="text"
 		bind:this={input}
 		bind:value
@@ -152,7 +170,9 @@
 		style:transform="translate({x}px, {y}px)"
 		ontransitionend={() => (arriving = false)}
 	></div>
-	{#if value}
+	{#if trailing}
+		<span class="search-field-trailing">{@render trailing()}</span>
+	{:else if value}
 		<button type="button" class="search-field-clear" onclick={clear} aria-label="Clear search">
 			<Icon icon="mynaui:x" width="14" />
 		</button>
@@ -221,7 +241,7 @@
 		height: 1.5rem;
 		padding: 0;
 		border: 0;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
@@ -229,6 +249,27 @@
 	.search-field-clear:hover {
 		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground);
+	}
+	.search-field-trailing {
+		position: absolute;
+		right: 1rem;
+		display: flex;
+		align-items: center;
+		pointer-events: none;
+	}
+	/* The large size: a page whose field is the point of the page. */
+	.search-field.lg {
+		height: 52px;
+	}
+	.search-field.lg :global(.search-field-icon) {
+		left: 1rem;
+	}
+	.search-field.lg .search-field-input {
+		padding: 0 4.5rem 0 3rem;
+		font-size: 1rem;
+	}
+	.search-field.lg .search-field-mirror {
+		font-size: 1rem;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.search-field {

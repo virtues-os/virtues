@@ -91,7 +91,7 @@ export function getNamespace(url: string): string | null {
 /**
  * Check if a URL is an entity detail page.
  * e.g., '/person/person_abc' → true
- * e.g., '/person' → false (list page)
+ * e.g., '/person' → false
  * e.g., '/virtues/account' → false (system page)
  */
 export function isEntityDetailUrl(url: string): boolean {
@@ -100,7 +100,7 @@ export function isEntityDetailUrl(url: string): boolean {
 
 /**
  * Check if a URL is an entity list page.
- * e.g., '/person' → true
+ * e.g., '/person' → true (it opens the wiki's index of people)
  * e.g., '/person/person_abc' → false
  */
 export function isEntityListUrl(url: string): boolean {

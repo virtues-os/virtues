@@ -2056,7 +2056,10 @@
 		gap: 0.5rem;
 		border-radius: var(--radius-md);
 	}
-	.list-item:hover {
+	/* The row with keyboard focus takes the hover tint: there are no focus
+	   rings, so the tint is how you see where you are. */
+	.list-item:hover,
+	.list-item:has(.list-row:focus-visible) {
 		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 	.list-row {

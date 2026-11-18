@@ -16,6 +16,7 @@
 	import IntroductionSection from './IntroductionSection.svelte';
 	import ChangedLately from './ChangedLately.svelte';
 	import DraftCard from './DraftCard.svelte';
+	import SearchField from '$lib/components/SearchField.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
 	import { isAppleKeyboard } from '$lib/utils/platform';
 	import { LANDING, matchSettings, settingPlace, titleOf, type Setting } from '$lib/settings';
@@ -130,28 +131,24 @@
 
 <div class="page">
 	<h1>What do you want to change?</h1>
-	<label class="search" class:typing>
-		<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20">
-			<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" d="M19 11.5a7.5 7.5 0 1 1-15 0a7.5 7.5 0 0 1 15 0m-2.107 5.42l3.08 3.08" />
-		</svg>
-		<input
-			type="search"
-			bind:value={query}
-			placeholder="Find a setting, or say what you want changed"
-			aria-label="Search settings"
-			role="combobox"
-			aria-expanded={typing && !draftText}
-			aria-controls={typing && !draftText ? 'settings-results' : undefined}
-			aria-activedescendant={picked >= 0 ? `settings-result-${picked}` : undefined}
-			aria-autocomplete="list"
-			autocomplete="off"
-			spellcheck="false"
-			onkeydown={onSearchKey}
-		/>
-		<!-- ⌘ , opens Settings from anywhere (the shortcut lives with the
-		     others in UnifiedSidebar); once you type, Esc clears. -->
-		{#if typing}<kbd>Esc</kbd>{:else}<kbd>{isAppleKeyboard ? '⌘ ,' : 'Ctrl ,'}</kbd>{/if}
-	</label>
+	<!-- ⌘ , opens Settings from anywhere (the shortcut lives with the
+	     others in UnifiedSidebar); once you type, Esc clears. -->
+	<SearchField
+		bind:value={query}
+		size="lg"
+		placeholder="Find a setting, or say what you want changed"
+		label="Search settings"
+		role="combobox"
+		aria-expanded={typing && !draftText}
+		aria-controls={typing && !draftText ? 'settings-results' : undefined}
+		aria-activedescendant={picked >= 0 ? `settings-result-${picked}` : undefined}
+		aria-autocomplete="list"
+		onkeydown={onSearchKey}
+	>
+		{#snippet trailing()}
+			{#if typing}<kbd>Esc</kbd>{:else}<kbd>{isAppleKeyboard ? '⌘ ,' : 'Ctrl ,'}</kbd>{/if}
+		{/snippet}
+	</SearchField>
 
 	{#if typing && !draftText}
 		<p class="hint">↑ ↓ to pick a setting, and Return to open it. Or write what you want, like “keep answers short”, and Return asks {spoken} to draft it.</p>
@@ -234,38 +231,6 @@
 		font-weight: 400;
 		line-height: 1.1;
 		margin: 0 0 20px;
-	}
-
-	.search {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		height: 52px;
-		padding: 0 16px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		color: var(--color-foreground-muted);
-		transition: border-color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.search:focus-within {
-		border-color: var(--color-border-focus);
-	}
-
-	.search input {
-		flex: 1;
-		min-width: 0;
-		border: none;
-		outline: none;
-		background: none;
-		font: inherit;
-		font-size: 16px;
-		color: var(--color-foreground);
-	}
-
-	/* Esc clears it, and the hint beside the field says so. */
-	.search input::-webkit-search-cancel-button {
-		display: none;
 	}
 
 	kbd {
@@ -388,7 +353,6 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.search,
 		.link {
 			transition: none;
 		}

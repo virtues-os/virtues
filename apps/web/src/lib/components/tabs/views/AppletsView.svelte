@@ -17,6 +17,7 @@
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import ListRow from '$lib/components/datagrid/ListRow.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
 	import { runApplet, type Applet } from '$lib/api/client';
@@ -69,7 +70,11 @@
 			return reason ?? `Last run failed ${relativeTime(a.last_run.started_at)}`;
 		}
 		if (a.enabled && a.next_due_at && Date.now() - new Date(a.next_due_at).getTime() > OVERDUE_GRACE_MS) {
-			return `Was due ${relativeTime(a.next_due_at)} and hasn't run`;
+			// Says what happened, not that something is late.
+			const last = a.last_run?.started_at;
+			if (!last) return "Hasn't run yet";
+			const since = formatRelativeTimestamp(last);
+			return `Hasn't run since ${since === 'Yesterday' ? 'yesterday' : since}`;
 		}
 		return null;
 	}
@@ -177,14 +182,14 @@
 	>
 		{#snippet listRow(a: Applet)}
 			{@const trouble = problem(a)}
-			<span class="row">
-				<span class="row-icon" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={16} bare /></span>
-				<span class="row-text">
-					<span class="row-title">{a.name}</span>
-					<span class="row-line" class:problem={!!trouble}>{trouble ?? a.description ?? describeTriggers(a)}</span>
-				</span>
-				<span class="row-date">{when(a)}</span>
-			</span>
+			<ListRow
+				title={a.name}
+				line={trouble ?? a.description ?? describeTriggers(a)}
+				problem={!!trouble}
+				note={when(a)}
+			>
+				{#snippet lead()}<AtlasIcon name={appletGlyph(a)} size={16} bare />{/snippet}
+			</ListRow>
 		{/snippet}
 
 		{#snippet rowActions(a: Applet)}
@@ -211,54 +216,6 @@
 <NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
-	.row {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.875rem;
-	}
-	.row-icon {
-		flex: 0 0 16px;
-		margin-top: 0.25rem;
-		color: var(--color-foreground-muted);
-	}
-	.row-text {
-		flex: 1 1 auto;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.row-title,
-	.row-line {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row-title {
-		font-family: var(--font-serif);
-		font-size: 1.125rem;
-		line-height: 1.3;
-		color: var(--color-foreground);
-	}
-	:global(.list-item:hover) .row-title {
-		color: var(--color-foreground-muted);
-	}
-	.row-line {
-		font-family: var(--font-serif);
-		font-size: 1rem;
-		line-height: 1.45;
-		color: var(--color-foreground-muted);
-	}
-	.row-line.problem {
-		color: var(--color-error);
-	}
-	.row-date {
-		flex: 0 0 auto;
-		margin-top: 0.25rem;
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-muted);
-	}
 	.error-msg {
 		margin: 0 0 1rem;
 		font-size: 0.875rem;

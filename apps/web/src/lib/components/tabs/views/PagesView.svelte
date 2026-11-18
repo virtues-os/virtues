@@ -9,7 +9,7 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
-	import Icon from "$lib/components/Icon.svelte";
+	import ListRow from "$lib/components/datagrid/ListRow.svelte";
 	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 	import UniversalDataGrid, { type Column, type GroupInfo } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
@@ -219,16 +219,12 @@
 		{/snippet}
 
 		{#snippet listRow(page: PageSummary)}
-			<span class="row">
-				<span class="row-icon"><Icon icon={page.icon || "mynaui:file-text"} width="16" /></span>
-				<span class="row-text">
-					<span class="row-title">{displayTitle(page)}</span>
-					{#if displayExcerpt(page)}
-						<span class="row-excerpt">{displayExcerpt(page)}</span>
-					{/if}
-				</span>
-				<span class="row-date">{formatRelativeTimestamp(page.updated_at)}</span>
-			</span>
+			<ListRow
+				icon={page.icon || "mynaui:file-text"}
+				title={displayTitle(page)}
+				line={displayExcerpt(page)}
+				note={formatRelativeTimestamp(page.updated_at)}
+			/>
 		{/snippet}
 	</UniversalDataGrid>
 </Page>
@@ -256,49 +252,4 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.row {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.875rem;
-	}
-	:global(.list-row:hover) .row-title {
-		color: var(--color-foreground-muted);
-	}
-	.row-icon {
-		flex: 0 0 16px;
-		margin-top: 0.25rem;
-		color: var(--color-foreground-muted);
-	}
-	.row-text {
-		flex: 1 1 auto;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.row-title {
-		font-family: var(--font-serif);
-		font-size: 1.125rem;
-		line-height: 1.3;
-		color: var(--color-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row-excerpt {
-		font-family: var(--font-serif);
-		font-size: 1rem;
-		line-height: 1.45;
-		color: var(--color-foreground-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row-date {
-		flex: 0 0 auto;
-		margin-top: 0.25rem;
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-muted);
-	}
 </style>

@@ -31,7 +31,6 @@
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { onMount, untrack } from 'svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import { Button } from '$lib';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { ledeSentence } from '$lib/wiki/lede';
@@ -58,6 +57,7 @@
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 	import WikiFront from '$lib/components/wiki/WikiFront.svelte';
+	import ListRow from '$lib/components/datagrid/ListRow.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -564,18 +564,12 @@
 						{/snippet}
 
 						{#snippet listRow(entity: UnifiedEntity)}
-							<span class="row">
-								<span class="row-icon"><Icon icon={typeConfig[entity.entityType].icon} width="16" /></span>
-								<span class="row-text">
-									<span class="row-title">{entity.name}</span>
-									{#if detailLine(entity)}
-										<span class="row-line">{detailLine(entity)}</span>
-									{/if}
-								</span>
-								{#if entity.isSelf}
-									<span class="row-note">You</span>
-								{/if}
-							</span>
+							<ListRow
+								icon={typeConfig[entity.entityType].icon}
+								title={entity.name}
+								line={detailLine(entity)}
+								note={entity.isSelf ? 'You' : null}
+							/>
 						{/snippet}
 					</UniversalDataGrid>
 				{/key}
@@ -739,49 +733,4 @@
 		text-decoration: underline;
 	}
 
-	/* Entity rows: the same anatomy as the Pages and Applets lists. */
-	.row {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.875rem;
-	}
-	:global(.list-row:hover) .row-title {
-		color: var(--color-foreground-muted);
-	}
-	.row-icon {
-		flex: 0 0 16px;
-		margin-top: 0.25rem;
-		color: var(--color-foreground-muted);
-	}
-	.row-text {
-		flex: 1 1 auto;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.row-title,
-	.row-line {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row-title {
-		font-family: var(--font-serif);
-		font-size: 1.125rem;
-		line-height: 1.3;
-		color: var(--color-foreground);
-	}
-	.row-line {
-		font-family: var(--font-serif);
-		font-size: 1rem;
-		line-height: 1.45;
-		color: var(--color-foreground-muted);
-	}
-	.row-note {
-		flex: 0 0 auto;
-		margin-top: 0.25rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-	}
 </style>
