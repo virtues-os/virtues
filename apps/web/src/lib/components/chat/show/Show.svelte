@@ -10,8 +10,9 @@
 	and no ground of its own, a chart at the full width of the column.
 -->
 <script lang="ts">
-	import { isShowOutput, type ShowOutput } from "./show";
+	import { isKitMark, isShowOutput, type ShowOutput } from "./show";
 	import ShowChart from "./ShowChart.svelte";
+	import ShowMark from "./ShowMark.svelte";
 	import ShowNumbers from "./ShowNumbers.svelte";
 	import ShowTable from "./ShowTable.svelte";
 	import ShowMap from "./ShowMap.svelte";
@@ -53,8 +54,10 @@
 
 		{#if !out}
 			<div class="drawing" class:short={kind === "numbers"}></div>
+		{:else if out.kind === "chart" && isKitMark(out.mark)}
+			<ShowMark out={{ ...out, mark: out.mark }} {onOpenRows} />
 		{:else if out.kind === "chart"}
-			<ShowChart {columns} {rows} mark={out.mark ?? "bar"} />
+			<ShowChart {columns} {rows} mark={out.mark === "line" ? "line" : "bar"} />
 		{:else if out.kind === "numbers" && rows[0]}
 			<ShowNumbers {columns} row={rows[0]} />
 		{:else if out.kind === "table"}

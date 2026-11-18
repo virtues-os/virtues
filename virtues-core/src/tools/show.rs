@@ -39,7 +39,30 @@ struct ShowArgs {
     mark: Option<String>,
     #[serde(default)]
     options: Option<Vec<String>>,
+    /// interrupted: the date of the change, and the change in a few words.
+    #[serde(default)]
+    split_at: Option<String>,
+    #[serde(default)]
+    split_label: Option<String>,
+    /// cumulative: what a step is (day, weekday or hour), and the unit.
+    #[serde(default)]
+    step_kind: Option<String>,
+    #[serde(default)]
+    unit: Option<String>,
 }
+
+/// The call fields a chart mark reads beyond its rows, trimmed.
+#[derive(Debug, Default, Clone)]
+struct ChartFields {
+    split_at: Option<String>,
+    split_label: Option<String>,
+    step_kind: Option<String>,
+    unit: Option<String>,
+}
+
+const MAX_STATES: usize = 6;
+const MAX_UNIT_CHARS: usize = 12;
+const MAX_SPLIT_LABEL_CHARS: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -106,6 +129,12 @@ pub async fn execute(
     let trimmed = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let purpose = trimmed(&args.purpose).map(|p| purpose_named(&p)).transpose()?;
     let named_mark = trimmed(&args.mark);
+    let fields = ChartFields {
+        split_at: trimmed(&args.split_at),
+        split_label: trimmed(&args.split_label),
+        step_kind: trimmed(&args.step_kind),
+        unit: trimmed(&args.unit),
+    };
     let kind = match trimmed(&args.kind) {
         Some(k) => Kind::parse(&k)?,
         None => kind_before_query(purpose, named_mark.as_deref())?,
@@ -133,8 +162,13 @@ pub async fn execute(
     // A chart's mark is settled before the query when the call names it, and
     // picked from the columns after it when only the purpose is given.
     let named_chart_mark = match (kind, named_mark.as_deref()) {
-        (Kind::Chart, Some(m @ ("bar" | "line"))) => Some(m),
-        (Kind::Chart, Some(other)) => return Err(invalid(format!("mark '{other}' is not one: use bar or line"))),
+        (Kind::Chart, Some(m)) => match chart_marks::mark(m) {
+            Some(cm) if cm.kind == "chart" => Some(cm.mark),
+            _ => {
+                let known: Vec<&str> = chart_marks::MARKS.iter().filter(|m| m.kind == "chart").map(|m| m.mark).collect();
+                return Err(invalid(format!("mark '{m}' is not a chart mark: use one of {}", known.join(", "))));
+            }
+        },
         _ => None,
     };
 
@@ -159,15 +193,21 @@ pub async fn execute(
 
     let (columns, rows) = canonical_columns(kind, columns, rows);
     let drawn = match (kind, named_chart_mark) {
-        (Kind::Chart, Some(m)) => chart_marks::mark(m).expect("bar and line are chart marks"),
-        (Kind::Chart, None) => pick_chart_mark(purpose, &columns, &rows),
+        (Kind::Chart, Some(m)) => chart_marks::mark(m).expect("a named chart mark is in the table"),
+        (Kind::Chart, None) => pick_chart_mark(purpose, &fields, &columns, &rows),
         _ => candidates[0],
     };
-    let mut shaped = shape(kind, drawn.max_rows, &columns, rows)?;
-    shaped.insert("title".into(), json!(title));
+    let (columns, rows) = mark_columns(drawn.mark, columns, rows);
+    let mut shaped = if drawn.mark == "states" {
+        shape_states(drawn.max_rows, &columns, rows)?
+    } else {
+        shape(kind, drawn.max_rows, &columns, rows)?
+    };
     if kind == Kind::Chart {
+        check_mark(drawn.mark, &fields, &columns, &mut shaped)?;
         shaped.insert("mark".into(), json!(drawn.mark));
     }
+    shaped.insert("title".into(), json!(title));
     if let Some(p) = purpose {
         shaped.insert("purpose".into(), json!(p.id));
     }
@@ -217,8 +257,9 @@ fn kind_before_query(purpose: Option<&chart_marks::ChartPurpose>, named_mark: Op
 }
 
 /// The marks a call may end up drawing with: the named chart mark, else the
-/// purpose's marks of this kind, else every mark of this kind. Never empty for
-/// a kind that takes sql (`every_kind_with_sql_has_a_mark`).
+/// purpose's marks of this kind, else bar for a chart (what the picker draws
+/// with no purpose) and the kind's mark for the rest. Never empty for a kind
+/// that takes sql (`every_kind_with_sql_has_a_mark`).
 fn marks_for_call(
     kind: Kind,
     purpose: Option<&chart_marks::ChartPurpose>,
@@ -234,23 +275,40 @@ fn marks_for_call(
             return marks;
         }
     }
+    if kind == Kind::Chart {
+        return vec![chart_marks::mark("bar").expect("bar is a chart mark")];
+    }
     chart_marks::MARKS.iter().filter(of_kind).collect()
 }
 
 /// The chart mark for a call that gave no mark: the first of the purpose's
 /// chart marks whose columns fit, and bar when nothing else does or the call
 /// gave no purpose. Pure, so each pick is tested without a database.
-fn pick_chart_mark(purpose: Option<&chart_marks::ChartPurpose>, columns: &[String], rows: &[Value]) -> &'static ChartMark {
+fn pick_chart_mark(
+    purpose: Option<&chart_marks::ChartPurpose>,
+    fields: &ChartFields,
+    columns: &[String],
+    rows: &[Value],
+) -> &'static ChartMark {
     let bar = chart_marks::mark("bar").expect("bar is a chart mark");
     let Some(p) = purpose else { return bar };
-    chart_marks::marks_for(p.id)
-        .filter(|m| m.kind == "chart")
-        .find(|m| chart_fits(m.mark, columns, rows))
-        .unwrap_or(bar)
+    let marks: Vec<_> = chart_marks::marks_for(p.id).filter(|m| m.kind == "chart").collect();
+    // The purpose's only mark is drawn even when its columns are off, so its
+    // own refusal names the fix; bar would draw something the call didn't ask for.
+    if let [only] = marks.as_slice() {
+        return only;
+    }
+    marks.into_iter().find(|m| chart_fits(m.mark, fields, columns, rows)).unwrap_or(bar)
 }
 
-fn chart_fits(mark: &str, columns: &[String], rows: &[Value]) -> bool {
+fn chart_fits(mark: &str, fields: &ChartFields, columns: &[String], rows: &[Value]) -> bool {
     match mark {
+        // Only a literal step column or step_kind: an ordinary `day, steps`
+        // query is a bar or a line, though `day` is a step's alias once named.
+        "cumulative" => fields.step_kind.is_some() || columns.iter().any(|c| c == "step"),
+        "interrupted" => fields.split_at.is_some(),
+        "baseline" => has_column(mark, "usual_low", columns) && has_column(mark, "usual_high", columns),
+        "states" => ["day", "start", "end", "state"].iter().all(|c| has_column(mark, c, columns)),
         // A line runs over real time: every value in the first column is a
         // time or a date, and at least one is there.
         "line" => columns.first().is_some_and(|x| {
@@ -260,6 +318,205 @@ fn chart_fits(mark: &str, columns: &[String], rows: &[Value]) -> bool {
         "bar" => true,
         _ => false,
     }
+}
+
+/// The columns a chart mark reads by name, and the names a model writes for
+/// them first. Applied only once the mark is chosen, so a bar chart's
+/// `date` column keeps the label the owner reads.
+const MARK_ALIASES: &[(&str, &str, &[&str])] = &[
+    ("cumulative", "step", &["day"]),
+    ("baseline", "usual_low", &["low"]),
+    ("baseline", "usual_high", &["high"]),
+    ("states", "day", &["date"]),
+    ("states", "start", &["started_at"]),
+    ("states", "end", &["ended_at"]),
+    ("states", "state", &["what", "place", "label"]),
+];
+
+fn has_column(mark: &str, want: &str, columns: &[String]) -> bool {
+    columns.iter().any(|c| c == want)
+        || MARK_ALIASES
+            .iter()
+            .filter(|(m, w, _)| *m == mark && *w == want)
+            .any(|(_, _, aliases)| columns.iter().any(|c| aliases.contains(&c.as_str())))
+}
+
+/// Rename the first alias present to the mark's column, unless the column is
+/// already there.
+fn mark_columns(mark: &str, mut columns: Vec<String>, mut rows: Vec<Value>) -> (Vec<String>, Vec<Value>) {
+    for (m, want, aliases) in MARK_ALIASES {
+        if *m != mark || columns.iter().any(|c| c == want) {
+            continue;
+        }
+        let Some(at) = columns.iter().position(|c| aliases.contains(&c.as_str())) else { continue };
+        let from = std::mem::replace(&mut columns[at], want.to_string());
+        for row in rows.iter_mut() {
+            if let Some(obj) = row.as_object_mut() {
+                if let Some(v) = obj.remove(&from) {
+                    obj.insert(want.to_string(), v);
+                }
+            }
+        }
+    }
+    (columns, rows)
+}
+
+/// The checks a chart mark makes beyond the bar and line ones `shape` already
+/// ran, and the call fields it carries to the client. Pure.
+fn check_mark(mark: &str, fields: &ChartFields, columns: &[String], out: &mut Map<String, Value>) -> Result<(), ToolError> {
+    match mark {
+        "cumulative" => {
+            let step_kind = fields.step_kind.as_deref().unwrap_or("day");
+            let range = match step_kind {
+                "day" => 1..=31,
+                "weekday" => 1..=7,
+                "hour" => 0..=23,
+                other => {
+                    return Err(invalid(format!("step_kind '{other}' is not one: use day, weekday or hour")))
+                }
+            };
+            if columns.len() != 3 {
+                return Err(invalid(format!(
+                    "a cumulative comparison is step, then this period's running total and the last one's; \
+                     this query has {} columns",
+                    columns.len()
+                )));
+            }
+            if let Some(u) = &fields.unit {
+                if u.chars().count() > MAX_UNIT_CHARS {
+                    return Err(invalid(format!("unit is a word of at most {MAX_UNIT_CHARS} characters, such as USD or steps")));
+                }
+            }
+            let rows = out["rows"].as_array().cloned().unwrap_or_default();
+            let mut seen = Vec::new();
+            for row in &rows {
+                let step = row.get(&columns[0]).and_then(|v| v.as_f64().or_else(|| v.as_str()?.trim().parse().ok()));
+                let Some(step) = step.filter(|s| s.fract() == 0.0 && range.contains(&(*s as i64))) else {
+                    return Err(invalid(format!(
+                        "each step must be a whole number from {} to {} for step_kind {step_kind}; one row's is {}",
+                        range.start(),
+                        range.end(),
+                        row.get(&columns[0]).unwrap_or(&Value::Null)
+                    )));
+                };
+                if seen.contains(&(step as i64)) {
+                    return Err(invalid(format!("step {step} appears twice; give one row per step")));
+                }
+                seen.push(step as i64);
+                for total in &columns[1..] {
+                    if row.get(total).and_then(Value::as_f64).is_some_and(|v| v < 0.0) {
+                        return Err(invalid(format!("\"{total}\" is a running total and can't go below zero")));
+                    }
+                }
+            }
+            out.insert("step_kind".into(), json!(step_kind));
+            if let Some(u) = &fields.unit {
+                out.insert("unit".into(), json!(u));
+            }
+        }
+        "interrupted" => {
+            let (Some(at), Some(label)) = (&fields.split_at, &fields.split_label) else {
+                return Err(invalid(
+                    "an interrupted time series needs split_at (the date of the change) and split_label \
+                     (the change in a few words)",
+                ));
+            };
+            if label.chars().count() > MAX_SPLIT_LABEL_CHARS {
+                return Err(invalid(format!("split_label is a few words, at most {MAX_SPLIT_LABEL_CHARS} characters")));
+            }
+            if columns.len() != 2 {
+                return Err(invalid(format!(
+                    "an interrupted time series is the x axis, then one value; this query has {} columns",
+                    columns.len()
+                )));
+            }
+            out.insert("split_at".into(), json!(at));
+            out.insert("split_label".into(), json!(label));
+        }
+        "baseline" => {
+            if !(columns.iter().any(|c| c == "usual_low") && columns.iter().any(|c| c == "usual_high")) || columns.len() != 4 {
+                return Err(invalid(format!(
+                    "a baseline band is the x axis, the value, then usual_low and usual_high; this query returns {}",
+                    columns.join(", ")
+                )));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A state timeline's rows: day, start, end and state for each stretch.
+/// `shape`'s bar and line checks don't fit it, since three of its four
+/// columns are times and names. Pure.
+fn shape_states(max_rows: usize, columns: &[String], rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+    rows_and_names(columns, &rows)?;
+    if rows.len() > max_rows {
+        return Err(invalid(format!(
+            "a state timeline draws at most {max_rows} stretches; narrow the window or merge short ones"
+        )));
+    }
+    if let Some(missing) = ["day", "start", "end", "state"].iter().find(|c| !columns.iter().any(|have| have == *c)) {
+        return Err(invalid(format!(
+            "a state timeline needs day, start, end and state columns (date, started_at, ended_at and \
+             what work too); {missing} is missing from {}",
+            columns.join(", ")
+        )));
+    }
+    let mut states: Vec<&str> = Vec::new();
+    for row in &rows {
+        for c in ["day", "start", "end"] {
+            match row[c].as_str() {
+                Some(s) if is_time(s) || is_clock(s) => {}
+                other => {
+                    return Err(invalid(format!(
+                        "{c} must be a timestamp, a date or a time of day, and one row's is {}",
+                        other.map_or_else(|| row[c].to_string(), |s| format!("'{s}'"))
+                    )))
+                }
+            }
+        }
+        let state = row["state"].as_str().unwrap_or("");
+        if !states.contains(&state) {
+            states.push(state);
+        }
+    }
+    if states.len() > MAX_STATES {
+        return Err(invalid(format!(
+            "a state timeline tells at most {MAX_STATES} states apart, and this query has {}; \
+             group the rest into one (Elsewhere)",
+            states.len()
+        )));
+    }
+    let mut out = Map::new();
+    out.insert("kind".into(), json!("chart"));
+    out.insert("columns".into(), json!(columns));
+    out.insert("row_count".into(), json!(rows.len()));
+    out.insert("rows".into(), Value::Array(rows));
+    Ok(out)
+}
+
+/// What every drawn figure needs: some rows, and no two columns with one name.
+fn rows_and_names(columns: &[String], rows: &[Value]) -> Result<(), ToolError> {
+    if rows.is_empty() {
+        return Err(invalid(
+            "the query returned no rows, so there is nothing to draw. Say so in words, \
+             naming the window you looked at, rather than showing an empty figure",
+        ));
+    }
+    // Each row is a JSON object, so two columns with one name are one value:
+    // `SELECT a.title, b.title` would draw the second twice.
+    if let Some(dup) = columns.iter().enumerate().find_map(|(i, c)| columns[..i].contains(c).then_some(c)) {
+        return Err(invalid(format!(
+            "two columns are both named \"{dup}\"; alias them apart (AS \"...\")"
+        )));
+    }
+    Ok(())
+}
+
+/// `HH:MM` or `HH:MM:SS`, as a `time` column arrives.
+fn is_clock(s: &str) -> bool {
+    chrono::NaiveTime::parse_from_str(s, "%H:%M:%S%.f").is_ok() || chrono::NaiveTime::parse_from_str(s, "%H:%M").is_ok()
 }
 
 /// The columns a map and a timeline read, and the table names a model writes
@@ -312,19 +569,7 @@ fn choices(options: Vec<String>) -> Result<Vec<String>, ToolError> {
 /// `max_rows` is the drawn mark's (`ChartMark::max_rows`). Pure, so every
 /// refusal is tested without a database.
 fn shape(kind: Kind, max_rows: usize, columns: &[String], mut rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
-    if rows.is_empty() {
-        return Err(invalid(
-            "the query returned no rows, so there is nothing to draw. Say so in words, \
-             naming the window you looked at, rather than showing an empty figure",
-        ));
-    }
-    // Each row is a JSON object, so two columns with one name are one value:
-    // `SELECT a.title, b.title` would draw the second twice.
-    if let Some(dup) = columns.iter().enumerate().find_map(|(i, c)| columns[..i].contains(c).then_some(c)) {
-        return Err(invalid(format!(
-            "two columns are both named \"{dup}\"; alias them apart (AS \"...\")"
-        )));
-    }
+    rows_and_names(columns, &rows)?;
     let more = rows.len() > max_rows;
     let mut out = Map::new();
     out.insert("kind".into(), json!(kind.name()));
@@ -672,8 +917,8 @@ mod tests {
         let dated = vec![json!({ "Week": "2026-09-01", "Steps": 1 }), json!({ "Week": "2026-09-08", "Steps": 2 })];
         let labelled = vec![json!({ "Day": "Mon", "Steps": 1 }), json!({ "Day": "Tue", "Steps": 2 })];
         let p = purpose("change_over_time");
-        assert_eq!(pick_chart_mark(p, &cols(&["Week", "Steps"]), &dated).mark, "line");
-        assert_eq!(pick_chart_mark(p, &cols(&["Day", "Steps"]), &labelled).mark, "bar");
+        assert_eq!(pick_chart_mark(p, &ChartFields::default(), &cols(&["Week", "Steps"]), &dated).mark, "line");
+        assert_eq!(pick_chart_mark(p, &ChartFields::default(), &cols(&["Day", "Steps"]), &labelled).mark, "bar");
     }
 
     #[test]
@@ -681,15 +926,15 @@ mod tests {
         let mixed = vec![json!({ "x": "2026-09-01", "y": 1 }), json!({ "x": "Later", "y": 2 })];
         let empty = vec![json!({ "x": null, "y": 1 })];
         let p = purpose("change_over_time");
-        assert_eq!(pick_chart_mark(p, &cols(&["x", "y"]), &mixed).mark, "bar");
-        assert_eq!(pick_chart_mark(p, &cols(&["x", "y"]), &empty).mark, "bar");
+        assert_eq!(pick_chart_mark(p, &ChartFields::default(), &cols(&["x", "y"]), &mixed).mark, "bar");
+        assert_eq!(pick_chart_mark(p, &ChartFields::default(), &cols(&["x", "y"]), &empty).mark, "bar");
     }
 
     #[test]
     fn compare_groups_and_no_purpose_draw_bars_even_over_dates() {
         let dated = vec![json!({ "Week": "2026-09-01", "Steps": 1 }), json!({ "Week": "2026-09-08", "Steps": 2 })];
-        assert_eq!(pick_chart_mark(purpose("compare_groups"), &cols(&["Week", "Steps"]), &dated).mark, "bar");
-        assert_eq!(pick_chart_mark(None, &cols(&["Week", "Steps"]), &dated).mark, "bar");
+        assert_eq!(pick_chart_mark(purpose("compare_groups"), &ChartFields::default(), &cols(&["Week", "Steps"]), &dated).mark, "bar");
+        assert_eq!(pick_chart_mark(None, &ChartFields::default(), &cols(&["Week", "Steps"]), &dated).mark, "bar");
     }
 
     #[test]
@@ -748,8 +993,105 @@ mod tests {
     #[test]
     fn an_unknown_purpose_or_mark_lists_the_real_ones() {
         let Err(ToolError::InvalidParameters(m)) = purpose_named("vibes") else { panic!() };
-        assert!(m.contains("change_over_time, compare_groups"), "{m}");
+        assert!(m.contains("change_over_time, before_and_after"), "{m}");
         let Err(ToolError::InvalidParameters(m)) = kind_before_query(None, Some("pie")) else { panic!() };
         assert!(m.contains("line, bar"), "{m}");
+    }
+
+    fn fields(f: impl FnOnce(&mut ChartFields)) -> ChartFields {
+        let mut out = ChartFields::default();
+        f(&mut out);
+        out
+    }
+
+    #[test]
+    fn change_over_time_draws_a_cumulative_comparison_only_when_asked() {
+        let steps = vec![json!({ "step": 1, "This month": 40, "Last month": 35 })];
+        let days = vec![json!({ "day": "2026-09-01", "Steps": 4100 })];
+        let p = purpose("change_over_time");
+        let none = ChartFields::default();
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["step", "This month", "Last month"]), &steps).mark, "cumulative");
+        let by_kind = fields(|f| f.step_kind = Some("weekday".into()));
+        assert_eq!(pick_chart_mark(p, &by_kind, &cols(&["Weekday", "This week", "Last week"]), &steps).mark, "cumulative");
+        // `day` is a step's alias only once cumulative is named, never a reason to pick it.
+        assert_eq!(pick_chart_mark(p, &none, &cols(&["day", "Steps"]), &days).mark, "line");
+    }
+
+    #[test]
+    fn a_purpose_with_one_mark_draws_it_so_its_refusal_names_the_fix() {
+        let rows = vec![json!({ "Week": "2026-09-01", "Hours": 7 })];
+        let none = ChartFields::default();
+        assert_eq!(pick_chart_mark(purpose("usual_range"), &none, &cols(&["Week", "Hours"]), &rows).mark, "baseline");
+        assert_eq!(pick_chart_mark(purpose("before_and_after"), &none, &cols(&["Week", "Hours"]), &rows).mark, "interrupted");
+        assert_eq!(pick_chart_mark(purpose("daily_rhythm"), &none, &cols(&["Week", "Hours"]), &rows).mark, "states");
+    }
+
+    fn checked(mark: &str, f: &ChartFields, columns: &[&str], rows: Vec<Value>) -> Result<Map<String, Value>, ToolError> {
+        let (columns, rows) = mark_columns(mark, cols(columns), rows);
+        let cap = chart_marks::mark(mark).unwrap().max_rows;
+        let mut out = shape(Kind::Chart, cap, &columns, rows)?;
+        check_mark(mark, f, &columns, &mut out)?;
+        Ok(out)
+    }
+
+    #[test]
+    fn a_cumulative_comparison_checks_its_steps_and_carries_its_fields() {
+        let rows = |a: Value, b: Value| vec![json!({ "day": a, "This": 10, "Last": 8 }), json!({ "day": b, "This": 20, "Last": 18 })];
+        let usd = fields(|f| f.unit = Some("USD".into()));
+        let out = checked("cumulative", &usd, &["day", "This", "Last"], rows(json!(1), json!(2))).unwrap();
+        assert_eq!(out["columns"][0], json!("step"), "day is renamed to step once cumulative is drawn");
+        assert_eq!((out["step_kind"].as_str(), out["unit"].as_str()), (Some("day"), Some("USD")));
+        assert!(err(checked("cumulative", &usd, &["day", "This", "Last"], rows(json!(1), json!(1)))).contains("appears twice"));
+        assert!(err(checked("cumulative", &usd, &["day", "This", "Last"], rows(json!(1), json!(32)))).contains("from 1 to 31"));
+        let hours = fields(|f| f.step_kind = Some("hour".into()));
+        assert!(checked("cumulative", &hours, &["day", "This", "Last"], rows(json!(0), json!(23))).is_ok());
+        let bad = fields(|f| f.step_kind = Some("fortnight".into()));
+        assert!(err(checked("cumulative", &bad, &["day", "This", "Last"], rows(json!(1), json!(2)))).contains("day, weekday or hour"));
+        let long = fields(|f| f.unit = Some("kilowatt-hours".into()));
+        assert!(err(checked("cumulative", &long, &["day", "This", "Last"], rows(json!(1), json!(2)))).contains("unit"));
+    }
+
+    #[test]
+    fn an_interrupted_series_needs_the_change_and_one_value() {
+        let rows = vec![json!({ "Week": "2026-09-01", "Hours": 7 }), json!({ "Week": "2026-09-08", "Hours": 6.5 })];
+        let change = fields(|f| {
+            f.split_at = Some("2026-09-05".into());
+            f.split_label = Some("New schedule".into());
+        });
+        let out = checked("interrupted", &change, &["Week", "Hours"], rows.clone()).unwrap();
+        assert_eq!((out["split_at"].as_str(), out["split_label"].as_str()), (Some("2026-09-05"), Some("New schedule")));
+        assert!(err(checked("interrupted", &ChartFields::default(), &["Week", "Hours"], rows)).contains("split_at"));
+    }
+
+    #[test]
+    fn a_baseline_band_needs_its_usual_range_and_reads_low_and_high() {
+        let rows = vec![
+            json!({ "Day": "2026-09-01", "Rest": 55, "low": 54, "high": 57 }),
+            json!({ "Day": "2026-09-02", "Rest": 58, "low": 54, "high": 57 }),
+        ];
+        let out = checked("baseline", &ChartFields::default(), &["Day", "Rest", "low", "high"], rows).unwrap();
+        assert_eq!(out["columns"], json!(["Day", "Rest", "usual_low", "usual_high"]));
+        let two = vec![json!({ "Day": "2026-09-01", "Rest": 55 }), json!({ "Day": "2026-09-02", "Rest": 58 })];
+        assert!(err(checked("baseline", &ChartFields::default(), &["Day", "Rest"], two)).contains("usual_low and usual_high"));
+    }
+
+    #[test]
+    fn a_state_timeline_reads_its_aliases_and_refuses_too_many_states() {
+        let stretch = |state: &str| json!({ "date": "2026-09-01", "started_at": "09:00", "ended_at": "10:30", "what": state });
+        let (columns, rows) = mark_columns("states", cols(&["date", "started_at", "ended_at", "what"]), vec![stretch("Home"), stretch("Work")]);
+        let out = shape_states(600, &columns, rows).unwrap();
+        assert_eq!(out["columns"], json!(["day", "start", "end", "state"]));
+        let seven: Vec<Value> = ["A", "B", "C", "D", "E", "F", "G"].iter().map(|s| stretch(s)).collect();
+        let (columns, rows) = mark_columns("states", cols(&["date", "started_at", "ended_at", "what"]), seven);
+        assert!(err(shape_states(600, &columns, rows)).contains("at most 6 states"));
+        assert!(err(shape_states(600, &cols(&["day", "start", "state"]), vec![json!({ "day": "2026-09-01", "start": "09:00", "state": "Home" })])).contains("end is missing"));
+        let bad = vec![json!({ "day": "2026-09-01", "start": "morning", "end": "10:30", "state": "Home" })];
+        assert!(err(shape_states(600, &cols(&["day", "start", "end", "state"]), bad)).contains("time of day"));
+    }
+
+    #[test]
+    fn a_bar_chart_keeps_a_column_named_date() {
+        let (columns, _) = mark_columns("bar", cols(&["date", "Steps"]), vec![]);
+        assert_eq!(columns, cols(&["date", "Steps"]));
     }
 }

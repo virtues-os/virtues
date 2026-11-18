@@ -10,11 +10,27 @@ export type ShowKind = "chart" | "numbers" | "table" | "map" | "timeline" | "cho
 
 export type Row = Record<string, unknown>;
 
+/** Chart marks drawn by a chart-kit module (ShowMark.svelte) rather than ShowChart. */
+export const KIT_MARKS = ["baseline", "cumulative", "interrupted", "states"] as const;
+export type KitMark = (typeof KIT_MARKS)[number];
+
+export function isKitMark(mark: unknown): mark is KitMark {
+	return typeof mark === "string" && (KIT_MARKS as readonly string[]).includes(mark);
+}
+
 export interface ShowOutput {
 	kind: ShowKind;
 	title?: string | null;
-	/** chart only */
-	mark?: "bar" | "line";
+	/** chart only. The marks are virtues_registry::chart_marks::MARKS of kind chart. */
+	mark?: "bar" | "line" | KitMark;
+	/** The purpose the call gave, when it gave one. */
+	purpose?: string;
+	/** cumulative only */
+	step_kind?: "day" | "weekday" | "hour";
+	unit?: string;
+	/** interrupted only */
+	split_at?: string;
+	split_label?: string;
 	columns?: string[];
 	rows?: Row[];
 	row_count?: number;

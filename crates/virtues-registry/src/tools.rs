@@ -424,8 +424,12 @@ fn show_tool() -> ToolConfig {
                 "mark": {
                     "type": "string",
                     "enum": crate::chart_marks::MARKS.iter().map(|m| m.mark).collect::<Vec<_>>(),
-                    "description": "Optional: draw this instead of the chart the server picks. With kind chart, bar (the default) or line"
+                    "description": "Optional: draw this instead of the chart the server picks. With kind chart and no purpose, bar is the default"
                 },
+                "split_at": { "type": "string", "description": "interrupted only: the date of the change" },
+                "split_label": { "type": "string", "description": "interrupted only: the change in a few words" },
+                "step_kind": { "type": "string", "enum": ["day", "weekday", "hour"], "description": "cumulative only: what a step is; default day" },
+                "unit": { "type": "string", "description": "cumulative only: USD for money, or a word such as steps or km" },
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },

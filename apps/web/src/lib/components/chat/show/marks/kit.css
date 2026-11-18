@@ -1,0 +1,129 @@
+/* kit.css: the inline chat chart kit's tokens and shared styles.
+
+   Every component root carries the class "vk". Its --vk-* variables read the app's own tokens (themes.css), with
+   the dot labs' values as fallbacks, so a component dropped into the app takes the app's theme, dark included.
+   kit.js reads the same --vk-* variables for what it paints on a canvas. A page that sets --color-* on any
+   ancestor of a component re-themes it. */
+
+:root { --vk-kit: 1; }
+
+.vk {
+  --vk-primary: var(--color-primary, #1D4572);
+  --vk-ink: var(--color-foreground, #1A2030);
+  --vk-muted: var(--color-foreground-muted, #5E6370);
+  --vk-subtle: var(--color-foreground-subtle, #878B95);
+  --vk-border: var(--color-border, #E3E1DD);
+  --vk-border-subtle: var(--color-border-subtle, #EFEEEB);
+  --vk-border-strong: var(--color-border-strong, #D4D1CC);
+  --vk-background: var(--color-background, #FFFFFF);
+  --vk-page: var(--color-page, #FFFFFF);
+  --vk-highlight: var(--color-highlight, rgba(246, 222, 120, 0.55));
+  --vk-focus: var(--color-border-focus, #1D4572);
+  --vk-sans: var(--font-sans, 'Avenir Next', Avenir, 'Helvetica Neue', system-ui, sans-serif);
+  --vk-serif: var(--font-serif, 'EB Garamond', Georgia, serif);
+  --vk-mono: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  --vk-radius-sm: var(--radius-sm, 4px);
+  /* One accent: the first series is the primary, the second ink at 60%, the third subtle ink. */
+  --vk-s0: var(--vk-primary);
+  --vk-s1: color-mix(in srgb, var(--vk-ink) 60%, transparent);
+  --vk-s2: var(--vk-subtle);
+
+  position: relative;
+  min-width: 0;
+  font-family: var(--vk-sans);
+  color: var(--vk-ink);
+  -webkit-font-smoothing: antialiased;
+}
+.vk *, .vk *::before, .vk *::after { box-sizing: border-box; }
+
+/* The title row, set by the frame from the call's title: the serif at 18px, never italic. It may wrap: the title
+   comes with the call's input, before any data, so its height is settled before the chart arrives. */
+.vk-title {
+  min-height: 24px;
+  margin: 0 0 8px;
+  font-family: var(--vk-serif);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 18px;
+  line-height: 24px;
+  color: var(--vk-ink);
+  overflow-wrap: anywhere;
+}
+
+/* The block: readout 26px, plot, foot 26px. Each row has a fixed height, so a hover, a long label or the
+   arrival of the data never moves the words below. */
+.vk-block { position: relative; width: 100%; min-width: 0; }
+
+.vk-readout {
+  display: flex;
+  align-items: center;
+  gap: 0 16px;
+  height: 20px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--vk-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.vk-readout .vk-when { flex: none; color: var(--vk-ink); }
+.vk-readout .vk-fig { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.vk-readout .vk-lab { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vk-readout b { flex: none; font-weight: 500; color: var(--vk-ink); }
+.vk-sw { display: block; flex: none; overflow: visible; }
+
+.vk-plot {
+  position: relative;
+  width: 100%;
+  touch-action: pan-y;
+  outline: none;
+  border-radius: var(--vk-radius-sm);
+}
+.vk-plot:focus-visible { outline: 2px solid var(--vk-focus); outline-offset: 4px; }
+.vk-plot > canvas { position: absolute; left: 0; top: 0; display: block; }
+
+.vk-foot {
+  display: flex;
+  align-items: center;
+  gap: 0 12px;
+  height: 18px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--vk-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.vk-foot .vk-rows {
+  all: unset;
+  cursor: pointer;
+  color: var(--vk-primary);
+  font: inherit;
+  border-radius: var(--radius-xs, 2px);
+}
+.vk-foot .vk-rows:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.vk-foot .vk-rows:focus-visible { outline: 2px solid var(--vk-focus); outline-offset: 2px; }
+
+/* While a chart arrives its readout and foot wait, then fade in once the dot has passed. */
+.vk-wait { opacity: 0; }
+.vk-fade { transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1); }
+
+.vk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px; /* design-ok: the visually hidden pattern for screen-reader text */
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The frame and the plain row of figures are not ported: Show.svelte holds the
+   space while a call runs, and ShowNumbers draws kind numbers. */
+
+@media (prefers-reduced-motion: reduce) {
+  .vk-fade { transition: none; }
+}

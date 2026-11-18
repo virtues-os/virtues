@@ -37,7 +37,10 @@ pub struct ChartMark {
 
 pub const PURPOSES: &[ChartPurpose] = &[
     ChartPurpose { id: "change_over_time", story: "how a measure moves over time" },
+    ChartPurpose { id: "before_and_after", story: "a measure before and after a dated change" },
+    ChartPurpose { id: "usual_range", story: "how a measure sits against its own usual range" },
     ChartPurpose { id: "compare_groups", story: "one measure across a few groups or categories" },
+    ChartPurpose { id: "daily_rhythm", story: "how days are made up, across many days" },
     ChartPurpose { id: "events", story: "what happened when, item by item" },
     ChartPurpose { id: "place", story: "where things are or happened" },
     ChartPurpose { id: "in_sentence", story: "one to four figures beside the sentence" },
@@ -46,6 +49,38 @@ pub const PURPOSES: &[ChartPurpose] = &[
 
 /// Within a purpose, the picker tries marks in this order.
 pub const MARKS: &[ChartMark] = &[
+    ChartMark {
+        mark: "cumulative",
+        name: "Cumulative comparison",
+        kind: "chart",
+        purposes: &["change_over_time"],
+        line: "this period's running total against the last; step, then the two totals; give step_kind and unit",
+        max_rows: 31,
+    },
+    ChartMark {
+        mark: "interrupted",
+        name: "Interrupted time series",
+        kind: "chart",
+        purposes: &["before_and_after"],
+        line: "x, then one value; give split_at (the date) and split_label",
+        max_rows: 199,
+    },
+    ChartMark {
+        mark: "baseline",
+        name: "Baseline band",
+        kind: "chart",
+        purposes: &["usual_range"],
+        line: "x, the value, usual_low and usual_high",
+        max_rows: 199,
+    },
+    ChartMark {
+        mark: "states",
+        name: "State timeline",
+        kind: "chart",
+        purposes: &["daily_rhythm"],
+        line: "day, start, end and state, at most 6 states",
+        max_rows: 600,
+    },
     ChartMark {
         mark: "line",
         name: "Line chart",
