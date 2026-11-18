@@ -64,19 +64,6 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
         },
     };
 
-    // Finding the thread reads the owner's messages, which the owner can
-    // withhold from the assistant (Settings · Your data).
-    match crate::api::model_access::is_withheld(pool, "data_communication_message").await {
-        Ok(false) => {}
-        Ok(true) => {
-            return ToolResult::error(
-                "The owner has turned off reading messages in Settings, so you can't find who to send this to. \
-                 Nothing was sent. Tell the owner, and they can turn Messages back on there.",
-            )
-        }
-        Err(e) => return ToolResult::error(format!("Could not read the owner's settings: {e}. Nothing was sent.")),
-    }
-
     let target = match resolve(pool, to).await {
         Ok(Ok(t)) => t,
         Ok(Err(why)) => return ToolResult::error(why),

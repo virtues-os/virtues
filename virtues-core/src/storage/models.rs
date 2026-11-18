@@ -120,7 +120,8 @@ pub struct AssistantProfile {
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    /// What the assistant may read, per kind of record (`api::model_access`).
+    /// Unread. The assistant reads every kind of record; the column stays
+    /// until the owner decides to drop it.
     pub reading: serde_json::Value,
     /// How the owner wants to be spoken to, in their own words. Added beneath
     /// the assistant's character in the prompt, never in place of it.

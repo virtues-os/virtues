@@ -201,41 +201,6 @@ pub struct OntologyDescriptor {
     /// True for: app_usage, location_visit, calendar, outbound messages, transcription, web_browsing, workout.
     /// False for passive data: heart_rate, hrv, steps, sleep, inbound email, financial records.
     pub is_activation_signal: bool,
-    /// Whether the assistant may read this ontology without the owner's say.
-    pub model_access: ModelAccess,
-}
-
-/// Whether an ontology reaches the model by default.
-///
-/// The model reads the record through `virtues_face_reader`, which
-/// `ensure_applet_db_grants` grants on every `data_*` table at boot, and
-/// through code paths that run as the pool role and bypass grants entirely.
-/// `OwnerOptIn` withholds both: the grant loop skips the table, and every
-/// model-facing reader of this registry must skip it too. Reserved for data
-/// whose exposure the owner should decide, such as reproductive health.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelAccess {
-    Default,
-    OwnerOptIn,
-}
-
-impl OntologyDescriptor {
-    pub fn is_model_visible(&self) -> bool {
-        self.model_access == ModelAccess::Default
-    }
-}
-
-/// Tables the assistant may not read until the owner turns access on.
-pub fn owner_opt_in_tables() -> Vec<&'static str> {
-    let mut tables: Vec<&'static str> = registered_ontologies()
-        .into_iter()
-        .filter(|o| !o.is_model_visible())
-        .map(|o| o.table_name)
-        .collect();
-    tables.sort_unstable();
-    tables.dedup();
-    tables
 }
 
 /// What a lifeline lane can plot besides "how many rows landed here".
@@ -502,7 +467,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "health_hrv",
@@ -533,7 +497,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "health_steps",
@@ -564,7 +527,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "environment_weather",
@@ -602,7 +564,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             // Not activation: rain is not the owner doing something.
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "content_conversation",
@@ -652,7 +613,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             // Talking to an AI is the owner doing something, and the activation
             // gate is about whether the box saw activity at all.
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "health_sleep",
@@ -679,7 +639,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // Cycle tracking: raw Apple Health samples. No lane, day source,
         // embedding or SQL catalog entry yet, and hidden from the model until
@@ -703,7 +662,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None,
             continuous_agg: None,
             is_activation_signal: false,
-            model_access: ModelAccess::OwnerOptIn,
         },
         OntologyDescriptor {
             name: "health_symptom",
@@ -721,7 +679,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None,
             continuous_agg: None,
             is_activation_signal: false,
-            model_access: ModelAccess::OwnerOptIn,
         },
         OntologyDescriptor {
             name: "health_wrist_temperature",
@@ -739,7 +696,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None,
             continuous_agg: None,
             is_activation_signal: false,
-            model_access: ModelAccess::OwnerOptIn,
         },
         OntologyDescriptor {
             name: "health_workout",
@@ -766,7 +722,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // ===== Location Ontologies =====
         OntologyDescriptor {
@@ -786,7 +741,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None, // Spatial data — not a numeric aggregate
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "location_visit",
@@ -818,7 +772,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // ===== Communication Ontologies =====
         OntologyDescriptor {
@@ -869,7 +822,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "communication_message",
@@ -908,7 +860,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // ===== Calendar Ontology =====
         OntologyDescriptor {
@@ -944,7 +895,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // ===== Activity Ontologies =====
         OntologyDescriptor {
@@ -979,7 +929,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "activity_web_browsing",
@@ -1006,7 +955,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "communication_transcription",
@@ -1063,7 +1011,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // The audio SESSION — the coarse unit the day pipeline reads. One row per
         // coherent context (a conversation, a drive, a stretch of sleep), rolled up
@@ -1101,7 +1048,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
-            model_access: ModelAccess::Default,
         },
         // ===== Content Ontologies =====
         OntologyDescriptor {
@@ -1143,7 +1089,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // `content_conversation` lived here — zero rows, ever. Its own comment said
         // it was for "messages created directly by chat API", which is what
@@ -1205,7 +1150,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // ===== Financial Ontologies =====
         OntologyDescriptor {
@@ -1225,7 +1169,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "financial_transaction",
@@ -1263,7 +1206,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         OntologyDescriptor {
             name: "content_bookmark",
@@ -1355,7 +1297,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // ─────────────────────────────────────────────────────────────
         // App (intra-Virtues activity)
@@ -1435,7 +1376,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // `app_chat_message` lived here, and its own description called it a
         // "search artifact" — an ontology that existed for no reason but to be
@@ -1490,7 +1430,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // ===== Wiki articles =====
         //
@@ -1547,7 +1486,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // ===== Documents (agents/record/researcher.md D1) =====
         // One row per retrieval chunk of an extracted drive file. Universal
@@ -1588,7 +1526,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
         // Highlights + margin notes on documents (agents/record/researcher.md D2). Your
         // own marks are dense signal — embedding quote + note makes "what did
@@ -1622,7 +1559,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
-            model_access: ModelAccess::Default,
         },
     ]
 }

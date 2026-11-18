@@ -50,15 +50,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/entities/places/:id/merge", post(merge_place_handler))
         .route("/api/entities/places/:id/nearby", get(nearby_places_handler))
         .route(
-            "/api/assistant/memories",
-            get(list_assistant_memories_handler),
-        )
-        .route(
-            "/api/assistant/memories/:id",
-            put(edit_assistant_memory_handler)
-                .delete(retire_assistant_memory_handler),
-        )
-        .route(
             "/api/wiki/notes/:subject_type/:subject_id",
             get(list_notes_handler).post(create_note_handler),
         )
@@ -518,32 +509,6 @@ pub async fn lifeline_feed_handler(
     )
 }
 
-/// Notes on a subject.
-/// GET /api/assistant/memories — the live memories, lane-grouped.
-pub async fn list_assistant_memories_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::assistant_memories::list_memories(state.db.pool()).await)
-}
-
-/// PUT /api/assistant/memories/:id — the person rewrites one in their words.
-pub async fn edit_assistant_memory_handler(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(req): Json<crate::api::assistant_memories::EditMemoryRequest>,
-) -> Response {
-    api_response(crate::api::assistant_memories::edit_memory(state.db.pool(), id, &req.body).await)
-}
-
-/// DELETE /api/assistant/memories/:id — soft-retire with provenance.
-pub async fn retire_assistant_memory_handler(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Response {
-    api_response(
-        crate::api::assistant_memories::retire_memory(state.db.pool(), id)
-            .await
-            .map(|_| serde_json::json!({ "retired": true })),
-    )
-}
 
 pub async fn list_notes_handler(
     State(state): State<AppState>,

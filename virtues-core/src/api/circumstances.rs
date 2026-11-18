@@ -201,19 +201,6 @@ async fn build_section(
     _day_end: &str,
     tomorrow_end: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    // A section built from a kind the owner withheld (Settings · Your data)
-    // is left out of the prompt.
-    let reads = match name {
-        "place" => Some("data_location_visit"),
-        "calendar" => Some("data_calendar_event"),
-        "sleep" => Some("data_health_sleep"),
-        _ => None,
-    };
-    if let Some(table) = reads {
-        if crate::api::model_access::withheld_or_all(pool).await.contains(table) {
-            return Ok(None);
-        }
-    }
     match name {
         "clock" => {
             // When the block was taken, not the time now: it is held for the

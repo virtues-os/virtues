@@ -48,9 +48,6 @@ pub async fn build_coverage(pool: &PgPool, today: NaiveDate) -> Option<String> {
     // business being described to it here either.
     let catalog = virtues_registry::sql_catalog::get_table_metadata();
     tables.retain(|t, _| catalog.contains_key(t));
-    // Nor a kind the owner withheld (Settings · Your data).
-    let withheld = crate::api::model_access::withheld_or_all(pool).await;
-    tables.retain(|t, _| !withheld.contains(*t));
 
     let reads = tables.iter().map(|(table, column)| async move {
         // Identifiers come from two static registries, never from input.
@@ -90,9 +87,9 @@ pub async fn build_coverage(pool: &PgPool, today: NaiveDate) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// A kind the owner withholds leaves the coverage block with it.
+    /// A table with rows gets a line in the block.
     #[sqlx::test(migrations = "./migrations")]
-    async fn a_withheld_kind_is_not_described(pool: PgPool) {
+    async fn a_table_with_rows_is_described(pool: PgPool) {
         sqlx::query(
             "INSERT INTO data_calendar_event (id, title, started_at, ended_at, source_stream_id, source_table, source_provider)
              VALUES ('ev_1', 'Second coat', '2030-01-12T10:00:00Z', '2030-01-12T13:00:00Z', 's1', 'google_calendar', 'google')",
@@ -102,8 +99,6 @@ mod tests {
         .unwrap();
         let today = NaiveDate::from_ymd_opt(2030, 1, 13).unwrap();
         assert!(build_coverage(&pool, today).await.unwrap().contains("data_calendar_event"));
-        crate::api::model_access::set(&pool, "calendar", false).await.unwrap();
-        assert!(build_coverage(&pool, today).await.is_none());
     }
 
     /// Every registry timestamp column named for a catalog table must exist

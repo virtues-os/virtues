@@ -71,7 +71,6 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
 	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
 	'/virtues/data': { icon: 'mynaui:database' },
-	'/virtues/assistant/memory': { icon: 'mynaui:bookmark' },
 	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
 	'/virtues/appearance': { icon: 'mynaui:sun' },
 	'/virtues/billing': { icon: 'mynaui:credit-card', glyph: 'billing' },

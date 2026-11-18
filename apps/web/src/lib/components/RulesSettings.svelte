@@ -2,12 +2,8 @@
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * Never bring up, on How it talks: the subjects chat never raises
-	 * (`wiki_rules`, active, kind `avoid`), listed, added, edited and removed
-	 * here. The interview proposes rules too.
-	 *
-	 * Rules of the other kind (`defend`, "hold me to") are no longer added
-	 * here. Ones already in force still show, labelled, so none is in force
-	 * without being seen, and can be removed.
+	 * (`wiki_rules`, active), listed, added, edited and removed here. The
+	 * interview proposes rules too.
 	 *
 	 * Every save replaces the whole set, so it always sends `keepProposed`:
 	 * proposals waiting for the interview's close are not this page's to drop.
@@ -30,10 +26,6 @@
 		removing: boolean;
 	}
 
-	const KIND_LABEL: Record<Kind, string> = {
-		avoid: 'Never bring up',
-		defend: 'Hold me to',
-	};
 	const UNDO_MS = 6000;
 
 	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
@@ -64,7 +56,7 @@
 		return rules.map((r) => ({
 			key: nextKey++,
 			rule: r.rule,
-			kind: r.kind === 'defend' ? 'defend' : 'avoid',
+			kind: 'avoid',
 			removing: false,
 		}));
 	}
@@ -255,7 +247,6 @@
 								<Button variant="ghost" onclick={() => undo(row)}>Undo</Button>
 							</span>
 						{:else}
-							{#if row.kind === 'defend'}<span class="kind">{KIND_LABEL[row.kind]}</span>{/if}
 							{#if editingKey === row.key}
 								<label class="edit">
 									<span class="sr-only">Rule</span>
@@ -341,7 +332,6 @@
 		min-height: 32px;
 	}
 
-	.kind,
 	.removed {
 		font-size: 13px;
 		color: var(--color-foreground-muted);
@@ -380,7 +370,6 @@
 			grid-template-columns: minmax(0, 1fr) auto;
 		}
 
-		.kind,
 		.edit {
 			grid-column: 1 / -1;
 		}

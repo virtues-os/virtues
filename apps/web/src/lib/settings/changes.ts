@@ -13,20 +13,6 @@ function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Each kind of record, as Settings names it (`api/model_access.rs`). */
-const READING_NAMES: Record<string, string> = {
-	messages: 'Messages',
-	email: 'Email',
-	recordings: 'Recordings and transcripts',
-	calendar: 'Calendar',
-	health: 'Health',
-	cycle: 'Cycle and symptoms',
-	location: "Places you've been",
-	money: 'Money',
-	browsing: 'Browsing and apps',
-	documents: 'Bookmarks and documents',
-};
-
 /** The capability each tool belongs to, as Settings names it (`api/capabilities.rs`). */
 function capabilityOf(tool: string): string | null {
 	if (tool === 'web_search') return 'Search the web';
@@ -75,11 +61,6 @@ export function describeChange(change: SettingsChange): string {
 		case 'style':
 		case 'subjects':
 			return 'Changed';
-		case 'model-reading': {
-			const [kind, on] = Object.entries((value ?? {}) as Record<string, unknown>)[0] ?? [];
-			const name = kind ? (READING_NAMES[kind] ?? kind) : 'A kind of record';
-			return typeof on === 'boolean' ? `${name} ${on ? 'opened' : 'withheld'}` : 'Changed';
-		}
 		case 'keep-recordings':
 			return typeof value === 'number' ? `Changed to ${value === 365 ? '1 year' : `${value} days`}` : 'Changed to forever';
 		case 'units':

@@ -14,7 +14,6 @@
 	  Spending     /virtues/assistant/spending — models, and what tasks may spend
 	               /virtues/assistant/spending/models — the model list (?role= picks one)
 	               /virtues/assistant/spending/cost   — what AI has cost, and every call
-	  Memory       /virtues/assistant/memory — what the assistant remembers
 	  Appearance   /virtues/appearance     — theme, reading font, motion
 	  Billing      /virtues/billing        — subscription, balance, auto top-up
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
@@ -49,7 +48,6 @@
 
 	import SettingsLanding from '$lib/components/settings/SettingsLanding.svelte';
 	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
-	import MemoryPage from '$lib/components/settings/MemoryPage.svelte';
 	import ByoPage from '$lib/components/settings/ByoPage.svelte';
 	import BackupPage from '$lib/components/settings/BackupPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
@@ -72,6 +70,8 @@
 		'/virtues/you': '/virtues/profile',
 		'/virtues/account': '/virtues/profile',
 		'/virtues/account/assistant': '/virtues/assistant',
+		// Memory is retired: Virtues learns you from your record, not from notes.
+		'/virtues/assistant/memory': '/virtues/assistant',
 		// The model list and the cost page sit under Models and spending.
 		'/virtues/models': '/virtues/assistant/spending/models',
 		'/virtues/assistant/models': '/virtues/assistant/spending/models',
@@ -238,9 +238,7 @@
 		{:else if section === 'backup'}
 			<BackupPage />
 		{:else if section === 'assistant'}
-			{#if sub === 'memory'}
-				<MemoryPage />
-			{:else if sub === 'tools'}
+			{#if sub === 'tools'}
 				<SettingsSection section="tools" />
 			{:else if sub === 'spending' && subPage === 'models'}
 				<ModelCatalogView {role} />

@@ -33,7 +33,6 @@
 	import AppearanceSettings from './AppearanceSettings.svelte';
 	import CapabilitiesSettings from './CapabilitiesSettings.svelte';
 	import DataSettings from './DataSettings.svelte';
-	import ReadingSettings from './ReadingSettings.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
 	import { getAccent, getThemeChoice, setTheme, type Accent, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
@@ -157,7 +156,6 @@
 			<!-- The cost page lives under Models and spending; Billing links to it too, beside the balance it draws down. -->
 			<LinkRow id="ai-cost-billing" label={title('ai-cost')} help="This month day by day, what it went to, and every call." href="/virtues/assistant/spending/cost" />
 		{:else if id === 'data'}
-			<ReadingSettings assistantName={spoken} />
 			<DataSettings />
 		{:else if id === 'server'}
 			<div class="block" id="setting-updates"><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>

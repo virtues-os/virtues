@@ -203,18 +203,7 @@ async fn window_ontologies(
     end: chrono::DateTime<chrono::Utc>,
 ) -> Vec<String> {
     let mut present = Vec::new();
-
-    // `source_ontologies` lands in `wiki_events`, which the assistant reads,
-    // so a kind the owner has withheld from it (`api::model_access`) must not
-    // show up here even as a name. Unreadable switches name nothing.
-    let withheld = match crate::api::model_access::withheld_tables(pool).await {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(error = %e, "dayline: what the assistant may read is unreadable; naming no sources");
-            return present;
-        }
-    };
-    for ont in registered_ontologies().into_iter().filter(|o| !withheld.contains(o.table_name)) {
+    for ont in registered_ontologies() {
         // Interpolated identifiers are compile-time constants from the
         // registry, never user input. The window is bound.
         let sql = format!(

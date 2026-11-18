@@ -51,8 +51,6 @@ pub enum Store {
     Assistant,
     /// `capabilities.<id>`: one switch of what the assistant can do.
     Capability,
-    /// `reading.<id>`: one kind of record the assistant may read.
-    Reading,
     /// Appearance, applied by the page.
     App,
 }
@@ -88,9 +86,8 @@ const GLASS: &[(&str, &str)] = &[("none", "none, solid"), ("low", "low"), ("medi
 const SIZES: &[(&str, &str)] = &[("s", "small"), ("m", "medium"), ("l", "large")];
 const FONTS: &[(&str, &str)] = &[("sans", "sans serif"), ("serif", "serif"), ("mono", "monospace")];
 
-/// Every setting the agent may change. The capability and reading rows must
-/// name every switch `capabilities::capabilities` and `model_access::KINDS`
-/// have; a test holds them together.
+/// Every setting the agent may change. The capability rows must name every
+/// switch `capabilities::capabilities` has; a test holds them together.
 pub const FIELDS: &[Field] = &[
     f("full_name", "full-name", Kind::Text(200), Store::Profile, "their full name"),
     f("preferred_name", "preferred-name", Kind::Text(100), Store::Profile, "what the assistant calls them"),
@@ -120,16 +117,6 @@ pub const FIELDS: &[Field] = &[
     f("capabilities.browser", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may use a web browser"),
     f("capabilities.applets", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may make and change applets"),
     f("capabilities.pages", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may write and edit pages"),
-    f("reading.messages", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their messages"),
-    f("reading.email", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their email"),
-    f("reading.recordings", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read transcripts of their recordings"),
-    f("reading.calendar", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their calendar"),
-    f("reading.health", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their health records"),
-    f("reading.cycle", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their cycle tracking"),
-    f("reading.location", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their location history"),
-    f("reading.money", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their money records"),
-    f("reading.browsing", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their app and web history"),
-    f("reading.documents", "model-reading", Kind::Switch, Store::Reading, "whether the assistant may read their saved documents and bookmarks"),
     f("theme", "theme", Kind::Choice(THEMES), Store::App, "the app's theme"),
     f("accent", "accent", Kind::Choice(ACCENTS), Store::App, "the app's accent color"),
     f("glass", "glass", Kind::Choice(GLASS), Store::App, "how much of the painting shows through the sidebar, tabs and buttons"),
@@ -147,7 +134,6 @@ pub const PAGES: &[(&str, &str)] = &[
     ("auto-top-up", "Auto top-up charges your card, so you set it on Billing."),
     ("models", "You pick models from the list, where you can compare what each costs."),
     ("subjects", "You add the subjects {name} never raises one at a time, on its page."),
-    ("memory", "You choose what {name} forgets on Memory, one note at a time."),
     ("shared-links", "You turn off a link from its row on Shared links."),
     ("devices", "You unpair a device from its row on Devices."),
     ("pair-device", "Pairing needs the device in your hand."),
@@ -407,7 +393,7 @@ pub fn validate_reply(reply_text: &str, current: &Value) -> Draft {
 }
 
 /// Every field's value now, keyed by field name: the profile and assistant
-/// profile, one key per capability and reading switch, and the appearance
+/// profile, one key per capability switch, and the appearance
 /// values `app` sent (only the ones a field accepts).
 async fn current_values(pool: &PgPool, app: &Value) -> Result<Value> {
     let mut merged = serde_json::to_value(crate::api::profile::get_profile(pool).await?)?;
@@ -420,9 +406,6 @@ async fn current_values(pool: &PgPool, app: &Value) -> Result<Value> {
     }
     for s in crate::api::capabilities::list(pool).await? {
         m.insert(format!("capabilities.{}", s.id), Value::Bool(s.on));
-    }
-    for s in crate::api::model_access::list(pool).await? {
-        m.insert(format!("reading.{}", s.id), Value::Bool(s.on));
     }
     for spec in FIELDS.iter().filter(|f| f.store == Store::App) {
         if let Some(v) = app.get(spec.field).and_then(|v| stored_value(spec.field, v, false)) {
@@ -573,7 +556,7 @@ pub async fn apply_draft(pool: &PgPool, changes: Vec<ApplyChange>) -> Result<()>
             Store::Assistant => {
                 assistant.insert(spec.field.into(), value);
             }
-            Store::Capability | Store::Reading => switches.push((spec, value.as_bool().unwrap_or(false))),
+            Store::Capability => switches.push((spec, value.as_bool().unwrap_or(false))),
             Store::App => unreachable!("refused above"),
         }
     }
@@ -611,11 +594,7 @@ pub async fn apply_draft(pool: &PgPool, changes: Vec<ApplyChange>) -> Result<()>
     // Each switch is its own small write that records itself.
     for (spec, on) in switches {
         let id = spec.field.split_once('.').map(|(_, id)| id).unwrap_or(spec.field);
-        let written = match spec.store {
-            Store::Capability => crate::api::capabilities::set_by(pool, id, on, "assistant").await.map(|_| ()),
-            _ => crate::api::model_access::set_by(pool, id, on, "assistant").await.map(|_| ()),
-        };
-        if let Err(e) = written {
+        if let Err(e) = crate::api::capabilities::set_by(pool, id, on, "assistant").await {
             tracing::warn!(field = spec.field, error = %e, "apply draft: a switch failed after other changes saved");
             return Err(Error::Other(
                 "Your server saved part of this but not every switch. Changed lately shows what saved.".into(),
@@ -689,8 +668,8 @@ mod tests {
         assert_eq!(stored_value("keep_recordings_days", &json!("forever"), true), Some(Value::Null));
         assert_eq!(stored_value("birth_date", &json!("1990-04-02"), true), Some(json!("1990-04-02")));
         assert_eq!(stored_value("birth_date", &json!("2990-04-02"), true), None);
-        assert_eq!(stored_value("reading.health", &json!(false), true), Some(json!(false)));
-        assert_eq!(stored_value("reading.health", &json!("off"), true), None);
+        assert_eq!(stored_value("capabilities.web_search", &json!(false), true), Some(json!(false)));
+        assert_eq!(stored_value("capabilities.web_search", &json!("off"), true), None);
     }
 
     #[test]
@@ -749,11 +728,9 @@ mod tests {
     fn the_switch_fields_name_every_switch() {
         let capabilities: Vec<String> =
             crate::api::capabilities::capabilities().iter().map(|(id, _)| format!("capabilities.{id}")).collect();
-        let reading: Vec<String> = crate::api::model_access::KINDS.iter().map(|k| format!("reading.{}", k.id)).collect();
         let listed = |store: Store| -> Vec<String> {
             FIELDS.iter().filter(|f| f.store == store).map(|f| f.field.to_string()).collect()
         };
         assert_eq!(listed(Store::Capability), capabilities);
-        assert_eq!(listed(Store::Reading), reading);
     }
 }

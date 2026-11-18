@@ -109,17 +109,6 @@ impl SemanticSearchTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
 
-        // Nothing from a kind the owner withheld (Settings · Your data).
-        let withheld = crate::api::model_access::withheld_tables(&self.pool)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
-        if !withheld.is_empty() {
-            let ontologies = virtues_registry::ontologies::registered_ontologies();
-            results.retain(|r| {
-                !ontologies.iter().any(|o| o.name == r.ontology && withheld.contains(o.table_name))
-            });
-        }
-
         // What the wiki says about anything the search names, ahead of the
         // results. Not when the agent asked for particular sources, nor in a
         // chat scoped to a project's materials alone.

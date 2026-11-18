@@ -1487,12 +1487,12 @@ export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise
 	return body?.chapters ?? [];
 }
 
-/** A rule the assistant obeys (`<rules>` in its prompt). `avoid` keeps a
- *  subject out unless the person raises it; `defend` holds them to one. */
+/** A rule the assistant obeys (`<rules>` in its prompt): a subject it never
+ *  raises unless the person does. */
 export interface NarrativeRule {
 	id: string;
 	rule: string;
-	kind: 'avoid' | 'defend';
+	kind: 'avoid';
 	active: boolean;
 }
 
@@ -1508,7 +1508,7 @@ export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; pro
  *  Settings always sends: it edits the rules in force, and proposals belong to
  *  the interview's close. */
 export async function saveNarrativeRules(
-	rules: { rule: string; kind: 'avoid' | 'defend' }[],
+	rules: { rule: string; kind: 'avoid' }[],
 	{ keepProposed = false }: { keepProposed?: boolean } = {},
 ): Promise<void> {
 	await apiSend('POST', '/narrative/rules', { rules, keep_proposed: keepProposed });
@@ -3003,35 +3003,6 @@ export function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
-// ── Assistant memories (the Memory section of Settings > Assistant) ──
-// The machine's per-note memory, visible and editable. Every live note rides
-// in the system prompt of every conversation.
-
-export interface AssistantMemory {
-	id: number;
-	/** facts | manner | practices */
-	lane: string;
-	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
-	author: string;
-	body: string;
-	created_at: string;
-	updated_at: string;
-}
-
-export function listAssistantMemories(): Promise<AssistantMemory[]> {
-	return apiGet<AssistantMemory[]>('/assistant/memories');
-}
-
-/** Rewrite one memory in your own words. It becomes yours. */
-export function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
-	return apiSend<AssistantMemory>('PUT', `/assistant/memories/${id}`, { body });
-}
-
-/** Remove a memory from every future conversation (soft-retired with provenance). */
-export async function retireAssistantMemory(id: number): Promise<void> {
-	await apiSend('DELETE', `/assistant/memories/${id}`);
-}
-
 export function getAssistantProfile<T = unknown>(): Promise<T> {
 	return apiGet<T>('/assistant-profile');
 }
@@ -3097,21 +3068,6 @@ export function getCapabilities(): Promise<Capability[]> {
 /** Turn one on or off. Returns them all. */
 export function setCapability(id: Capability['id'], on: boolean): Promise<Capability[]> {
 	return apiSend<Capability[]>('PUT', `/settings/capabilities/${id}`, { on });
-}
-
-/** One kind of record the assistant may read, as the owner switched it (`api/model_access.rs`). */
-export interface ReadingKind {
-	id: 'messages' | 'email' | 'recordings' | 'calendar' | 'health' | 'cycle' | 'location' | 'money' | 'browsing' | 'documents';
-	on: boolean;
-}
-
-export function getReading(): Promise<ReadingKind[]> {
-	return apiGet<ReadingKind[]>('/settings/reading');
-}
-
-/** Let the assistant read a kind of record, or stop it. Returns them all. */
-export function setReading(id: ReadingKind['id'], on: boolean): Promise<ReadingKind[]> {
-	return apiSend<ReadingKind[]>('PUT', `/settings/reading/${id}`, { on });
 }
 
 /** A sample reply in the style notes being typed (`api/style_preview.rs`). */

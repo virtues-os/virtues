@@ -87,9 +87,6 @@ pub fn routes() -> Router<AppState> {
         // What the assistant can do: one switch per capability.
         .route("/api/settings/capabilities", get(list_capabilities_handler))
         .route("/api/settings/capabilities/:id", put(set_capability_handler))
-        // What the assistant may read: one switch per kind of record.
-        .route("/api/settings/reading", get(list_reading_handler))
-        .route("/api/settings/reading/:id", put(set_reading_handler))
         // A sample reply in the style notes being typed.
         .route("/api/settings/style-preview", post(style_preview_handler))
         // Models API
@@ -383,20 +380,6 @@ pub async fn set_capability_handler(
     Json(body): Json<SetCapabilityBody>,
 ) -> Response {
     api_response(crate::api::capabilities::set(state.db.pool(), &id, body.on).await)
-}
-
-/// GET /api/settings/reading — each kind of record, and whether the assistant may read it.
-pub async fn list_reading_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::model_access::list(state.db.pool()).await)
-}
-
-/// PUT /api/settings/reading/:id — let the assistant read a kind of record, or stop it. Returns them all.
-pub async fn set_reading_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<SetCapabilityBody>,
-) -> Response {
-    api_response(crate::api::model_access::set(state.db.pool(), &id, body.on).await)
 }
 
 #[derive(Deserialize)]

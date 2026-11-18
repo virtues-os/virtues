@@ -52,13 +52,10 @@ code a provider list in copy.
 - **BYO AI moves the boundary to the owner's vendor.** Calls go to their
   endpoint under their terms; ZDR enforcement is ours only on the hosted path.
   Never claim BYO is more private (see [`byo-ai-plan.md`](../plan/byo-ai-plan.md)).
-- **A kind the owner withholds stops going out.** Settings · Your data has
-  one switch per kind of record (`api/model_access.rs`). An off kind is
-  revoked from the SQL tool's role and left out of search results, the day
-  write-up, suggestions, the chat's circumstances and entity articles. What
-  the wiki already wrote from it before the switch went off still reaches a
-  model through the wiki. Cycle and symptoms are off until the owner turns
-  them on.
+- **Every kind of record can reach a model.** The assistant reads the whole
+  record, cycle and symptoms included, through the SQL tool, search, the day
+  write-up, suggestions, the chat's circumstances and entity articles. There
+  are no per-kind switches.
 - **Export writes on the box.** `virtues export` writes plain files to a
   folder on the server; nothing is uploaded.
 - **A local model keeps only its own slot's calls on the box.** A slot pointed at a local

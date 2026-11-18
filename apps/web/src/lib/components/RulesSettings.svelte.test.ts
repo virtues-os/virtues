@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 
-type Rule = { id: string; rule: string; kind: 'avoid' | 'defend'; active: boolean };
+type Rule = { id: string; rule: string; kind: 'avoid'; active: boolean };
 
 let serverRules: Rule[] = [];
 
@@ -29,7 +29,7 @@ let mounted: ReturnType<typeof mount> | null = null;
 beforeEach(() => {
 	serverRules = [
 		{ id: 'rule_000', rule: 'my ex', kind: 'avoid', active: true },
-		{ id: 'rule_001', rule: 'no work email on Sundays', kind: 'defend', active: true },
+		{ id: 'rule_001', rule: 'no work email on Sundays', kind: 'avoid', active: true },
 	];
 	vi.mocked(saveNarrativeRules).mockReset();
 	vi.mocked(saveNarrativeRules).mockResolvedValue(undefined);
@@ -76,7 +76,7 @@ describe('RulesSettings', () => {
 	it('lists the rules in force, oldest first, and never the proposals', async () => {
 		await open();
 		const rows = [...target.querySelectorAll('li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
-		expect(rows).toEqual(['my ex', 'Hold me to no work email on Sundays']);
+		expect(rows).toEqual(['my ex', 'no work email on Sundays']);
 		expect(text()).not.toContain('my old job');
 		expect(text()).toContain('Nick never raises these.');
 	});
@@ -94,7 +94,7 @@ describe('RulesSettings', () => {
 		expect(lastSent()).toEqual([
 			[
 				{ rule: 'my ex', kind: 'avoid' },
-				{ rule: 'no work email on Sundays', kind: 'defend' },
+				{ rule: 'no work email on Sundays', kind: 'avoid' },
 				{ rule: 'the move', kind: 'avoid' },
 			],
 			{ keepProposed: true },
@@ -140,7 +140,7 @@ describe('RulesSettings', () => {
 		vi.advanceTimersByTime(1);
 		await vi.waitFor(() => expect(saveNarrativeRules).toHaveBeenCalledOnce());
 		expect(lastSent()).toEqual([
-			[{ rule: 'no work email on Sundays', kind: 'defend' }],
+			[{ rule: 'no work email on Sundays', kind: 'avoid' }],
 			{ keepProposed: true },
 		]);
 	});
@@ -167,7 +167,7 @@ describe('RulesSettings', () => {
 		unmount(mounted!);
 		mounted = null;
 		await vi.waitFor(() => expect(saveNarrativeRules).toHaveBeenCalledOnce());
-		expect(lastSent()?.[0]).toEqual([{ rule: 'no work email on Sundays', kind: 'defend' }]);
+		expect(lastSent()?.[0]).toEqual([{ rule: 'no work email on Sundays', kind: 'avoid' }]);
 	});
 
 	it('puts back what the server has when a save fails, and says so', async () => {

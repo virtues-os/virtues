@@ -63,10 +63,8 @@ When it IS relevant (decisions about priorities, questions about direction, mome
 /// and the tenth is the one that would matter," which is the whole reason these
 /// sentences are lifted out of the prose and restated as rules.
 ///
-/// TWO KINDS, OPPOSITE HANDLING. `avoid` is a constraint on what the assistant
-/// RAISES; `defend` is an instruction to actively support something. Rendering
-/// them as one undifferentiated list would express neither — the failure
-/// migration 0101 names in its own comment.
+/// Each rule is a subject the assistant never RAISES (kind `avoid`); it is
+/// not a refusal to discuss it.
 ///
 /// Rendered only when rules exist. An empty block teaches a model that this
 /// section is usually noise, which is the last thing it can afford to be.
@@ -81,8 +79,6 @@ pub const RULES_PROMPT: &str = r#"
 {rules}
 
 On never raising something: do not bring the subject up yourself, whether as an example, a gentle check-in, or a connection to something else you are already discussing. This is NOT a refusal to discuss it. If {user_name} raises it, engage normally and well. The rule governs who opens the subject, never whether it may be spoken about. Never mention that such a rule exists, quote it back, or hint that a topic is off limits: "I'd rather not bring that up" tells {user_name} exactly what they asked you not to raise.
-
-On helping hold a line: they asked for this help. When something would cut against what they are holding to, say so plainly, once, in terms of that commitment. Do not nag, do not repeat yourself on later turns, and do not moralize. Then let it go.
 </rules>
 "#;
 
@@ -389,7 +385,7 @@ pub fn build_personalized_prompt(
     // Narrative identity section — only when there is one. It was
     // unconditional, so a box where nobody has written one carried a quarter
     // of a thousand tokens of instructions about reading a document that is
-    // not there, ending in an empty tag. <rules> and <memory> are omitted when
+    // not there, ending in an empty tag. <rules> is omitted when
     // empty for the stated reason that an empty block teaches the model the
     // section is usually noise; this is the same block and the same reason.
     if !narrative_identity.trim().is_empty() {
@@ -560,7 +556,7 @@ mod tests {
     /// The framing is instructions for reading a document. With no document
     /// there is nothing to read, and a quarter of a thousand tokens of
     /// preamble ending in an empty tag teaches the model the section is noise
-    /// — which is the stated reason <rules> and <memory> are omitted when
+    /// — which is the stated reason <rules> is omitted when
     /// empty. This is the default state of every new box.
     #[test]
     fn the_identity_block_is_absent_when_nothing_is_written() {

@@ -63,7 +63,7 @@ export const SECTIONS: readonly Section[] = [
 	{ id: 'assistant', title: 'How {name} talks to you', lede: 'Its name and how it speaks to you.', route: '/virtues/assistant' },
 	{ id: 'tools', title: 'What {name} can do', lede: "Turn off anything you don't want it to do.", route: '/virtues/assistant/tools' },
 	{ id: 'spending', title: 'Models and spending', lede: 'Which models it uses and how much it may spend.', route: '/virtues/assistant/spending' },
-	{ id: 'data', title: 'What {name} may read', lede: 'Which of your records {name} sees, how long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
+	{ id: 'data', title: 'Your data', lede: 'How long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: 'Your subscription, your balance, and your own AI key.', route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
@@ -96,11 +96,9 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'ai-cost', title: 'What AI has cost', section: 'spending', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/assistant/spending/cost' },
 
 	// Your data
-	{ id: 'memory', title: 'What {name} remembers', section: 'data', kind: 'page', words: ['memory', 'memories', 'notes', 'forget'], route: '/virtues/assistant/memory' },
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/shared' },
 	{ id: 'backup', title: 'Backup', section: 'data', kind: 'page', words: ['backup', 'drive', 'restore', 'copy', 'recovery key', 'disaster'], route: '/virtues/backup' },
-	{ id: 'model-reading', title: 'What {name} may read', section: 'data', kind: 'control', words: ['privacy', 'access', 'hide', 'messages', 'health', 'location', 'money', 'cycle', 'period', 'see my'], route: '/virtues/data' },
 	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
 	{ id: 'export', title: 'Export everything', section: 'data', kind: 'action', words: ['download', 'copy', 'takeout', 'leave', 'my data', 'json'], route: '/virtues/data' },
 

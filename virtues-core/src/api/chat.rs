@@ -904,7 +904,7 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
     }
 }
 
-/// The rules block — `wiki_rules`, grouped by kind.
+/// The rules block: the subjects in `wiki_rules` never to bring up.
 ///
 /// THIS TABLE WAS WRITTEN AND NEVER READ. From 0101 until now, `wiki_rules` (and
 /// `wiki_standing_order` before it) was populated by the interview's last
@@ -913,9 +913,8 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// stops being context and becomes a rule." This function is what makes that
 /// sentence true.
 ///
-/// Grouped rather than listed flat because `avoid` and `defend` need opposite
-/// handling, and the prompt can only give them opposite handling if it can tell
-/// them apart.
+/// Only kind `avoid`. Rows of the retired `defend` kind ("help me hold to")
+/// stay stored and are not read.
 ///
 /// Empty string when there are no rules, so the caller can omit the section.
 /// Errors are swallowed to an empty string on purpose — a database blip must
@@ -923,8 +922,8 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// safe direction only because the alternative is worse; it does mean a failed
 /// read silently un-enforces, which is why it is logged.
 async fn build_rules(pool: &PgPool) -> String {
-    let rows = match sqlx::query_as::<_, (String, String)>(
-        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
+    let rows = match sqlx::query_scalar::<_, String>(
+        "SELECT rule FROM wiki_rules WHERE active AND kind = 'avoid' ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
@@ -936,37 +935,13 @@ async fn build_rules(pool: &PgPool) -> String {
         }
     };
 
-    let mut avoid: Vec<&str> = Vec::new();
-    let mut defend: Vec<&str> = Vec::new();
-    for (kind, rule) in &rows {
-        let rule = rule.trim();
-        if rule.is_empty() {
-            continue;
-        }
-        match kind.as_str() {
-            "defend" => defend.push(rule),
-            // Anything unrecognised is treated as `avoid`. The CHECK constraint
-            // makes that unreachable today, and if a third kind is ever added,
-            // the conservative reading is the one that cannot cause harm.
-            _ => avoid.push(rule),
-        }
+    let avoid: Vec<&str> = rows.iter().map(|r| r.trim()).filter(|r| !r.is_empty()).collect();
+    if avoid.is_empty() {
+        return String::new();
     }
-
-    let mut out = String::new();
-    if !avoid.is_empty() {
-        out.push_str("Never raise these unless they do:\n");
-        for r in avoid {
-            out.push_str(&format!("- {r}\n"));
-        }
-    }
-    if !defend.is_empty() {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str("Help them hold to these:\n");
-        for r in defend {
-            out.push_str(&format!("- {r}\n"));
-        }
+    let mut out = String::from("Never raise these unless they do:\n");
+    for r in avoid {
+        out.push_str(&format!("- {r}\n"));
     }
     out
 }
@@ -975,7 +950,7 @@ async fn build_rules(pool: &PgPool) -> String {
 ///
 /// Assembles the block registry in `build_system_prompt_blocks`: base
 /// (identity + character + style notes + narrative identity + tools + mode) → precedence →
-/// memory → circumstances → coverage → active_project → active_context →
+/// circumstances → coverage → active_project → active_context →
 /// rules; the cache split falls before the first per-turn block..
 /// Loads user name, assistant name, style notes, and narrative identity from profiles.
 async fn build_system_prompt(
@@ -1352,43 +1327,6 @@ async fn build_system_prompt_blocks(
             meta: BlockMeta { tag: "precedence", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Static },
             body: Box::pin(async move {
                 Some(crate::agent::prompt_blocks::precedence_line().to_string())
-            }),
-        },
-        // The machine's memory: per-note rows the person can read and edit
-        // (Settings), rendered with ids so the update_memory ops can name
-        // them. Three lanes per agents/build/narrative-identity.md: facts of their
-        // world, their preferred manner, their practices.
-        Block {
-            meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
-            body: Box::pin(async move {
-                let memories = match crate::api::assistant_memories::list_memories(pool).await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!("[chat] memory omitted from the prompt: {e}");
-                        return None;
-                    }
-                };
-                if memories.is_empty() {
-                    return None;
-                }
-                let mut out = String::from(
-                    "\n\n<memory>\nWhat you have learned alongside {user}, in notes you keep (they can read and edit these in Settings; a note marked [theirs] is in their words — never revise or retire it). Use silently: reference when relevant, never recite unprompted.\n",
-                );
-                out = out.replace("{user}", user_name);
-                for lane in ["facts", "manner", "practices"] {
-                    let in_lane: Vec<_> = memories.iter().filter(|m| m.lane == lane).collect();
-                    if in_lane.is_empty() {
-                        continue;
-                    }
-                    out.push_str(&format!("<{lane}>\n"));
-                    for m in in_lane {
-                        let theirs = if m.author == "human" { " [theirs]" } else { "" };
-                        out.push_str(&format!("- (#{}){} {}\n", m.id, theirs, m.body));
-                    }
-                    out.push_str(&format!("</{lane}>\n"));
-                }
-                out.push_str("</memory>");
-                Some(out)
             }),
         },
         // The computed present — as-of time, place, today's spine, calendar,
@@ -2791,7 +2729,7 @@ mod tests {
     /// because that failure is invisible from the outside: the prompt still
     /// builds, chat still answers, and nothing looks wrong.
     #[sqlx::test]
-    async fn rules_are_grouped_by_kind(pool: PgPool) {
+    async fn only_never_raise_rules_are_rendered(pool: PgPool) {
         sqlx::query(
             "INSERT INTO wiki_rules (id, rule, kind) VALUES
                 ('r1', 'my father', 'avoid'),
@@ -2804,18 +2742,12 @@ mod tests {
 
         let out = build_rules(&pool).await;
 
-        // Each kind under its own heading, or the prompt cannot give them the
-        // opposite handling they need.
-        let avoid_at = out.find("Never raise").expect("avoid heading");
-        let defend_at = out.find("Help them hold").expect("defend heading");
-        assert!(avoid_at < defend_at, "avoid group comes first:\n{out}");
+        assert!(out.starts_with("Never raise these unless they do:"), "{out}");
         assert!(out.contains("- my father"));
         assert!(out.contains("- drinking"));
-        assert!(out.contains("- the morning pages"));
-
-        // The defend rule must not be filed under avoid.
-        let defend_block = &out[defend_at..];
-        assert!(!defend_block.contains("my father"), "kinds bled:\n{out}");
+        // A retired hold-me-to rule stays stored and is not rendered.
+        assert!(!out.contains("the morning pages"), "{out}");
+        assert!(!out.contains("Help them hold"), "{out}");
     }
 
     /// No rules must render NOTHING, not an empty heading — a `<rules>` block
@@ -3002,7 +2934,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
@@ -3165,7 +3097,6 @@ mod live_prompt_audit {
             for tag in [
                 "<persona",
                 "<narrative_identity",
-                "<memory>",
                 "<datetime>",
                 "<user_context>",
                 "<identity>",

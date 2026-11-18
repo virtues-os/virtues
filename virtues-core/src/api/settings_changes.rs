@@ -62,10 +62,6 @@ pub const ASSISTANT_FIELDS: &[(&str, &str)] = &[
 /// whole from a profile save.
 const CAPABILITIES_FIELD: &str = "enabled_tools";
 
-/// What the assistant may read: rows hold only the kind one switch changed
-/// (`api::model_access::set`).
-const READING_FIELD: &str = "reading";
-
 /// Fields an undo may set back to nothing: model slots store NULL for "the
 /// Virtues default", and the profile's text fields and birth date can be
 /// cleared. The others treat a missing value as "leave it", so a change from
@@ -188,10 +184,6 @@ pub struct Lately {
 
 /// Whether an undo can write `old_value` back to `field`.
 fn undoable(field: &str, old_value: &Value) -> bool {
-    if field == READING_FIELD {
-        // A switch that was at its default holds null; putting it back means its default.
-        return old_value.is_object();
-    }
     if field == CAPABILITIES_FIELD || field == THEME_FIELD {
         return old_value.is_object() || old_value.is_string();
     }
@@ -228,18 +220,6 @@ async fn current_value(pool: &PgPool, field: &str, recorded_new: &Value) -> Resu
     if field == THEME_FIELD {
         let profile = serde_json::to_value(crate::api::assistant_profile::get_assistant_profile(pool).await?)?;
         return Ok(theme_of(&profile));
-    }
-    if field == READING_FIELD {
-        let states = crate::api::model_access::list(pool).await?;
-        let keys = recorded_new.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
-        return Ok(Value::Object(
-            keys.into_iter()
-                .map(|k| {
-                    let on = states.iter().find(|s| s.id == k).map(|s| Value::Bool(s.on)).unwrap_or(Value::Null);
-                    (k, on)
-                })
-                .collect(),
-        ));
     }
     let profile = if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
         serde_json::to_value(crate::api::profile::get_profile(pool).await?)?
@@ -389,14 +369,6 @@ async fn write_back(pool: &PgPool, field: &str, old_value: Value) -> Result<()> 
     if field == CAPABILITIES_FIELD {
         // A capability change holds only its own tools; put those back.
         crate::api::capabilities::apply(pool, &old_value).await?;
-        return Ok(());
-    }
-    if field == READING_FIELD {
-        for (kind, was) in old_value.as_object().into_iter().flatten() {
-            // `null` was the kind's default; the default is what it held.
-            let default_on = crate::api::model_access::KINDS.iter().find(|k| k.id == kind).is_some_and(|k| k.default_on);
-            crate::api::model_access::set(pool, kind, was.as_bool().unwrap_or(default_on)).await?;
-        }
         return Ok(());
     }
     if field == THEME_FIELD {

@@ -83,8 +83,8 @@ describe('matchSettings', () => {
 	});
 
 	it("matches on the assistant's name as written in titles", () => {
-		expect(ids('ari remem', 'Ari')).toEqual(['memory']);
-		expect(ids('what ari', 'Ari')).toEqual(expect.arrayContaining(['preferred-name', 'memory']));
+		expect(ids('ari calls', 'Ari')).toEqual(['preferred-name']);
+		expect(ids('what ari', 'Ari')).toEqual(expect.arrayContaining(['preferred-name']));
 	});
 
 	it('ranks a title that starts with the query above a looser match', () => {

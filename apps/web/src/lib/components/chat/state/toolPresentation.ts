@@ -257,11 +257,6 @@ const TOOLS: Record<string, Presentation> = {
 	generate_image: { noun: "an image", depth: 4, say: ["Making an image", "Made an image"] },
 	// Drawn in the reply; listed here only when a call failed.
 	show: { noun: "a figure", depth: 4, say: ["Drawing a figure", "Drew a figure"] },
-	update_memory: {
-		noun: "memory",
-		depth: 4,
-		say: ["Noting something to remember", "Noted something to remember"],
-	},
 	get_project_item: {
 		noun: "a thread",
 		depth: 4,

@@ -475,7 +475,6 @@ pub(crate) mod tests {
             ("analysis", &["shell", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
-            ("self", &["update_memory"], 800),
             // Raised 450 on 2026-11-16 for a task's thing and its
             // recurrence: three parameters on each tool, and the sentence in
             // each description that says what they do.

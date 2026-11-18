@@ -158,8 +158,8 @@ describe('mergeChanges', () => {
 
 	it('keeps changes to different switches of one setting apart', () => {
 		const merged = mergeChanges([
-			change('model-reading', { health: false }, { id: 'setting:6', field: 'reading', occurred_at: at(11) }),
-			change('model-reading', { money: false }, { id: 'setting:5', field: 'reading', occurred_at: at(10) }),
+			change('capabilities', { web_search: false }, { id: 'setting:6', field: 'enabled_tools', occurred_at: at(11) }),
+			change('capabilities', { applet: false }, { id: 'setting:5', field: 'enabled_tools', occurred_at: at(10) }),
 		]);
 		expect(merged).toHaveLength(2);
 	});

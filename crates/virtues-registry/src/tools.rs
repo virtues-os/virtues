@@ -64,7 +64,6 @@ pub struct ToolConfig {
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
 /// - edit_page: Edit a block page by block ops, a markdown page by find/replace
-/// - update_memory: Persist notes across conversations
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
@@ -72,7 +71,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         revise_article_tool(),
         skip_step_tool(),
         record_introductions_tool(),
-        update_memory_tool(),
         web_search_tool(),
         semantic_search_tool(),
         sql_query_tool(true),
@@ -632,38 +630,6 @@ fn think_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:lightbulb-line".to_string(),
         display_order: 0,
-        is_system: false,
-    }
-}
-
-/// Update Memory tool — persist notes across conversations
-fn update_memory_tool() -> ToolConfig {
-    ToolConfig {
-        id: "update_memory".to_string(),
-        name: "Memory".to_string(),
-        description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
-        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Write to them as "you", with no ids or phone numbers. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "op": {
-                    "type": "string",
-                    "enum": ["add", "revise", "retire"],
-                    "description": "Default add"
-                },
-                "lane": {
-                    "type": "string",
-                    "enum": ["facts", "manner", "practices"],
-                    "description": "Default facts"
-                },
-                "note_id": { "type": "integer" },
-                "content": { "type": "string" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:brain-line".to_string(),
-        display_order: 1,
         is_system: false,
     }
 }
@@ -1324,7 +1290,6 @@ fn get_project_item_tool() -> ToolConfig {
 pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
         "think": true,
-        "update_memory": true,
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
@@ -1377,7 +1342,6 @@ mod tests {
         // Verify specific tools exist
         let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"think"));
-        assert!(ids.contains(&"update_memory"));
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
@@ -1422,7 +1386,6 @@ mod tests {
         let enabled = default_enabled_tools();
         assert!(enabled.is_object());
         assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("update_memory"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));

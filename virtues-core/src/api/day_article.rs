@@ -169,9 +169,6 @@ pub(crate) async fn assemble(
     start: &str,
     end: &str,
 ) -> Result<DayInput> {
-    // What the assistant may read (Settings · Your data): a withheld kind
-    // gives this nothing, so it never reaches the model.
-    let withheld = crate::api::model_access::withheld_tables(pool).await?;
     // The owner, so they are not listed as someone in their own day.
     let self_id: Option<String> =
         sqlx::query_scalar("SELECT self_person_id FROM app_user_profile LIMIT 1")
@@ -184,12 +181,10 @@ pub(crate) async fn assemble(
         "SELECT id, text, started_at, COALESCE(ended_at, started_at + interval '5 minutes') AS ended_at \
          FROM data_communication_transcription \
          WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
-         AND NOT $3::boolean \
          ORDER BY started_at",
     )
     .bind(start)
     .bind(end)
-    .bind(withheld.contains("data_communication_transcription"))
     .fetch_all(pool)
     .await?;
     let mut recorded: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
@@ -256,12 +251,10 @@ pub(crate) async fn assemble(
               AND er.entity_type = 'person' AND er.role = 'sender' \
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at < $2::timestamptz \
-         AND NOT $3::boolean \
          ORDER BY m.id, (pe.name IS NULL)",
     )
     .bind(start)
     .bind(end)
-    .bind(withheld.contains("data_communication_message"))
     .fetch_all(pool)
     .await?;
     let participants: Vec<(String, String)> = sqlx::query_as(
@@ -269,12 +262,11 @@ pub(crate) async fn assemble(
          JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id AND r.entity_type = 'person' \
          JOIN wiki_people p ON p.id = r.entity_id \
          WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at < $2::timestamptz AND m.conversation_id IS NOT NULL \
-           AND ($3::text IS NULL OR p.id <> $3) AND NOT $4::boolean",
+           AND ($3::text IS NULL OR p.id <> $3)",
     )
     .bind(start)
     .bind(end)
     .bind(self_id.as_deref())
-    .bind(withheld.contains("data_communication_message"))
     .fetch_all(pool)
     .await?;
     let mut thread_names: HashMap<String, BTreeSet<String>> = HashMap::new();
@@ -1202,11 +1194,6 @@ fn metres(a: &Fix, b: &Fix) -> f64 {
 
 /// The day's GPS fixes, in time order.
 async fn day_fixes(pool: &PgPool, start: &str, end: &str) -> Result<Vec<Fix>> {
-    // What the assistant may read (Settings · Your data): a withheld kind
-    // gives this nothing, so it never reaches the model.
-    if crate::api::model_access::is_withheld(pool, "data_location_point").await? {
-        return Ok(Vec::new());
-    }
     let rows: Vec<(DateTime<Utc>, f64, f64)> = sqlx::query_as(
         "SELECT occurred_at, latitude, longitude FROM data_location_point \
          WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz \
@@ -1666,9 +1653,6 @@ pub struct DayFacts {
 const COVERAGE_MERGE_MIN: i64 = 10;
 
 pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
-    // What the assistant may read (Settings · Your data): a withheld kind
-    // gives this nothing, so it never reaches the model.
-    let withheld = crate::api::model_access::withheld_tables(pool).await?;
     let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let (start, end) = super::day_summary::day_boundaries_utc(date, Some(&day_tz));
     let (day_start, day_end) = super::day_summary::day_bounds(date, Some(&day_tz));
@@ -1686,12 +1670,11 @@ pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
     let spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
         "SELECT started_at, COALESCE(ended_at, started_at + interval '5 minutes') \
          FROM data_communication_transcription \
-         WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz AND NOT $3::boolean \
+         WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
          ORDER BY started_at",
     )
     .bind(&start)
     .bind(&end)
-    .bind(withheld.contains("data_communication_transcription"))
     .fetch_all(pool)
     .await?;
     let mut coverage: Vec<[DateTime<Utc>; 2]> = Vec::new();

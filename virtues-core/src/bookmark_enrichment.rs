@@ -184,12 +184,6 @@ fn daily_cap() -> i64 {
 pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     let mut summary = EnrichmentSummary::default();
 
-    // Enrichment shows each bookmark to a model, so it waits while the owner
-    // withholds bookmarks from the assistant (Settings · Your data).
-    if crate::api::model_access::is_withheld(db, "data_content_bookmark").await? {
-        return Ok(summary);
-    }
-
     let cap = daily_cap();
     let done_today: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM data_content_bookmark
