@@ -37,6 +37,8 @@ contract reaches the model only when it needs it.
 
 ### 1. A `purpose` argument on `show`
 
+**As built, one field.** The tool offers a single `chart` argument that takes a purpose, a mark by name, or `choices`. Each purpose is described as the owner's question it answers. show.rs still reads `purpose`, `kind` and `mark` for calls written before `chart`. The rest of this section describes the purposes, which are unchanged.
+
 `show` gains `purpose`, one of eleven values. Each names the story the data
 tells, in words a model can match to the owner's question:
 
