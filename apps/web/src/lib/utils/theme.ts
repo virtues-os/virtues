@@ -180,7 +180,8 @@ export async function loadThemeFromDB(): Promise<ThemeChoice> {
 	if (typeof window === 'undefined') return FALLBACK_CHOICE;
 
 	try {
-		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string } }>();
+		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string; accent?: string } }>();
+		applyAccent(isAccent(profile.ui_preferences?.accent) ? profile.ui_preferences.accent : DEFAULT_ACCENT);
 		const stored = profile.ui_preferences?.theme;
 		const choice = resolveChoice(stored);
 		if (choice) {
@@ -200,6 +201,7 @@ export async function loadThemeFromDB(): Promise<ThemeChoice> {
 /** Apply the cached choice at once, then sync with the profile. */
 export function initTheme(): void {
 	if (typeof window === 'undefined') return;
+	applyAccent(getAccent());
 	applyTheme(getThemeChoice());
 	void loadThemeFromDB();
 }
@@ -260,7 +262,67 @@ export const themePreviewColors: Record<
 
 /** Icon and one line for each choice in the ⌘K theme list. */
 export const themeMetadata: Record<ThemeChoice, { icon: string; description: string }> = {
-	oxford: { icon: 'mynaui:sun', description: 'Navy and claret on white' },
+	oxford: { icon: 'mynaui:sun', description: 'Dark ink on white' },
 	asgard: { icon: 'mynaui:moon', description: 'Light ink on graphite' },
 	system: { icon: 'mynaui:circle-half', description: 'Follows your device' }
 };
+
+// ── Accent ──────────────────────────────────────────────────────────────────
+// The one color a page carries (design.md, "Accent"), picked from swatches
+// that themes.css tunes once for Light and once for Dark. It is saved on the
+// profile beside the theme (`ui_preferences.accent`), cached for app.html's
+// pre-paint, and set as `data-accent` on <html>.
+
+export type Accent = 'navy' | 'indigo' | 'violet' | 'plum' | 'teal' | 'graphite';
+
+export const DEFAULT_ACCENT: Accent = 'navy';
+
+/** Every swatch, in the order the picker shows them. */
+export const ACCENTS: readonly { id: Accent; name: string }[] = [
+	{ id: 'navy', name: 'Navy' },
+	{ id: 'indigo', name: 'Indigo' },
+	{ id: 'violet', name: 'Violet' },
+	{ id: 'plum', name: 'Plum' },
+	{ id: 'teal', name: 'Teal' },
+	{ id: 'graphite', name: 'Graphite' }
+];
+
+const ACCENT_STORAGE_KEY = 'virtues-accent';
+
+export function isAccent(value: unknown): value is Accent {
+	return typeof value === 'string' && ACCENTS.some((a) => a.id === value);
+}
+
+/** The cached accent. */
+export function getAccent(): Accent {
+	if (typeof window === 'undefined') return DEFAULT_ACCENT;
+	try {
+		const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
+		return isAccent(stored) ? stored : DEFAULT_ACCENT;
+	} catch {
+		return DEFAULT_ACCENT;
+	}
+}
+
+/** Paint an accent (visual only, no persistence). */
+export function applyAccent(accent: Accent): void {
+	if (typeof window === 'undefined') return;
+	document.documentElement.setAttribute('data-accent', accent);
+	try {
+		localStorage.setItem(ACCENT_STORAGE_KEY, accent);
+	} catch {
+		// Storage disabled: the accent lasts for this page.
+	}
+	window.dispatchEvent(new CustomEvent('accentchange', { detail: { accent } }));
+}
+
+/** Paint an accent and save it to the profile. */
+export async function setAccent(accent: Accent): Promise<void> {
+	if (typeof window === 'undefined') return;
+	applyAccent(accent);
+	try {
+		await updateUiPreferences({ accent });
+	} catch (error) {
+		console.error('Failed to save accent:', error);
+	}
+}

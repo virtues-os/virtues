@@ -446,12 +446,12 @@
 	.see-all:hover { color: var(--color-foreground); }
 	.chart { width: 100%; height: auto; display: block; overflow: visible; margin-top: 6px; }
 	.chart .bar { fill: var(--color-border); transition: fill 120ms ease; }
-	.chart .bar.today { fill: var(--color-secondary); }
+	.chart .bar.today { fill: var(--color-primary); }
 	.chart .bar:hover { fill: var(--color-foreground-subtle); }
-	.chart .bar.today:hover { fill: var(--color-secondary); }
+	.chart .bar.today:hover { fill: var(--color-primary); }
 	.chart .base { stroke: var(--color-border); stroke-width: 1; }
 	.chart text { font-family: var(--font-sans); font-size: 11px; fill: var(--color-foreground-subtle); }
-	.chart .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--color-secondary); font-weight: 500; }
+	.chart .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--color-primary); font-weight: 500; }
 	.chart .empty { font-family: var(--font-sans); font-size: 12px; fill: var(--color-foreground-subtle); }
 
 	/* By kind: a name, a track, a figure. */
@@ -460,7 +460,7 @@
 	.kind-n { color: var(--color-foreground); }
 	.track { height: 6px; border-radius: var(--radius-sm); background: var(--color-border-subtle); overflow: hidden; }
 	.fill { height: 100%; border-radius: var(--radius-sm); background: var(--color-border); }
-	.kind:first-child .fill { background: var(--color-secondary); }
+	.kind:first-child .fill { background: var(--color-primary); }
 	.kind-amt { text-align: right; color: var(--color-foreground); }
 	.kind-amt.dim { color: var(--color-foreground-subtle); font-size: 13px; }
 	@media (max-width: 480px) { .kind { grid-template-columns: 96px 1fr 64px; } }

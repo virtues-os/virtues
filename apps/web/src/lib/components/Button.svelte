@@ -14,13 +14,13 @@
 	 * their own. The fix was not a bigger API — it already took snippets. It
 	 * was speaking the same language as everything around it.
 	 *
-	 * Shape is design.md, "Primitives": a box at `--radius-md`, one filled
-	 * claret action per page. One height, `--control-h` (34px), and 44px on a
-	 * touch screen.
+	 * Shape is design.md, "Primitives": a box at `--radius-md`, and one filled
+	 * action per page, in the accent. One height, `--control-h`, and 44px on
+	 * a touch screen.
 	 *
 	 * `variant` is a claim about the button's job, not its color:
 	 *
-	 *   primary    the one action the page is for. Claret. At most one per page.
+	 *   primary    the one action the page is for, filled with the accent. At most one per page.
 	 *   secondary  a real action that is not the point of the page.
 	 *   ghost      a control in chrome; nothing on the desk may out-shout the page.
 	 *   danger     destroys something. Never also the primary. Red ink and an
@@ -191,21 +191,19 @@
 		}
 	}
 
-	/* Claret (`--color-secondary`) is the page's single filled action, and is
-	   the one exception to `--color-primary` being the only color the pane
-	   carries (design.md, "Color"). Never a rule, a fill, a border for
-	   emphasis, or a second button. */
+	/* The page's single filled action, in the accent (design.md, "Accent").
+	   One per page: never a second filled button. */
 	.v-btn[data-variant="primary"] {
-		background: var(--color-secondary);
+		background: var(--color-primary);
 		color: var(--color-surface);
 	}
 
 	.v-btn[data-variant="primary"]:hover:not(:disabled) {
-		background: var(--color-secondary-hover);
+		background: var(--color-primary-hover);
 	}
 
 	.v-btn[data-variant="primary"]:active:not(:disabled) {
-		background: var(--color-secondary-active);
+		background: var(--color-primary-active);
 	}
 
 	.v-btn[data-variant="secondary"] {

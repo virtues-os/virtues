@@ -55,9 +55,6 @@
 	--color-primary-active: var(--primary-active);
 	--color-primary-subtle: var(--primary-subtle);
 
-	--color-secondary: var(--secondary);
-	--color-secondary-hover: var(--secondary-hover);
-	--color-secondary-active: var(--secondary-active);
 
 	/* Status Colors */
 	--color-success: var(--success);
@@ -385,16 +382,6 @@
 	--foreground-subtle: #71717A;
 	--foreground-disabled: #A1A1AA;
 
-	/* Interactive Colors - One blue, spent sparingly (links, focus, selection) */
-	--primary: #0A84FF;
-	--primary-hover: #3395FF;
-	--primary-active: #0060DF;
-	--primary-subtle: #EAF3FF;
-
-	/* Secondary - Ink. Filled controls are graphite, not colour. */
-	--secondary: #17171A;
-	--secondary-hover: #2A2A2F;
-	--secondary-active: #000000;
 
 	/* Status Colors - Semantic only, and muted enough to sit on paper */
 	--success: #1A7F45;
@@ -536,8 +523,43 @@
 }
 
 /* ===================================
+   ACCENT
+   The swatches a person picks from (Settings, Appearance, Accent), each
+   tuned once for Light and once for Dark so links and the filled button's
+   label clear AA on the page in both: at least 6.9:1 in Light and 7.8:1 in
+   Dark. No red, green or amber, which mean danger, success and warning.
+   Navy is the default. Each is also a plain [data-accent] rule, so a swatch
+   in the picker can show its own color.
+   =================================== */
+:root,
+[data-accent="navy"] {
+	--accent-light: #1D4572;
+	--accent-dark: #88C0D0;
+}
+[data-accent="indigo"] {
+	--accent-light: #3B47A8;
+	--accent-dark: #9DA6F2;
+}
+[data-accent="violet"] {
+	--accent-light: #5B3A9E;
+	--accent-dark: #B7A2EE;
+}
+[data-accent="plum"] {
+	--accent-light: #7A2E66;
+	--accent-dark: #E2A1CB;
+}
+[data-accent="teal"] {
+	--accent-light: #0E6466;
+	--accent-dark: #6FC4BD;
+}
+[data-accent="graphite"] {
+	--accent-light: #3A3F4A;
+	--accent-dark: #C5CAD3;
+}
+
+/* ===================================
    OXFORD
-   Light, and the default: ivory, navy and claret.
+   Light, and the default.
    =================================== */
 :root,
 [data-theme="oxford"] {
@@ -573,25 +595,25 @@
 	--foreground-subtle: #626779;
 	--foreground-disabled: #A8A395;
 
-	/* Interactive Colors - Deep heritage navy */
-	--primary: #1D4572;
-	--primary-hover: #255893;
-	--primary-active: #153356;
-	--primary-subtle: #E8EEF5;
+	/* The accent (design.md, "Accent"): the one color a page carries, for
+	   what is pressable and what is now, and the fill of the page's one
+	   filled button. It is the person's pick from the swatches below, in
+	   this theme's tuning. Hover moves toward the page, press toward the
+	   ink, and the tint is a wash of it on the page, so every swatch gets
+	   all four from one value. */
+	--primary: var(--accent-light);
+	--primary-hover: color-mix(in srgb, var(--primary) 85%, var(--page));
+	--primary-active: color-mix(in srgb, var(--primary) 80%, var(--foreground));
+	--primary-subtle: color-mix(in srgb, var(--primary) 10%, var(--page));
 
-	/* Secondary - Claret heritage red (the signature accent) */
-	--secondary: #9A2B2E;
-	--secondary-hover: #B23639;
-	--secondary-active: #7E2225;
-
-	/* Status Colors - Hunter green + goldenrod + claret */
+	/* Status Colors */
 	--success: #2E6B43;
 	--success-subtle: #E3EDE5;
 	/* 5.6:1 on white and 4.7:1 on --warning-subtle, so warning text and the
 	   warning Badge both clear AA. */
 	--warning: #8F5E0C;
 	--warning-subtle: #F6ECD6;
-	/* A clear red, apart from claret (--secondary): an error must not look
+	/* A clear red, apart from every accent swatch: an error must not look
 	   like the page's filled action. 6.6:1 on white. */
 	--error: #B42318;
 	--error-subtle: #F6E3E2;
@@ -605,11 +627,11 @@
 	--border-subtle: #EFEEEB;
 	--border-strong: #D4D1CC;
 	--border-field: #8F8A82; /* 3.4:1 on the page */
-	--border-focus: #1D4572;
+	--border-focus: var(--primary);
 
 	/* Selection/Highlight - A yellow highlighter, warmed toward gold. Not the
-	   claret: a marked passage in the signature accent reads as an error state
-	   rather than as something someone marked. Yellow is what a pen does to
+	   accent: a marked passage in the accent would read as a link rather
+	   than as something someone marked. Yellow is what a pen does to
 	   paper, and the hue is nobody else's here. Warm (HSL 46°, 85%, 71%) so it
 	   reads as a mark on the ivory page and not as a tint of it: over the page
 	   it lands at #F9ECC3, over a white card at #FAEEC6. */
@@ -655,15 +677,9 @@
 	--foreground-subtle: #828282;
 	--foreground-disabled: #525252;
 
-	/* Interactive Colors - Nordic blue */
-	--primary: #88C0D0;
-	--primary-hover: #9dd0de;
-	--primary-active: #6fa8b8;
-	--primary-subtle: #1a2a2d;
-
-	--secondary: #D4D4D4;
-	--secondary-hover: #e5e5e5;
-	--secondary-active: #c4c4c4;
+	/* The accent in Dark's tuning; hover, press and tint follow it through
+	   the mixes in the Light block. */
+	--primary: var(--accent-dark);
 
 	/* Status Colors */
 	--success: #3FA266;
@@ -686,7 +702,6 @@
 	--border-subtle: #242528;
 	--border-strong: #3e4045;
 	--border-field: #66686e; /* 3.2:1 on the page */
-	--border-focus: #88C0D0;
 
 	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
 	 * against the near-black ground. */

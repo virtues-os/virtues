@@ -226,7 +226,7 @@
 
 	.fig-quote q::before,
 	.fig-quote q::after {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.who {

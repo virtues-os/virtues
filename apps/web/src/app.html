@@ -33,6 +33,9 @@
 					var sys = t === "system";
 					if (sys) t = matchMedia("(prefers-color-scheme: dark)").matches ? "asgard" : "oxford";
 					if (t === "oxford" || t === "asgard") document.documentElement.setAttribute("data-theme", t);
+					// Settings · Appearance · Accent (lib/utils/theme.ts).
+					var a = localStorage.getItem("virtues-accent");
+					if (a) document.documentElement.setAttribute("data-accent", a);
 					// Settings · Appearance · Glass (stores/glass.svelte.ts).
 					var g = localStorage.getItem("virtues-glass");
 					if (g) document.documentElement.setAttribute("data-glass", g);

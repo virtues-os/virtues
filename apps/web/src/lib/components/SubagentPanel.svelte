@@ -75,7 +75,7 @@
 	}
 
 	.subagent-count {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 		font-variant-numeric: tabular-nums;
 		font-size: 0.75rem;
 	}
@@ -100,7 +100,7 @@
 	.subagent-status-icon {
 		display: inline-flex;
 		flex-shrink: 0;
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.subagent-card[data-status='done'] .subagent-status-icon {
@@ -126,7 +126,7 @@
 	}
 
 	.subagent-model {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -135,7 +135,7 @@
 	}
 
 	.subagent-tokens {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 		font-variant-numeric: tabular-nums;
 		font-size: 0.7rem;
 		flex-shrink: 0;

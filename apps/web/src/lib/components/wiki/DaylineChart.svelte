@@ -364,7 +364,7 @@
 	}
 
 	.block.top {
-		fill: var(--color-secondary);
+		fill: var(--color-primary);
 		fill-opacity: 0.85;
 	}
 
@@ -468,7 +468,7 @@
 	}
 
 	.tip-usual.top {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.note {

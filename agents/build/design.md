@@ -86,9 +86,9 @@ and holds the few app-wide rules (the focus reset, the Glass setting, the
 selection color).
 
 **Write the `--color-` spelling in a component.** `themes.css` defines raw
-values (`--surface`, `--border`, `--secondary`) and bridges them to Tailwind
+values (`--surface`, `--border`, `--primary`) and bridges them to Tailwind
 through `@theme inline` as `--color-surface`, `--color-border`,
-`--color-secondary`. Both resolve. The bridged name is the one the rest of
+`--color-primary`. Both resolve. The bridged name is the one the rest of
 the tree uses and the one a Tailwind utility maps to. Raw names belong
 inside `themes.css` only.
 
@@ -102,18 +102,41 @@ inside `themes.css` only.
 | Muted, subtle | `--color-foreground-muted`, `--color-foreground-subtle` | Secondary text, captions. Three inks, no others. |
 | Hairline | `--color-border` | A framed block's edge. Decoration, held to no contrast minimum. |
 | Field edge | `--color-border-field` | A text field's edge at rest (Input, Textarea, SearchField). It shows where a field is, so it holds 3:1 against the page in both themes. |
-| Accent | `--color-primary` | Means *now* or *pressable*. |
-| Filled action | `--color-secondary` | The single primary Button on a page. |
+| Accent | `--color-primary` | Means *now* or *pressable*, and fills the page's one primary Button. The person picks it (see [Accent](#accent)). |
 | Status | `--color-success`, `--color-warning`, `--color-error`, `--color-info` | A state a person can act on. |
 
 ```specimen Colors
 ```
 
 **One accent, with two meanings.** `--color-primary` is the only color a page
-carries, and it means *now* (a live marker, the open clip) or *pressable* (a
-link, a save). The one exception is the filled action: claret on the single
-`Button variant="primary"` a page is allowed. Claret is never a rule, a fill,
-a border for emphasis or a second button, and it never marks where work ran.
+carries, and it means *now* (a live marker, today's bar, the open clip) or
+*pressable* (a link, a save, the one filled `Button variant="primary"` a page
+is allowed). It is never a rule, a fill for decoration, a border for emphasis
+or a second filled button, and it never marks where work ran.
+
+### Accent
+
+The person picks the accent in Settings, Appearance, from six swatches: Navy
+(the default), Indigo, Violet, Plum, Teal and Graphite (`ACCENTS` in
+`lib/utils/theme.ts`). It is saved on the profile beside the theme
+(`ui_preferences.accent`), cached for the pre-paint in `app.html`, and set as
+`data-accent` on `<html>`.
+
+- **Each swatch is tuned twice** in `themes.css`, as `--accent-light` and
+  `--accent-dark`, so links and the filled button's label clear AA on the
+  page in both themes. Light's `--primary` reads `--accent-light` and Dark's
+  reads `--accent-dark`. Hover, press and the tint are mixed from it, so a
+  swatch is one value per theme.
+- **No red, green or amber swatch.** Those mean danger, success and warning,
+  and an accent in one of them would make a link read as a state.
+- **Swatches, not a color wheel.** A free pick would fail contrast in one
+  theme or the other.
+- Every swatch is a plain `[data-accent]` rule as well, so an element can
+  show a swatch other than the chosen one: the picker's dots and the
+  specimen below do this.
+
+```specimen Accents
+```
 
 **Do not use color to suggest a category that does not exist.** A hue on a
 lane suggests a relationship the data does not have. Separate lanes by form
@@ -652,7 +675,7 @@ gap is open work.
 
 | Primitive | Job | Today | Decided |
 |---|---|---|---|
-| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `danger` destroys something and is never also primary; it is red ink and an edge at rest and fills only under the pointer, so it never looks like the primary. | `--radius-md`; 34px, 44px on touch. 73 files, beside about 485 hand-styled `<button>`s. | Kept. |
+| `Button` | A labeled action. `primary` is the one action a page is for, at most one; `primary` fills with the accent; `danger` destroys something and is never also primary; it is red ink and an edge at rest and fills only under the pointer, so it never looks like the primary. | `--radius-md`; 34px, 44px on touch. 73 files, beside about 485 hand-styled `<button>`s. | Kept. |
 | `IconButton` | A button with no words. `label` is required and feeds `aria-label` and `title`. | `nested` 20px, `control` 34px (the default), `touch` 44px; ghost, secondary, danger. 35 files. | Kept. |
 | `TextAction` | A button with no box: a quiet link in `--color-primary`. `inline` keeps `font: inherit` mid-sentence. | 33 files. | Kept. |
 | `Input`, `Textarea` | Text fields with label, help and validation. | 34px, 44px on touch; 14px text, 16px on touch. 12 and 3 files, beside about 100 raw fields. | Kept; the raw fields move onto them. |
@@ -816,7 +839,7 @@ in a comment on or above it. Never cut a baseline from the shared checkout
 | a font size off the scale | 0 | |
 | color literals outside `themes.css` and a chart's paint | 0 | `hex-literal`, `rgb-literal` |
 | bold or italic asked of the serif | 0 | `serif-impossible` |
-| raw `--secondary`, `--border`, `--surface` in a component | 0 | |
+| raw `--primary`, `--border`, `--surface` in a component | 0 | |
 | `--surface-elevated` as a hover, active or selected state | 0 | |
 | a hand-made copy of a primitive | 0 | |
 | distinct font sizes on one list or drawer, its title aside | at most 2 | |

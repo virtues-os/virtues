@@ -734,7 +734,7 @@
 	}
 
 	/* What the record says beside the passage: a short dashed rule before a
-	   silence, a small claret "new" before a first. */
+	   silence, a small "new" in the accent before a first. */
 	.mark {
 		display: grid;
 		grid-template-columns: 1.4rem 1fr;
@@ -750,7 +750,7 @@
 	.mark .new {
 		font-size: 0.625rem;
 		letter-spacing: 0.04em;
-		color: var(--color-secondary);
+		color: var(--color-primary);
 		padding-top: 0.08rem;
 	}
 

@@ -16,7 +16,7 @@
 		{ fg: '--foreground-subtle', bg: '--page', where: 'Hints, dates, captions', need: 4.5 },
 		{ fg: '--foreground', bg: '--desk', where: 'Text on the desk', need: 4.5 },
 		{ fg: '--primary', bg: '--page', where: 'Links and pressable ink', need: 4.5 },
-		{ fg: '--surface', bg: '--secondary', where: 'The primary Button label on claret', need: 4.5 },
+		{ fg: '--surface', bg: '--primary', where: 'The primary Button label on the accent', need: 4.5 },
 		{ fg: '--surface', bg: '--error', where: 'The danger Button label under the pointer', need: 4.5 },
 		{ fg: '--success', bg: '--page', where: 'Success text', need: 4.5 },
 		{ fg: '--warning', bg: '--page', where: 'Warning text', need: 4.5 },

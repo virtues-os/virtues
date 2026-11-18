@@ -13,6 +13,7 @@
 	import { lightUp } from '$lib/utils/lit';
 	import Button from '$lib/components/Button.svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
 	import StyleNotesSettings from '$lib/components/StyleNotesSettings.svelte';
 	import RulesSettings from '$lib/components/RulesSettings.svelte';
@@ -31,7 +32,7 @@
 	import DataSettings from './DataSettings.svelte';
 	import ReadingSettings from './ReadingSettings.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
-	import { getThemeChoice, setTheme, type ThemeChoice } from '$lib/utils/theme';
+	import { getAccent, getThemeChoice, setTheme, type Accent, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
 	import { takePendingSetting } from '$lib/settings/focus';
 
@@ -63,6 +64,7 @@
 	const title = (settingId: string) => titleOf(findSetting(settingId)?.title ?? settingId, spoken);
 
 	let theme = $state<ThemeChoice>(getThemeChoice());
+	let accent = $state<Accent>(getAccent());
 
 	// `setTheme` applies it and saves it in the assistant profile's
 	// `ui_preferences`, which is where the app reads it and where Changed
@@ -134,6 +136,9 @@
 		{:else if id === 'appearance'}
 			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
+			</SettingRow>
+			<SettingRow id="accent" label={title('accent')} help="The color of links, selections and the main button on each page." block>
+				<AccentPicker value={accent} onchange={(next) => (accent = next)} />
 			</SettingRow>
 			<AppearanceSettings assistantName={spoken} />
 		{:else if id === 'billing'}
