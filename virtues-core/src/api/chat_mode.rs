@@ -485,9 +485,11 @@ pub(crate) mod tests {
             // One tool whatever is connected; the services' own tools go to
             // its worker, never into this list.
             ("connections", &["connection"], 900),
-            // Drawn inside the reply. The kinds and their column contracts are
-            // the description; trimming it means dropping a kind.
-            ("show", &["show"], 1_900),
+            // Drawn inside the reply. The charts and their columns are in the
+            // charts skill, which the model loads before drawing; this is the
+            // core rules and the purposes. Raised 500 on 2026-11-18 for the
+            // purposes and the pointer to the skill.
+            ("show", &["show"], 2_400),
             // The most-used tool, and its table block is generated from the
             // catalog (sql_catalog::prompt_block), so a new table or a longer
             // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
@@ -509,10 +511,11 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's was the sum of its group
         // ceilings, and rose 1,300 on 2026-10-27 for `use_applet` listing the
         // four shipped chat applets; the applets a box adds grow it toward
-        // that group's ceiling, which this test cannot see. The rest sit just
-        // above their 2026-09-29 size.
+        // that group's ceiling, which this test cannot see. Rose 750 on
+        // 2026-11-18 for show's purposes and the charts skill's line in
+        // `use_applet`. The rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 23_350),
+            ("chat", 24_100),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),

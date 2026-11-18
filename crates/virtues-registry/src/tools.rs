@@ -405,29 +405,31 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads, and `chart`, the purpose whose question the figure answers; the server picks the chart from the columns the query returns. It runs the query, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Make one call for each figure: if show refuses it, call once more with the fix the refusal names, and never draw a figure again once it has drawn. If show is closed for the turn, say in words what the figure would have shown, and don't draw it another way, such as with shell. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. Before your first show call in a chat, load the charts skill with use_applet: it says which chart fits the question and the columns each reads. Give `chart` and `sql`, one read-only SELECT over the tables sql_query reads; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading, once or twice a reply at most. Make one call for each figure: if show refuses it, call once more with the fix the refusal names, and never draw a figure again once it has drawn. If show is closed for the turn, say in words what the figure would have shown, and don't draw it another way, such as with shell. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "chart": {
                     "type": "string",
-                    "enum": crate::chart_marks::chart_values(),
-                    "description": crate::chart_marks::purpose_catalog()
+                    "description": format!(
+                        "A purpose ({}), a chart the owner named, or choices for reply buttons",
+                        crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")
+                    )
                 },
                 "title": { "type": "string", "description": "A few words naming what is shown" },
-                "sql": { "type": "string", "description": "Name the columns a chart reads as its line under chart says (day, hour, usual_low, started_at and so on); alias every other column as the owner should read it: AS \"Hours asleep\"" },
-                "finding": { "type": "string", "description": "scatter only: one sentence on what lines up, written only from rows you have already read" },
-                "split_at": { "type": "string", "description": "interrupted only: the date of the change" },
-                "split_label": { "type": "string", "description": "interrupted only: the change in a few words" },
-                "step_kind": { "type": "string", "enum": ["day", "weekday", "hour"], "description": "cumulative only: what a step is; default day" },
-                "unit": { "type": "string", "description": "cumulative only: USD for money, or a word such as steps or km" },
-                "event_label": { "type": "string", "description": "aligned only: the event at zero in a few words, such as Payday" },
-                "days": { "type": "integer", "minimum": 7, "maximum": 92, "description": "lollipop only: the window in days; default 30" },
-                "period": { "type": "string", "description": "density only: the stretch the minutes cover, such as in October" },
+                "sql": { "type": "string", "description": "One read-only SELECT, its columns named as the charts skill says" },
+                "finding": { "type": "string", "description": "scatter; see the charts skill" },
+                "split_at": { "type": "string", "description": "interrupted; see the charts skill" },
+                "split_label": { "type": "string", "description": "interrupted; see the charts skill" },
+                "step_kind": { "type": "string", "description": "cumulative; see the charts skill" },
+                "unit": { "type": "string", "description": "cumulative; see the charts skill" },
+                "event_label": { "type": "string", "description": "aligned; see the charts skill" },
+                "days": { "type": "integer", "description": "lollipop; see the charts skill" },
+                "period": { "type": "string", "description": "density; see the charts skill" },
                 "series": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
-                    "description": "in_sentence or spark: when a figure stands for a series (an average, a total, a change between two periods), map its column to a SELECT of the rows behind it: the x axis, the value aliased as the owner reads it, and figure (the figure's level on the rows it summarizes, null on the rows around them). Nothing is drawn where you call: quote each figure in your sentence and link only the figure itself, such as [0.8 a day](its series ref)"
+                    "description": "in_sentence and spark; see the charts skill"
                 },
                 "options": {
                     "type": "array",

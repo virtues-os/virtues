@@ -140,6 +140,8 @@ above, plus each tie.
 
 ### 4. `chart_guide(mark)`, for the few marks with extra arguments
 
+**As built, a skill.** The catalog outgrew `show`'s size budget (6,208 characters against 1,900), so the charts and their columns moved into the charts skill, `applets/charts/SKILL.md`, which the model loads with `use_applet` before its first `show` call in a chat. Its `references/` hold the queries that are hard to write. `show`'s definition keeps the core rules and the purpose names, about 2,400 characters. A registry test keeps the skill naming every purpose and mark. The rest of this section describes the tool that was not built.
+
 A small read-only tool returns one mark's `how` from the table. The model calls
 it only when it wants a mark that takes call arguments beyond the SQL:
 
@@ -192,7 +194,7 @@ executor that takes the mark's `max_rows + 1` as its limit: a crate-internal
    table row and the picker row together, in one change per batch. Start with
    the marks the model will reach for most: `baseline`, `cumulative`,
    `interrupted` and `states`.
-4. `chart_guide`, once the first mark with extra arguments lands.
+4. **Built as the charts skill** (see section 4).
 
 ## How to tell it worked
 
