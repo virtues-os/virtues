@@ -138,8 +138,9 @@
 /* Liquid glass (themes.css, `--lq-*`). One recipe for everything that
    floats over the painting. The rim and the lift are shadows because glass
    is the one surface in the shell that is lifted off what is behind it.
-   `.lq-regular` is the frostier glass of surfaces that hold text, and
-   `.lq-selected` the denser glass of the tab you are on. */
+   `.lq-regular` is the frostier glass of surfaces that hold text: the
+   sidebar, the home cards, and the tab you are on (`.lq-selected`), so
+   the shell reads as one material. */
 .lq {
 	position: relative;
 	background: var(--lq-sheen), var(--lq-fill);
@@ -173,7 +174,9 @@
 }
 
 .lq.lq-selected {
-	background: var(--lq-sheen), var(--lq-fill-selected);
+	background: var(--lq-sheen), var(--lq-fill-regular);
+	-webkit-backdrop-filter: var(--lq-filter-regular);
+	backdrop-filter: var(--lq-filter-regular);
 	box-shadow: var(--lq-rim), var(--lq-lift-selected); /* design-ok: the selected tab's glass */
 }
 
@@ -221,7 +224,6 @@
 :root[data-glass="none"] {
 	--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
 	--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
-	--lq-fill-selected: linear-gradient(var(--color-surface), var(--color-surface));
 	--lq-filter: none;
 	--lq-filter-regular: none;
 }
@@ -231,7 +233,6 @@
 	:root:root {
 		--lq-fill: linear-gradient(var(--color-surface), var(--color-surface));
 		--lq-fill-regular: linear-gradient(var(--color-surface), var(--color-surface));
-		--lq-fill-selected: linear-gradient(var(--color-surface), var(--color-surface));
 		--lq-filter: none;
 		--lq-filter-regular: none;
 	}

@@ -164,7 +164,7 @@
 	   cards (`.lq` in app.css). A thin layer of the surface that lets the
 	   picture through, frosted, with a lit rim that is strongest along the
 	   top edge, a sheen across the top, and a soft lift. All of it is one
-	   material: the selected tab is the sidebar's glass a little denser,
+	   material: the selected tab is the sidebar's glass,
 	   not a white pill. Pages sit on paper, never on glass.
 
 	   How much shows through is the owner's (Settings · Appearance ·
@@ -183,9 +183,6 @@
 	--lq-fill: linear-gradient(180deg,
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 60% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 86% * var(--lq-see)), transparent));
-	--lq-fill-selected: linear-gradient(
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 30% * var(--lq-see)), transparent),
-		color-mix(in srgb, var(--color-surface) max(0%, 100% - 30% * var(--lq-see)), transparent));
 	/* Regular glass, for surfaces that hold text: the sidebar and the home
 	   cards. Denser and more frosted than a control's clear glass, so a
 	   label stays readable where the painting is behind it (`.lq-regular`,
@@ -746,9 +743,6 @@
 	--lq-fill: linear-gradient(180deg,
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 38% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 56% * var(--lq-see)), transparent));
-	--lq-fill-selected: linear-gradient(
-		color-mix(in srgb, var(--color-foreground) 9%, var(--color-surface)),
-		color-mix(in srgb, var(--color-foreground) 9%, var(--color-surface)));
 	--lq-fill-regular: linear-gradient(
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent),
 		color-mix(in srgb, var(--color-surface) max(0%, 100% - 20% * var(--lq-see)), transparent));
