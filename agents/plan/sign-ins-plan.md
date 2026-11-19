@@ -15,7 +15,8 @@ in again with as little work for the owner as possible.
 
 - **Three syncs replay a session with a plain HTTP client:** X, Instagram and
   Grok (`applets/sources.toml`, the `login` entries). They need the cookies and
-  nothing else.
+  nothing else. Grok's login cookie names are still unconfirmed (the TODO in
+  that file).
 - **Two sites answer only a real browser:** claude.ai and ChatGPT. A visible
   Chrome on a server, signed in by the owner, read both
   ([record/ai-chat-sync-spike-2026-10-23.md](../record/ai-chat-sync-spike-2026-10-23.md)).
@@ -40,8 +41,12 @@ in again with as little work for the owner as possible.
    dead session with a redirect to its login page gives a client that follows
    redirects a 200 and an HTML page. The sync reports a parse error, never
    marks the sign-in for reconnect, and the owner is never asked to sign in.
-2. **One dead sign-in notifies on every run.** The attention item for a failed
-   applet is keyed by run, so each scheduled run raises a new notification.
+2. **One dead sign-in shows as two items.** Once a sync marks its sign-in for
+   reconnect, the runner refuses to load it, so every later run fails with the
+   runner's "credential not found or not active" error. The owner sees
+   "Instagram needs you to sign in again" and, beside it, a failed-applet item
+   carrying that internal error. Each is one notification: the applet item is
+   keyed by applet (`api/attention.rs`).
 3. **The session is replayed as a different browser.** The session is made in
    a browser that identifies as Safari, and the Instagram sync sends a Chrome
    user agent. Not shown to have ended a session; it is a known reason sites
@@ -63,8 +68,9 @@ not change with where the cookies came from.
   its response, and a network failure. Signed out marks the sign-in for
   reconnect. Session syncs use `virtues_applets::http_client_no_redirects()`
   where the site signals a dead session by redirect.
-- A sign-in that needs the owner raises one attention item, keyed by the
-  sign-in, for as long as it is dead.
+- A sign-in that needs the owner raises one attention item. A sync whose
+  sign-in is marked for reconnect is skipped, or its failed-applet item is
+  left out, so the sign-in item is the only one.
 - The sync sends the user agent of the browser that made the session. The
   hand-over carries it.
 - The sync writes cookies the site reissues back into the stored sign-in.
@@ -82,8 +88,10 @@ Mac's copy is still signed in, the sync recovers and the owner sees nothing.
 The attention item opens the site's login page in the Browser pane. For a site
 where the owner has allowed it, the app fills the saved password and the
 authenticator code, and hands the page to the owner for anything else. The
-shell fills these fields itself; a model never sees the values, which is the
-existing rule for password and one-time-code fields.
+shell fills these fields itself and a model never sees the values. Today the
+shell refuses to let a model type into password and one-time-code fields.
+Filling a saved login in the Mac pane is the unbuilt half of slice 6 in
+[secrets-plan.md](secrets-plan.md), and this slice depends on it.
 
 ### Slice 4: a browser on the server
 
