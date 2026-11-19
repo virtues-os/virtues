@@ -311,3 +311,39 @@ async fn flush(db: &PgPool, records: &[EmailRow]) -> Result<usize> {
     let result = q.execute(db).await?;
     Ok(result.rows_affected() as usize)
 }
+
+/// Bring a stored message's labels up to date after Gmail reports a change.
+/// `labels` is the message's full label set after the change. Returns 0 when
+/// the message was never stored here (older than the first sync, or a draft).
+pub async fn update_labels(db: &PgPool, gmail_id: &str, labels: &[String]) -> Result<u64> {
+    let is_read = !labels.iter().any(|l| l == "UNREAD");
+    let is_starred = labels.iter().any(|l| l == "STARRED");
+    let res = sqlx::query(
+        "UPDATE data_communication_email \
+         SET labels = $2, is_read = $3, is_starred = $4, \
+             metadata = jsonb_set(metadata, '{label_ids}', $2) \
+         WHERE source_stream_id = $1 AND source_table = 'google_gmail' \
+           AND (labels IS DISTINCT FROM $2 OR is_read IS DISTINCT FROM $3 OR is_starred IS DISTINCT FROM $4)",
+    )
+    .bind(gmail_id)
+    .bind(serde_json::json!(labels))
+    .bind(is_read)
+    .bind(is_starred)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Mark messages Gmail deleted. The row stays: it is history, and
+/// `deleted_at_source` is how the rest of the system reads "gone from Gmail".
+pub async fn mark_deleted(db: &PgPool, gmail_ids: &[String]) -> Result<u64> {
+    let res = sqlx::query(
+        "UPDATE data_communication_email SET deleted_at_source = now() \
+         WHERE source_stream_id = ANY($1) AND source_table = 'google_gmail' \
+           AND deleted_at_source IS NULL",
+    )
+    .bind(gmail_ids)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected())
+}

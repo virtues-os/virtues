@@ -5,6 +5,13 @@
 //! Google's calendar API). On first run there's no token; we query the
 //! last 90 days + future and store the returned `nextSyncToken`.
 //!
+//! Not every calendar is fetched on every run. The calendar list is fetched
+//! once a day. Calendars Google publishes (holidays and the like) are checked
+//! once a day, and a calendar with no changes for a week is checked hourly
+//! until it changes again. Everything else is checked every run. The
+//! schedule is `is_due`; the times it reads live in `checked_at` and
+//! `changed_at` in the applet's state.
+//!
 //! Two failure modes are load-bearing here, because together they froze a real
 //! box's calendar for three days:
 //!
@@ -41,6 +48,17 @@ const MAX_PAGES: u32 = 20;
 /// How far back a full sync reaches. Only applies when there is no usable
 /// cursor — normal runs are deltas, which are unbounded in age.
 const FULL_SYNC_LOOKBACK_DAYS: i64 = 90;
+/// People rarely add or remove a calendar, so the list is fetched once a day.
+const CALENDAR_LIST_EVERY_SECS: i64 = 86_400;
+/// Calendars Google publishes (holidays, sports, moon phases) change a few
+/// times a year. Checked once a day.
+const PUBLISHED_EVERY_SECS: i64 = 86_400;
+/// A calendar with no changes for a week is checked hourly until it changes.
+const IDLE_AFTER_SECS: i64 = 7 * 86_400;
+const IDLE_EVERY_SECS: i64 = 3_600;
+/// Runs land a few seconds after the quarter hour, not exactly on it, so a
+/// check is due slightly before its interval is up.
+const DUE_SLACK_SECS: i64 = 300;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,8 +89,28 @@ async fn main() -> Result<()> {
         })
         .unwrap_or_default();
 
-    let calendars = list_calendars(&client, &access_token).await?;
+    let now = chrono::Utc::now().timestamp();
+    let listed_at = input.config.get("calendars_listed_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let cached: Option<Vec<Value>> = input.config.get("calendars").and_then(|v| v.as_array()).cloned();
+    let calendars = match cached {
+        Some(c) if now - listed_at < CALENDAR_LIST_EVERY_SECS - DUE_SLACK_SECS => c,
+        _ => {
+            // Keep only what the loop reads, so state stays small.
+            let fresh: Vec<Value> = list_calendars(&client, &access_token)
+                .await?
+                .iter()
+                .map(|c| serde_json::json!({ "id": c.get("id"), "accessRole": c.get("accessRole") }))
+                .collect();
+            input.config["calendars"] = Value::from(fresh.clone());
+            input.config["calendars_listed_at"] = Value::from(now);
+            fresh
+        }
+    };
+
+    let mut checked_at = int_map(&input.config, "checked_at");
+    let mut changed_at = int_map(&input.config, "changed_at");
     let mut total_written = 0usize;
+    let mut skipped = 0usize;
     let mut failures: Vec<String> = Vec::new();
 
     for cal in &calendars {
@@ -80,6 +118,13 @@ async fn main() -> Result<()> {
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("primary");
+
+        // A calendar seen for the first time starts out active.
+        let changed = *changed_at.entry(cal_id.to_string()).or_insert(now);
+        if !is_due(cal_id, now, checked_at.get(cal_id).copied(), changed) {
+            skipped += 1;
+            continue;
+        }
 
         // `accessRole` is the whole reason we walk the calendarList rather than
         // hitting `primary` directly: it is what distinguishes the owner's own
@@ -103,6 +148,10 @@ async fn main() -> Result<()> {
         {
             Ok((written, new_token)) => {
                 total_written += written;
+                checked_at.insert(cal_id.to_string(), now);
+                if written > 0 {
+                    changed_at.insert(cal_id.to_string(), now);
+                }
                 match new_token {
                     Some(t) => {
                         sync_tokens.insert(cal_id.to_string(), t);
@@ -123,18 +172,27 @@ async fn main() -> Result<()> {
         }
     }
 
-    input.config["sync_tokens"] = serde_json::json!(sync_tokens);
+    // Drop entries for calendars that are no longer listed.
+    let listed: std::collections::HashSet<&str> =
+        calendars.iter().filter_map(|c| c.get("id").and_then(|v| v.as_str())).collect();
+    for m in [&mut checked_at, &mut changed_at] {
+        m.retain(|k, _| listed.contains(k.as_str()));
+    }
+    sync_tokens.retain(|k, _| listed.contains(k.as_str()));
 
-    let synced = calendars.len().saturating_sub(failures.len());
+    input.config["sync_tokens"] = serde_json::json!(sync_tokens);
+    input.config["checked_at"] = serde_json::json!(checked_at);
+    input.config["changed_at"] = serde_json::json!(changed_at);
+
+    let attempted = calendars.len() - skipped;
+    let synced = attempted.saturating_sub(failures.len());
     let summary = format!(
-        "synced {} events across {}/{} calendars",
-        total_written,
-        synced,
-        calendars.len()
+        "synced {} events across {}/{} calendars ({} not due)",
+        total_written, synced, attempted, skipped
     );
 
     if !failures.is_empty() {
-        if synced == 0 {
+        if synced == 0 && attempted > 0 {
             // Nothing worked, so there are no fresh cursors to protect by
             // exiting clean. Fail the run outright.
             return Err(anyhow!(
@@ -152,6 +210,27 @@ async fn main() -> Result<()> {
     }
 
     output_with_records(&summary, &input.config, total_written as i64)
+}
+
+/// Whether a calendar should be fetched on this run.
+fn is_due(cal_id: &str, now: i64, checked_at: Option<i64>, changed_at: i64) -> bool {
+    let Some(checked) = checked_at else { return true };
+    let every = if cal_id.ends_with("@group.v.calendar.google.com") {
+        PUBLISHED_EVERY_SECS
+    } else if now - changed_at >= IDLE_AFTER_SECS {
+        IDLE_EVERY_SECS
+    } else {
+        return true;
+    };
+    now - checked >= every - DUE_SLACK_SECS
+}
+
+fn int_map(config: &Value, key: &str) -> HashMap<String, i64> {
+    config
+        .get(key)
+        .and_then(|v| v.as_object())
+        .map(|o| o.iter().filter_map(|(k, v)| v.as_i64().map(|n| (k.clone(), n))).collect())
+        .unwrap_or_default()
 }
 
 async fn list_calendars(client: &reqwest::Client, token: &str) -> Result<Vec<Value>> {
@@ -354,4 +433,31 @@ async fn tombstone_absent(
     .context("tombstoning absent calendar events failed")?;
 
     Ok(res.rows_affected())
+}
+
+#[cfg(test)]
+mod due_tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+
+    #[test]
+    fn an_active_calendar_is_checked_every_run() {
+        assert!(is_due("me@example.com", NOW, Some(NOW - 900), NOW - 3_600));
+    }
+
+    #[test]
+    fn an_idle_calendar_is_checked_hourly() {
+        let week_ago = NOW - IDLE_AFTER_SECS;
+        assert!(!is_due("me@example.com", NOW, Some(NOW - 900), week_ago));
+        assert!(is_due("me@example.com", NOW, Some(NOW - 3_600), week_ago));
+    }
+
+    #[test]
+    fn a_published_calendar_is_checked_daily() {
+        let id = "en.usa#holiday@group.v.calendar.google.com";
+        assert!(!is_due(id, NOW, Some(NOW - 3_600), NOW));
+        assert!(is_due(id, NOW, Some(NOW - 86_400 + 60), NOW));
+        assert!(is_due(id, NOW, None, NOW));
+    }
 }
