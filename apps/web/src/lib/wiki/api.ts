@@ -911,6 +911,17 @@ export function writeDayAgain(date: string): Promise<{ state: 'running' }> {
 	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/page/write-again`);
 }
 
+/** Where a day's Write it again stands. `code` is how it ended: `written`, `not_enough`, or another that did not write. */
+export type DayWriteAgainStatus =
+	| { state: 'idle' }
+	| { state: 'running' }
+	| { state: 'ended'; code: string };
+
+/** Ask your server where a day's Write it again stands. */
+export function getDayWriteAgain(date: string): Promise<DayWriteAgainStatus> {
+	return apiSend('GET', `/wiki/day/${encodeURIComponent(date)}/page/write-again`);
+}
+
 /** How the day's pictures are made: `ui_preferences.day_pictures`, oil when unset. */
 export type DayPictureStyle = 'oil' | 'watercolor' | 'pencil' | 'gouache';
 

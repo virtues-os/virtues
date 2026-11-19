@@ -41,6 +41,7 @@
 		getDayRewrite,
 		rewriteDay,
 		writeDayAgain,
+		getDayWriteAgain,
 		paintDay,
 		type DayPictureStyle,
 		revertArticle,
@@ -454,7 +455,7 @@
 	// where the page was.
 	type Removal =
 		| { kind: "none" }
-		| { kind: "removed"; at: string; pageId: string | null; failed?: "put_back" | "write" }
+		| { kind: "removed"; at: string; pageId: string | null; failed?: "put_back" | "start" | "write" | "not_enough" }
 		| { kind: "writing" };
 	const removalOf = (d: WikiDayApi): Removal =>
 		d.page_removed_at ? { kind: "removed", at: d.page_removed_at, pageId: d.removed_page_id ?? null } : { kind: "none" };
@@ -464,14 +465,29 @@
 	let removalSeq = 0;
 	let writeAgainTimer: ReturnType<typeof setTimeout> | null = null;
 
+	/** The day `removal` describes. The same day handed over again keeps what was said about it. */
+	let removalDay = page.date;
+
 	$effect(() => {
-		removal = removalOf(page);
+		const next = removalOf(page);
+		if (page.date === removalDay) {
+			// Read again while it is on screen: keep why a write did not
+			// land, and keep saying a write is running.
+			untrack(() => {
+				if (removal.kind === "writing" && next.kind === "removed") return;
+				removal = next.kind === "removed" && removal.kind === "removed" ? { ...next, failed: removal.failed } : next;
+			});
+			return;
+		}
+		removalDay = page.date;
+		removal = next;
 		removalSeq++;
 		removalBusy = false;
-		return () => {
-			if (writeAgainTimer) clearTimeout(writeAgainTimer);
-			writeAgainTimer = null;
-		};
+		if (writeAgainTimer) clearTimeout(writeAgainTimer);
+		writeAgainTimer = null;
+	});
+	$effect(() => () => {
+		if (writeAgainTimer) clearTimeout(writeAgainTimer);
 	});
 
 	const removedOn = $derived(
@@ -528,9 +544,53 @@
 		}
 	}
 
-	/** How often, and for how long, the day is asked for the page being written. */
-	const WRITE_AGAIN_POLL_MS = 15_000;
-	const WRITE_AGAIN_ASKS = 120;
+	/** How often your server is asked how the writing is going. */
+	const WRITE_AGAIN_POLL_MS = 10_000;
+
+	/**
+	 * Ask how the day's Write it again is going, and again while it runs.
+	 * When it ends, the day is read again: its new page, or the removal as
+	 * it was, with why nothing was written.
+	 */
+	async function followWriteAgain(slug: string, seq: number) {
+		writeAgainTimer = null;
+		if (seq !== removalSeq) return;
+		const status = await getDayWriteAgain(slug).catch(() => null);
+		if (seq !== removalSeq) return;
+		if (!status || status.state === "running") {
+			if (status) removal = { kind: "writing" };
+			writeAgainTimer = setTimeout(() => void followWriteAgain(slug, seq), WRITE_AGAIN_POLL_MS);
+			return;
+		}
+		if (removal.kind !== "writing") return;
+		const d = await getDayByDate(slug).catch(() => null);
+		if (seq !== removalSeq) return;
+		if (d?.article) {
+			summaryText = d.article;
+			removal = { kind: "none" };
+			void askRewrite(slug);
+		} else if (d) {
+			const after = removalOf(d);
+			removal =
+				after.kind === "removed"
+					? { ...after, failed: status.state === "ended" && status.code === "not_enough" ? "not_enough" : "write" }
+					: after;
+		}
+	}
+
+	// A day opened while your server is still writing its page says so.
+	$effect(() => {
+		if (!page.page_removed_at) return;
+		const slug = page.date;
+		const seq = untrack(() => removalSeq);
+		void getDayWriteAgain(slug)
+			.then((status) => {
+				if (seq !== removalSeq || status.state !== "running") return;
+				removal = { kind: "writing" };
+				void followWriteAgain(slug, seq);
+			})
+			.catch(() => {});
+	});
 
 	/** Write it again: your server writes a new page for the day from its records. */
 	async function writeDayPageAgain() {
@@ -543,7 +603,7 @@
 			await writeDayAgain(slug);
 		} catch {
 			if (seq === removalSeq) {
-				removal = { ...line, failed: "write" };
+				removal = { ...line, failed: "start" };
 				removalBusy = false;
 			}
 			return;
@@ -551,21 +611,7 @@
 		if (seq !== removalSeq) return;
 		removalBusy = false;
 		removal = { kind: "writing" };
-		let asks = 0;
-		const ask = async () => {
-			writeAgainTimer = null;
-			if (seq !== removalSeq) return;
-			const r = await fetchArticle(slug);
-			if (seq !== removalSeq) return;
-			if (r.article) {
-				summaryText = r.article;
-				removal = { kind: "none" };
-				void askRewrite(slug);
-			} else if (++asks < WRITE_AGAIN_ASKS) {
-				writeAgainTimer = setTimeout(() => void ask(), WRITE_AGAIN_POLL_MS);
-			}
-		};
-		writeAgainTimer = setTimeout(() => void ask(), WRITE_AGAIN_POLL_MS);
+		writeAgainTimer = setTimeout(() => void followWriteAgain(slug, seq), WRITE_AGAIN_POLL_MS);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1471,8 +1517,12 @@
 								</p>
 								{#if removal.failed === "put_back"}
 									<p class="empty-state-text">Your server couldn't put the page back. Try again, or restore it from Recently deleted.</p>
-								{:else if removal.failed === "write"}
+								{:else if removal.failed === "start"}
 									<p class="empty-state-text">Your server couldn't start writing this day's page. Try again later.</p>
+								{:else if removal.failed === "not_enough"}
+									<p class="empty-state-text">Your server has too little from this day to write a page, so nothing changed.</p>
+								{:else if removal.failed === "write"}
+									<p class="empty-state-text">Your server couldn't write this day's page, so nothing changed. Try again later.</p>
 								{/if}
 							{:else}
 								<p class="empty-state-text">This day has no page yet.</p>
