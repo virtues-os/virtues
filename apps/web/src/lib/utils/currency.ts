@@ -14,17 +14,21 @@ export function formatMicrosUSD(micros: number): string {
 }
 
 /**
- * Format a per-call micros amount, which can be tiny (sub-cent). Shows more
- * precision for small values so a $0.0003 charge isn't rendered as "$0.00".
+ * Format a micros amount that can be tiny, such as one AI call. Ten cents and
+ * up, and zero, show cents ("$0.46"). Under ten cents always shows four
+ * places, so a column of calls lines up ("$0.0300" above "$0.0025"). A charge
+ * too small for four places reads "<$0.0001", short enough for that column,
+ * so it never looks free.
  */
 export function formatMicrosPrecise(micros: number): string {
 	const dollars = (micros ?? 0) / 1_000_000;
 	const abs = Math.abs(dollars);
-	const digits = abs > 0 && abs < 0.01 ? 4 : 2;
+	if (abs > 0 && abs < 0.00005) return '<$0.0001';
+	const places = abs === 0 || abs >= 0.1 ? 2 : 4;
 	return new Intl.NumberFormat('en-US', {
 		style: 'currency',
 		currency: 'USD',
-		minimumFractionDigits: 2,
-		maximumFractionDigits: digits,
+		minimumFractionDigits: places,
+		maximumFractionDigits: places,
 	}).format(dollars);
 }

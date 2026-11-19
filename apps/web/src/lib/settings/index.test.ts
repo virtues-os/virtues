@@ -62,6 +62,11 @@ describe('titleOf', () => {
 		expect(titleOf("{name}'s name", null)).toBe("Your assistant's name");
 		expect(titleOf('{name}', 'ari')).toBe('Ari');
 	});
+
+	it('gives a name ending in s a bare apostrophe', () => {
+		expect(titleOf("{name}'s name", 'Virtues')).toBe("Virtues' name");
+		expect(titleOf("{name}'s name", 'Ari')).toBe("Ari's name");
+	});
 });
 
 describe('matchSettings', () => {

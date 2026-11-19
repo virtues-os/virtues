@@ -50,7 +50,7 @@
 	<h2 class="settings-label">On this device</h2>
 	<p class="lede">These stay on this device, so your phone and your Mac can differ.</p>
 
-	<SettingRow id="glass" label={title('glass')} help="How much of the painting shows through the sidebar and tabs. None makes them solid.">
+	<SettingRow id="glass" label={title('glass')} help="How much of the background picture shows through the sidebar and tabs. None makes them solid.">
 		<Segmented id="glass-choice" label={title('glass')} value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
 	</SettingRow>
 

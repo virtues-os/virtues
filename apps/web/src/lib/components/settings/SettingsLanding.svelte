@@ -184,8 +184,8 @@
 	{#if !typing && !draftText}
 		<div class="map">
 			{#each LANDING as group (group.title)}
-				<nav aria-label={group.heading}>
-					<h2>{group.heading}</h2>
+				<nav aria-label={group.title}>
+					<h2>{group.title}</h2>
 					<div class="buttons">
 						{#each group.links as link (link.label)}
 							<a

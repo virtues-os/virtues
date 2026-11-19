@@ -192,8 +192,8 @@
 >
 	<p class="intro">
 		Any endpoint that speaks the OpenAI-style chat API works, such as OpenRouter, a provider's own API, or a model on
-		your network. Your key is stored encrypted on your server. Web search, places and bank data still go through your
-		subscription.
+		your network. Your key is stored encrypted on your server, and only the Virtues app on one of your paired devices
+		can change it. Web search, places and bank data still go through your subscription.
 	</p>
 	<p class="intro">
 		Whoever runs the endpoint sees every call. A key from your employer sends your life through systems they can read.
@@ -260,8 +260,7 @@
 		<div class="actions">
 			<div><Button variant="primary" loading={busy} onclick={save}>Check and use it</Button></div>
 			<p class="intro">
-				Your server sends one short call to check the key before it switches. Changing it takes the Virtues app on one
-				of your paired devices.
+				Your server sends one short call to check the key before it switches.
 			</p>
 		</div>
 	{/if}

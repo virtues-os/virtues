@@ -49,7 +49,6 @@
 		detail: string;
 		deleted_at: string;
 		expires_at: string;
-		days_remaining: number;
 		raw: TrashItem | DriveFile;
 	}
 
@@ -76,11 +75,6 @@
 		file: "mynaui:file",
 	};
 
-	function daysLeft(expiresAt: string): number {
-		const ms = new Date(expiresAt).getTime() - Date.now();
-		return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
-	}
-
 	function addDays(iso: string, days: number): string {
 		return new Date(new Date(iso).getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 	}
@@ -93,7 +87,6 @@
 			detail: KIND_LABEL[item.kind],
 			deleted_at: item.deleted_at,
 			expires_at: item.expires_at,
-			days_remaining: daysLeft(item.expires_at),
 			raw: item,
 		};
 	}
@@ -105,10 +98,9 @@
 			id: `file:${file.id}`,
 			kind: "file",
 			title: file.filename,
-			detail: file.path || "Drive",
+			detail: KIND_LABEL.file,
 			deleted_at: deleted,
 			expires_at: expires,
-			days_remaining: daysLeft(expires),
 			raw: file,
 		};
 	}
@@ -200,7 +192,7 @@
 
 	const columns: Column<TrashRow>[] = [
 		{ key: "title", label: "Name", width: "40%", minWidth: "200px" },
-		{ key: "detail", label: "Was", width: "18%", minWidth: "100px", hideOnMobile: true },
+		{ key: "detail", label: "Kind", width: "18%", minWidth: "100px", hideOnMobile: true },
 		{
 			key: "deleted_at",
 			label: "Deleted",
@@ -209,15 +201,14 @@
 			hideOnMobile: true,
 			getValue: (row) => formatDate(row.deleted_at),
 		},
+		// A date, not a countdown: days ticking down read as a deadline on
+		// every visit, and the app shows no countdowns (CLAUDE.md, personas).
 		{
-			key: "days_remaining",
-			label: "Gone in",
-			width: "14%",
-			minWidth: "90px",
-			getValue: (row) =>
-				row.days_remaining === 0
-					? "today"
-					: `${row.days_remaining} ${row.days_remaining === 1 ? "day" : "days"}`,
+			key: "expires_at",
+			label: "Removed for good",
+			width: "16%",
+			minWidth: "120px",
+			getValue: (row) => formatDate(row.expires_at),
 		},
 	];
 </script>
@@ -253,6 +244,7 @@
 		searchPlaceholder="Search Recently deleted"
 		defaultViewMode="table"
 		mobileViewMode="table"
+		showCounts={false}
 		onRefresh={load}
 	>
 		{#snippet rowActions(row: TrashRow)}

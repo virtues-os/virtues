@@ -91,7 +91,8 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
 /**
  * Settings' pages, for the crumbs on those pages and the menus the crumbs
  * open. They come from the landing page's site map (LANDING in lib/settings),
- * so a page sits under the same heading in both: Assistant, You, Your server.
+ * so a page sits under the same heading in both: Your assistant, Your
+ * profile, Your server.
  *
  * One row per page. A site-map link that names a row on a page points at a
  * page another link already lists, so the page goes under its plain link

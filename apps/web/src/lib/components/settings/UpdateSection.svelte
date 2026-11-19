@@ -16,6 +16,7 @@
 	 */
 	import { onMount, onDestroy } from 'svelte';
 	import Switch from './Switch.svelte';
+	import SettingRow from './SettingRow.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -342,16 +343,13 @@
 
 		{#if auto}
 			<div class="auto">
-				<div class="auto-row">
-					<div>
-						<p class="auto-title">Install updates automatically</p>
-						<p class="note">
-							Your server installs new releases on its channel around {hourLabel(auto.hour)}
-							and restarts. Connected devices reconnect on their own.
-						</p>
-					</div>
+				<SettingRow
+					id="auto-install"
+					label="Install updates automatically"
+					help="Your server installs new releases on its channel around {hourLabel(auto.hour)} and restarts. Connected devices reconnect on their own."
+				>
 					<Switch checked={auto.enabled} label="Install updates automatically" disabled={autoSaving} onchange={() => toggleAuto()} />
-				</div>
+				</SettingRow>
 				{#if auto.install && !auto.install.ok}
 					<p class="note auto-failed">
 						Your server couldn't install {releaseName(auto.install.to)} on
@@ -595,21 +593,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-	}
-
-	.auto-row {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
-	.auto-row p {
-		margin: 0;
-	}
-
-	.auto-title {
-		font-size: 13px;
 	}
 
 	.auto-failed {

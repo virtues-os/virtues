@@ -45,12 +45,15 @@
 		return id ? modelSlots.nameOf(id) : 'The recommended model';
 	}
 
-	/** "About $0.003 a call this month", from calls paid through Virtues. */
+	/** "About $0.0030 a call this month", from calls paid through Virtues. */
 	function costLine(slot: SlotConfig): string | null {
 		const id = inUse(slot);
 		const b = byModel.find((m) => m.label === id);
 		const paid = b ? b.calls - b.byo_calls : 0;
-		return b && paid > 0 ? `about ${formatMicrosPrecise(Math.round(b.cost_micros / paid))} a call this month` : null;
+		if (!b || paid <= 0) return null;
+		const each = formatMicrosPrecise(Math.round(b.cost_micros / paid));
+		// "<$0.0001" is already a bound, so it takes no "about".
+		return `${each.startsWith('<') ? each : `about ${each}`} a call this month`;
 	}
 
 	function open(slot: SlotConfig) {

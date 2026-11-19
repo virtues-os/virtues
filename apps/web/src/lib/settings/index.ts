@@ -59,7 +59,7 @@ export interface Setting {
 }
 
 export const SECTIONS: readonly Section[] = [
-	{ id: 'you', title: 'Profile', lede: 'Who you are, to start with. {name} and your pages use it.', route: '/virtues/profile' },
+	{ id: 'you', title: 'Profile', lede: 'The basics about you, which {name} and your pages use.', route: '/virtues/profile' },
 	{ id: 'assistant', title: 'How {name} talks to you', lede: 'Its name and how it speaks to you.', route: '/virtues/assistant' },
 	{ id: 'tools', title: 'What {name} can do', lede: "Turn off anything you don't want it to do.", route: '/virtues/assistant/tools' },
 	{ id: 'spending', title: 'Models and spending', lede: 'Which models it uses and how much it may spend.', route: '/virtues/assistant/spending' },
@@ -130,12 +130,15 @@ export const SETTINGS: readonly Setting[] = [
 ];
 
 /** The assistant's name in a title or lede, or "your assistant" where none
- *  was chosen. A title that starts with it keeps a capital. */
+ *  was chosen. A title that starts with it keeps a capital, and a name that
+ *  ends in s takes a bare apostrophe ("Virtues' name"). */
 export function titleOf(text: string, assistantName?: string | null): string {
 	const name = assistantName?.trim() || 'your assistant';
-	return text.replace(/\{name\}/g, (_m, offset: number) =>
-		offset === 0 ? name.charAt(0).toUpperCase() + name.slice(1) : name,
-	);
+	return text.replace(/\{name\}('s)?/g, (_m, possessive: string | undefined, offset: number) => {
+		const shown = offset === 0 ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+		if (!possessive) return shown;
+		return /s$/i.test(shown) ? `${shown}'` : `${shown}'s`;
+	});
 }
 
 export function findSetting(id: string): Setting | undefined {
@@ -176,13 +179,13 @@ export interface LandingLink {
 
 /**
  * The landing page's site map, one line per party: the assistant, you, and
- * your server. `title` names the group in crumbs and in search results;
- * `heading` labels its line on the landing page.
+ * your server. `title` labels the group's line on the landing page and names
+ * it in crumbs and search results, so a page is under the same name in all
+ * three.
  */
-export const LANDING: readonly { title: string; heading: string; links: readonly LandingLink[] }[] = [
+export const LANDING: readonly { title: string; links: readonly LandingLink[] }[] = [
 	{
-		title: 'Assistant',
-		heading: 'Your assistant',
+		title: 'Your assistant',
 		links: [
 			{ label: 'How it talks', route: '/virtues/assistant' },
 			{ label: 'What it can do', route: '/virtues/assistant/tools' },
@@ -190,8 +193,7 @@ export const LANDING: readonly { title: string; heading: string; links: readonly
 		],
 	},
 	{
-		title: 'You',
-		heading: 'Your profile',
+		title: 'Your profile',
 		links: [
 			{ label: 'Profile', route: '/virtues/profile' },
 			{ label: 'Appearance', route: '/virtues/appearance' },
@@ -200,7 +202,6 @@ export const LANDING: readonly { title: string; heading: string; links: readonly
 	},
 	{
 		title: 'Your server',
-		heading: 'Your server',
 		links: [
 			{ label: 'Status', route: '/virtues/system' },
 			{ label: 'Devices', route: '/virtues/devices' },

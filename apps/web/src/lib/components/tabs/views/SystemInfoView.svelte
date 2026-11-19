@@ -80,10 +80,12 @@
 		if (h > 0) return `${h}h ${m}m`;
 		return `${m}m`;
 	}
-	// A processor that doesn't report its clock reads as its cores alone.
+	// A processor that doesn't report its clock reads as its cores alone. Some
+	// report a placeholder of a few MHz instead of nothing, which would print
+	// "0.00 GHz", so anything under 100 MHz counts as unreported.
 	function cores(cpu: { logical_cores: number; frequency_mhz: number }): string {
 		const n = `${cpu.logical_cores} cores`;
-		return cpu.frequency_mhz ? `${n} · ${(cpu.frequency_mhz / 1000).toFixed(2)} GHz` : n;
+		return cpu.frequency_mhz >= 100 ? `${n} · ${(cpu.frequency_mhz / 1000).toFixed(2)} GHz` : n;
 	}
 	const temp = (c: number) => formatTemperature(c, units.current, { scale: true });
 

@@ -277,12 +277,14 @@
 	);
 	const monthName = new Date().toLocaleDateString('en-US', { month: 'long' });
 	// A renewal sets the balance to the month's credit; it does not add to
-	// what is left.
+	// what is left. The month's figure is every charge to the balance, so it
+	// is larger than What AI has cost, which counts AI calls alone at the
+	// provider's price; each says what it counts.
 	const balanceContext = $derived(
 		usage
 			? [
 					renewsLabel ? `Your monthly credit renews ${renewsLabel}.` : '',
-					`${formatMicrosPrecise(usage.month_to_date_micros)} spent so far in ${monthName}.`,
+					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI, web search, places and bank data.`,
 				]
 					.filter(Boolean)
 					.join(' ')
@@ -426,7 +428,7 @@
 
 	{#if isSubscribed}
 		<SettingRow id="invoices" label="Payments" help="Your monthly charges and top-ups, each with its receipt.">
-			<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>Every invoice, in Stripe</Button>
+			<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>See payments in Stripe</Button>
 		</SettingRow>
 	{/if}
 </section>
