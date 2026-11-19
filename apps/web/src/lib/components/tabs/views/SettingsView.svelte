@@ -20,20 +20,19 @@
 	  Your data    /virtues/data           — backup, export, keep recordings, deleting
 	               /virtues/data/shared    — every link shared through the door
 	               /virtues/data/keys      — the named keys applets use
+	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
+	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
-	  Server       /virtues/server         — updates, and reaching it from away
-	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
-	  Devices      /virtues/devices        — paired devices, and Unpair
-	               /virtues/devices/server — the server's own page: its release
-	               /virtues/devices/this   — the machine you're on (local panel)
+	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
+	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Applets      /virtues/applets        — every applet, built-in ones included
 	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
-	session. The destructive actions are Unpair, beside the device it removes,
-	and Start over, at the foot of the landing page, which unpairs everything.
+	session. The destructive actions are Unpair, on the page of the device it
+	removes, and Start over, at the foot of Devices, which unpairs everything.
 
 	Legacy flat/nested routes (/virtues/account, /virtues/connections/*,
 	/virtues/box/devices, /virtues/developer/console, …) self-heal on mount.
@@ -44,12 +43,12 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
-	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
 	import SettingsLanding from '$lib/components/settings/SettingsLanding.svelte';
 	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
 	import ByoPage from '$lib/components/settings/ByoPage.svelte';
 	import BackupPage from '$lib/components/settings/BackupPage.svelte';
+	import UpdatesPage from '$lib/components/settings/UpdatesPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -98,16 +97,17 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network and updates are the Server page; versions are the server's
-		// device page; the machine measured is System.
-		'/virtues/network': '/virtues/server',
-		'/virtues/software': '/virtues/devices/server',
+		// Updates holds the versions each part runs; reaching the server from
+		// away is on Devices; the machine itself is Your server.
+		'/virtues/server': '/virtues/updates',
+		'/virtues/network': '/virtues/devices',
+		'/virtues/software': '/virtues/updates',
+		'/virtues/devices/server': '/virtues/updates',
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/server',
-		'/virtues/box/updates': '/virtues/server',
-		'/virtues/updates': '/virtues/server',
-		'/virtues/version': '/virtues/devices/server',
+		'/virtues/box/network': '/virtues/devices',
+		'/virtues/box/updates': '/virtues/updates',
+		'/virtues/version': '/virtues/updates',
 		// This Mac is `devices/this`, a device page like any other, and a
 		// stable word Sources can link to without knowing a device id.
 		'/virtues/box/devices': '/virtues/devices',
@@ -177,7 +177,7 @@
 		| 'page'
 		| 'profile'
 		| 'appearance'
-		| 'server'
+		| 'updates'
 		| 'data'
 		| 'backup'
 		| 'assistant'
@@ -191,7 +191,7 @@
 	const SECTIONS = [
 		'profile',
 		'appearance',
-		'server',
+		'updates',
 		'data',
 		'backup',
 		'assistant',
@@ -232,8 +232,8 @@
 			<SettingsSection section="you" />
 		{:else if section === 'appearance'}
 			<SettingsSection section="appearance" />
-		{:else if section === 'server'}
-			<SettingsSection section="server" />
+		{:else if section === 'updates'}
+			<UpdatesPage />
 		{:else if section === 'data'}
 			{#if sub === 'shared'}
 				<SharedLinksView />
@@ -275,17 +275,10 @@
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
-			{:else if sub === 'server'}
-				<!-- The server's own page. It is row zero of Devices, not a
-				     separate subject: "what release does this machine run" is a
-				     fact about a device. -->
-				<SoftwareView />
 			{:else if sub === 'this' && isIOS}
-				<!-- iOS keeps its own instrument panel for now: MobileDeviceScreen
-				     is 900 lines of stream-by-stream local detail that has no
-				     box-side equivalent. iOS FIRST, because an iPad satisfies
-				     `isMacOS` too (it reports a desktop platform string; see
-				     utils/platform.ts) and would otherwise get the Mac panel. -->
+				<!-- The phone's own page reads plugins only the phone has. iOS
+				     first, because an iPad satisfies `isMacOS` too (it reports a
+				     desktop platform string; see utils/platform.ts). -->
 				<ThisDeviceView />
 			{:else}
 				<!-- ONE page for every other device, including this Mac. It used

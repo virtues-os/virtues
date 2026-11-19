@@ -27,7 +27,10 @@ import { matchRank } from '$lib/search/match';
  *  (`assistant_profile::DEFAULT_ASSISTANT_NAME`). */
 export const DEFAULT_ASSISTANT_NAME = 'Virtues';
 
-export type SectionId = 'you' | 'assistant' | 'tools' | 'spending' | 'data' | 'appearance' | 'billing' | 'server';
+export type SectionId = 'you' | 'assistant' | 'tools' | 'spending' | 'data' | 'appearance' | 'billing' | 'server' | 'updates' | 'devices' | 'device';
+
+/** A platform with settings of its own on This device. */
+export type DevicePlatform = 'mac' | 'ios';
 
 export interface Section {
 	id: SectionId;
@@ -36,7 +39,7 @@ export interface Section {
 	/** One sentence under the title. */
 	lede: string;
 	/** The section's own page, or null for one whose settings each have a
-	 *  page (Your data). */
+	 *  page (Your server). */
 	route: string | null;
 }
 
@@ -56,6 +59,9 @@ export interface Setting {
 	route: string;
 	/** Undoing it is not possible (unpair everything, start over). */
 	destructive?: boolean;
+	/** Only on this platform's This device page (pausing the Mac's collector,
+	 *  the phone's notifications). Search lists it only there. */
+	platform?: DevicePlatform;
 }
 
 export const SECTIONS: readonly Section[] = [
@@ -66,7 +72,12 @@ export const SECTIONS: readonly Section[] = [
 	{ id: 'data', title: 'Your data', lede: "Copies of your data, what your server keeps, and what you've shared.", route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks and how your pages read.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: "Your subscription, your balance, and what you've paid.", route: '/virtues/billing' },
-	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
+	{ id: 'server', title: 'Your server', lede: 'Whether your server is all right, what it runs, and the machine itself.', route: null },
+	{ id: 'updates', title: 'Updates', lede: 'New releases of your server, and which ones it takes.', route: '/virtues/updates' },
+	{ id: 'devices', title: 'Devices', lede: 'Everything paired to your server, and how each one reaches it.', route: '/virtues/devices' },
+	// This device's line on the landing page appears only on a device with a
+	// page of its own (deviceLanding), so the section has no fixed route.
+	{ id: 'device', title: 'This device', lede: 'What only the device in your hand can show or change.', route: null },
 ];
 
 export const SETTINGS: readonly Setting[] = [
@@ -118,16 +129,29 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'auto-top-up', title: 'Auto top-up', section: 'billing', kind: 'control', words: ['top up', 'refill', 'add money', 'limit'], route: '/virtues/billing' },
 	{ id: 'invoices', title: 'Payments', section: 'billing', kind: 'action', words: ['invoice', 'invoices', 'receipt', 'receipts', 'charges', 'paid'], route: '/virtues/billing' },
 
-	// Server and devices
-	{ id: 'updates', title: 'Check for updates', section: 'server', kind: 'action', words: ['update', 'version', 'upgrade', 'release'], route: '/virtues/server' },
-	{ id: 'auto-install', title: 'Install updates on their own', section: 'server', kind: 'control', words: ['automatic updates', 'auto update'], route: '/virtues/server' },
-	{ id: 'update-channel', title: 'Which updates', section: 'server', kind: 'control', words: ['channel', 'early', 'beta', 'released', 'prerelease'], route: '/virtues/server' },
-	{ id: 'reach', title: 'Reach your server away from home', section: 'server', kind: 'control', words: ['remote', 'relay', 'network', 'anywhere', 'away'], route: '/virtues/server' },
+	// Your server
+	{ id: 'server-health', title: 'Your server', section: 'server', kind: 'page', words: ['status', 'system', 'storage', 'disk', 'memory', 'cpu', 'health', 'temperature'], route: '/virtues/system' },
 	{ id: 'search-runs-on', title: 'Where search runs', section: 'server', kind: 'page', words: ['search', 'accelerator', 'npu', 'cpu', 'index'], route: '/virtues/search' },
-	{ id: 'server-health', title: 'How your server is doing', section: 'server', kind: 'page', words: ['system', 'storage', 'disk', 'memory', 'cpu', 'health'], route: '/virtues/system' },
-	{ id: 'devices', title: 'Devices', section: 'server', kind: 'page', words: ['phone', 'iphone', 'mac', 'paired', 'unpair'], route: '/virtues/devices' },
-	{ id: 'pair-device', title: 'Pair a device', section: 'server', kind: 'action', words: ['add device', 'connect', 'new phone'], route: '/virtues/devices' },
-	{ id: 'start-over', title: 'Start over', section: 'server', kind: 'action', words: ['reset', 'unpair everything', 'setup again'], route: '/virtues/server', destructive: true },
+	{ id: 'applets', title: 'Applets', section: 'server', kind: 'page', words: ['scheduled', 'background', 'jobs', 'runs', 'failed'], route: '/virtues/applets' },
+
+	// Updates
+	{ id: 'updates', title: 'Check for updates', section: 'updates', kind: 'action', words: ['update', 'version', 'upgrade', 'release', 'install'], route: '/virtues/updates' },
+	{ id: 'auto-install', title: 'Install updates automatically', section: 'updates', kind: 'control', words: ['automatic updates', 'auto update', 'on their own'], route: '/virtues/updates' },
+	{ id: 'update-channel', title: 'Which updates', section: 'updates', kind: 'control', words: ['channel', 'early', 'beta', 'released', 'prerelease'], route: '/virtues/updates' },
+
+	// Devices
+	{ id: 'pair-device', title: 'Pair a device', section: 'devices', kind: 'action', words: ['add device', 'connect', 'new phone', 'devices', 'paired', 'agent'], route: '/virtues/devices' },
+	{ id: 'devices', title: 'Unpair a device', section: 'devices', kind: 'action', words: ['devices', 'remove device', 'revoke', 'disconnect', 'lost phone'], route: '/virtues/devices' },
+	{ id: 'reach', title: 'Reach your server away from home', section: 'devices', kind: 'control', words: ['remote', 'relay', 'network', 'anywhere', 'away'], route: '/virtues/devices' },
+	{ id: 'start-over', title: 'Start over', section: 'devices', kind: 'action', words: ['reset', 'unpair everything', 'setup again'], route: '/virtues/devices', destructive: true },
+
+	// This device
+	{ id: 'this-device', title: 'This device', section: 'device', kind: 'page', words: ['this mac', 'this phone', 'this computer', 'app version'], route: '/virtues/devices/this' },
+	{ id: 'collecting', title: 'Collecting on this Mac', section: 'device', kind: 'action', words: ['pause', 'resume', 'collector', 'stop collecting'], route: '/virtues/devices/this', platform: 'mac' },
+	{ id: 'permissions', title: 'What this Mac may read', section: 'device', kind: 'value', words: ['permissions', 'full disk access', 'accessibility', 'microphone', 'system settings'], route: '/virtues/devices/this', platform: 'mac' },
+	{ id: 'what-it-sends', title: 'What this phone sends', section: 'device', kind: 'value', words: ['location', 'health', 'contacts', 'calendar', 'finance', 'audio', 'streams'], route: '/virtues/devices/this', platform: 'ios' },
+	{ id: 'notifications', title: 'Notifications on this phone', section: 'device', kind: 'value', words: ['push', 'notify', 'alerts'], route: '/virtues/devices/this', platform: 'ios' },
+	{ id: 'the-app', title: 'This app', section: 'device', kind: 'value', words: ['app version', 'app update', 'relaunch'], route: '/virtues/devices/this' },
 ];
 
 /** The assistant's name in a title or lede, or "your assistant" where none
@@ -155,10 +179,11 @@ export function settingsIn(section: SectionId): Setting[] {
  * its title (with the assistant's name filled in) or any of its words, and
  * keeps its best rank; ties keep the page's order.
  */
-export function matchSettings(query: string, assistantName?: string | null): Setting[] {
+export function matchSettings(query: string, assistantName?: string | null, platform?: DevicePlatform | null): Setting[] {
+	const here = SETTINGS.filter((s) => !s.platform || s.platform === platform);
 	const q = query.trim();
-	if (!q) return [...SETTINGS];
-	return SETTINGS.map((setting, order) => {
+	if (!q) return here;
+	return here.map((setting, order) => {
 		const names = [titleOf(setting.title, assistantName), ...setting.words];
 		const rank = Math.max(...names.map((n) => matchRank(n, q)));
 		return { setting, rank, order };
@@ -178,13 +203,22 @@ export interface LandingLink {
 	setting?: string;
 }
 
+/** One line of the landing page's site map. */
+export interface LandingGroup {
+	/** Labels the line on the landing page and names it in crumbs and search
+	 *  results, so a page is under the same name in all three. */
+	title: string;
+	/** The page the title opens, for a party with a page of its own: your
+	 *  server, this device. */
+	route?: string;
+	links: readonly LandingLink[];
+}
+
 /**
  * The landing page's site map, one line per party: the assistant, you, and
- * your server. `title` labels the group's line on the landing page and names
- * it in crumbs and search results, so a page is under the same name in all
- * three.
+ * your server. This device joins them where there is one (`deviceLanding`).
  */
-export const LANDING: readonly { title: string; links: readonly LandingLink[] }[] = [
+export const LANDING: readonly LandingGroup[] = [
 	{
 		title: 'Your assistant',
 		links: [
@@ -203,15 +237,53 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 	},
 	{
 		title: 'Your server',
+		route: '/virtues/system',
 		links: [
-			{ label: 'Status', route: '/virtues/system' },
 			{ label: 'Devices', route: '/virtues/devices' },
-			{ label: 'Updates and network', route: '/virtues/server' },
+			{ label: 'Updates', route: '/virtues/updates' },
 			{ label: 'Backup', route: '/virtues/backup' },
 			{ label: 'Your data', route: '/virtues/data' },
 		],
 	},
 ];
+
+/** The kind of device the app is running on, as far as This device is concerned. */
+export type DeviceHere =
+	/** The Mac app: its collector, live permissions and its own updates. */
+	| 'mac-app'
+	/** The iPhone or iPad app. */
+	| 'ios-app'
+	/** The Windows or Linux app, which only shows the server's screens. */
+	| 'desktop-app'
+	/** A browser on a paired computer, which counts as that computer. */
+	| 'browser';
+
+/**
+ * This device's line on the landing page. Its links name the parts of the
+ * page only that device can show. A browser on the server itself (the
+ * console) has no line: Your server already covers that machine.
+ */
+export function deviceLanding(here: DeviceHere): LandingGroup {
+	const route = '/virtues/devices/this';
+	const links: Record<DeviceHere, LandingLink[]> = {
+		'mac-app': [
+			{ label: 'Collecting', route, setting: 'collecting' },
+			{ label: 'Permissions', route, setting: 'permissions' },
+			{ label: 'The app', route, setting: 'the-app' },
+		],
+		'ios-app': [
+			{ label: 'What it sends', route, setting: 'what-it-sends' },
+			{ label: 'Notifications', route, setting: 'notifications' },
+			{ label: 'The app', route, setting: 'the-app' },
+		],
+		'desktop-app': [{ label: 'The app', route, setting: 'the-app' }],
+		browser: [
+			{ label: 'Permissions', route, setting: 'permissions' },
+			{ label: 'The app', route, setting: 'the-app' },
+		],
+	};
+	return { title: 'This device', route, links: links[here] };
+}
 
 /**
  * The page a setting lives on, as Settings names it: its section's page

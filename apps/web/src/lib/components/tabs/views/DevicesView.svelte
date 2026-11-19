@@ -1,245 +1,96 @@
 <!--
-  Devices — the unified "+ paired things" list. Every browser tab, mobile app,
-  Mac collector, and sensor that's paired with this box shows up here. The
-  user can revoke any of them; the box invalidates the credential AND evicts
-  the WG peer in a single transaction. There is no "log out of just one tab"
-  here — that's signout. This is "this hardware/app no longer has any
-  authority."
+  Settings · Your server · Devices (/virtues/devices): everything paired to
+  your server, and how each one reaches it.
 
-  The server is ROW ONE of the same table, not a card above it. Until 2026-09-08
-  it sat in its own box over the grid ("This server — the release it runs"),
-  which made the one machine everything else is paired to the one machine you
-  could not search, sort or read the version of alongside the rest. It is still
-  not a peer — it cannot be revoked, and its lifecycle is an upgrade — so its
-  row carries an Updates action where the others carry Revoke, and it is pinned
-  first in the default order.
+  One row per thing you'd call a device. A Mac's collector folds into its
+  app's row, since together they are one Mac; it lists on its own only when
+  its app is no longer paired. An agent lists on its own and names the Mac it
+  was added from. Each row opens that device's page, where it is unpaired.
+
+  Below the list: reaching your server away from home (the relay switch,
+  which is about how your devices find it), and Start over, which unpairs
+  every device at once.
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Button, Badge } from "$lib";
-	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
-	import Icon from "$lib/components/Icon.svelte";
-	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
-	import UniversalDataGrid, {
-		type Column,
-	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
-	import {
-		listDevices,
-		getUpdateStatus,
-		getSystemTelemetry,
-		type UpdateStatus,
-	} from "$lib/api/client";
-	import { createResource } from "$lib/utils/resource.svelte";
-	import { formatDateTime } from "$lib/utils/dateUtils";
+	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
-	import { isMacOS, isTauri } from "$lib/utils/platform";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
+	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
+	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
+	import Button from "$lib/components/Button.svelte";
+	import Icon from "$lib/components/Icon.svelte";
+	import Modal from "$lib/components/Modal.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
 	import AgentConnectModal from "$lib/components/devices/AgentConnectModal.svelte";
-	import Modal from "$lib/components/Modal.svelte";
+	import { listDevices } from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
+	import { isMacOS } from "$lib/utils/platform";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { lightPendingSetting } from "$lib/settings/focus";
 	import {
-		kindLabel,
 		kindIcon,
-		deniedMacPermissions,
+		kindSentence,
+		deviceName,
+		reachLine,
 		deviceHref,
-		revokeDeviceFlow,
+		collectorOf,
+		isCollector,
+		deniedPermissions,
 		type Device,
 		type DevicesResponse,
 	} from "$lib/devices/shared";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
+	const MANUAL = "https://virtues.com/docs/operate/reach";
+
 	const res = createResource(() => listDevices<DevicesResponse>());
+	const devices = $derived(res.data?.devices ?? []);
 
-	// The server's own facts, fetched beside the device list rather than as
-	// part of it: the box does not list itself as a device (it has no
-	// credential to itself), so its row is assembled here from the update
-	// status — release, channel, whether a newer one exists — and the host
-	// telemetry for the hostname and OS. Both are best-effort: the row exists
-	// the moment the page opens, and fills in as each answer arrives. A failed
-	// check shows a blank, never a stale or invented value.
-	type HostInfo = { hostname?: string | null; os?: string | null; kernel?: string | null };
-	let update = $state<UpdateStatus | null>(null);
-	let host = $state<HostInfo | null>(null);
+	onMount(() => lightPendingSetting());
 
-	async function loadServer() {
-		const [u, t] = await Promise.allSettled([
-			getUpdateStatus(),
-			getSystemTelemetry<{ host?: HostInfo }>(),
-		]);
-		update = u.status === "fulfilled" ? u.value : null;
-		host = t.status === "fulfilled" ? (t.value?.host ?? null) : null;
-	}
+	type Row = { device: Device; line: string; notes: string[] };
 
-	$effect(() => {
-		loadServer();
-	});
-
-	async function reloadAll() {
-		await Promise.all([res.reload(), loadServer()]);
-	}
-
-	// One row shape for the server and every device, so the grid searches,
-	// sorts and groups them as a single population.
-	type Row = {
-		id: string;
-		is_server: boolean;
-		label: string;
-		/** Second line under the name — the kind, in a person's words. */
-		kind: string;
-		version: string | null;
-		/** Second line under the version — the OS for the server, the
-		 *  interface bundle for an app that carries its own release. */
-		version_sub: string | null;
-		/** Why this row is out of date, or null when it is not (or we cannot
-		 *  tell — the two are deliberately drawn the same, as no mark). */
-		behind: string | null;
-		last_seen_at: string | null;
-		paired_at: string | null;
-		device: Device | null;
-	};
-
-	// A collector is a desktop_app credential that declared a data source at
-	// pairing (the app itself pairs sourceless). Its kind badge saying
-	// "Desktop" is what made `example-mac.local` unreadable next to the app.
-	function isCollectorRow(d: Device): boolean {
-		return d.kind === "desktop_app" && !!d.source_id;
-	}
-
-	const serverRow = $derived.by((): Row => {
-		const name = host?.hostname ? `Your server · ${host.hostname}` : "Your server";
-		const os = host?.os ?? null;
-		return {
-			id: "server",
-			is_server: true,
-			label: name,
-			kind: "Server",
-			version: update?.running_version ?? null,
-			version_sub: os,
-			behind:
-				update?.update_available && update.latest
-					? `${update.latest} is available — open to install`
-					: update?.update_available
-						? "A newer release is available. Open to install"
-						: null,
-			// It answered this request.
-			last_seen_at: new Date().toISOString(),
-			paired_at: null,
-			device: null,
-		};
-	});
-
-	// The server first, then the device you are holding, then each machine's
-	// collector folded directly under the app that installed it
-	// (`installed_by`, stamped at pair-consume from the token's minter). The
-	// box orders by last-seen, which is *usually* right and reliably isn't
-	// when you have just opened the app on a second machine; and a flat
-	// last-seen order is what made one Mac read as two unrelated rows.
-	// Collectors whose installing app is gone (revoked, or paired before the
-	// join existed) list standalone at the end.
+	// The device you're using first, then the server's order (last reached
+	// first). A collector whose app is listed folds into that app's row.
 	const rows = $derived.by((): Row[] => {
-		const all = res.data?.devices ?? [];
-		const parents = all
-			.filter((d) => !d.installed_by)
-			.sort((a, b) => Number(b.is_current) - Number(a.is_current));
-		const ordered: Device[] = [];
-		for (const p of parents) {
-			ordered.push(p, ...all.filter((d) => d.installed_by === p.id));
-		}
-		ordered.push(
-			...all.filter(
-				(d) => d.installed_by && !parents.some((p) => p.id === d.installed_by),
-			),
+		const listed = devices.filter(
+			(d) => !(isCollector(d) && d.installed_by && devices.some((p) => p.id === d.installed_by)),
 		);
-		const byId = new Map(all.map((d) => [d.id, d]));
-		return [serverRow, ...ordered.map((d) => deviceRow(d, byId))];
+		listed.sort((a, b) => Number(b.is_current) - Number(a.is_current));
+		return listed.map((d) => ({ device: d, line: `${kindSentence(d, devices)}. ${reachLine(d)}`, notes: notesFor(d) }));
 	});
 
-	function deviceRow(d: Device, byId: Map<string, Device>): Row {
-		const collector = isCollectorRow(d);
-		// The collector runs a build the app installs, so a lasting
-		// disagreement means a relaunch has not happened — not that the
-		// collector is wrong. Same rule the device page applies.
-		const parent = d.installed_by ? byId.get(d.installed_by) : undefined;
-		const behind =
-			collector && d.version && parent?.app_version && d.version !== parent.app_version
-				? `Behind the app that installed it (${parent.app_version}) — relaunch the app`
-				: null;
-		return {
-			id: d.id,
-			is_server: false,
-			label: d.label,
-			kind: collector ? "Collector" : kindLabel(d.kind),
-			version: versionText(d),
-			// An app that reports its own release also carries an interface
-			// bundle; a collector's version IS its binary and has nothing under it.
-			version_sub: d.app_version && d.version ? `interface ${d.version}` : (d.channel ?? null),
-			behind,
-			last_seen_at: d.last_seen_at,
-			paired_at: d.paired_at,
-			device: d,
-		};
+	/**
+	 * What is off about a device, in amber under its line: a permission its
+	 * Mac's collector reports as off, a collector that has stopped reporting
+	 * or runs behind its app, and a phone your server can't notify.
+	 */
+	function notesFor(d: Device): string[] {
+		const notes: string[] = [];
+		const reporter = isCollector(d) ? d : collectorOf(d, devices);
+		if (reporter) {
+			for (const p of deniedPermissions(reporter)) notes.push(`${p.label} is off, so ${p.costs}.`);
+			if (reporter.permissions?.stale) notes.push("Its collector hasn't reported lately. It may have stopped.");
+			if (reporter !== d && reporter.version && d.app_version && reporter.version !== d.app_version) {
+				notes.push("Its collector runs an older version than the app. Relaunch the app.");
+			}
+		}
+		if (d.kind === "mobile_app" && !d.push_address_at) notes.push("Your server can't send notifications to this phone.");
+		return notes;
 	}
 
-	// The version a person means: the native app's own release when the device
-	// reports one. The old single string was the UI-bundle identity — which,
-	// for a paired desktop, is the box-served SPA and so mirrored the box:
-	// "This device · 0.1.5-staging.65" on a Mac running app 1.0.22 was the
-	// confusion that triggered the version audit. The full lattice (bundle,
-	// sha, channel) still lives on the device detail page; here one honest
-	// number beats three misleading ones. Bundle identity remains the headline
-	// only for rows that have no app of their own (the console renders the
-	// box's UI; a collector's `version` IS its binary once it reports).
-	function versionText(device: Device): string | null {
-		if (device.app_version) return device.app_version;
-		if (!device.version) return null;
-		const sha = device.sha && device.sha !== "dev" ? ` · ${device.sha}` : "";
-		return `${device.version}${sha}`;
+	function open(d: Device) {
+		windowShellStore.navigate(deviceHref(d), { label: d.is_current ? "Settings · This device" : `Settings · ${deviceName(d)}` });
 	}
 
-	// "Connected" is a claim about now, and the box only knows when a device
-	// last spoke to it. Five minutes covers every poll interval a paired app
-	// runs at, so a device inside that window is talking to the box as you
-	// read this; outside it, the honest thing is the timestamp itself, not a
-	// coarser "3d ago". The server and the device in your hand are connected
-	// by construction — one answered this request, the other made it.
-	const CONNECTED_WINDOW_MS = 5 * 60 * 1000;
-	function isConnected(row: Row): boolean {
-		if (row.is_server || row.device?.is_current) return true;
-		if (!row.last_seen_at) return false;
-		return Date.now() - new Date(row.last_seen_at).getTime() < CONNECTED_WINDOW_MS;
-	}
-
-	function rowIcon(row: Row): string {
-		return row.is_server ? "mynaui:servers" : kindIcon(row.device!.kind);
-	}
-
-	function rowHref(row: Row): string {
-		return row.is_server ? "/virtues/devices/server" : deviceHref(row.device!);
-	}
-
-	function openRow(row: Row) {
-		windowShellStore.navigate(rowHref(row), { label: "Settings" });
-	}
-
-	// "+ Add device": which kind, then the one add-a-device sheet Setup and
-	// Sources use (DevicePairModal). This view used to mint its own
-	// `/pair#t=` QR, which the phone's scanner cannot read (it reads handoff
-	// codes only), while the phone's own screen told people to come here for
-	// it. One sheet everywhere now. (Setup review, 2026-09-25.)
+	// Add a device: which kind, then the one pairing sheet Setup and Sources
+	// use (DevicePairModal). An AI agent can be added only from the Mac app,
+	// which runs its bridge.
 	let addOpen = $state(false);
 	let pairing = $state<{ deviceType: "ios" | "mac"; displayName: string } | null>(null);
-	// An AI agent on this Mac, connected over MCP as a device of its own.
-	// Only the Mac app can run its bridge.
 	let connectingAgent = $state(false);
-
-	async function revoke(device: Device) {
-		if (await revokeDeviceFlow(device)) await res.reload();
-	}
-
-	function startAdd() {
-		addOpen = true;
-	}
 
 	function choose(kind: "ios" | "mac" | "agent") {
 		addOpen = false;
@@ -249,261 +100,77 @@
 		}
 		pairing = kind === "ios" ? { deviceType: "ios", displayName: "iPhone" } : { deviceType: "mac", displayName: "computer" };
 	}
-
-	// Shown whenever we ARE a Mac app, not only on the `is_current` row.
-	//
-	// One Mac appears as TWO devices — the app ("Virtues Desktop", is_current)
-	// and the collector (the .local hostname, is_current false) — and it is the
-	// COLLECTOR that reports permissions. Gating on is_current therefore hid the
-	// button behind a row that never carries a denial, so the fix shipped inert
-	// (caught on live data 2026-08-13).
-	//
-	// The cost of relaxing it: someone with two Macs sees the button on the
-	// other Mac's row too, where it opens the wrong machine's settings. Rare,
-	// recoverable, and better than a control that cannot appear at all — and it
-	// is why the button says "on this Mac" (MacPermissions, off a local reading).
-	const canFix = $derived(isTauri);
-
-	// Columns feed the grid's search/sort/group; the cells themselves come from
-	// the tableRow snippet below. Date columns return the raw ISO string so sort
-	// orders by time, not by the prose the cell displays.
-	const columns: Column<Row>[] = [
-		{
-			key: "label",
-			label: "Machine",
-			icon: "mynaui:mobile",
-			width: "38%",
-			minWidth: "220px",
-		},
-		{
-			// The row's second line already says the kind; keep the field for
-			// grouping and search without spending a column on it.
-			key: "kind",
-			label: "Kind",
-			hidden: true,
-			groupable: true,
-		},
-		{
-			key: "version",
-			label: "Version",
-			icon: "mynaui:git-commit",
-			width: "24%",
-			minWidth: "150px",
-		},
-		{
-			key: "last_seen_at",
-			label: "Last seen",
-			icon: "mynaui:clock-circle",
-			width: "20%",
-			minWidth: "140px",
-		},
-		{
-			key: "paired_at",
-			label: "Paired",
-			icon: "mynaui:link",
-			width: "18%",
-			minWidth: "120px",
-			hideOnMobile: true,
-		},
-	];
 </script>
 
 <SettingsPage
 	title="Devices"
-	lede="Your server, and every app, browser and sensor paired to it."
-	width="medium"
+	lede="Everything paired to your server, and how each one reaches it."
+	back={{ route: "/virtues/system", label: "Your server" }}
 >
 	{#snippet actions()}
-		<Button variant="primary" onclick={startAdd}>
-			<Icon icon="mynaui:plus" />
-			Add device
-		</Button>
+		<span id="setting-pair-device"><Button variant="secondary" onclick={() => (addOpen = true)}>Add a device</Button></span>
 	{/snippet}
 
-	<!--
-		The universal grid, not a hand-rolled list — Devices was the one list in
-		the app with its own row markup, so it was also the one list without
-		search, sort, grouping or a right-click menu. Row click is the drill-down
-		(the grid stops propagation around rowActions and the fix button below,
-		so the banner's "Open Full Disk Access" can't fire a navigation behind
-		itself).
-	-->
-	<UniversalDataGrid
-		items={rows}
-		{columns}
-		entityType="devices"
-		loading={res.loading}
-		error={res.error}
-		onRetry={reloadAll}
-		showCounts={false}
-		emptyIcon="mynaui:mobile"
-		emptyMessage="No paired devices. Run `virtues pair` on your server to pair this browser, or click Add device above."
-		loadingMessage="Loading devices..."
-		searchPlaceholder="Search by name, kind, version..."
-		onRefresh={reloadAll}
-		{rowIcon}
-		{rowHref}
-		onItemClick={openRow}
-	>
-		{#snippet tableRow(row: Row)}
-			{@const device = row.device}
-			<td class="px-3 py-2.5">
-				<div class="flex items-center gap-2 flex-wrap" class:pl-5={device?.installed_by}>
-					{#if device?.installed_by}
-						<!-- Folded under the app that installed it (see the sort). -->
-						<Icon
-							icon="mynaui:corner-down-right"
-							class="text-foreground-muted flex-shrink-0"
-							width="14"
-						/>
-					{/if}
-					<span class="text-sm font-medium text-foreground truncate">{row.label}</span>
-					{#if device?.is_current}
-						<Badge>This device</Badge>
-					{/if}
-				</div>
-				<div class="text-xs text-foreground-muted mt-0.5" class:pl-5={device?.installed_by}>
-					{row.kind}
-				</div>
-				{#if device}
-					<!-- A collector missing a permission isn't an error: nothing crashed,
-					     and the rest of its streams are fine. It reads as a standing
-					     warning with the remedy attached, not a toast. -->
-					<MacPermissions {device} deniedOnly canOpen={canFix} />
-					{#if device.permissions?.stale}
-						<div class="text-xs text-foreground-muted mt-2 italic">
-							It hasn't reported its permissions lately. Its collector may have stopped.
-						</div>
-					{/if}
-				{/if}
-			</td>
-			<td class="px-3 py-2.5">
-				<div class="flex items-center gap-1.5">
-					{#if row.behind}
-						<!-- The mark is the whole point of putting the server in the
-						     table: out of date reads the same on every row, and the
-						     reason is one hover away. -->
-						<span class="text-error flex-none inline-flex" title={row.behind}>
-							<Icon icon="mynaui:arrow-up-circle-solid" width="15" />
+	{#if res.error}
+		<div class="load-error" role="alert">
+			<p>Your server couldn't list your devices.</p>
+			<Button variant="secondary" onclick={() => void res.reload()}>Try again</Button>
+		</div>
+	{:else if res.loading && !res.data}
+		<p class="quiet">Loading your devices…</p>
+	{:else if rows.length === 0}
+		<p class="quiet">Nothing is paired yet. Run virtues pair on your server, or add a device above.</p>
+	{:else}
+		<ul class="devices" id="setting-devices">
+			{#each rows as row (row.device.id)}
+				<li>
+					<button type="button" class="device" onclick={() => open(row.device)}>
+						<span class="glyph"><Icon icon={kindIcon(row.device.kind)} width="18" /></span>
+						<span class="words">
+							<span class="name">{deviceName(row.device)}</span>
+							<span class="line">{row.line}</span>
+							{#each row.notes as note (note)}
+								<span class="note">{note}</span>
+							{/each}
 						</span>
-					{/if}
-					{#if row.version}
-						<span class="text-sm font-mono text-foreground">{row.version}</span>
-					{:else if row.is_server && !update}
-						<span class="text-xs text-foreground-muted">…</span>
-					{:else}
-						<span class="text-xs text-foreground-subtle">—</span>
-					{/if}
-				</div>
-				{#if row.version_sub}
-					<div class="text-xs text-foreground-muted mt-0.5 truncate">{row.version_sub}</div>
-				{/if}
-			</td>
-			<td class="px-3 py-2.5 text-sm">
-				{#if isConnected(row)}
-					<span class="inline-flex items-center gap-2 text-foreground">
-						<span class="dot dot-on"></span>Connected
-					</span>
-				{:else if row.last_seen_at}
-					<span class="inline-flex items-center gap-2 text-foreground-muted">
-						<span class="dot"></span>{formatDateTime(row.last_seen_at)}
-					</span>
-				{:else}
-					<span class="inline-flex items-center gap-2 text-foreground-muted">
-						<span class="dot"></span>Never
-					</span>
-				{/if}
-			</td>
-			<td class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile">
-				{#if row.paired_at}
-					{formatDateTime(row.paired_at)}
-				{:else}
-					<span class="text-foreground-subtle">—</span>
-				{/if}
-			</td>
-		{/snippet}
+						<svg class="chev" viewBox="0 0 24 24" aria-hidden="true" width="15" height="15">
+							<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" />
+						</svg>
+					</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 
-		{#snippet card(row: Row)}
-			{@const device = row.device}
-			<div class="flex flex-col items-center gap-2 text-center">
-				<Icon icon={rowIcon(row)} class="text-3xl text-foreground-muted" />
-				<span class="text-sm font-medium text-foreground break-all">{row.label}</span>
-				<div class="flex items-center gap-1 flex-wrap justify-center">
-					<Badge>{row.kind}</Badge>
-					{#if device?.is_current}
-						<Badge>This device</Badge>
-					{/if}
-				</div>
-				{#if row.version}
-					<span class="text-xs font-mono text-foreground inline-flex items-center gap-1">
-						{#if row.behind}
-							<span class="text-error inline-flex" title={row.behind}>
-								<Icon icon="mynaui:arrow-up-circle-solid" width="13" />
-							</span>
-						{/if}
-						{row.version}
-					</span>
-				{/if}
-				<span class="text-xs text-foreground-muted inline-flex items-center gap-1.5">
-					{#if isConnected(row)}
-						<span class="dot dot-on"></span>Connected
-					{:else if row.last_seen_at}
-						<span class="dot"></span>{formatDateTime(row.last_seen_at)}
-					{:else}
-						<span class="dot"></span>Never seen
-					{/if}
-				</span>
-				{#if device && deniedMacPermissions(device).length > 0}
-					<span class="text-xs text-warning flex items-center gap-1">
-						<Icon icon="mynaui:lock" width="12" />
-						{deniedMacPermissions(device).length}
-						{deniedMacPermissions(device).length === 1 ? "permission" : "permissions"} off
-					</span>
-				{/if}
-			</div>
-		{/snippet}
+	<NetworkSection />
+	<ReopenSection />
 
-		{#snippet rowActions(row: Row)}
-			{#if row.device}
-				<Button variant="ghost" onclick={() => revoke(row.device!)}>
-					<Icon icon="mynaui:x-circle" />
-					Unpair
-				</Button>
-			{:else}
-				<!-- The server cannot be revoked; its verb is an upgrade. -->
-				<Button variant="ghost" onclick={() => openRow(row)}>
-					<Icon icon="mynaui:cloud-download" />
-					Updates
-				</Button>
-			{/if}
-		{/snippet}
-	</UniversalDataGrid>
+	<p class="aside">
+		The manual's <a href={MANUAL} target="_blank" rel="noopener noreferrer">Reaching your server</a> page explains pairing, the
+		relay, and what the relay can and can't see.
+	</p>
 </SettingsPage>
 
 <Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">
 	<div class="add-choices">
 		<button type="button" class="add-choice" onclick={() => choose("ios")}>
-			<Icon icon="mynaui:mobile" width="22" />
+			<Icon icon="mynaui:mobile" width="20" />
 			<span>An iPhone</span>
 		</button>
 		<button type="button" class="add-choice" onclick={() => choose("mac")}>
-			<Icon icon="mynaui:desktop" width="22" />
+			<Icon icon="mynaui:desktop" width="20" />
 			<span>A computer</span>
 		</button>
 		{#if isMacOS}
 			<button type="button" class="add-choice" onclick={() => choose("agent")}>
-				<Icon icon="mynaui:chip" width="22" />
+				<Icon icon="mynaui:sparkles" width="20" />
 				<span>An AI agent on this Mac</span>
 			</button>
 		{/if}
 	</div>
 </Modal>
 
-<AgentConnectModal
-	open={connectingAgent}
-	onClose={() => (connectingAgent = false)}
-	onConnected={() => void res.reload()}
-/>
+<AgentConnectModal open={connectingAgent} onClose={() => (connectingAgent = false)} onConnected={() => void res.reload()} />
 
 {#if pairing}
 	<DevicePairModal
@@ -520,49 +187,122 @@
 {/if}
 
 <style>
+	.devices {
+		list-style: none;
+		margin: 24px 0 0;
+		padding: 0;
+	}
+
+	.device {
+		display: grid;
+		grid-template-columns: 20px minmax(0, 1fr) 15px;
+		align-items: start;
+		gap: 12px;
+		width: calc(100% + 24px);
+		min-height: 60px;
+		margin: 0 -12px;
+		padding: 12px;
+		box-sizing: border-box;
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		font: inherit;
+		text-align: left;
+		color: var(--color-foreground);
+		cursor: pointer;
+		transition: background var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.device:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.glyph,
+	.chev {
+		margin-top: 2px;
+		color: var(--color-foreground-muted);
+	}
+
+	.words {
+		min-width: 0;
+	}
+
+	.name {
+		display: block;
+		font-size: 15px;
+	}
+
+	.line {
+		display: block;
+		margin-top: 2px;
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+	}
+
+	.note {
+		display: block;
+		margin-top: 4px;
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--color-warning);
+	}
+
+	.quiet {
+		margin: 24px 0 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.load-error {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 24px;
+	}
+
+	.load-error p {
+		margin: 0;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+
+	.aside {
+		margin: 32px 0 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.aside a {
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
 	.add-choices {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-		gap: 0.75rem;
+		grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+		gap: 12px;
 	}
+
 	.add-choice {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.6rem;
-		padding: 1.4rem 1rem;
+		gap: 8px;
+		padding: 24px 16px;
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius-xl);
+		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 		font: inherit;
 		font-size: 14px;
 		color: var(--color-foreground);
 		cursor: pointer;
-		transition: box-shadow 0.15s ease, background 0.15s ease;
 	}
+
 	.add-choice:hover {
 		background: color-mix(in srgb, var(--color-foreground) 4%, var(--color-surface));
-	}
-
-	/* The presence dot. Green = spoke to the box inside the window (or IS the
-	   box, or is the device reading this); grey = a timestamp instead. */
-	.dot {
-		width: 8px;
-		height: 8px;
-		border-radius: var(--radius-full);
-		flex: none;
-		background: var(--color-foreground-subtle);
-	}
-	.dot-on {
-		background: var(--color-success);
-	}
-
-
-	/* Matches the grid's own hideOnMobile header behavior for the paired-at
-	   cell, which the custom tableRow has to hide itself. */
-	@media (max-width: 768px) {
-		.hide-mobile {
-			display: none;
-		}
 	}
 </style>

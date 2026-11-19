@@ -14,6 +14,19 @@ describe("Settings' crumbs", () => {
 		expect(labels('/virtues/data/shared', 'Settings · Shared links')).toEqual(['Settings', 'Your server', 'Your data', 'Shared links']);
 	});
 
+	it("put Your server's pages under its page, and This device on its own", () => {
+		expect(labels('/virtues/system', 'Settings · Your server')).toEqual(['Settings', 'Your server']);
+		expect(labels('/virtues/devices', 'Settings · Devices')).toEqual(['Settings', 'Your server', 'Devices']);
+		expect(labels('/virtues/updates', 'Settings · Updates')).toEqual(['Settings', 'Your server', 'Updates']);
+		expect(labels('/virtues/devices/dev_x', 'Settings · Office iMac')).toEqual(['Settings', 'Your server', 'Devices', 'Office iMac']);
+		expect(labels('/virtues/devices/this', 'Settings · This device')).toEqual(['Settings', 'This device']);
+	});
+
+	it("link Your server's crumb to its page", () => {
+		const crumbs = crumbsForRoute('/virtues/devices', 'Settings · Devices').crumbs;
+		expect(crumbs[1]).toMatchObject({ label: 'Your server', route: '/virtues/system' });
+	});
+
 	it('keep a page under its parent page', () => {
 		expect(labels('/virtues/assistant/spending/cost', 'Settings · What AI has cost')).toEqual([
 			'Settings',

@@ -76,7 +76,8 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/billing': { icon: 'mynaui:credit-card', glyph: 'billing' },
 	'/virtues/system': { icon: 'mynaui:servers', glyph: 'system' },
 	'/virtues/devices': { icon: 'mynaui:mobile', glyph: 'devices' },
-	'/virtues/server': { icon: 'mynaui:refresh' },
+	'/virtues/updates': { icon: 'mynaui:refresh' },
+	'/virtues/devices/this': { icon: 'mynaui:desktop' },
 	'/virtues/backup': { icon: 'mynaui:archive' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
 	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
@@ -90,15 +91,18 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
  * Settings' pages, for the crumbs on those pages and the menus the crumbs
  * open. They come from the landing page's site map (LANDING in lib/settings),
  * so a page sits under the same heading in both: Your assistant, Your
- * profile, Your server.
+ * profile, Your server, This device.
  *
- * One row per page. A site-map link that names a row on a page points at a
- * page another link already lists, so the page goes under its plain link
- * where it has one, and otherwise under its group's name.
+ * One row per page. A group with a page of its own (Your server) is a row
+ * under its own name, and its links sit under it. A site-map link that names
+ * a row on a page points at a page another link already lists, so the page
+ * goes under its plain link where it has one, and otherwise under its
+ * group's name.
  */
 function settingsRows(): ModeRow[] {
 	const rows: ModeRow[] = [];
 	for (const group of LANDING) {
+		if (group.route) rows.push(settingsRow(group.route, group.title, group.title));
 		for (const { route } of group.links) {
 			if (rows.some((r) => r.href === route)) continue;
 			const plain = LANDING.flatMap((g) => g.links.filter((l) => l.route === route && !l.setting).map((l) => ({ g, l })))[0];
@@ -106,9 +110,14 @@ function settingsRows(): ModeRow[] {
 			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
 		}
 	}
-	// Pages the site map leaves out: search settings are found by searching,
-	// and Applets is reached from the Applets door.
-	rows.push(settingsRow('/virtues/search', 'Search', 'Your server'), settingsRow('/virtues/applets', 'Applets', 'Your server'));
+	// Pages Your server links to rather than the site map: Search and Applets.
+	// This device's line appears only on a device with a page of its own, so
+	// its row is here rather than in LANDING.
+	rows.push(
+		settingsRow('/virtues/search', 'Search', 'Your server'),
+		settingsRow('/virtues/applets', 'Applets', 'Your server'),
+		settingsRow('/virtues/devices/this', 'This device', 'This device'),
+	);
 	return rows;
 }
 

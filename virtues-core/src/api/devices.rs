@@ -43,6 +43,11 @@ pub struct DeviceListItem {
     pub paired_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub paired_from_ip: Option<String>,
+    /// The platform the pairing client reported (`device_info.os`): `ios`,
+    /// `macos`, `windows` or `linux`. Null for a phone added through the Mac's
+    /// handoff code and for the local console, which pair without one. iPhone
+    /// and iPad both report `ios`.
+    pub os: Option<String>,
     /// The client's reported build identity (from the `X-Virtues-Client`
     /// header, stored under `device_info.build`). Null until the device has
     /// made a request on a build that sends it.
@@ -86,6 +91,7 @@ pub struct DeviceListItem {
 pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl IntoResponse {
     let rows: Result<Vec<DeviceListItem>, _> = sqlx::query_as(
         "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
+                device_info->>'os'               AS os, \
                 device_info->'build'->>'version' AS version, \
                 device_info->'build'->>'sha'     AS sha, \
                 device_info->'build'->>'channel' AS channel, \
