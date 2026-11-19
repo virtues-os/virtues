@@ -51,6 +51,19 @@ pub fn http_client() -> reqwest::Client {
         .expect("failed to build reqwest client")
 }
 
+/// `http_client` that returns a redirect instead of following it. A sync that
+/// replays a logged-in web session needs this: when the session ends, the site
+/// redirects to its login page, and a client that follows the redirect gets the
+/// login page's HTML with a 200 instead of a status the applet can recognize.
+pub fn http_client_no_redirects() -> reqwest::Client {
+    ensure_crypto_provider();
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build reqwest client")
+}
+
 /// Install the ring crypto provider once (reqwest here is rustls-tls-no-provider,
 /// so direct external HTTPS panics with "No provider set" without this).
 fn ensure_crypto_provider() {
