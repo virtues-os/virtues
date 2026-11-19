@@ -66,8 +66,13 @@ fn provider_cfg(p: &str) -> Option<ProviderCfg> {
             client_secret: env("GOOGLE_CLIENT_SECRET"),
             redirect_uri: env_or("GOOGLE_REDIRECT_URI", "https://auth.virtues.com/google/callback"),
             scopes: vec![
+                // `calendar.events` writes events but cannot list calendars
+                // or read `calendars/primary`, which the sync and the account
+                // lookup need, so `calendar.readonly` stays beside it.
+                // `gmail.modify` reads mail, changes labels and writes drafts.
                 "https://www.googleapis.com/auth/calendar.readonly".into(),
-                "https://www.googleapis.com/auth/gmail.readonly".into(),
+                "https://www.googleapis.com/auth/calendar.events".into(),
+                "https://www.googleapis.com/auth/gmail.modify".into(),
             ],
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
             token_url: "https://oauth2.googleapis.com/token".into(),
@@ -392,8 +397,12 @@ async fn start(
         }
         match provider.as_str() {
             "google" => {
+                // `include_granted_scopes` makes a reconnect add the new
+                // scopes to an owner's existing grant, so a box signed in
+                // before a scope was added gets it by reconnecting.
                 qp.append_pair("access_type", "offline")
-                    .append_pair("prompt", "consent");
+                    .append_pair("prompt", "consent")
+                    .append_pair("include_granted_scopes", "true");
             }
             "strava" => {
                 qp.append_pair("approval_prompt", "auto");
