@@ -52,7 +52,10 @@ sha256, swapped atomically.
 ## Serving
 
 `deploy/maps/cut.py`, a monthly timer on the cloud server, cuts the newest
-Protomaps build into `/srv/maps/<build>/`; virtues-api serves `/v1/maps/index`
+Protomaps build into `/srv/maps/<build>/`, and `deploy/maps/upload.sh` copies
+it to an object storage bucket. Since 2026-11-19 virtues-api reads that bucket
+and streams each file to the box, so a read that reaches storage carries the
+API server's address and no box's. It serves `/v1/maps/index`
 and `/v1/maps/<build>/<file>` (with `Range`) behind `BearerAuth`. A lapsed
 subscription gets a 402, so no new files, but the files the box already has keep
 working. A free self-hosted box can point `VIRTUES_MAPS_SOURCE` at its own copy

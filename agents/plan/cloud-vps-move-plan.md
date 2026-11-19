@@ -1,6 +1,6 @@
 # Moving the cloud services off the dedicated server
 
-**Written 2026-11-19. Slice 1 is partly built; nothing else is, and no server
+**Written 2026-11-19. Slice 1 is done; nothing else is built, and no server
 is ordered.** atlas, virtues-api and
 their Postgres run on one dedicated server since 2026-09-28
 ([record](../record/cloud-consolidation.md),
@@ -78,35 +78,20 @@ dedicated server able to run everything.
 
 ### 1. virtues-api reads maps from the bucket
 
-Built on 2026-11-19, not yet deployed:
+Done on 2026-11-19 ([record](../record/cloud-consolidation.md)). The API on
+the dedicated server reads the bucket; `/srv/maps` is still there.
 
-- The maps routes have a bucket source (`services/virtues-api/src/routes/maps.rs`),
-  switched on by the five `VIRTUES_MAPS_S3_*` variables. `latest.json`,
-  `index.json` and the files come from signed reads
-  (`crates/virtues-helpers/src/crypto/sigv4.rs`), with the box's `Range`
-  header passed through and the body streamed. The routes stay outside
-  `TraceLayer`, and the new code writes no path and no account anywhere.
-- A private bucket exists with two keys: one that can write to it, for
-  uploads, and one that can only read it, for the API. Neither key can reach
-  the backup bucket.
-- `deploy/maps/upload.sh` uploads one build and then `latest.json`. The
-  newest build is uploaded; the older one is not, because the API only needs
-  the build `latest.json` names.
-
-Left:
-
-- Compare every object's size with the build's `index.json`.
-- Deploy to the **dedicated** server with the bucket source switched on, while
-  `/srv/maps` is still there. Check with a real key: the index, a ranged read,
-  and one whole file against its sha256. Then let one box run its daily sync.
+- Rollback: remove the five `VIRTUES_MAPS_S3_*` variables from `api.env` and
+  redeploy. The directory source takes over.
 - Until slice 2 is done, run `upload.sh <build>` after each monthly cut.
   Otherwise the API keeps serving the build the bucket has, which is a month
-  older and still complete.
-- Rollback: unset the five variables and redeploy. Nothing was deleted.
-
-The API is now in the path of every map download, so a first sync of a few GB
-goes through the server's link. At today's traffic that is far below the link,
-and the capacity bars on the intranet show it if that changes.
+  older and still complete. `virtues-health` reports it.
+- Only the newest build is in the bucket. A box asks for the build the index
+  names, so the older one is not needed.
+- The API is in the path of every map download, so a first sync of a few GB
+  goes through the server's link. At today's traffic that is far below the
+  link, and the capacity bars on the intranet show it if that changes.
+- One check is left: read a box's log after its next daily sync.
 
 ### 2. The map cut runs on a temporary instance
 

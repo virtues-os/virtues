@@ -195,7 +195,7 @@ live database).
 
 Environment is **not** passed inline at `docker run` time. It lives in a
 root-only env-file on the host, `/etc/virtues/api.env`, and the container runs
-with `--network host` on `:9002` with `/srv/maps` mounted read-only. To add or
+with `--network host` on `:9002`. Map files come from object storage (the `VIRTUES_MAPS_S3_*` variables); `/srv/maps` is still mounted read-only as the fallback when they are unset. To add or
 change a secret, edit the env-file (keep a timestamped `.bak`) and redeploy the
 running ref: `docker restart` does not re-read `--env-file`.
 

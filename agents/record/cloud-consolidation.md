@@ -23,3 +23,10 @@ The relay stays on its own server. The two items still open are in
   databases, image registry and leftover DNS records were deleted. DNS and IAM
   stay at the old provider by choice. Map fonts reached the one box that had
   recorded the first build's broken archive.
+- **2026-11-19, maps read from object storage.** The newest build (9,923
+  files, 178 GB) was uploaded to a private bucket and every object compared
+  with the local file by size and md5. virtues-api was deployed with the
+  bucket source on; a box's key read the index, a whole file that matched its
+  sha256, and a resumed range through the live API. The directory on the
+  server is still there and still the rollback. This is the first slice of
+  [moving off the dedicated server](../plan/cloud-vps-move-plan.md).
