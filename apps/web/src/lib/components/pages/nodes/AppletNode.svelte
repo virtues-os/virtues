@@ -164,11 +164,6 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
-	.doc-applet-handle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-	}
-
 	/* On touch the handle takes the pointer only on a selected applet: a
 	   thumb that begins a scroll over it scrolls, and writes no height. Its
 	   hit area is a thumb's 44pt, grown around the 8px bar. */

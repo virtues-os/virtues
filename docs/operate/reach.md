@@ -116,8 +116,8 @@ and doesn't depend on what the relay logs.
 
 Your server ships with the relay's address built in, so you can reach it from
 the first boot without an account. Most connected products ship their
-rendezvous servers the same way. You can turn the relay off: Settings → System
-→ Network shows the relay in use and has the switch. With the relay off, the
+rendezvous servers the same way. You can turn the relay off: Settings →
+Updates and network shows the relay in use and has the switch. With the relay off, the
 server still works on your own network.
 
 ## Checking the connection

@@ -12,7 +12,7 @@ export interface ChatSession {
 	icon: string | null;
 	/** `--cat-*` token key, never a hex. Migration 0079. */
 	icon_color?: string | null;
-	project_id?: string | null;
+	thread_id?: string | null;
 	last_updated: string | null;
 	first_message_at: string;
 	last_message_at: string;
@@ -50,7 +50,7 @@ class ChatSessionStore {
 	/** The project a chat is filed in: its row when listed, else what this client learned. */
 	projectOf(chatId: string): string | null {
 		const row = this.sessions.find((s) => s.conversation_id === chatId);
-		if (row) return row.project_id ?? null;
+		if (row) return row.thread_id ?? null;
 		return this.knownProjects[chatId] ?? null;
 	}
 
@@ -63,9 +63,9 @@ class ChatSessionStore {
 		if ((this.knownProjects[chatId] ?? null) !== projectId) {
 			this.knownProjects = { ...this.knownProjects, [chatId]: projectId };
 		}
-		if (this.sessions.some((s) => s.conversation_id === chatId && (s.project_id ?? null) !== projectId)) {
+		if (this.sessions.some((s) => s.conversation_id === chatId && (s.thread_id ?? null) !== projectId)) {
 			this.sessions = this.sessions.map((s) =>
-				s.conversation_id === chatId ? { ...s, project_id: projectId } : s,
+				s.conversation_id === chatId ? { ...s, thread_id: projectId } : s,
 			);
 		}
 	}
@@ -143,7 +143,7 @@ class ChatSessionStore {
 					conversation_id: chatId,
 					title,
 					icon: null,
-					project_id: null,
+					thread_id: null,
 					last_updated: null,
 					first_message_at: '',
 					// A chat is only titled once it has been talked in.

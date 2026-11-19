@@ -3,14 +3,14 @@
 #     bash tools/design-lint.sh --update-baseline
 # Raising a number here is how the ratchet stops being one — fix the page instead,
 # or annotate the single line with `design-ok: <why>` if the grammar allows it.
-43 shadow
-12 tiny-type
-5 half-px-type
-24 mono
-27 mono-literal
-217 hex-literal
-47 rgb-literal
+31 shadow
+11 tiny-type
+4 half-px-type
+21 mono
+21 mono-literal
+123 hex-literal
+33 rgb-literal
 8 radius
-284 off-grid
-67 no-reduced-motion
+274 off-grid
+55 no-reduced-motion
 0 serif-impossible

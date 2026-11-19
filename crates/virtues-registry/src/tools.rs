@@ -64,7 +64,6 @@ pub struct ToolConfig {
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
 /// - edit_page: Edit a block page by block ops, a markdown page by find/replace
-/// - update_memory: Persist notes across conversations
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
@@ -72,11 +71,11 @@ pub fn default_tools() -> Vec<ToolConfig> {
         revise_article_tool(),
         skip_step_tool(),
         record_introductions_tool(),
-        update_memory_tool(),
         web_search_tool(),
         semantic_search_tool(),
         sql_query_tool(true),
         sql_write_tool(),
+        delete_data_tool(),
         sudo_tool(),
         shell_tool(),
         dispatch_subagents_tool(),
@@ -105,7 +104,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. thing_id (a wiki_things id) puts it under a thing in place of a project. recur_every with recur_unit makes the owner's own task recur, that long after they finish it."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. home: a thread, person, place, org or thing ref; also_about: more refs. With recur_every and recur_unit, the owner's task recurs that long after they finish it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -120,8 +119,8 @@ fn create_task_tool() -> ToolConfig {
                             "notes": { "type": "string" },
                             "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
                             "for": { "type": "string", "enum": ["owner", "assistant"] },
-                            "project_id": { "type": "string" },
-                            "thing_id": { "type": "string" },
+                            "home": { "type": "string" },
+                            "also_about": { "type": "array", "items": { "type": "string" } },
                             "recur_every": { "type": "integer" },
                             "recur_unit": { "type": "string", "enum": ["day", "week", "month", "year"] }
                         }
@@ -144,7 +143,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, thing_id or recur_unit."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, home, recur_unit."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -154,8 +153,8 @@ fn update_task_tool() -> ToolConfig {
                 "notes": { "type": "string" },
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
-                "project_id": { "type": "string" },
-                "thing_id": { "type": "string" },
+                "home": { "type": "string" },
+                "also_about": { "type": "array", "items": { "type": "string" } },
                 "recur_every": { "type": "integer" },
                 "recur_unit": { "type": "string" },
                 "status": { "type": "string", "enum": ["open", "active", "ready", "done", "dismissed"] },
@@ -210,12 +209,12 @@ fn send_imessage_tool() -> ToolConfig {
         id: "send_imessage".to_string(),
         name: "Send a message".to_string(),
         description: "Send an iMessage from your Mac".to_string(),
-        llm_description: "Send a text message as the owner, through Messages on their Mac, into the thread they already have with that person. Use it when the owner asks you to message, text or tell someone something. It goes about five seconds after the call (the owner can cancel it in the chat until then), or at `at` when the owner names a time (\"text Nick at 9am\"). Send only what the owner asked for, to the person they named. Each message is its own call: a send earlier in the chat sent that message only, so a new request is a new call even when it repeats an earlier one, and the chat shows the owner a card for every call. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, a phone number or email, or a group chat: its name as set in Messages, or, for a group with no name, its thread_id from data_communication_message (find it by who is in it). `attachments` sends files after the text: drive files by their ref (/drive/<id>), or photos from the owner's messages as /api/messages/<id>/attachments/<n> (n is the position in that row's metadata.attachments). If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
+        llm_description: "Send a text message as the owner, through Messages on their Mac, into the conversation they already have with that person. Use it when the owner asks you to message, text or tell someone something. It goes about five seconds after the call (the owner can cancel it in the chat until then), or at `at` when the owner names a time (\"text Nick at 9am\"). Send only what the owner asked for, to the person they named. Each message is its own call: a send earlier in the chat sent that message only, so a new request is a new call even when it repeats an earlier one, and the chat shows the owner a card for every call. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, a phone number or email, or a group chat: its name as set in Messages, or, for a group with no name, its thread_id from data_communication_message (find it by who is in it). `attachments` sends files after the text: drive files by their ref (/drive/<id>), or photos from the owner's messages as /api/messages/<id>/attachments/<n> (n is the position in that row's metadata.attachments). If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["to"],
             "properties": {
-                "to": { "type": "string", "description": "A name, a person id, a phone number or email, a group chat's name, or a thread_id" },
+                "to": { "type": "string", "description": "A name, a person id, a phone number or email, a group chat's name, or a conversation_id" },
                 "text": { "type": "string", "description": "The message, exactly as it will be sent. Leave it out to send only files" },
                 "attachments": { "type": "array", "items": { "type": "string" }, "description": "Files to send after the text: /drive/<id>, or /api/messages/<id>/attachments/<n>. Up to 25 MB together" },
                 "at": { "type": "string", "description": "Only when the owner names a time: when to send, as a local date and time in the owner's timezone (2026-10-21T09:00). Up to 30 days ahead" }
@@ -405,19 +404,32 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. Before your first show call in a chat, load the charts skill (use_applet): which chart fits, and the columns each reads. Give `chart` and `sql`, one read-only SELECT; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading or the owner asks to see something, once or twice a reply at most. Make one call per figure: if show refuses it, call once more with the fix the refusal names; never draw a figure again once it has drawn. If show is closed for the turn, say in words what it would have shown; don't draw it another way, such as with shell. One number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["kind"],
             "properties": {
-                "kind": {
+                "chart": {
                     "type": "string",
-                    "enum": ["chart", "numbers", "table", "map", "timeline", "choices"],
-                    "description": "chart: first column is the x axis, then 1-3 numeric series; under 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
+                    "description": format!(
+                        "A purpose ({}), a chart the owner named, or choices for reply buttons",
+                        crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")
+                    )
                 },
-                "title": { "type": "string", "description": "A few words naming what is shown" },
-                "sql": { "type": "string", "description": "Alias every column as the owner should read it: AS \"Hours asleep\"" },
-                "mark": { "type": "string", "enum": ["bar", "line"], "description": "chart only; default bar" },
+                "title": { "type": "string", "description": "A few words for what is shown" },
+                "sql": { "type": "string", "description": "One read-only SELECT, its columns named as the charts skill says" },
+                "finding": { "type": "string", "description": "scatter; see the charts skill" },
+                "split_at": { "type": "string", "description": "interrupted; see the charts skill" },
+                "split_label": { "type": "string", "description": "interrupted; see the charts skill" },
+                "step_kind": { "type": "string", "description": "cumulative; see the charts skill" },
+                "unit": { "type": "string", "description": "cumulative; see the charts skill" },
+                "event_label": { "type": "string", "description": "aligned; see the charts skill" },
+                "days": { "type": "integer", "description": "lollipop; see the charts skill" },
+                "period": { "type": "string", "description": "density; see the charts skill" },
+                "series": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "in_sentence and spark: rows behind a figure in your sentence, for the owner to open; see the charts skill"
+                },
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -585,7 +597,7 @@ fn read_asset_tool() -> ToolConfig {
         description: "Look at an image or file the user has stored".to_string(),
         llm_description: r#"Look at one file in the user's drive; an image comes back for you to see. Take file_id from its ref URL: /drive/dr_abc123 is "dr_abc123".
 
-Use it when answering means seeing the file: "this screenshot", a layout that matters, or a project member marked text="none", which semantic_search cannot see inside, so an empty search is no evidence about it. One known file per call, never a sweep: images cost context. If the file cannot be shown, say so; never describe a file you were not shown."#.to_string(),
+Use it when answering means seeing the file: "this screenshot", a layout that matters, or a thread member marked text="none", which semantic_search cannot see inside, so an empty search is no evidence about it. One known file per call, never a sweep: images cost context. If the file cannot be shown, say so; never describe a file you were not shown."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["file_id"],
@@ -619,38 +631,6 @@ fn think_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:lightbulb-line".to_string(),
         display_order: 0,
-        is_system: false,
-    }
-}
-
-/// Update Memory tool — persist notes across conversations
-fn update_memory_tool() -> ToolConfig {
-    ToolConfig {
-        id: "update_memory".to_string(),
-        name: "Memory".to_string(),
-        description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
-        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Write to them as "you", with no ids or phone numbers. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "op": {
-                    "type": "string",
-                    "enum": ["add", "revise", "retire"],
-                    "description": "Default add"
-                },
-                "lane": {
-                    "type": "string",
-                    "enum": ["facts", "manner", "practices"],
-                    "description": "Default facts"
-                },
-                "note_id": { "type": "integer" },
-                "content": { "type": "string" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:brain-line".to_string(),
-        display_order: 1,
         is_system: false,
     }
 }
@@ -697,7 +677,7 @@ fn semantic_search_tool() -> ToolConfig {
         description: "Search personal data by meaning".to_string(),
         llm_description: r#"Search the user's own data by meaning; `domains` lists what it holds.
 
-Omit `domains` to search everything; always omit it in a project chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
+Omit `domains` to search everything; always omit it in a thread chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
 
 Naming a person, place or org, or dates spanning a week or less, puts `from_your_wiki` first: an article, or a card whose id fits `entities`."#.to_string(),
         parameters: serde_json::json!({
@@ -1032,6 +1012,43 @@ fn sql_write_tool() -> ToolConfig {
     }
 }
 
+/// Propose deleting records from the owner's data tables (virtues-core
+/// `tools/delete_data.rs`, then `api/deletions.rs`). The tool deletes
+/// nothing: the chat shows a card, the owner allows it there, and the server
+/// deletes each row and writes its tombstone.
+fn delete_data_tool() -> ToolConfig {
+    ToolConfig {
+        id: "delete_data".to_string(),
+        name: "Delete data".to_string(),
+        description: "Propose deleting records you no longer want on your server".to_string(),
+        llm_description: r#"Propose deleting records from the owner's data_* tables, only when they ask to delete, remove or forget something their server collected. The delete-data applet says how to scope it: load it first unless it is already in your instructions. This deletes nothing. The owner gets a card showing what it covers and allows it there; the server then removes the rows and keeps them from being collected again. `summary` finishes the card's question "Delete …?" in plain words ("your messages with David Okafor"). Each target is one table with `where` (a SQL condition, as after WHERE) or `ids`. Your turn ends at the call. `deletion_id` alone returns where an earlier one stands."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": { "type": "string" },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["table"],
+                        "properties": {
+                            "table": { "type": "string" },
+                            "where": { "type": "string" },
+                            "ids": { "type": "array", "items": { "type": "string" } }
+                        }
+                    }
+                },
+                "deletion_id": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:delete-bin-line".to_string(),
+        display_order: 8,
+        is_system: false,
+    }
+}
+
 /// Sudo tool — a command on the server itself, as its admin account.
 /// The admin applet only: no other applet may list it, and the executor
 /// refuses it outside a sudo turn. The sandboxed `shell` is the one chat and
@@ -1311,7 +1328,6 @@ fn get_project_item_tool() -> ToolConfig {
 pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
         "think": true,
-        "update_memory": true,
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
@@ -1364,7 +1380,6 @@ mod tests {
         // Verify specific tools exist
         let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"think"));
-        assert!(ids.contains(&"update_memory"));
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
@@ -1409,7 +1424,6 @@ mod tests {
         let enabled = default_enabled_tools();
         assert!(enabled.is_object());
         assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("update_memory"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));

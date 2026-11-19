@@ -1,0 +1,64 @@
+/* The wash for something you came to find ($lib/utils/lit): a cited
+   sentence, a message you jumped to, the setting a search opened, a block
+   the assistant just changed. The highlighter draws across it in about
+   220ms, holds, then wipes off in the reading direction, so the eye is
+   pulled along it once and then left alone. Only what you came for is lit.
+
+   The highlight is a background image, so it wraps with the text line by
+   line (box-decoration-break) and leaves the element's own background
+   alone. Under reduced motion it does not travel: the color is there at
+   once and fades. */
+.lit {
+	background-image: linear-gradient(var(--color-highlight), var(--color-highlight));
+	background-repeat: no-repeat;
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
+	animation: lit 1.8s both;
+}
+
+@keyframes lit {
+	0% {
+		background-size: 0% 100%;
+		background-position: 0 0;
+		animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+	}
+	12% {
+		background-size: 100% 100%;
+		background-position: 0 0;
+	}
+	/* Full width, so moving the anchor to the right edge shows nothing:
+	   it sets up the wipe. */
+	50% {
+		background-size: 100% 100%;
+		background-position: 100% 0;
+		animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+	}
+	100% {
+		background-size: 0% 100%;
+		background-position: 100% 0;
+	}
+}
+
+@keyframes lit-still {
+	0%,
+	40% {
+		background-color: var(--color-highlight);
+	}
+	100% {
+		background-color: transparent;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.lit {
+		background-image: none;
+		animation: lit-still 1.2s backwards;
+	}
+}
+
+/* Settings' reduce motion cuts every animation to 1ms; this one carries
+   information, so it keeps its length and loses only the travel. */
+:root[data-reduce-motion] .lit {
+	background-image: none;
+	animation: lit-still 1.2s backwards !important;
+}

@@ -136,7 +136,7 @@
 			<!-- First in the row, as a code editor's find puts it: the arrows
 			     beside the count already mean previous and next. -->
 			<IconButton
-				size={touch ? "touch" : "md"}
+		size={touch ? "touch" : "control"}
 				icon={more ? "mynaui:chevron-down" : "mynaui:chevron-right"}
 				label={editable ? "Options and replace" : "Options"}
 				expanded={more}
@@ -154,16 +154,16 @@
 				onkeydown={onKeydown}
 			/>
 			<span class="find-status" aria-live="polite">{status}</span>
-			<IconButton size={touch ? "touch" : "md"} icon="mynaui:chevron-up" label="Previous match" shortcut="⇧⏎" onclick={() => findPrevious(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="mynaui:chevron-down" label="Next match" shortcut="⏎" onclick={() => findNext(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="mynaui:x" label="Close find" shortcut="Esc" onclick={close} />
+			<IconButton size={touch ? "touch" : "control"} icon="mynaui:chevron-up" label="Previous match" shortcut="⇧⏎" onclick={() => findPrevious(editor.view)} />
+			<IconButton size={touch ? "touch" : "control"} icon="mynaui:chevron-down" label="Next match" shortcut="⏎" onclick={() => findNext(editor.view)} />
+			<IconButton size={touch ? "touch" : "control"} icon="mynaui:x" label="Close find" shortcut="Esc" onclick={close} />
 		</div>
 		{#if more}
 			<div class="find-more">
 				<div class="find-options">
-					<IconButton size={touch ? "touch" : "md"} icon="mynaui:type-text" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
-					<IconButton size={touch ? "touch" : "md"} icon="mynaui:type-text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
-					<IconButton size={touch ? "touch" : "md"} icon="mynaui:asterisk-circle" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
+					<IconButton size={touch ? "touch" : "control"} icon="mynaui:type-text" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
+					<IconButton size={touch ? "touch" : "control"} icon="mynaui:type-text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
+					<IconButton size={touch ? "touch" : "control"} icon="mynaui:asterisk-circle" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
 				</div>
 				{#if editable}
 					<div class="find-replace">
@@ -263,7 +263,7 @@
 		padding: 0 8px;
 		margin-left: 0;
 		border-radius: var(--card-radius);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 	}
 
 	/* Docked: the row is a field in the page toolbar's place, the toolbar's
@@ -284,7 +284,7 @@
 	.docked .find-row {
 		height: 28px;
 		border-radius: var(--card-radius);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 	}
 
 	.docked .find-input {

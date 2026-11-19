@@ -123,12 +123,14 @@ fn models_base() -> String {
         .unwrap_or_else(|_| "https://github.com/virtues-os/virtues/releases/download/models-1".into())
 }
 
-/// Local mode exists only where we drive the NPU, and only where each turn
-/// can be sandboxed. A box that refuses unprivileged user namespaces (some
-/// distributions restrict them) would fail every turn closed, which is safe
-/// but pointless, so the mode is not offered there.
+/// Local mode runs on a Dragon's NPU, so it is offered on a Dragon board, and
+/// only where each turn can be sandboxed. The board, not the search setup:
+/// a Dragon whose search moved to the CPU still has the NPU this mode uses. A
+/// box that refuses unprivileged user namespaces (some distributions restrict
+/// them) would fail every turn closed, which is safe but pointless, so the
+/// mode is not offered there.
 pub fn supported() -> bool {
-    preview() || (crate::inference_report::is_dragon_profile() && sandbox_works())
+    preview() || (crate::inference_report::is_dragon_board() && sandbox_works())
 }
 
 /// `VIRTUES_LOCAL_PREVIEW=1` offers the mode on a machine without the NPU, so

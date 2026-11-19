@@ -1,63 +1,61 @@
 <!--
 	SettingsView.svelte
 
-	The one Settings room. A single door in the sidebar opens here; every
-	preference and console lives under it as a route-driven section. Replaces the
-	former two rooms (Account + System) and the flat footer folder
-	(Sources · Tools · Profile · Devices · System · Developers · Sign Out).
+	The one Settings room. Bare /virtues is the landing page
+	(settings/SettingsLanding.svelte): search, what needs you, Changed
+	lately, and a link to each page. Each section of lib/settings is a page
+	(settings/SettingsSection.svelte); the other routes are pages a row
+	opens, for what is a list, a chart, a table or a long form.
 
-	Doctrine: one tab group max. The primary sub-nav (the nouns the user owns) is
-	the only nav for most sections; only Developer carries a secondary sub-nav,
-	and nothing nests a tab group inside a tab group.
-
-	  You          /virtues/you            — profile, theme
-	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
-	  Billing      /virtues/billing        — subscription, balance, routing, and
-	                                         the AI calls that draw it down
-	  Keys         /virtues/keys           — sign-ins and the named keys applets use
+	  (landing)    /virtues                — search, Changed lately, every page
+	  Profile      /virtues/profile        — you: name, birthday, work, home
+	  How it talks /virtues/assistant      — its name, its manner, what it never raises
+	  Can do       /virtues/assistant/tools — its tools, and suggested questions
+	  Spending     /virtues/assistant/spending — models, and what tasks may spend
+	               /virtues/assistant/spending/models — the model list (?role= picks one)
+	               /virtues/assistant/spending/cost   — what AI has cost, and every call
+	               /virtues/assistant/spending/provider — your own AI provider
+	  Appearance   /virtues/appearance     — theme, reading font, motion
+	  Billing      /virtues/billing        — subscription, balance, auto top-up
+	  Your data    /virtues/data           — keep recordings, export everything
+	  Backup       /virtues/backup         — the newest backup, the drives, restoring
+	  Server       /virtues/server         — updates, and reaching it from away
+	  Keys         /virtues/keys           — the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
-	  Network      /virtues/network        — which network the box is on
-	  Software     /virtues/software       — release, track, update, artifacts
-	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
+	  Devices      /virtues/devices        — paired devices, and Unpair
+	               /virtues/devices/server — the server's own page: its release
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
-	  Developer    /virtues/developer      — SQL · Terminal
+	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
-	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
-	picker, an update installer, an 8-chapter telemetry console and a
-	revoke-every-device button on a single scroll — a reading, two settings and
-	a detonator sharing one scrollbar — and the console's own "Network &
-	Devices" and "About" chapters answered questions the two sections above
-	them had already answered differently. Splitting it by subject is what
-	removes the duplication; it was never really one room.
-
-	There is no "Sign out" — auth is the device's proven iroh key, not a server
-	session. The destructive action is Unpair, and it lives next to the thing it
-	destroys (Devices) — which is also why "Start over", the plural of Unpair,
-	moved there out of Box.
+	There is no "Sign out": auth is the device's proven iroh key, not a server
+	session. The destructive actions are Unpair, beside the device it removes,
+	and Start over, at the foot of the landing page, which unpairs everything.
 
 	Legacy flat/nested routes (/virtues/account, /virtues/connections/*,
 	/virtues/box/devices, /virtues/developer/console, …) self-heal on mount.
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
 	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
-	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
-	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+	import SettingsLanding from '$lib/components/settings/SettingsLanding.svelte';
+	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
+	import ByoPage from '$lib/components/settings/ByoPage.svelte';
+	import BackupPage from '$lib/components/settings/BackupPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
-	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
@@ -66,28 +64,33 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Old routes → their home in the flattened room. Rewritten in place so the
-	// sub-nav underline and the content both land on the canonical section.
+	// Old routes → where each lives now. Rewritten in place, so the tab's
+	// history keeps only the current route.
 	const LEGACY_ROUTES: Record<string, string> = {
-		'/virtues': '/virtues/you',
-		'/virtues/account': '/virtues/you',
-		'/virtues/profile': '/virtues/you',
+		'/virtues/you': '/virtues/profile',
+		'/virtues/account': '/virtues/profile',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// The model catalog is Assistant's sub-page, beside the pickers it serves.
-		'/virtues/models': '/virtues/assistant/models',
+		// Memory is retired: Virtues learns you from your record, not from notes.
+		'/virtues/assistant/memory': '/virtues/assistant',
+		// The model list and the cost page sit under Models and spending.
+		'/virtues/models': '/virtues/assistant/spending/models',
+		'/virtues/assistant/models': '/virtues/assistant/spending/models',
+		'/virtues/billing/cost': '/virtues/assistant/spending/cost',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
 		// bookmarks, not just historical paths.
-		'/virtues/usage': '/virtues/billing',
+		'/virtues/usage': '/virtues/assistant/spending/cost',
 		'/virtues/account/billing': '/virtues/billing',
-		'/virtues/byo-key': '/virtues/billing',
+		// Your own AI provider is where it runs, so it sits under Models and spending.
+		'/virtues/byo-key': '/virtues/assistant/spending/provider',
+		'/virtues/billing/byo': '/virtues/assistant/spending/provider',
 		'/virtues/billing/plan': '/virtues/billing',
-		'/virtues/account/usage': '/virtues/billing',
-		'/virtues/billing/usage': '/virtues/billing',
-		// Telemetry was this page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/billing',
-		'/virtues/developer/telemetry': '/virtues/billing',
+		'/virtues/account/usage': '/virtues/assistant/spending/cost',
+		'/virtues/billing/usage': '/virtues/assistant/spending/cost',
+		// Telemetry was the cost page under a word for something you send somewhere.
+		'/virtues/telemetry': '/virtues/assistant/spending/cost',
+		'/virtues/developer/telemetry': '/virtues/assistant/spending/cost',
 		// "Plan" named a choice that does not exist — one subscription, one
 		// price. Short-lived (2026-08-31 → 09-03), but it was a live row with
 		// bookmarks, so its door stays open.
@@ -95,36 +98,24 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network lives under System, as the machine's own connection; Software
-		// described the release a DEVICE runs, so it is that device's page
-		// under Devices.
-		'/virtues/network': '/virtues/system',
+		// Network and updates are the Server page; versions are the server's
+		// device page; the machine measured is System.
+		'/virtues/network': '/virtues/server',
 		'/virtues/software': '/virtues/devices/server',
-		// Box split into System · Network · Software (2026-08-17). Its own door
-		// lands on System, the largest of the three and the one that kept the
-		// page's former title.
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/system',
-		'/virtues/box/updates': '/virtues/devices/server',
-		'/virtues/updates': '/virtues/devices/server',
+		'/virtues/box/network': '/virtues/server',
+		'/virtues/box/updates': '/virtues/server',
+		'/virtues/updates': '/virtues/server',
 		'/virtues/version': '/virtues/devices/server',
-		// Devices absorbed both Start over (the split above) and This Mac, which
-		// was a top-level section for one instance of hardware. It is now
-		// `devices/this` — a device page like any other, and a stable word
-		// Sources can link to without knowing a device id.
+		// This Mac is `devices/this`, a device page like any other, and a
+		// stable word Sources can link to without knowing a device id.
 		'/virtues/box/devices': '/virtues/devices',
 		'/virtues/system/devices': '/virtues/devices',
 		'/virtues/devices/': '/virtues/devices',
 		'/virtues/this-mac': '/virtues/devices/this',
 		'/virtues/box/this-mac': '/virtues/devices/this',
 		'/virtues/system/this-mac': '/virtues/devices/this',
-		// Developer flattened — Console layer removed
-		'/virtues/developer': '/virtues/developer/sql',
-		'/virtues/developer/console': '/virtues/developer/sql',
-		// The pre-Settings developer doors (/virtues/sql, and the /developers/*
-		// group that used to self-heal them). One room now.
-		'/virtues/sql': '/virtues/developer/sql',
 		'/virtues/terminal': '/virtues/developer/terminal',
 		// The auth-activity log is gone. Its old doors land on Devices, which is
 		// where the thing it reported on — what is paired, and what you can
@@ -134,9 +125,9 @@
 		'/virtues/developer/activity': '/virtues/devices',
 	};
 
-	// Sources left Settings for its own door, so these can't be rewritten in
-	// place the way the others are — `/sources` is a different tab type, and
-	// only `navigate` re-resolves that through the registry.
+	// Sources left Settings for its own door. `/sources` is a different tab
+	// type, so these go through `retarget`, which re-resolves the type and
+	// replaces this tab's history slot in place.
 	const SOURCES_ALIASES = [
 		'/virtues/sources',
 		'/virtues/connections/sources',
@@ -144,23 +135,28 @@
 		'/virtues/tools',
 	];
 
-	// The Lake console is gone: it listed the archive's streams, which Drive's
-	// Streams page shows. Its doors land there, a different tab type, so they
-	// go through `navigate` like Sources' aliases.
-	const LAKE_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
+	// Streams and SQL are sections of Sources now (Streams, Query). Their old
+	// doors land there through `retarget`, like Sources' aliases. Terminal
+	// keeps its route; ⌘K opens it.
+	const STREAMS_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
+	const QUERY_ALIASES = ['/virtues/developer', '/virtues/developer/sql', '/virtues/developer/console', '/virtues/sql'];
 
 	$effect(() => {
 		// Services the assistant can act in are rows in the Sources catalog.
 		if (tab.route === '/virtues/connections') {
-			windowShellStore.navigate('/sources/catalog', { label: 'Sources · Catalog' });
+			windowShellStore.retarget(tab.id, '/sources/catalog', 'Sources · Catalog');
 			return;
 		}
 		if (SOURCES_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/sources', { label: 'Sources' });
+			windowShellStore.retarget(tab.id, '/sources', 'Sources');
 			return;
 		}
-		if (LAKE_ALIASES.includes(tab.route)) {
-			windowShellStore.navigate('/storage/streams', { label: 'Streams' });
+		if (STREAMS_ALIASES.includes(tab.route)) {
+			windowShellStore.retarget(tab.id, '/sources/streams', 'Sources · Streams');
+			return;
+		}
+		if (QUERY_ALIASES.includes(tab.route)) {
+			windowShellStore.retarget(tab.id, '/sources/query', 'Sources · Query');
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
@@ -175,7 +171,12 @@
 	});
 
 	type Section =
-		| 'you'
+		| 'page'
+		| 'profile'
+		| 'appearance'
+		| 'server'
+		| 'data'
+		| 'backup'
 		| 'assistant'
 		| 'billing'
 		| 'keys'
@@ -187,6 +188,11 @@
 		| 'developer';
 
 	const SECTIONS = [
+		'profile',
+		'appearance',
+		'server',
+		'data',
+		'backup',
 		'assistant',
 		'billing',
 		'keys',
@@ -200,40 +206,55 @@
 
 	// (section, sub) are a pure function of the route. `raw` is everything after
 	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Assistant, Devices, Developer).
-	const raw = $derived(tab.route.replace(/^\/virtues\/?/, ''));
+	// The query (`?role=` on the model list) is not part of the path.
+	const routePath = $derived(tab.route.split('?')[0]);
+	const routeQuery = $derived(tab.route.split('?')[1] ?? '');
+	const raw = $derived(routePath.replace(/^\/virtues\/?/, ''));
 	const section = $derived<Section>(
-		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'you'
+		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
-	const sub = $derived(raw.split('/')[1] ?? '');
 
-	// There is no in-page section nav. The rail's Settings panel carries the
-	// rows (SETTINGS_MODE in `lib/sidebar/modes.ts`) and this room renders
-	// whatever the route names — the same move the wiki and sources made, and
-	// the last of the three duplicated navs to go.
-	//
-	// Settings had the worst case of it: a primary strip of eight AND a second
-	// row nested under Developer, beside a sidebar panel listing the same
-	// words. Two stacked rows of underline tabs is the smell `modes.ts` names
-	// as a nav outgrowing its container — and the container was never the
-	// problem, the second copy was.
-	//
-	// `/virtues/developer/*` renders here too: SQL and Terminal are rows under
-	// the panel's Developer heading, beside the preferences rather than mixed
-	// into them.
+	// The applets section lays out its own column. The other sections are
+	// SettingsPage's, which sets its own width.
+	const width = usePageWidth(() => (section === 'applets' ? 'full' : null));
+	const sub = $derived(raw.split('/')[1] ?? '');
+	const subPage = $derived(raw.split('/')[2] ?? '');
+	const role = $derived(new URLSearchParams(routeQuery).get('role') ?? undefined);
+
+	// No section list sits beside these pages: the landing links to each,
+	// and each page links back to it.
 </script>
 
 <div class="settings-view">
 	<main class="content">
-		{#if section === 'you'}
-			<ProfileView {tab} {active} />
+		{#if section === 'page'}
+			<SettingsLanding />
+		{:else if section === 'profile'}
+			<SettingsSection section="you" />
+		{:else if section === 'appearance'}
+			<SettingsSection section="appearance" />
+		{:else if section === 'server'}
+			<SettingsSection section="server" />
+		{:else if section === 'data'}
+			<SettingsSection section="data" />
+		{:else if section === 'backup'}
+			<BackupPage />
 		{:else if section === 'assistant'}
-			{#if sub === 'models'}
-				<ModelCatalogView />
+			{#if sub === 'tools'}
+				<SettingsSection section="tools" />
+			{:else if sub === 'spending' && subPage === 'models'}
+				<ModelCatalogView {role} />
+			{:else if sub === 'spending' && subPage === 'cost'}
+				<BillingView />
+			{:else if sub === 'spending' && subPage === 'provider'}
+				<ByoPage />
+			{:else if sub === 'spending'}
+				<SettingsSection section="spending" />
 			{:else}
-				<AssistantView />
+				<SettingsSection section="assistant" />
 			{/if}
 		{:else if section === 'billing'}
-			<BillingView {tab} {active} />
+			<SettingsSection section="billing" />
 		{:else if section === 'keys'}
 			<KeysView />
 		{:else if section === 'system'}
@@ -243,10 +264,10 @@
 		{:else if section === 'shared'}
 			<SharedLinksView />
 		{:else if section === 'applets'}
-			<!-- Padding on the scroller, the 72rem measure inside it: the same
+			<!-- Padding on the scroller, the page's width inside it: the same
 			     box model as the Applets page in Home, so the two line up. -->
 			<div class="applets-settings">
-				<div class="measure">
+				<div class="measure" style:max-width={width.css}>
 					<ManageApplets {tab} />
 				</div>
 			</div>
@@ -275,12 +296,10 @@
 				     standing on the machine it describes. -->
 				<DeviceView deviceId={sub} {tab} {active} />
 			{/if}
-		{:else if section === 'developer'}
-			{#if sub === 'terminal'}
-				<DeveloperTerminalView {tab} {active} />
-			{:else}
-				<DeveloperSqlView {tab} {active} />
-			{/if}
+		{:else if section === 'developer' && sub === 'terminal'}
+			<!-- Terminal, opened from ⌘K. SQL is Sources · Query; the other
+			     developer routes forward there, so they mount nothing here. -->
+			<DeveloperTerminalView {tab} {active} />
 		{/if}
 	</main>
 </div>
@@ -304,7 +323,6 @@
 	}
 
 	.measure {
-		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
 	}

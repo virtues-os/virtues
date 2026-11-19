@@ -11,6 +11,7 @@ pub mod configure_inference;
 pub mod data;
 pub mod diag;
 pub mod doctor;
+pub mod export;
 pub mod lake_adopt;
 pub mod model_set;
 pub mod link;
@@ -164,6 +165,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — runs before the normal init path, whose ensure_embedding_dims
             // would refuse the width change on the still-populated index.
             unreachable!("Reindex command should be handled in main.rs");
+        }
+        Commands::Export { .. } => {
+            // Needs only a pool and the lake, so main.rs runs it first.
+            unreachable!("Export command should be handled in main.rs");
         }
         Commands::LakeAdopt { .. } => {
             // Needs only a pool + STORAGE_PATH, so main.rs runs it before the client

@@ -20,6 +20,7 @@
 
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import type { Editor } from "@tiptap/core";
 	import { Extension } from "@tiptap/core";
 	import { isChangeOrigin } from "@tiptap/extension-collaboration";
@@ -74,7 +75,7 @@
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import FindBar from "$lib/components/pages/FindBar.svelte";
 	import { portal } from "$lib/actions/portal";
-	import { fade, fly } from "svelte/transition";
+	import { fade, fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import TableMenu from "$lib/components/pages/TableMenu.svelte";
 	import SuggestionBar from "$lib/components/pages/SuggestionBar.svelte";
@@ -92,6 +93,8 @@
 		 */
 		article?: boolean;
 		editable: boolean;
+		/** The page is drawn as an A4 sheet (stores/pageWidth.svelte.ts). */
+		sheet?: boolean;
 		placeholder?: string;
 		/** The inline writer; without one, Ask AI is not offered. */
 		ai?: TreeAiDriver;
@@ -115,6 +118,7 @@
 		pageTitle,
 		article = false,
 		editable,
+		sheet = false,
 		placeholder = "Start writing, or press / for commands…",
 		ai,
 		onDocChange,
@@ -176,7 +180,7 @@
 	$effect(() => onFindOpen?.(findOpen && !!findHost));
 	/** A motion's length, or none when the person asks for reduced motion. */
 	const motion = (ms: number) =>
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
+		reducedMotion() ? 0 : ms;
 	let findInitial = $state("");
 
 	let tableAnchor = $state<{ x: number; y: number; width: number } | null>(null);
@@ -765,7 +769,7 @@
 	class="document-editor"
 	class:prose--article={pageDisplay.article}
 	class:prose--flat-headings={pageDisplay.headingMode === "flat"}
-	class:doc-page-view={pageDisplay.widthMode === "page"}
+	class:doc-page-view={sheet}
 	class:doc-veiled={veil.hiding}
 	style:--prose-family={pageDisplay.fontFamily}
 	style:--prose-size={pageDisplay.fontSize}

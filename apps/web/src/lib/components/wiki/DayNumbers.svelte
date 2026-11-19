@@ -406,7 +406,7 @@
 
 	.hot {
 		font-size: 0.6875rem;
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.v {
@@ -459,7 +459,7 @@
 	}
 
 	.today.hot {
-		fill: var(--color-secondary);
+		fill: var(--color-primary);
 	}
 
 	.u {
@@ -596,7 +596,7 @@
 
 	.unusual-pick {
 		margin-top: 0.75rem;
-		background: color-mix(in srgb, var(--color-secondary) 6%, transparent);
+		background: color-mix(in srgb, var(--color-primary) 6%, transparent);
 	}
 
 	.group {

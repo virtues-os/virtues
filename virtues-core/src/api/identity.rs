@@ -46,10 +46,11 @@ async fn names(pool: &sqlx::PgPool) -> (Option<String>, Option<String>) {
 
 /// What people call this box in a list: the app's chooser, Settings, the
 /// atlas link page. "Virtues 4812" until it has an owner; after, the
-/// owner's: "Adam's server". The owner, not the assistant, because most
-/// people keep the default assistant name, and "Ari's server" in every
-/// house tells no two servers apart (2026-09-28). "Ari's server" only until
-/// the owner has said what to call them.
+/// owner's: "Nick's server". The owner, not the assistant, because most
+/// people keep the default assistant name, and the same name in every house
+/// tells no two servers apart. A renamed assistant ("Juno's server") stands
+/// in only until the owner has said what to call them; the default name
+/// never does, since "Virtues's server" says nothing.
 ///
 pub async fn box_label(pool: &sqlx::PgPool) -> String {
     if crate::api::pair::is_unclaimed(pool).await {
@@ -60,10 +61,11 @@ pub async fn box_label(pool: &sqlx::PgPool) -> String {
 }
 
 fn list_name(person: Option<&str>, assistant: Option<&str>) -> String {
+    let default = crate::api::assistant_profile::DEFAULT_ASSISTANT_NAME;
     match (person, assistant) {
         (Some(p), _) => format!("{p}'s server"),
-        (None, Some(a)) => format!("{a}'s server"),
-        (None, None) => "Your server".into(),
+        (None, Some(a)) if a != default => format!("{a}'s server"),
+        _ => "Your server".into(),
     }
 }
 
@@ -91,7 +93,7 @@ pub async fn identity_handler(State(state): State<AppState>) -> impl IntoRespons
     let pool = state.db.pool();
     Json(serde_json::json!({
         // Machine-shaped ("virtues-4812") and for people ("Virtues 4812",
-        // then "Ari's server"). Older apps read `label` as it is.
+        // then "Nick's server"). Older apps read `label` as it is.
         "name": format!("virtues-{}", crate::codename::box_number()),
         "label": box_label(pool).await,
         // Fails CLOSED — a DB blip must not tell the LAN this box is unclaimed.
@@ -113,7 +115,8 @@ mod tests {
     #[test]
     fn a_list_names_the_owner_first() {
         assert_eq!(list_name(Some("Nick"), Some("Ari")), "Nick's server");
-        assert_eq!(list_name(None, Some("Ari")), "Ari's server", "until the owner has a name");
+        assert_eq!(list_name(None, Some("Juno")), "Juno's server", "until the owner has a name");
+        assert_eq!(list_name(None, Some("Virtues")), "Your server", "the default name tells no servers apart");
         assert_eq!(list_name(None, None), "Your server");
     }
 

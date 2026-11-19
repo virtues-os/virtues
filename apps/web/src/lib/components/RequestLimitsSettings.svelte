@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
 	 * What the assistant may spend on requests it works in the background
 	 * (Tasks): one limit for a single run and one for all runs in a day.
@@ -11,7 +12,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	type Key = 'request_run_limit_micros' | 'request_day_limit_micros';
 
@@ -51,35 +52,23 @@
 </script>
 
 <section>
-	<h2 class="settings-label">Spending on requests</h2>
+	<h2 class="settings-label">What tasks may spend</h2>
 	<p class="sec-hint">
-		When you hand {assistantName} a task, it works on it in the background. These limits
-		cap what that work can spend through Virtues.
+		For tasks you hand {assistantName}. A task that reaches its limit stops and shows you what it
+		has so far. Chat and applets have no limit.
 	</p>
-	<div class="fields">
-		<Input
-			label="Each run, in dollars"
-			bind:value={run}
-			disabled={!loaded}
-			autoSave
-			onSave={(v: string | number) => save('request_run_limit_micros', v)}
-		/>
-		<Input
-			label="Each day, in dollars"
-			bind:value={day}
-			disabled={!loaded}
-			autoSave
-			onSave={(v: string | number) => save('request_day_limit_micros', v)}
-		/>
+	<div class="limit">
+		<label for="limit-run-field">One task</label>
+		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-run-field" bind:value={run} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_run_limit_micros', v)} /></div>
+	</div>
+	<div class="limit">
+		<label for="limit-day-field">All tasks in a day</label>
+		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-day-field" bind:value={day} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_day_limit_micros', v)} /></div>
 	</div>
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 	{/if}
-	<p class="sec-hint">
-		A run that reaches its limit stops and shows you what it has so far. Once a day's limit is reached,
-		requests wait until the day's spending falls under it. With your own AI key, the cost is unknown,
-		so these limits do not apply.
-	</p>
+	<p class="sec-hint">Once the last 24 hours reach the day's limit, tasks wait until spending falls under it. Neither limit applies on your own AI key, whose cost isn't known.</p>
 </section>
 
 <style>
@@ -89,16 +78,27 @@
 		gap: 12px;
 	}
 
-	.fields {
+	.limit {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 12rem));
-		gap: 16px;
+		grid-template-columns: minmax(0, 1fr) 9rem;
+		align-items: center;
+		gap: 24px;
 	}
 
-	@media (max-width: 480px) {
-		.fields {
-			grid-template-columns: minmax(0, 1fr);
-		}
+	.limit label {
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+
+	.field {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.unit {
+		font-size: 15px;
+		color: var(--color-foreground-subtle);
 	}
 
 	.sec-hint,

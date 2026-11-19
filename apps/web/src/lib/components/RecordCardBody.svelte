@@ -329,7 +329,7 @@
 
 	.rb-tile-m {
 		font-size: 0.75rem;
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.rb-tile-d {

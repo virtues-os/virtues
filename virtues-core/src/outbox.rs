@@ -58,7 +58,7 @@ pub struct Outgoing {
     pub person_id: Option<String>,
     pub recipient: String,
     pub handle: String,
-    pub thread_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub body: String,
     pub send_at: DateTime<Utc>,
     pub state: String,
@@ -70,7 +70,7 @@ pub struct Outgoing {
 }
 
 const COLUMNS: &str =
-    "id, person_id, recipient, handle, thread_id, body, send_at, state, error, sent_at, delivered_at, attachments";
+    "id, person_id, recipient, handle, conversation_id, body, send_at, state, error, sent_at, delivered_at, attachments";
 
 /// The most a message can carry in files, all told. They cross to the Mac as
 /// base64 in one websocket frame.
@@ -81,7 +81,7 @@ pub struct NewMessage<'a> {
     pub person_id: Option<&'a str>,
     pub recipient: &'a str,
     pub handle: &'a str,
-    pub thread_id: Option<&'a str>,
+    pub conversation_id: Option<&'a str>,
     pub body: &'a str,
     pub send_at: DateTime<Utc>,
     pub attachments: serde_json::Value,
@@ -91,7 +91,7 @@ pub struct NewMessage<'a> {
 pub async fn enqueue(pool: &PgPool, m: NewMessage<'_>) -> sqlx::Result<Outgoing> {
     let id = crate::ids::generate_id("outbox", &[&uuid::Uuid::new_v4().to_string()]);
     let row = sqlx::query_as::<_, Outgoing>(&format!(
-        "INSERT INTO app_message_outbox (id, chat_id, person_id, recipient, handle, thread_id, body, send_at, attachments)
+        "INSERT INTO app_message_outbox (id, chat_id, person_id, recipient, handle, conversation_id, body, send_at, attachments)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING {COLUMNS}"
     ))
@@ -100,7 +100,7 @@ pub async fn enqueue(pool: &PgPool, m: NewMessage<'_>) -> sqlx::Result<Outgoing>
     .bind(m.person_id)
     .bind(m.recipient)
     .bind(m.handle)
-    .bind(m.thread_id)
+    .bind(m.conversation_id)
     .bind(m.body)
     .bind(m.send_at)
     .bind(&m.attachments)
@@ -272,7 +272,7 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
             }
         };
         // absent-ok: no thread means a first message, sent to the handle.
-        let args = json!({ "chat_id": m.thread_id.clone().unwrap_or_default(), "handle": m.handle, "text": m.body, "files": files });
+        let args = json!({ "chat_id": m.conversation_id.clone().unwrap_or_default(), "handle": m.handle, "text": m.body, "files": files });
         // Each file is its own hand-off to Messages.
         let wait = SEND_WAIT + Duration::from_secs(15) * m.attachments.as_array().map_or(0, |a| a.len() as u32);
         let outcome = crate::browser::call(SEND_OP, args, wait).await;
@@ -362,8 +362,8 @@ async fn settle_delivered(pool: &PgPool) -> sqlx::Result<()> {
                     COALESCE((m.metadata->>'send_error')::bigint, 0) AS err
                FROM open o
                JOIN data_communication_message m
-                 ON (m.thread_id = o.thread_id
-                     OR (o.thread_id IS NULL AND m.thread_id LIKE '%;' || o.handle))
+                 ON (m.conversation_id = o.conversation_id
+                     OR (o.conversation_id IS NULL AND m.conversation_id LIKE '%;' || o.handle))
                 AND (m.metadata->>'is_from_me')::boolean
                 AND m.occurred_at >= COALESCE(o.sent_at, o.send_at) - interval '2 minutes'
                 AND m.occurred_at >= $1
@@ -440,7 +440,7 @@ mod tests {
             person_id: None,
             recipient: "Nick Example",
             handle: "+15125550101",
-            thread_id: Some("any;-;+15125550101"),
+            conversation_id: Some("any;-;+15125550101"),
             body: "Running ten minutes late",
             send_at,
             attachments: json!([]),
@@ -489,7 +489,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO data_communication_message
-               (id, message_id, thread_id, channel, body, from_identifier, from_handle,
+               (id, message_id, conversation_id, channel, body, from_identifier, from_handle,
                 occurred_at, source_stream_id, source_table, source_provider, metadata)
              VALUES ('m1', 'm1', 'any;-;+15125550101', 'imessage', 'Running ten minutes late', 'me', '',
                      now() - interval '10 seconds', 'm1', 'messages', 'mac',
@@ -517,7 +517,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO data_communication_message
-               (id, message_id, thread_id, channel, body, from_identifier, from_handle, has_attachments,
+               (id, message_id, conversation_id, channel, body, from_identifier, from_handle, has_attachments,
                 occurred_at, source_stream_id, source_table, source_provider, metadata)
              VALUES ('m3', 'm3', 'any;-;+15125550101', 'imessage', '[Photo]', 'me', '', true,
                      now() - interval '10 seconds', 'm3', 'messages', 'mac',
@@ -543,7 +543,7 @@ mod tests {
         let own = |id: &str, body: &str, files: bool, meta: &str| {
             format!(
                 "INSERT INTO data_communication_message
-                   (id, message_id, thread_id, channel, body, from_identifier, from_handle, has_attachments,
+                   (id, message_id, conversation_id, channel, body, from_identifier, from_handle, has_attachments,
                     occurred_at, source_stream_id, source_table, source_provider, metadata)
                  VALUES ('{id}', '{id}', 'any;-;+15125550101', 'imessage', '{body}', 'me', '', {files},
                          now() - interval '10 seconds', '{id}', 'messages', 'mac', '{meta}')"
@@ -584,7 +584,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO data_communication_message
-               (id, message_id, thread_id, channel, body, from_identifier, from_handle,
+               (id, message_id, conversation_id, channel, body, from_identifier, from_handle,
                 occurred_at, source_stream_id, source_table, source_provider, metadata)
              VALUES ('m2', 'm2', 'any;-;+15125550101', 'imessage', 'Running ten minutes late', 'me', '',
                      now() - interval '10 seconds', 'm2', 'messages', 'mac',

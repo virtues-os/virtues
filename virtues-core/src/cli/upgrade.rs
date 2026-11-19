@@ -561,7 +561,8 @@ async fn activate(
     // follow it: retire the reranker, and start a background move to a new
     // embedding model if this release recommends one (`model_set`). Never
     // fails the upgrade. A box on its own server keeps its owner's models, and
-    // a Dragon's NPU models change only with the installer.
+    // a Dragon still on its NPU moves only when its owner runs
+    // `virtues configure-inference --recommended`.
     super::model_set::start_recommended_change().await;
 
     println!();

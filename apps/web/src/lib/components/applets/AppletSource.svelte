@@ -211,7 +211,7 @@
 		cursor: pointer;
 	}
 	.files button:hover:not(:disabled) {
-		background: var(--color-muted, #f3f4f6);
+		background: var(--hover-bg);
 	}
 	.files button.active {
 		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);

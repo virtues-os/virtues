@@ -8,7 +8,6 @@
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, tick } from "svelte";
-	import { fade } from "svelte/transition";
 	import { FloatingContent, useClickOutside } from "$lib/floating";
 	import type { VirtualAnchor } from "$lib/floating";
 	import { inComposition } from "$lib/utils/ime";
@@ -83,7 +82,7 @@
 	options={{ placement: "bottom-start", offset: 6, flip: true, shift: true, padding: 8 }}
 	class="ai-prompt-container"
 >
-	<div bind:this={menuEl} class="ai-prompt" transition:fade={{ duration: 100 }}>
+	<div bind:this={menuEl} class="ai-prompt">
 		<div class="ai-prompt-input-row">
 			<Icon icon="mynaui:sparkles" width="15" class="ai-prompt-spark" />
 			<input
@@ -180,7 +179,7 @@
 		color: var(--color-primary);
 	}
 
-	/* A thumb's 44pt (design-grammar §6): the selection toolbar's Ask AI and
+	/* A thumb's 44pt (design.md, "Primitives"): the selection toolbar's Ask AI and
 	   `/ai` open this on a phone. The row wraps there, as it may. */
 	@media (pointer: coarse) {
 		.ai-prompt-action {

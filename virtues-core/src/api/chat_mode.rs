@@ -367,6 +367,7 @@ pub(crate) mod tests {
             "admin",
             "clarity-review",
             "deep-research",
+            "delete-data",
             "meeting-prep",
             "morning-brief",
             "trip-planner",
@@ -475,19 +476,24 @@ pub(crate) mod tests {
             ("analysis", &["shell", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
-            ("self", &["update_memory"], 800),
             // Raised 450 on 2026-11-16 for a task's thing and its
             // recurrence: three parameters on each tool, and the sentence in
             // each description that says what they do.
             ("tasks", &["create_task", "update_task"], 1_950),
             ("sql_write", &["sql_write"], 600),
+            // Proposes a deletion of ingested records. How to scope one is in
+            // the delete-data skill, which the model loads first; this is
+            // what the call does and its two shapes of target.
+            ("delete_data", &["delete_data"], 1_100),
             // A service the owner connected over MCP (`tools/connection.rs`).
             // One tool whatever is connected; the services' own tools go to
             // its worker, never into this list.
             ("connections", &["connection"], 900),
-            // Drawn inside the reply. The kinds and their column contracts are
-            // the description; trimming it means dropping a kind.
-            ("show", &["show"], 1_900),
+            // Drawn inside the reply. The charts and their columns are in the
+            // charts skill, which the model loads before drawing; this is the
+            // core rules and the purposes. Raised 500 on 2026-11-18 for the
+            // purposes and the pointer to the skill.
+            ("show", &["show"], 2_400),
             // The most-used tool, and its table block is generated from the
             // catalog (sql_catalog::prompt_block), so a new table or a longer
             // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
@@ -495,8 +501,9 @@ pub(crate) mod tests {
             // in 1,422 calls, so the columns stay and the prose went. Raised
             // 150 on 2026-10-20 for app_tasks, the one table the task tools
             // read through it, and 50 on 2026-11-16 for app_tasks' thing and
-            // recurrence columns.
-            ("sql_query", &["sql_query"], 6_700),
+            // recurrence columns. Raised 150 on 2026-11-17 for a task's
+            // person, place and org homes and the app_task_links table.
+            ("sql_query", &["sql_query"], 6_850),
             // Mode-only tools, each set just above its 2026-09-29 size. Sudo
             // raised on 2026-10-27 for its clean environment and the
             // recovery-key ask.
@@ -508,10 +515,13 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's was the sum of its group
         // ceilings, and rose 1,300 on 2026-10-27 for `use_applet` listing the
         // four shipped chat applets; the applets a box adds grow it toward
-        // that group's ceiling, which this test cannot see. The rest sit just
-        // above their 2026-09-29 size.
+        // that group's ceiling, which this test cannot see. Rose 750 on
+        // 2026-11-18 for show's purposes and the charts skill's line in
+        // `use_applet`, and 700 more the same day for delete_data and the
+        // delete-data skill's line. The rest sit just above their 2026-09-29
+        // size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 23_200),
+            ("chat", 24_800),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -520,15 +530,19 @@ pub(crate) mod tests {
             // less what admin no longer lists. Clarity review just above its
             // size when it shipped on 2026-10-28. New applet is the applet
             // tool alone, so it follows that group's ceiling.
-            ("admin", 9_000),
-            ("clarity-review", 7_000),
-            // Deep research rose 100 on 2026-11-16 with the sql_query group.
-            ("deep-research", 13_350),
-            ("meeting-prep", 8_400),
-            ("morning-brief", 8_700),
+            ("admin", 9_150),
+            // Each mode with sql_query rose 150 on 2026-11-17 with that
+            // group, and deep research 100 more on 2026-11-16.
+            ("clarity-review", 7_150),
+            ("deep-research", 13_500),
+            // sql_query, search and delete_data. Just above its size when it
+            // shipped on 2026-11-18.
+            ("delete-data", 9_200),
+            ("meeting-prep", 8_550),
+            ("morning-brief", 8_850),
             ("new-applet", 3_150),
-            ("trip-planner", 9_000),
-            ("weekly-review", 8_700),
+            ("trip-planner", 9_150),
+            ("weekly-review", 8_850),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();

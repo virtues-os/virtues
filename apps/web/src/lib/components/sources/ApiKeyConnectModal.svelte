@@ -165,8 +165,8 @@
 			{#if loginAvailable && !pasting}
 				<p class="muted">
 					Log in to {source.name} {inPane ? 'in the browser beside this view' : 'in a window here'}.
-					Your server saves the session with your other sign-ins in Settings, under Keys, so you
-					don't copy anything by hand.
+					Your server keeps the session with this source, so you don't copy
+					anything by hand.
 				</p>
 				{#if waitingForLogin}
 					<p class="muted">Finish logging in to {source.name} in the window that opened.</p>

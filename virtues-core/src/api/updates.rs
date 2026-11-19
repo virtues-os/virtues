@@ -183,6 +183,11 @@ pub async fn status() -> UpdateStatus {
     }
 }
 
+/// The update channel this server follows, by name ('stable', 'prerelease').
+pub fn channel_name() -> String {
+    channel::current().as_str().to_string()
+}
+
 /// Switch channels.
 ///
 /// Note the asymmetry going back to stable: a box on `prerelease` is usually

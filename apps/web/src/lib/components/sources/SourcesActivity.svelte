@@ -236,7 +236,7 @@
 <Page
 	title="Activity"
 	description="Every applet run on this server, newest first. Filter to just your sources, or to what failed."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#if err}
 		<div class="error">{err}</div>
@@ -266,7 +266,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 </style>

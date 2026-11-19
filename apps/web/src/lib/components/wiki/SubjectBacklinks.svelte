@@ -18,6 +18,7 @@
 	 * hundreds of entity pages is a heading that means "we looked", which is not worth a
 	 * line of anyone's attention.
 	 */
+	import { fade } from '$lib/utils/transitions';
 	import { onMount } from 'svelte';
 	import WikiCollapsibleSection from './WikiCollapsibleSection.svelte';
 	import { getSubjectBacklinks, type SubjectBacklink } from '$lib/wiki/api';
@@ -46,7 +47,7 @@
 </script>
 
 {#if loaded && links.length > 0}
-	<section class="section" id="mentioned-in">
+	<section class="section" id="mentioned-in" in:fade>
 		<WikiCollapsibleSection title="Mentioned in" count={links.length}>
 			<ul class="mentions">
 				{#each links as link (link.page_id)}

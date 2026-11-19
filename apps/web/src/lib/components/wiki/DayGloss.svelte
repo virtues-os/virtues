@@ -235,10 +235,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.gloss-card:focus {
-		outline: none;
-	}
-
 	.kick {
 		display: flex;
 		flex-wrap: wrap;

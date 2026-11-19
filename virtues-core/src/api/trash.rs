@@ -1,7 +1,7 @@
-//! Recently deleted — the trash for chats, pages and projects.
+//! Recently deleted — the trash for chats, pages and threads.
 //!
 //! Delete is not permanent. `DELETE /api/chats/:id`, `/api/pages/:id` and
-//! `/api/projects/:id` stamp `deleted_at` (migration 0030) and the row leaves
+//! `/api/threads/:id` stamp `deleted_at` (migration 0030) and the row leaves
 //! every listing, fetch, day view and search index; it sits here for
 //! [`TRASH_RETENTION_DAYS`] with a restore, and then the sweeper purges it.
 //! `app_drive_files` has worked this way since the squash; this is the same
@@ -13,10 +13,10 @@
 //!
 //! What trashing does and does not touch:
 //!
-//!   - The row keeps everything. Messages, versions, shares, project
-//!     membership and a chat's `project_id` all stay, so a restore brings the
+//!   - The row keeps everything. Messages, versions, shares, thread
+//!     membership and a chat's `thread_id` all stay, so a restore brings the
 //!     thing back whole. Membership rows for a trashed member are filtered out
-//!     of the project's listing and counts (`projects.rs`), not deleted.
+//!     of the thread's listing and counts (`threads.rs`), not deleted.
 //!   - The search index is cleared for the record at once. `search_embeddings`
 //!     has no FK to any source table, so a hard delete used to leave the text
 //!     searchable and citable forever — that bug is closed here rather than
@@ -28,8 +28,8 @@
 //!
 //! The sweep every listing must carry — `deleted_at IS NULL` — is spelled out
 //! in: `chats::list_chats` / `get_chat`, `pages::{list_pages, get_page,
-//! get_backlinks, search_entities}`, `projects::{list_projects, get_project,
-//! add_project_item}`, `circumstances` (threads), `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
+//! get_backlinks, search_entities}`, `threads::{list_threads, get_thread,
+//! add_thread_item}`, `circumstances` (threads), `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
 //! for `app_chat` and `app_page`. `sqlx::query` is untyped: a listing that
 //! forgets the predicate shows deleted rows and nothing warns.
 
@@ -47,7 +47,7 @@ pub const TRASH_RETENTION_DAYS: i64 = 30;
 pub enum TrashKind {
     Chat,
     Page,
-    Project,
+    Thread,
 }
 
 impl TrashKind {
@@ -55,9 +55,9 @@ impl TrashKind {
         match s {
             "chat" => Ok(Self::Chat),
             "page" => Ok(Self::Page),
-            "project" => Ok(Self::Project),
+            "thread" => Ok(Self::Thread),
             other => Err(Error::InvalidInput(format!(
-                "unknown trash kind '{other}' (chat | page | project)"
+                "unknown trash kind '{other}' (chat | page | thread)"
             ))),
         }
     }
@@ -66,18 +66,18 @@ impl TrashKind {
         match self {
             Self::Chat => "app_chats",
             Self::Page => "app_pages",
-            Self::Project => "app_projects",
+            Self::Thread => "app_threads",
         }
     }
 
     /// The `search_embeddings.ontology` names a record of this kind can be
     /// indexed under. A page is `app_page` or `wiki_article` by its `kind`;
-    /// clearing both is cheaper than asking. Projects are not embedded.
+    /// clearing both is cheaper than asking. Threads are not embedded.
     fn ontologies(self) -> &'static [&'static str] {
         match self {
             Self::Chat => &["app_chat"],
             Self::Page => &["app_page", "wiki_article"],
-            Self::Project => &[],
+            Self::Thread => &[],
         }
     }
 }
@@ -105,8 +105,8 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<TrashItem>> {
         SELECT 'page', id, COALESCE(NULLIF(title, ''), 'Untitled'), icon, deleted_at
         FROM app_pages WHERE deleted_at IS NOT NULL
         UNION ALL
-        SELECT 'project', id, COALESCE(NULLIF(name, ''), 'Untitled'), icon, deleted_at
-        FROM app_projects WHERE deleted_at IS NOT NULL
+        SELECT 'thread', id, COALESCE(NULLIF(name, ''), 'Untitled'), icon, deleted_at
+        FROM app_threads WHERE deleted_at IS NOT NULL
         ORDER BY deleted_at DESC
         "#,
     )
@@ -212,26 +212,26 @@ pub async fn purge(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
         return Err(Error::NotFound(format!("{kind:?} not found: {id}")));
     }
 
-    // A project's members cascade by FK. A chat or page is a member BY URL,
+    // A thread's members cascade by FK. A chat or page is a member BY URL,
     // which no FK knows about, so its rows are swept by hand — best-effort,
     // as the hard deletes always did it.
     let url = match kind {
         TrashKind::Chat => Some(format!("/chat/{id}")),
         TrashKind::Page => Some(format!("/page/{id}")),
-        TrashKind::Project => None,
+        TrashKind::Thread => None,
     };
     if let Some(url) = url {
-        if let Err(e) = crate::api::projects::remove_items_by_url(pool, &url).await {
-            tracing::warn!(kind = ?kind, id, "purge: project membership sweep failed: {e}");
+        if let Err(e) = crate::api::threads::remove_items_by_url(pool, &url).await {
+            tracing::warn!(kind = ?kind, id, "purge: thread membership sweep failed: {e}");
         }
     }
-    // Pins are by URL for every kind, projects included. A trashed thing's
+    // Pins are by URL for every kind, threads included. A trashed thing's
     // pin is only hidden (restore brings it back); a purged one's has
     // nothing left to point at.
     let pin_url = format!("/{}/{id}", match kind {
         TrashKind::Chat => "chat",
         TrashKind::Page => "page",
-        TrashKind::Project => "project",
+        TrashKind::Thread => "thread",
     });
     if let Err(e) = sqlx::query("DELETE FROM app_pins WHERE url = $1").bind(&pin_url).execute(pool).await {
         tracing::warn!(kind = ?kind, id, "purge: pin sweep failed: {e}");
@@ -267,8 +267,7 @@ pub async fn purge_expired(pool: &PgPool) -> Result<u64> {
     Ok(n)
 }
 
-/// Clear a record's rows from `search_embeddings`, keeping the BM25 corpus
-/// stats honest (mirrors `extraction::sweep_orphaned_embeddings`).
+/// Clear a record's rows from the search index (`search::evict`).
 async fn drop_embeddings(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
     let ontologies = kind.ontologies();
     if ontologies.is_empty() {
@@ -278,29 +277,9 @@ async fn drop_embeddings(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()>
         .begin()
         .await
         .map_err(|e| Error::Database(format!("drop embeddings tx: {e}")))?;
-    let dropped: Vec<Option<i64>> = sqlx::query_scalar(
-        "DELETE FROM search_embeddings \
-         WHERE ontology = ANY($1) AND record_id = $2 \
-         RETURNING bm25_len",
-    )
-    .bind(ontologies)
-    .bind(id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| Error::Database(format!("drop embeddings: {e}")))?;
-    if !dropped.is_empty() {
-        let dropped_len: i64 = dropped.iter().flatten().sum();
-        sqlx::query(
-            "UPDATE search_index_meta \
-             SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
-             WHERE singleton",
-        )
-        .bind(dropped.len() as i64)
-        .bind(dropped_len)
-        .execute(&mut *tx)
+    crate::search::evict::evict_records(&mut tx, ontologies, &[id.to_string()])
         .await
-        .map_err(|e| Error::Database(format!("drop embeddings stats: {e}")))?;
-    }
+        .map_err(|e| Error::Database(format!("drop embeddings: {e}")))?;
     tx.commit()
         .await
         .map_err(|e| Error::Database(format!("drop embeddings commit: {e}")))

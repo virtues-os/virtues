@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Switch from '$lib/components/settings/Switch.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Card from '$lib/components/Card.svelte';
@@ -475,6 +477,8 @@
 		}
 		contextMenu.show({ x: rect.left, y: rect.bottom + 4 }, items);
 	}
+
+	const width = usePageWidth(() => 'medium');
 </script>
 
 {#snippet headActions()}
@@ -482,7 +486,7 @@
 		{#if chatId}
 			<!-- A word with the icon: a speech bubble alone didn't say you
 			     can tell it things or change it there. -->
-			<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
+			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
 		<IconButton
 			icon="mynaui:info-circle"
@@ -492,20 +496,11 @@
 		/>
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
 		{#if action.archived_at}
-			<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+			<Button variant="secondary" onclick={() => setEnabled(true)} disabled={saving}>
 				Turn back on
 			</Button>
 		{:else}
-			<button
-				type="button"
-				class="switch"
-				class:on={action.enabled}
-				role="switch"
-				aria-checked={action.enabled}
-				aria-label="Run this applet"
-				disabled={saving}
-				onclick={() => setEnabled(!action!.enabled)}
-			></button>
+			<Switch checked={action.enabled} label="Run this applet" disabled={saving} onchange={(next) => setEnabled(next)} />
 		{/if}
 	{/if}
 {/snippet}
@@ -525,7 +520,7 @@
 			<span class="failed">{problemText}</span>
 		</span>
 		{#if fix}
-			<Button variant="primary" size="sm" onclick={openFix}>{fix.label}</Button>
+			<Button variant="primary" onclick={openFix}>{fix.label}</Button>
 		{:else if canRunNow}
 			<TextAction onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
 		{/if}
@@ -569,7 +564,7 @@
 	{:else if err && !action}
 		<p class="state error-msg">{err}</p>
 	{:else if action}
-		<div class="measure">
+		<div style:max-width={width.css} class="measure">
 			{#if inInfo}
 				<div class="narrow">
 					<header class="head sub">
@@ -731,7 +726,6 @@
 		}
 	}
 	.measure {
-		max-width: 920px;
 		margin: 0 auto;
 		display: flex;
 		flex-direction: column;
@@ -783,52 +777,8 @@
 		gap: 4px;
 		flex: none;
 	}
-	.head-actions .switch {
+	.head-actions :global(.switch) {
 		margin-left: 8px;
-	}
-
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-	.switch.on {
-		background: var(--color-success);
-	}
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: var(--color-background);
-		transition: transform 150ms ease;
-	}
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 3px;
-	}
-	.switch:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.switch,
-		.switch::after {
-			transition: none;
-		}
 	}
 
 	.list-head {
@@ -838,7 +788,6 @@
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 	}
-
 
 	/* Info: one narrow column, like a sheet laid on the applet. */
 	.narrow {
@@ -870,7 +819,6 @@
 		gap: 4px;
 		align-items: flex-start;
 	}
-
 
 	/* Results, and beside them All pages or the inspector. */
 	.body.with-side {
@@ -1027,7 +975,6 @@
 		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
-
 
 	/* What its last runs did, one line each. */
 	.empty {

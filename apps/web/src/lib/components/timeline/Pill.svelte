@@ -3,8 +3,8 @@
 	(Button.svelte: a pill, the surface in a hairline, the foreground's text)
 	at the list's own sizes, with the likely answer and a save filled in the
 	Timeline's blue, as the prototype's card fills them (the owner's call,
-	2026-10-08: "hybrid" over Button's claret primary, which would be the only
-	claret on a map of blue stays, orange drives and red events). `quiet` is
+	2026-10-08: "hybrid" over Button's filled primary, which would be the only
+	filled accent on a map of blue stays, orange drives and red events). `quiet` is
 	Button's "ghost": text only, for Cancel and the way back. No underlined
 	word is a button in the Timeline.
 -->
@@ -98,10 +98,6 @@
 	.pill:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
-	}
-	.pill:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.pill {

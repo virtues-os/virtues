@@ -10,8 +10,6 @@ import { uploadsAtStake } from '$lib/document/uploads';
 export interface AtStake {
 	/** A temporary chat is open: its transcript lives only in this page. */
 	temporaryChat: boolean;
-	/** Setup shows in a pane: a step can hold a connection or an interview mid-flight. */
-	setupShowing: boolean;
 	/** A reply is still streaming. */
 	replying: boolean;
 	/** The focused element, whose text a reload would lose (a half-entered key or rename). */
@@ -29,7 +27,7 @@ export interface AtStake {
  */
 export function nothingToLose(at: AtStake): boolean {
 	if (uploadsAtStake() > 0) return false;
-	if (at.temporaryChat || at.setupShowing || at.replying) return false;
+	if (at.temporaryChat || at.replying) return false;
 	const focused = at.focused as HTMLInputElement | HTMLTextAreaElement | null;
 	return !(focused && typeof focused.value === 'string' && focused.value.length > 0);
 }

@@ -14,11 +14,9 @@
 	// Derive entityId from route
 	// Route format: /person/person_abc123 → entityId = person_abc123
 	// Route format: /day/day_2026-01-25 → entityId = day_2026-01-25
-	const entityId = $derived.by(() => {
-		// Extract the entityId (last path segment) from the route
-		const match = tab.route.match(/^\/[a-z]+\/(.+)$/);
-		return match?.[1];
-	});
+	const routeMatch = $derived(tab.route.match(/^\/([a-z]+)\/(.+)$/));
+	const kind = $derived(routeMatch?.[1]);
+	const entityId = $derived(routeMatch?.[2]);
 
 	function handleLabelChange(label: string) {
 		windowShellStore.updateTab(tab.id, { label });
@@ -26,6 +24,7 @@
 </script>
 
 <WikiContent
+	{kind}
 	{entityId}
 	{active}
 	onLabelChange={handleLabelChange}

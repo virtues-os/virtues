@@ -1,17 +1,18 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page } from "$lib";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
 	import { apiGet } from "$lib/api/client";
-	import { onMount, onDestroy } from "svelte";
+	import { onMount } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { formatTemperature } from "$lib/utils/units";
+	import { units } from "$lib/stores/units.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// The three version lines — box, UI bundle, native shell — used to be read
-	// here, in the About chapter. They are Settings → Software's now: this page
-	// measures the machine, and a version number is not a measurement.
+	// This page measures the machine. Versions are on the server's device page
+	// (SoftwareView), and its settings are on the Settings page.
 
 	// Detail lives ON the page, not in the pane toolbar. The toolbar is shared
 	// chrome — the same strip whatever tab you are in — so a control that only
@@ -26,7 +27,6 @@
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
-	let live = $state(false); // a successful poll happened recently
 
 	// ─── /health (service liveness) ─────────────────────────────────────────
 	let serverStatus = $state("unknown");
@@ -44,7 +44,6 @@
 	let gpuHist = $state<number[]>([]);
 	let netHist = $state<number[]>([]);
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	function push(arr: number[], v: number): number[] {
 		const next = arr.length >= HIST ? arr.slice(1) : arr.slice();
@@ -81,10 +80,24 @@
 		if (h > 0) return `${h}h ${m}m`;
 		return `${m}m`;
 	}
-	function ghz(mhz: number): string {
-		if (!mhz) return "—";
-		return (mhz / 1000).toFixed(2) + " GHz";
+	// A processor that doesn't report its clock reads as its cores alone.
+	function cores(cpu: { logical_cores: number; frequency_mhz: number }): string {
+		const n = `${cpu.logical_cores} cores`;
+		return cpu.frequency_mhz ? `${n} · ${(cpu.frequency_mhz / 1000).toFixed(2)} GHz` : n;
 	}
+	const temp = (c: number) => formatTemperature(c, units.current, { scale: true });
+
+	// Volumes that share one container (APFS's / and /System/Volumes/Data)
+	// report the same space; each disk is shown once, under its shortest mount.
+	const disks = $derived.by(() => {
+		const seen = new Map<string, NonNullable<typeof t>["disks"][number]>();
+		for (const d of t?.disks ?? []) {
+			const key = `${d.total}:${d.available}`;
+			const kept = seen.get(key);
+			if (!kept || d.mount.length < kept.mount.length) seen.set(key, d);
+		}
+		return [...seen.values()];
+	});
 
 	// Pressure → semantic class (calm neutral → warning → error). We never
 	// assign arbitrary colors; utilization is genuinely semantic.
@@ -186,6 +199,14 @@
 		}
 	}
 
+	/** The backup row's words for each state (`api/backup_status.rs`). */
+	function backupLine(state: string, secs: number | null): string {
+		if (state === "none") return "No backup drive yet";
+		if (state === "never") return "No backup has finished yet";
+		if (state === "failing") return "Backups are failing";
+		return `Last backup ${backupAge(secs)}`;
+	}
+
 	/** "4 hours", "9 days" — the only figure this surface really carries. */
 	function backupAge(secs: number | null): string {
 		if (secs === null) return "never";
@@ -217,7 +238,6 @@
 				detail ? { processes: 1 } : undefined,
 			);
 			t = d;
-			live = true;
 			cpuHist = push(cpuHist, Math.round(d.cpu?.usage_pct ?? 0));
 			memHist = push(
 				memHist,
@@ -226,20 +246,25 @@
 			if (d.gpu?.usage_pct != null) gpuHist = push(gpuHist, Math.round(d.gpu.usage_pct));
 			netHist = push(netHist, (d.network?.rx_per_sec ?? 0) + (d.network?.tx_per_sec ?? 0));
 		} catch (e) {
-			live = false;
 			console.error("telemetry failed", e);
 		}
 	}
 
-	onMount(async () => {
-		await Promise.all([loadHealth(), loadTelemetry(), loadBackup(), loadHistory()]);
-		loading = false;
-		// Calm cadence — the machine breathes, it doesn't twitch.
-		pollTimer = setInterval(loadTelemetry, 3000);
+	onMount(() => {
+		void Promise.all([loadHealth(), loadTelemetry(), loadBackup(), loadHistory()]).then(
+			() => (loading = false)
+		);
 	});
 
-	onDestroy(() => {
-		if (pollTimer) clearInterval(pollTimer);
+	// Calm cadence: the machine breathes, it doesn't twitch. Only while this
+	// view is on screen, and started here rather than after an await, where a
+	// view closed during the await kept fetching telemetry forever.
+	$effect(() => {
+		if (!active) return;
+		const timer = setInterval(() => {
+			if (document.visibilityState === "visible") void loadTelemetry();
+		}, 3000);
+		return () => clearInterval(timer);
 	});
 </script>
 
@@ -273,24 +298,16 @@
 	</div>
 {/snippet}
 
-<Page title="System" description="Your server, examined." maxWidth="wide">
-	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
-	     (no border, no hover, nothing to press); Detail ACTS. A status light
-	     styled like a button invites clicks that do nothing, which is why the
-	     pill keeps its own shape rather than joining the row. -->
+<SettingsPage
+	title="How your server is doing"
+	lede="Its processor, memory, storage and services, now and over the last day."
+	width="medium"
+>
 	{#snippet actions()}
-		<div class="head-actions">
-			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
-			<button
-				class="detail-btn"
-				class:on={detail}
-				onclick={toggleDetail}
-				aria-pressed={detail}
-			>
-				<Icon icon="mynaui:terminal" width="14" />
-				<span>Detail</span>
-			</button>
-		</div>
+		<button class="detail-btn" class:on={detail} onclick={toggleDetail} aria-pressed={detail}>
+			<Icon icon="mynaui:terminal" width="14" />
+			<span>Detail</span>
+		</button>
 	{/snippet}
 
 	{#if loading}
@@ -298,16 +315,9 @@
 			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else}
-		<!--
-		  ORDER IS THE NARRATIVE. Four questions, asked the way an operator asks
-		  them: is it healthy (vitals, thermal, service) · what is it doing
-		  (processes, inference) · what is it holding (storage, backup) · what is
-		  it (host, least consulted, so last).
-		
-		  It used to run vitals, inference, backup, storage, host, processes,
-		  thermal, service — which is not an order, and left thermal and service
-		  (both health) separated from vitals by five unrelated chapters.
-		-->
+		<!-- In the order an operator asks: is it healthy (vitals, thermal,
+		     service), what is it doing (processes, inference), what is it
+		     holding (storage, backup), and what is it (host). -->
 		<!-- ─── VITALS ─────────────────────────────────────────────────── -->
 		<section class="chapter">
 			<h2 class="settings-label">Vitals</h2>
@@ -318,7 +328,7 @@
 					String(cpuPct),
 					"%",
 					cpuHist,
-					t?.cpu ? `${t.cpu.logical_cores} cores · ${ghz(t.cpu.frequency_mhz)}` : "",
+					t?.cpu ? cores(t.cpu) : "",
 				)}
 				{@render vital(
 					"Memory",
@@ -336,17 +346,11 @@
 						"%",
 						gpuHist,
 						gpuPct == null
-							? "warming…"
+							? "Starting"
 							: t.gpu.offload_active
-								? "GPU offload active"
-								: "⚠ CPU fallback",
+								? "Search runs on it"
+								: "Search runs on the processor instead",
 					)}
-				{:else}
-					<div class="vital muted-vital">
-						<div class="vital-head"><span class="vital-name">Graphics</span></div>
-						<div class="vital-figure"><span class="vital-big mono dim">CPU</span></div>
-						<div class="vital-sub">No discrete GPU detected</div>
-					</div>
 				{/if}
 				{@render vital(
 					"Network",
@@ -380,11 +384,11 @@
 				<div class="cols">
 					<div class="col">
 						{#each t.thermal as s}
-							{@render ledger(s.label, `${s.temp_c.toFixed(1)} °C`, true, pressure(s.temp_c))}
+							{@render ledger(s.label, temp(s.temp_c), true, pressure(s.temp_c))}
 						{/each}
 					</div>
 					<div class="col">
-						{#if t.gpu?.temp_c != null}{@render ledger("GPU temp", `${t.gpu.temp_c.toFixed(1)} °C`, true)}{/if}
+						{#if t.gpu?.temp_c != null}{@render ledger("GPU temperature", temp(t.gpu.temp_c), true)}{/if}
 						{#if t.gpu?.power_mw != null}{@render ledger("GPU power", `${(t.gpu.power_mw / 1000).toFixed(2)} W`, true)}{/if}
 						{#if t.gpu?.mem_total}{@render ledger("GPU memory", `${bytesStr(t.gpu.mem_used ?? 0)} / ${bytesStr(t.gpu.mem_total)}`, true)}{/if}
 					</div>
@@ -409,7 +413,7 @@
 								<div class="history-head">
 									<span class="vital-name">{chart.label}</span>
 									<span class="vital-pct mono"
-										>{(chart.series.at(-1) ?? 0).toFixed(0)}{chart.pct ? "%" : " °C"}</span
+										>{chart.pct ? `${(chart.series.at(-1) ?? 0).toFixed(0)}%` : temp(chart.series.at(-1) ?? 0)}</span
 									>
 								</div>
 								<svg class="spark tall" viewBox="0 0 240 36" preserveAspectRatio="none">
@@ -427,14 +431,9 @@
 		</section>
 
 		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
-		<!-- Was "About", and it carried the three version lines. Those moved to
-		     Settings → Software, which is now the one place that answers "what
-		     am I running" — they were being told here *and* by the update
-		     panel that used to sit at the top of this same scroll. What stays
-		     is live: is the service healthy, is the database there, how much
-		     of the pool is in use. `Package` goes too — Software says it, with
-		     the channel and the build counter beside it, which is the version
-		     sentence that is actually true. -->
+		<!-- What is live about the service: is it healthy, is the database
+		     there, how much of the pool is in use. Versions are on the server's
+		     device page. -->
 		<section class="chapter">
 			<h2 class="settings-label">Service</h2>
 			<!-- Three facts, so ONE column rather than the two-column grid the
@@ -460,7 +459,6 @@
 				{/if}
 			{/if}
 		</section>
-		<NetworkSection />
 
 		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
 		{#if detail && t?.processes?.length}
@@ -493,7 +491,9 @@
 		{/if}
 
 		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
-		{#if t?.inference}
+		<!-- Operator detail, like the process list: the Search page says
+		     where search runs in plain words. -->
+		{#if detail && t?.inference}
 			<section class="chapter">
 				<h2 class="settings-label">Inference</h2>
 				<div class="cols">
@@ -502,14 +502,14 @@
 						{@render ledger("Precision", t.inference.precision, true)}
 						{@render ledger(
 							"Models",
-							t.inference.models_baked ? "all baked" : "incomplete",
+							t.inference.models_baked ? "All downloaded" : "Some missing",
 							false,
 							t.inference.models_baked ? "ok" : "warn",
 						)}
 						{#if t.gpu}
 							{@render ledger(
 								"Offload",
-								t.gpu.offload_active ? "GPU active" : "CPU fallback",
+								t.gpu.offload_active ? "On the GPU" : "On the CPU",
 								false,
 								t.gpu.offload_active ? "ok" : "crit",
 							)}
@@ -517,10 +517,10 @@
 					</div>
 					<div class="col">
 						{#each t.inference.models as m}
-							{@render ledger(m.name, m.source === "baked" ? "● on disk" : "○ missing", true, m.source === "baked" ? "ok" : "warn")}
+							{@render ledger(m.name, m.source === "baked" ? "Downloaded" : "Missing", true, m.source === "baked" ? "ok" : "warn")}
 						{/each}
 						{#each t.services as s}
-							{@render ledger(`${s.name} sidecar`, s.up ? "listening" : "down", true, s.up ? "ok" : "crit")}
+							{@render ledger(`${s.name} service`, s.up ? "Running" : "Stopped", true, s.up ? "ok" : "crit")}
 						{/each}
 					</div>
 				</div>
@@ -528,11 +528,11 @@
 		{/if}
 
 		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
-		{#if t?.disks?.length}
+		{#if disks.length}
 			<section class="chapter">
 				<h2 class="settings-label">Storage</h2>
 				<div class="drives">
-					{#each t.disks as d}
+					{#each disks as d (d.mount)}
 						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
 						<div class="drive">
 							<div class="drive-head">
@@ -552,59 +552,23 @@
 		{/if}
 
 		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
-		<!--
-			Deliberately above Storage: "how much would I lose" is a more urgent
-			question than "how full is it", and this is the only place the answer
-			appears. There is no restore button — restore needs the service
-			stopped, so the box cannot do it to itself, and a button would imply
-			a capability that cannot exist.
-		-->
+		<!-- Backup's state, its drives and restoring are on their own page
+		     (settings/BackupPage.svelte); this row says how old the newest
+		     backup is and opens it. -->
 		{#if backup}
 			<section class="chapter">
 				<h2 class="settings-label">Backup</h2>
-				<div class="cols">
-					<div class="col">
-						{#if backup.state === "none"}
-							{@render ledger("Off-server copies", "none", false, "crit")}
-						{:else}
-							{@render ledger(
-								"Last backup",
-								backupAge(backup.age_seconds),
-								false,
-								backup.state === "ok" ? "ok" : backup.state === "never" ? "crit" : "warn",
-							)}
-						{/if}
-					</div>
-					<div class="col">
-						{#each backup.volumes as v}
-							{@render ledger(
-								v.name,
-								v.last_error ? "failing" : v.attached ? "attached" : "not attached",
-								false,
-								v.last_error ? "crit" : v.attached ? "ok" : "warn",
-							)}
-						{/each}
-					</div>
-				</div>
-				{#if backup.state === "none"}
-					<p class="note">
-						This server holds one copy of its data. Register a drive with
-						<code>virtues volumes add &lt;path&gt;</code>.
-					</p>
-				{:else if backup.volumes.some((v) => v.last_error)}
-					<p class="note">
-						{backup.volumes.find((v) => v.last_error)?.last_error}
-					</p>
-				{/if}
+				<button type="button" class="backup-link" onclick={() => windowShellStore.navigate('/virtues/backup', { label: 'Settings · Backup' })}>
+					<span class:warn={backup.state !== "ok"}>{backupLine(backup.state, backup.age_seconds)}</span>
+					<span class="open">Open</span>
+				</button>
 			</section>
 		{/if}
 
 		<!-- ─── HOST ───────────────────────────────────────────────────── -->
-		<!-- Was "Network & Devices", which claimed two subjects this page no
-		     longer owns: which Wi-Fi the box is on is Settings → Network, and
-		     how many devices are paired is Settings → Devices, where you can
-		     also do something about it. What is left is the machine's own
-		     identity and the traffic crossing it — measurements, not settings. -->
+		<!-- The machine's own identity and the traffic crossing it. Reaching the
+		     server away from home is on the Settings page; paired devices are
+		     under Devices. -->
 		<section class="chapter">
 			<h2 class="settings-label">Host</h2>
 			<div class="cols">
@@ -632,15 +596,9 @@
 		</section>
 
 	{/if}
-</Page>
+</SettingsPage>
 
 <style>
-	/* ─── Head actions ─────────────────────────────────────────────────── */
-	.head-actions {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-	}
 	.detail-btn {
 		display: inline-flex;
 		align-items: center;
@@ -666,45 +624,6 @@
 		color: var(--color-foreground);
 	}
 
-	.live {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: var(--foreground-subtle);
-	}
-	.live .dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--foreground-disabled, var(--foreground-subtle));
-	}
-	.live.on .dot {
-		background: var(--success);
-		animation: breathe 3s var(--ease-in-out-quad, ease-in-out) infinite;
-	}
-	@keyframes breathe {
-		0%, 100% { opacity: 0.35; }
-		50% { opacity: 1; }
-	}
-	.toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		font-size: 12px;
-		color: var(--foreground-muted);
-		padding: 4px 9px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		transition: all var(--duration-fast) ease;
-	}
-	.toggle:hover { color: var(--foreground); border-color: var(--border-strong, var(--foreground-subtle)); }
-	.toggle.active {
-		color: var(--foreground);
-		border-color: var(--foreground-subtle);
-		background: var(--surface-elevated);
-	}
 
 	/* ─── Chapters ─────────────────────────────────────────────────────── */
 
@@ -718,10 +637,9 @@
 	/* ─── Vitals grid ──────────────────────────────────────────────────── */
 	.vitals-grid {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 14px;
 	}
-	@media (max-width: 880px) { .vitals-grid { grid-template-columns: repeat(2, 1fr); } }
 	.vital {
 		border: 1px solid var(--border-subtle, var(--border));
 		border-radius: var(--radius-xl);
@@ -746,14 +664,12 @@
 		color: var(--foreground);
 		font-feature-settings: "tnum";
 	}
-	.vital-big.dim { color: var(--foreground-muted); font-size: 22px; }
 	.vital-unit { font-size: 12px; color: var(--foreground-subtle); }
 	.vital-sub {
 		font-size: 11px;
 		color: var(--foreground-muted);
 		min-height: 14px;
 	}
-	.muted-vital .vital-sub { padding-top: 4px; }
 
 	.spark { width: 100%; height: 24px; display: block; }
 	.spark.tall { height: 36px; }
@@ -860,11 +776,6 @@
 		margin: 10px 0 0;
 		max-width: 60ch;
 	}
-	.note code {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: var(--foreground);
-	}
 
 	/* ─── Drives ───────────────────────────────────────────────────────── */
 	.drives { display: flex; flex-direction: column; gap: 18px; }
@@ -923,4 +834,32 @@
 	}
 
 	.mono { font-family: var(--font-mono); }
+
+	/* Backup's own page opens from here. */
+	.backup-link {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		width: 100%;
+		max-width: 60ch;
+		padding: 8px 0;
+		border: none;
+		border-bottom: 1px solid var(--color-border-subtle);
+		background: none;
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+
+	.backup-link .warn {
+		color: var(--warning);
+	}
+
+	.backup-link .open {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
 </style>

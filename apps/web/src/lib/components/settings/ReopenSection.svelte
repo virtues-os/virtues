@@ -1,10 +1,6 @@
 <!--
-  Settings → Devices → "Start over".
-
-  Lives at the foot of Devices because that is what it does: it is the plural
-  of Unpair. It used to sit at the bottom of "Box", under the CPU graphs — so
-  a page you opened to check a temperature ended in a button that signs out
-  every device you own.
+  Settings → "Start over", alone at the foot of the Updates and network
+  page, below every setting, because it unpairs every device you own.
 
   Wraps `POST /api/pair/reopen-onboarding` — the `virtues reset --keep-data`
   path. Revokes every paired device and its credentials; touches no data, no
@@ -55,7 +51,7 @@
 
 	<p class="sub">
 		Unpairs every device and puts your server back into setup. Your record, your
-		connected accounts and your subscription stay exactly as they are.
+		connected accounts and your subscription stay as they are.
 	</p>
 
 	{#if error}
@@ -72,24 +68,24 @@
 				run virtues pair on your server and enter the code in the app.
 			</p>
 			<div class="row">
-				<Button variant="danger" size="sm" loading={busy} onclick={go}>
+				<Button variant="danger" loading={busy} onclick={go}>
 					Unpair everything
 				</Button>
-				<Button variant="ghost" size="sm" disabled={busy} onclick={() => (armed = false)}>
+				<Button variant="ghost" disabled={busy} onclick={() => (armed = false)}>
 					Cancel
 				</Button>
 			</div>
 		</div>
 	{:else}
-		<Button variant="secondary" size="sm" class="self-start" onclick={() => (armed = true)}>
+		<Button variant="secondary" class="self-start" onclick={() => (armed = true)}>
 			Put this server back into setup
 		</Button>
 	{/if}
 </section>
 
 <style>
-	/* Inside Devices' `<Page>` now, which owns the gutter — this only needs the
-	   rule and the air that separate it from the device list above. */
+	/* At the foot of the landing page, which owns the gutter; this only needs
+	   the rule and the air that separate it from the links above. */
 	.reopen {
 		display: flex;
 		flex-direction: column;

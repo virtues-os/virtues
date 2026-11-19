@@ -355,10 +355,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.record-card:focus {
-		outline: none;
-	}
-
 	/* A popover that moves to the next stop slides there. */
 	:global(.record-float.gliding) {
 		transition:

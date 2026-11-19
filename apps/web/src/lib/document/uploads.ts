@@ -130,7 +130,14 @@ interface Entry {
 	released: boolean;
 }
 
-/** The files this device has given, by id; until stored, each is the only copy, in this page's memory. */
+/**
+ * The files this device has given, by id; until stored, each is the only
+ * copy, in this page's memory. A stored file leaves the map (`settle`), and a
+ * refused one keeps only its name and why: otherwise every file pasted or
+ * dropped into a page stayed here, bytes and preview, for the life of the
+ * window. One let go stays whole, because redo can bring its block back and
+ * these bytes are then the only copy.
+ */
 const local = new Map<string, Entry>();
 /** Files waiting for a request, in the order given. */
 let waiting: string[] = [];
@@ -211,6 +218,22 @@ export function uploadBlocksBack(ids: Iterable<string>): void {
 		send(id, entry);
 	}
 	restake();
+}
+
+/**
+ * Free what a finished upload no longer needs. Stored: the block now draws
+ * the server's copy, so the entry goes. Refused: the block still says why,
+ * so the entry stays, without its bytes or preview. A block that subscribed
+ * before keeps its store and the last state it was told.
+ */
+function settle(id: string, entry: Entry): void {
+	if (entry.preview) URL.revokeObjectURL(entry.preview);
+	entry.preview = null;
+	if (entry.done) {
+		local.delete(id);
+	} else if (entry.refused) {
+		entry.file = new File([], entry.file.name, { type: entry.file.type });
+	}
 }
 
 /** Let `entry` go: no page names it. A request already out finishes, and is not tried again. */
@@ -392,7 +415,8 @@ function transmit(id: string, entry: Entry): void {
 			active--;
 			entry.sending = false;
 			entry.done = true;
-			entry.state.set({ phase: 'done', name, preview });
+			entry.state.set({ phase: 'done', name, preview: null });
+			settle(id, entry);
 			restake();
 			pump();
 		},
@@ -411,7 +435,8 @@ function transmit(id: string, entry: Entry): void {
 			} else {
 				const reason = error instanceof Error ? error.message : String(error);
 				entry.failed = !refused;
-				entry.state.set({ phase: 'failed', name, reason, refused, preview });
+				entry.state.set({ phase: 'failed', name, reason, refused, preview: refused ? null : preview });
+				if (refused) settle(id, entry);
 				if (entry.failed) rest();
 			}
 			restake();

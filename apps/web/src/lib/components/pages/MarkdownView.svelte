@@ -84,7 +84,6 @@
 		<span class="markdown-hint">{hint ?? ""}</span>
 		<Button
 			variant="secondary"
-			size="sm"
 			icon={copied ? "mynaui:check" : "mynaui:copy"}
 			disabled={markdown === null}
 			onclick={copy}

@@ -1,24 +1,16 @@
 <!--
-  Software — what this box runs, and how it moves forward.
+  Software: what each part of the app runs on this server.
 
-  Split out of "Box" on 2026-08-17. The version story used to be told twice on
-  one scroll: UpdateSection at the top said what release the box is on and
-  offered to install the next one, and System's "About" chapter, five sections
-  further down, printed Package / Built / Commit / Interface / App. Two answers
-  to "what am I running" on one page is one answer too many, so the question
-  now has a room and System keeps only what it can measure live.
-
-  The three artifacts below are why this page is more than an Install button.
-  A box, a UI bundle, and a native shell each carry their own version and have
-  no reason to agree — on 2026-08-05 a phone ran visibly newer UI than the Mac
-  beside it and the reason took ssh and a git log to find. With OTA moving the
-  bundle independently of the app, that question gets asked more, not less.
+  A server, a UI bundle, and a native shell each carry their own version and
+  have no reason to agree, so this page lists all three. Installing updates,
+  the channel and automatic installs are on the Settings page (UpdateSection),
+  so the version question has one answer here and the update controls one
+  place there.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Page } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import { formatDate } from '$lib/utils/dateUtils';
-	import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 	import { BUILD, buildLabel } from '$lib/build';
 	import {
 		shellIdentity,
@@ -68,28 +60,15 @@
 	}
 </script>
 
-<Page
-	title="Software"
-	description="The release this server runs, and the track it follows."
-	maxWidth="wide"
+<SettingsPage
+	title="Your server"
+	lede="The version each part of the app runs. They can differ. Updates are in Updates and network."
+	back={{ route: '/virtues/devices', label: 'Devices' }}
 >
-	<UpdateSection />
-
 	<section class="artifacts">
-		<h3>Artifacts</h3>
-		<p class="sub">
-			Three pieces with three version numbers. They can differ. This is where you find out by how much.
-		</p>
-
 		<dl class="ledger">
-			<!--
-				The version goes FIRST, because the sentence above promises three
-				version numbers and this row used to open with a build date — the
-				one artifact of the three whose version was missing, on the page
-				whose whole job is telling you which versions are in play. It is
-				the same string "Running" shows above; repeated here so the three
-				can be read against each other in one column.
-			-->
+			<!-- The version first, the same string Updates shows, so the three
+			     parts read against each other in one column. -->
 			<dt>Server</dt>
 			<dd class="mono">
 				{version || '—'}
@@ -115,7 +94,7 @@
 						? shell.servingBundle
 							? `ota ${shell.servingBundle.slice(0, 8)}`
 							: 'bundled'
-						: 'served by the box'}
+						: 'from your server'}
 				</span>
 				{#if staged}
 					<span class="staged">
@@ -132,7 +111,6 @@
 				<dt>App</dt>
 				<dd class="mono">
 					{shell.appVersion}
-					<span class="dim"> · surface {shell.commandSurface}</span>
 				</dd>
 			{/if}
 		</dl>
@@ -147,27 +125,13 @@
 			<p class="ota-note">{otaNote}</p>
 		{/if}
 	</section>
-</Page>
+</SettingsPage>
 
 <style>
 	.artifacts {
 		margin-top: 2.5rem;
 		padding-top: 1.5rem;
 		border-top: 1px solid var(--color-border);
-	}
-
-	h3 {
-		font-size: 14px;
-		font-weight: 600;
-		margin: 0;
-	}
-
-	.sub {
-		margin: 6px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		max-width: 60ch;
 	}
 
 	.ledger {

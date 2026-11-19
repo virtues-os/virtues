@@ -35,7 +35,6 @@
 	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
-	import SetupRing from "$lib/components/sidebar/SetupRing.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -44,17 +43,14 @@
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { sidebarDoors, type DoorId } from "$lib/stores/sidebarDoors.svelte";
 	import { pinIdentity } from "$lib/refs/identity.svelte";
-	import { clothFor } from "$lib/sidebar/pin-colors";
-	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { accentCss } from "$lib/sidebar/pin-colors";
+	import { isEmoji, kindGlyph } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newProject } from "$lib/utils/projectActions";
-	import { newPage as makePage, newTask as makeTask } from "$lib/utils/newActions";
+	import { newPage as makePage } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
-	import { goto } from "$app/navigation";
-	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import { setup } from "$lib/components/setup/setup.svelte";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
@@ -81,15 +77,6 @@
 		mobileLayout.closeDrawer();
 	}
 
-	// The phone's Setup tile: the desktop rail's, as the drawer's first row,
-	// while any step of Setup is not done (skipped included).
-	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
-
-	function continueSetup() {
-		mobileLayout.closeDrawer();
-		void goto(`/setup/${setup.resumeAt ?? "welcome"}`);
-	}
-
 	function openSearch() {
 		mobileLayout.closeDrawer();
 		search.show();
@@ -98,10 +85,6 @@
 	/** A page is written the way a chat is started, so its door stands under New chat. */
 	function newPage() {
 		void makePage(go);
-	}
-
-	function newTask() {
-		void makeTask(go);
 	}
 
 	function addProject() {
@@ -117,10 +100,10 @@
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
-		tasks: { open: () => go("/tasks", "Tasks"), add: { label: "New task", run: newTask } },
-		projects: { open: () => go("/projects", "Projects"), add: { label: "New project", run: addProject } },
+		threads: { open: () => go("/threads", "Threads"), add: { label: "New thread", run: addProject } },
 		applets: { open: () => go("/applets", "Applets") },
 		wiki: { open: () => go("/wiki", "Wiki") },
+		storage: { open: () => go("/storage", "Storage") },
 	};
 
 	function openPin(pin: Pin, title: string) {
@@ -200,13 +183,6 @@
 		<!-- Search is a field, not a door: the one filled shape in the column,
 		     so the eye finds it without reading. The pill treatment is the
 		     old bottom bar's, moved up. -->
-		{#if setupOpen}
-			<button class="setup-row" onclick={continueSetup}>
-				<SetupRing />
-				<span class="row-text">Continue setup</span>
-				<span class="setup-count">{setup.doneCount}/{setup.steps.length}</span>
-			</button>
-		{/if}
 		<button class="search-pill" onclick={openSearch}>
 			<AtlasIcon name="search" bare />
 			<span>Search</span>
@@ -260,8 +236,9 @@
 					onclick={() => openPin(pin, look.title)}
 				>
 					<span class="chat-title with-glyph">
-						<!-- The mark picked for it, else a dot in its color. -->
-						<span class="pin-mark" aria-hidden="true" style="color: {clothFor({ url: pin.url, color: look.color })}">
+						<!-- The mark picked for it, else its kind's base glyph, in its
+						     color if it has one. -->
+						<span class="pin-mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
 							{#if look.icon && isEmoji(look.icon)}
 								{look.icon}
 							{:else if look.icon?.startsWith("atlas:")}
@@ -269,7 +246,7 @@
 							{:else if look.icon}
 								<Icon icon={look.icon} width={16} />
 							{:else}
-								<Icon icon="shape:circle" width={14} />
+								<AtlasIcon name={kindGlyph(pin.url)} size={16} bare />
 							{/if}
 						</span>
 						<span class="title-text">{look.title}</span>
@@ -285,7 +262,7 @@
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
-			{@const home = s.project_id ? projectStore.byId(s.project_id) : undefined}
+			{@const home = s.thread_id ? projectStore.byId(s.thread_id) : undefined}
 			<button
 				class="chat-row"
 				class:active={activeRoute === route}
@@ -336,8 +313,6 @@
 		   the viewport's top bar, and the two bars are meant to share a
 		   baseline — the » lands where the ghost/compose control sits. */
 		background-color: var(--color-surface);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		color: var(--color-foreground);
 	}
 
@@ -488,31 +463,6 @@
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
-	/* Setup's standing call to act: the one row in primary ink, as the rail's
-	   tile is on desktop. */
-	.setup-row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		width: 100%;
-		min-height: 48px;
-		margin-bottom: 8px;
-		padding: 0 16px;
-		border: 0;
-		border-radius: var(--radius-xl);
-		background: var(--color-primary);
-		color: var(--color-background);
-		text-align: left;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-	}
-	.setup-count {
-		margin-left: auto;
-		font-size: 13px;
-		font-variant-numeric: tabular-nums;
-		opacity: 0.8;
-	}
-
 	.row {
 		display: flex;
 		align-items: center;

@@ -25,7 +25,8 @@
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
-	import { fly, fade } from "svelte/transition";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import { fly, fade } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
@@ -98,7 +99,7 @@
 	const name = $derived(setup.assistantName);
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 	const IN = { y: still ? 0 : 8, duration: still ? 0 : 260, easing: cubicOut, delay: still ? 0 : 60 };
 	const OUT = { y: still ? 0 : -6, duration: still ? 0 : 150, easing: cubicOut };
 
@@ -469,10 +470,6 @@
 		outline: 3px solid color-mix(in srgb, var(--color-primary) 10%, transparent);
 		background: color-mix(in srgb, var(--color-primary) 3%, transparent);
 	}
-	.choice:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	.choice-head {
 		display: flex;
 		align-items: center;
@@ -610,11 +607,6 @@
 	.link:hover,
 	.link.on {
 		color: var(--color-foreground);
-	}
-	.link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
-		border-radius: 0;
 	}
 	.link.more {
 		align-self: flex-start;

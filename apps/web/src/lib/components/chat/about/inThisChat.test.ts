@@ -110,12 +110,12 @@ describe('inThisChat', () => {
 
 	it('lists something you brought in once, even after a tool reads it', () => {
 		const panel = inThisChat([
-			{ id: 'u1', role: 'user', parts: [text('What is in [@Kitchen plans](/project/proj_kitchen)?')] },
+			{ id: 'u1', role: 'user', parts: [text('What is in [@Kitchen plans](/thread/proj_kitchen)?')] },
 			{
 				id: 'a1',
 				role: 'assistant',
 				parts: [
-					tool('get_project_item', 'call_k', { item_url: '/project/proj_kitchen' }, { type: 'project', name: 'Kitchen plans' }),
+					tool('get_project_item', 'call_k', { item_url: '/thread/proj_kitchen' }, { type: 'thread', name: 'Kitchen plans' }),
 					tool('get_project_item', 'call_c', { item_url: '/chat/chat_tiles' }, { type: 'chat', title: 'Tile samples' }),
 				],
 			},

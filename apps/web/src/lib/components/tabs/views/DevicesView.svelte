@@ -16,7 +16,8 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Badge } from "$lib";
+	import { Button, Badge } from "$lib";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import UniversalDataGrid, {
@@ -33,7 +34,6 @@
 	import { toast } from "svelte-sonner";
 	import { isMacOS, isTauri } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
 	import AgentConnectModal from "$lib/components/devices/AgentConnectModal.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -107,16 +107,15 @@
 	}
 
 	const serverRow = $derived.by((): Row => {
-		const name = host?.hostname ? `Virtues Server · ${host.hostname}` : "Virtues Server";
+		const name = host?.hostname ? `Your server · ${host.hostname}` : "Your server";
 		const os = host?.os ?? null;
-		const kernel = host?.kernel ?? null;
 		return {
 			id: "server",
 			is_server: true,
 			label: name,
 			kind: "Server",
 			version: update?.running_version ?? null,
-			version_sub: os && kernel ? `${os} · ${kernel}` : (os ?? kernel),
+			version_sub: os,
 			behind:
 				update?.update_available && update.latest
 					? `${update.latest} is available — open to install`
@@ -309,17 +308,10 @@
 	];
 </script>
 
-<!--
-	The page's own heading, not a hand-rolled one. This view used to draw its
-	own `<h1 class="text-2xl font-semibold">` inside a bare `<Page>` with its own
-	measure and padding — so Devices was a sans 24px heading in a 3xl column
-	while every neighbouring room was a serif 30px heading in a 6xl one, for no
-	reason anyone chose.
--->
-<Page
+<SettingsPage
 	title="Devices"
-	description="Your server, and every app, browser and sensor paired to it."
-	maxWidth="wide"
+	lede="Your server, and every app, browser and sensor paired to it."
+	width="medium"
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>
@@ -343,6 +335,7 @@
 		loading={res.loading}
 		error={res.error}
 		onRetry={reloadAll}
+		showCounts={false}
 		emptyIcon="mynaui:mobile"
 		emptyMessage="No paired devices. Run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
@@ -379,7 +372,7 @@
 					<MacPermissions {device} deniedOnly canOpen={canFix} />
 					{#if device.permissions?.stale}
 						<div class="text-xs text-foreground-muted mt-2 italic">
-							Permission report is stale - the collector may not be running.
+							It hasn't reported its permissions lately. Its collector may have stopped.
 						</div>
 					{/if}
 				{/if}
@@ -399,7 +392,7 @@
 					{:else if row.is_server && !update}
 						<span class="text-xs text-foreground-muted">…</span>
 					{:else}
-						<span class="text-xs text-foreground-muted italic">version unknown</span>
+						<span class="text-xs text-foreground-subtle">—</span>
 					{/if}
 				</div>
 				{#if row.version_sub}
@@ -424,9 +417,6 @@
 			<td class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile">
 				{#if row.paired_at}
 					{formatDateTime(row.paired_at)}
-					{#if device?.paired_from_ip}
-						<div class="text-xs mt-0.5">from {device.paired_from_ip}</div>
-					{/if}
 				{:else}
 					<span class="text-foreground-subtle">—</span>
 				{/if}
@@ -477,7 +467,7 @@
 			{#if row.device}
 				<Button variant="ghost" onclick={() => revoke(row.device!)}>
 					<Icon icon="mynaui:x-circle" />
-					Revoke
+					Unpair
 				</Button>
 			{:else}
 				<!-- The server cannot be revoked; its verb is an upgrade. -->
@@ -488,14 +478,7 @@
 			{/if}
 		{/snippet}
 	</UniversalDataGrid>
-
-	<!-- Revoke, in the plural. It lived at the foot of "Box" until 2026-08-17,
-	     below the CPU graphs, which put the button that signs out every device
-	     you own on a page you open to read a temperature. Its subject was
-	     always this one: the same verb as the Revoke buttons above, applied to
-	     all of them at once. -->
-	<ReopenSection />
-</Page>
+</SettingsPage>
 
 <Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">
 	<div class="add-choices">

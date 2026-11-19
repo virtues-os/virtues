@@ -73,11 +73,11 @@
 	title={source?.name ?? sourceId}
 	description={source?.description ??
 		'This source is not installed on this server. Anything still connected to it won\'t run.'}
-	maxWidth="wide"
+	maxWidth="medium"
 >
 	{#snippet actions()}
 		{#if source}
-			<Button variant="primary" size="sm" onclick={() => void connect()}>{connectLabel}</Button>
+			<Button variant="primary" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	{/snippet}
 
@@ -150,7 +150,7 @@
 		padding: 0.5rem 0.75rem;
 		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 
@@ -237,7 +237,7 @@
 		gap: 0.375rem;
 		padding: 0 0.875rem 0.5rem 2rem;
 		font-size: 0.6875rem;
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 	}
 
 	@media (max-width: 720px) {

@@ -15,6 +15,8 @@
 	 * The only honest signal is the box going away and coming back.
 	 */
 	import { onMount, onDestroy } from 'svelte';
+	import Switch from './Switch.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import {
@@ -27,6 +29,11 @@
 	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
 	import { reloadApp } from '$lib/reload';
 
+	const CHANNELS = [
+		{ value: 'stable', label: 'Released' },
+		{ value: 'prerelease', label: 'Early, may break' },
+	] as const;
+
 	let status = $state<UpdateStatus | null>(null);
 	let loading = $state(true);
 	let switching = $state(false);
@@ -38,8 +45,15 @@
 	let restart = $state<{ phase: 'going' | 'back'; error?: string; detail?: string } | null>(null);
 	let applyError = $state<string | null>(null);
 	let watchTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Set when the page goes away, so a poll already waiting on the server
+	 *  does not schedule another (or reload whatever page you are on). */
+	let destroyed = false;
+	let channelError = $state<string | null>(null);
+	/** Bumped when a switch fails, so the menu redraws on the channel that held. */
+	let channelKey = $state(0);
 
 	onDestroy(() => {
+		destroyed = true;
 		if (watchTimer) clearTimeout(watchTimer);
 	});
 
@@ -87,11 +101,14 @@
 	async function switchChannel(channel: 'stable' | 'prerelease') {
 		if (switching || status?.channel === channel) return;
 		switching = true;
+		channelError = null;
 		try {
 			await setUpdateChannel(channel);
 			await check();
 		} catch (err) {
 			console.error('[updates] channel switch failed:', err);
+			channelError = "Your server couldn't change which updates it takes. It's still on the one shown. Try again.";
+			channelKey += 1;
 		} finally {
 			switching = false;
 		}
@@ -197,7 +214,9 @@
 		};
 
 		const poll = async () => {
+			if (destroyed) return;
 			const now = await probe();
+			if (destroyed) return;
 			const alive = !!now?.ok;
 			// Older servers send no stamp; for them, coming back is all there is.
 			const moved = before === null || (!!now?.build && now.build !== before);
@@ -251,7 +270,7 @@
 <section class="updates">
 	<header>
 		<h3>Updates</h3>
-		<Button variant="secondary" size="sm" icon="mynaui:refresh" {loading} onclick={check}>
+		<Button variant="secondary" icon="mynaui:refresh" {loading} onclick={check}>
 			Check again
 		</Button>
 	</header>
@@ -268,7 +287,7 @@
 				{#if restart.detail}
 					<p class="how">Your server said: {restart.detail}</p>
 				{/if}
-				<Button variant="secondary" size="sm" onclick={() => (restart = null)}>Done</Button>
+				<Button variant="secondary" onclick={() => (restart = null)}>Done</Button>
 			{:else if restart.phase === 'back'}
 				<p>
 					<Icon icon="mynaui:check" width="14" />
@@ -290,17 +309,13 @@
 		<dl class="facts">
 			<dt>Running</dt>
 			<dd class="running">
-				<!-- RELEASE IDENTITY, not the build counter. This row used to
-				     print `current` (the crate version), which is the same
-				     string on every prerelease build — so a box on `edge` was
-				     told it was running "0.3.0", the number of a release it is
-				     ahead of. `codename::version()` exists precisely so every
-				     surface says the same word; this one wasn't asking. -->
+				<!-- The release name (`codename::version()`), which every surface
+				     shows. The crate version is the same on every prerelease
+				     build, so it would name a release this box is ahead of. -->
 				<span class="ver">{status.running_version}</span>
 				{#if status.running_channel && status.running_channel !== 'stable'}
 					<span class="track">{status.running_channel}</span>
 				{/if}
-				<span class="counter">build {status.current}</span>
 			</dd>
 			<dt>Channel</dt>
 			<dd>
@@ -311,16 +326,9 @@
 				     deliberate reach, which is the honest shape of this
 				     decision. -->
 				<div class="channel-picker">
-					<select
-						id="channel"
-						disabled={switching}
-						value={status.channel}
-						onchange={(e) =>
-							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
-					>
-						<option value="stable">Main — released builds</option>
-						<option value="prerelease">Staging — unreleased, may break</option>
-					</select>
+					{#key channelKey}
+						<Select id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
+					{/key}
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
 							<Icon icon="mynaui:danger-triangle" width="13" />
@@ -328,6 +336,7 @@
 						</span>
 					{/if}
 				</div>
+				{#if channelError}<p class="state error">{channelError}</p>{/if}
 			</dd>
 		</dl>
 
@@ -341,15 +350,7 @@
 							and restarts. Connected devices reconnect on their own.
 						</p>
 					</div>
-					<button
-						class="switch"
-						class:on={auto.enabled}
-						role="switch"
-						aria-checked={auto.enabled}
-						aria-label="Install updates automatically"
-						disabled={autoSaving}
-						onclick={toggleAuto}
-					></button>
+					<Switch checked={auto.enabled} label="Install updates automatically" disabled={autoSaving} onchange={() => toggleAuto()} />
 				</div>
 				{#if auto.install && !auto.install.ok}
 					<p class="note auto-failed">
@@ -377,7 +378,7 @@
 			     leaves a box unpatched. -->
 			<p class="state error">
 				<Icon icon="mynaui:danger-circle" width="14" />
-				Couldn't check for updates — {status.check_error}
+				Couldn't check for updates: {status.check_error}
 			</p>
 		{:else if status.running_ahead}
 			<!-- Neither "up to date" nor "update available" is true here, and
@@ -387,10 +388,12 @@
 			     owner decide. -->
 			<p class="state ahead">
 				<Icon icon="mynaui:git-branch" width="14" />
-				This box runs <strong>{status.running_version}</strong>, from the
-				{status.running_channel} track — ahead of
-				{status.latest ?? 'the latest release'} on Main. Nothing to install;
-				Main will catch up.
+				<span>
+					This server runs <strong>{status.running_version}</strong>, from the
+					{status.running_channel} track. That's ahead of
+					{status.latest ?? 'the latest release'}, so there's nothing to install
+					until releases catch up.
+				</span>
 			</p>
 		{:else if status.update_available}
 			<div class="state available">
@@ -402,16 +405,15 @@
 				<p class="warn">
 					{#if staged}
 						Already fetched and checked against this server, so installing is a
-						restart — under a minute. It disconnects every device using the
-						box, not just this one.
+						restart of under a minute. It disconnects every device using your
+						server, not just this one.
 					{:else}
-						The box downloads it, restarts and runs migrations, which
-						disconnects every device using it — not just this one.
+						Your server downloads it, restarts and updates its database, which
+						disconnects every device using it, not just this one.
 					{/if}
 				</p>
 				<Button
 					variant="primary"
-					size="sm"
 					class="self-start"
 					icon={staged ? 'mynaui:refresh-alt' : 'mynaui:download'}
 					disabled={!!restart}
@@ -440,9 +442,9 @@
 
 		{#if aheadOfStable}
 			<p class="note">
-				On Staging you're usually ahead of the last stable release. Switching
-				back to Main stops new prereleases; it doesn't move your server backwards,
-				so nothing changes until stable catches up.
+				Early updates usually put your server ahead of the last released one.
+				Switching back to Released stops early updates. Your server stays on
+				the version it has until a released one catches up.
 			</p>
 		{/if}
 	{:else if !loading}
@@ -510,10 +512,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.counter {
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-	}
 
 	.ahead {
 		color: var(--color-foreground-muted);
@@ -524,16 +522,6 @@
 		align-items: center;
 		gap: 10px;
 		flex-wrap: wrap;
-	}
-
-	.channel-picker select {
-		font: inherit;
-		font-size: 13px;
-		padding: 4px 8px;
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-border);
-		background: var(--color-background);
-		color: var(--color-foreground);
 	}
 
 	.risk {
@@ -628,44 +616,6 @@
 		color: var(--error);
 	}
 
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-	.switch.on {
-		background: var(--color-success);
-	}
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: var(--color-background);
-		transition: transform 150ms ease;
-	}
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 3px;
-	}
-	.switch:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-
 	.apply-error {
 		color: var(--error);
 	}
@@ -693,13 +643,7 @@
 	}
 
 	.restarting :global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Design lint: count the things agents/build/design-grammar.md §9 says to count.
+# Design lint: count the things agents/build/design.md, "The checklist" says to count.
 #
 # Run from anywhere:   bash tools/design-lint.sh
 #
@@ -45,14 +45,9 @@ SRC="apps/web/src"
 # Color literals: `src/themes.css` and `src/app.css` are where literals are
 # SUPPOSED to live — they define the tokens everything else must reference.
 #
-# `wiki/LifelineCanvas.svelte` and `wiki/LifelineMap.svelte` are the two files
-# that paint into a canvas 2D context. `ctx.fillStyle` cannot resolve `var()`,
-# so they read the token with `getComputedStyle().getPropertyValue('--x')` and
-# need a literal as the fallback when the property is empty. That is the
-# correct pattern, not debt. Named, not globbed, and deliberately short:
-# `DaylineChart.svelte` (56 hex), `DaylineStrip.svelte` (13) and
-# `ChapterLifeline.svelte` (2) are SVG and CSS, which take `var()` fine — their
-# literals are real debt and stay in the baseline where they can be paid down.
+# Canvas code reads tokens with `getComputedStyle().getPropertyValue('--x')`,
+# since `ctx.fillStyle` cannot resolve `var()`, and keeps a literal only as the
+# fallback. It lives in `.ts` files, which this lint does not scan.
 #
 # Mono: `themes.css` declares `--font-mono`.
 #
@@ -68,7 +63,7 @@ SRC="apps/web/src"
 # Deliberately NOT exempt: `chat/PageEditResult.svelte`, whose `.result-title`
 # is a page TITLE wearing a mono stack — that is exactly the kicker the grammar
 # names, and it stays in the baseline where it can be paid down.
-COLOR_EXEMPT='apps/web/src/themes.css apps/web/src/app.css apps/web/src/lib/components/wiki/LifelineCanvas.svelte apps/web/src/lib/components/wiki/LifelineMap.svelte'
+COLOR_EXEMPT='apps/web/src/themes.css apps/web/src/app.css'
 MONO_EXEMPT='apps/web/src/themes.css'
 MONO_LITERAL_EXEMPT="$MONO_EXEMPT apps/web/src/app.css apps/web/src/lib/components/tabs/views/DeveloperTerminalView.svelte apps/web/src/lib/components/applets/AppletSource.svelte apps/web/src/lib/components/chat/CodeInterpreterCard.svelte apps/web/src/lib/components/chat/EditDiffCard.svelte apps/web/src/lib/components/asset/TextPane.svelte"
 
@@ -86,28 +81,13 @@ describe() {
     radius)            echo "border-radius that is not a --radius-* step, 0, 50% or a pill (§6)" ;;
     off-grid)          echo "off-grid px in padding/margin/gap (§6: the 8pt grid — 8·12·16·20·24·32…)" ;;
     no-reduced-motion) echo "file animates with no prefers-reduced-motion block (§7)" ;;
-    serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/typography.md)" ;;
+    serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/design.md, "Type")" ;;
     esac
 }
 
-# `routes/(public)/components/` is the design gallery: a workbench that renders
-# every primitive, every token and a contrast matrix. It is a TOOL, not a
-# product surface, and the page grammar governs pages. It legitimately needs
-# what the grammar forbids — mono for token names and hex values, sub-11px type
-# for a dense matrix, off-grid gaps in a spec table — and linting it would
-# force the one page that makes design debt visible to fake compliance.
-# Excluded whole rather than per-rule, because no rule applies to it.
-#
-# `serif-impossible` below depends on this exclusion for correctness, not only
-# for noise: that page renders "Faked bold" and "Faked italic" side by side as
-# SPECIMENS of the very thing the rule forbids, to show what a browser does
-# with a one-cut family. Flagging a demonstration of a bug as the bug is how a
-# lint teaches people to delete the explanation. If this exclusion is ever
-# narrowed, those two lines need `design-ok:` first.
 file_list() {
     find "$SRC" -type f \( -name '*.svelte' -o -name '*.css' \) \
         ! -name '*.test.ts' \
-        ! -path '*/routes/(public)/components/*' \
         | LC_ALL=C sort
 }
 
@@ -311,7 +291,7 @@ scan() {
         # italic` is a browser-synthesized oblique: a mechanical slant of the
         # roman, not a drawn italic, and it looks it. Neither is loud enough to
         # catch in review, which is the whole reason to count them. The full
-        # account is agents/build/typography.md and the @font-face comment in
+        # account is agents/build/design.md, "Type" and the @font-face comment in
         # apps/web/src/app.css. A serif hierarchy is set with size, case, color
         # and space — §4 already asks for exactly that.
         #
@@ -352,11 +332,13 @@ scan() {
 # sensitivity is not a preference, it is a symptom. Whole-file by nature, so it
 # is its own pass: one record per offending FILE, reported at the first line
 # that moves, which is the line an author should look at.
+# Code that asks stores/motion.svelte.ts (`reducedMotion()`, `motion.reduced`)
+# answers the device setting and Settings' Reduce motion, so it counts too.
 scan_motion() {
     while IFS= read -r f; do
         hit=$(awk '
             /design-ok:/ { next }
-            /prefers-reduced-motion/ { guarded = 1; exit }
+            /prefers-reduced-motion|reducedMotion\(\)|motion\.reduced/ { guarded = 1; exit }
             !moves && /(^|[^a-zA-Z0-9-])(transition|animation)[a-z-]*[ \t]*:/ { moves = FNR; src = $0 }
             END { if (!guarded && moves) { gsub(/\t/, " ", src); sub(/^[ \t]+/, "", src); print moves "\t" src } }
         ' "$f") || return
@@ -432,7 +414,7 @@ if [ -n "$improved" ]; then
 fi
 
 if [ "$fail" -ne 0 ]; then
-    echo "The page grammar is agents/build/design-grammar.md. A limit it states as a"
+    echo "The page grammar is agents/build/design.md. A limit it states as a"
     echo "number is not advice; put the count back under its baseline, or annotate the"
     echo "one line the grammar actually permits with \`design-ok: <why>\`."
     exit 1

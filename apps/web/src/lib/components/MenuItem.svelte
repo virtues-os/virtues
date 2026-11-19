@@ -159,7 +159,7 @@
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6): a long press on a
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"): a long press on a
 	   block page opens these menus on a phone. */
 	@media (pointer: coarse) {
 		.v-menuitem {
@@ -176,14 +176,15 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
+	/* Rows take the press fill and never shrink (design.md, Motion). */
+	.v-menuitem:active:not(:disabled) {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
 	.v-menuitem:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
-	}
-
-	.v-menuitem:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: -2px;
 	}
 
 	/* A checkbox in a set shows only its tick; shading every checked row
@@ -199,6 +200,10 @@
 	[data-destructive="true"]:hover:not(:disabled),
 	[data-destructive="true"].is-focused:not(:disabled) {
 		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+	}
+
+	[data-destructive="true"]:active:not(:disabled) {
+		background: color-mix(in srgb, var(--color-error) 20%, transparent);
 	}
 
 	.mi-lead {
@@ -262,16 +267,7 @@
 	}
 
 	.mi-spin :global(svg) {
-		animation: mi-spin 1s linear infinite;
-	}
-
-	@keyframes mi-spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	/* Keep the information, drop the travel. A spinner that cannot spin still

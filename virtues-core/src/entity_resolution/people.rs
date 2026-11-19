@@ -511,7 +511,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 /// and inventing one would not help: the useful link is not "me", it is *who I was
 /// talking to*.
 ///
-/// That party is recoverable without any new column. `thread_id` groups a
+/// That party is recoverable without any new column. `conversation_id` groups a
 /// conversation, and the counterparty is simply the one known person among the
 /// thread's *inbound* handles — which the sender side has already resolved. So each
 /// sent message gets a `recipient` ref to that person, mirroring how
@@ -548,22 +548,22 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             -- thread whose inbound side resolves to two different people (bad contact
             -- data) — guessing the recipient is worse than leaving it unresolved.
             thread_party AS (
-                SELECT m.thread_id,
+                SELECT m.conversation_id,
                        min(o.person_id)      AS person_id,
                        min(o.name) AS name
                 FROM data_communication_message m
                 JOIN handle_owner o ON o.handle = m.from_handle
                 WHERE m.from_handle <> ''
                   AND m.is_group_message = FALSE
-                  AND m.thread_id IS NOT NULL
-                GROUP BY m.thread_id
+                  AND m.conversation_id IS NOT NULL
+                GROUP BY m.conversation_id
                 HAVING count(DISTINCT o.person_id) = 1
             )
             SELECT m.id             AS "msg_id!",
                    tp.person_id     AS "person_id!",
                    tp.name AS "name!"
             FROM data_communication_message m
-            JOIN thread_party tp ON tp.thread_id = m.thread_id
+            JOIN thread_party tp ON tp.conversation_id = m.conversation_id
             LEFT JOIN wiki_refs r
                    ON r.source_table = 'data_communication_message'
                   AND r.source_id = m.id
@@ -1201,12 +1201,12 @@ mod tests {
                 "DELETE FROM wiki_refs r
                  USING data_communication_message m
                  WHERE r.source_table='data_communication_message'
-                   AND r.source_id=m.id AND m.thread_id=$1",
+                   AND r.source_id=m.id AND m.conversation_id=$1",
             )
             .bind(thread)
             .execute(db.pool())
             .await;
-            let _ = sqlx::query("DELETE FROM data_communication_message WHERE thread_id=$1")
+            let _ = sqlx::query("DELETE FROM data_communication_message WHERE conversation_id=$1")
                 .bind(thread)
                 .execute(db.pool())
                 .await;
@@ -1229,7 +1229,7 @@ mod tests {
         ) {
             sqlx::query(
                 "INSERT INTO data_communication_message
-                   (id, message_id, thread_id, channel, body, from_identifier,
+                   (id, message_id, conversation_id, channel, body, from_identifier,
                     from_handle, is_group_message, occurred_at, source_stream_id,
                     source_table, source_provider, metadata)
                  VALUES ($1,$1,$2,'imessage','hi',$3,$4,false, now(), $1,
@@ -1272,7 +1272,7 @@ mod tests {
         let recipient_refs: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM wiki_refs r
              JOIN data_communication_message m ON m.id = r.source_id
-             WHERE m.thread_id=$1 AND r.role='recipient' AND r.entity_id=$2
+             WHERE m.conversation_id=$1 AND r.role='recipient' AND r.entity_id=$2
                AND (m.metadata->>'is_from_me')::bool",
         )
         .bind(&thread)

@@ -33,6 +33,10 @@ export interface QueryResult {
 	more: boolean;
 	/** The SQL your server ran. */
 	sql?: string;
+	/** A `show` of numbers: the rows behind each figure that has them, by the figure's column. */
+	series?: Record<string, QueryResult>;
+	/** The figures are drawn as sparklines (mark spark) rather than opening. */
+	spark?: boolean;
 }
 
 /** One record a tool returned in this turn, as the answer's citation card reads it. */

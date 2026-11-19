@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { flip } from "svelte/animate";
+	import { flip } from "$lib/utils/transitions";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { onMount, untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
@@ -17,9 +18,9 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
-	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
+	import { accentCss } from "$lib/sidebar/pin-colors";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
-	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { isEmoji, kindIcon } from "$lib/utils/iconHelpers";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { pinMenuItem, pinIconMenuItem } from "$lib/pins/pinAction";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -28,6 +29,8 @@
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { routeToEntityId } from "$lib/utils/urlUtils";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
+	import TabHoverCard, { type TabCardAction } from "./TabHoverCard.svelte";
+	import { canPin, isPinned, togglePin } from "$lib/pins/pinAction";
 	import { cubicBezier, easePremium, motionMs } from "$lib/utils/motion";
 
 	const FLIP_DURATION_MS = 150;
@@ -268,7 +271,7 @@
 							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
 							color: look.color,
 							label: look.title,
-							autoColor: clothFor({ url: tab.route }),
+							fallback: kindIcon(tab.route),
 							// Persisted on click, without closing — so you can
 							// try a color against the grid before choosing the
 							// glyph, which is the point of one panel.
@@ -370,7 +373,8 @@
 		renamingTabId = null;
 		renameValue = "";
 		if (!tab?.route || !ownedRef(tab.route)) return;
-		renameRef(tab.route, newLabel).catch((e) => console.error("[WindowTabBar] rename failed:", e));
+		if (newLabel === tabLook(tab).title) return;
+		void renameRef(tab.route, newLabel);
 	}
 
 	// `autofocus` only applies on page load, so a field mounted later has to
@@ -380,8 +384,6 @@
 		node.select();
 	}
 
-	const reducedMotion =
-		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 	/** `--ease-in-out-quad`. */
 	const easeInOut = cubicBezier(0.45, 0, 0.55, 1);
@@ -434,7 +436,7 @@
 	 * its placeholder as the pointer crosses zones, and it measures the
 	 * strip as it goes.
 	 */
-	const tabMotionMs = () => (reducedMotion || dndManager.session ? 0 : TAB_MOTION_MS);
+	const tabMotionMs = () => (reducedMotion() || dndManager.session ? 0 : TAB_MOTION_MS);
 	const RISE_PX = 8;
 	const SINK_PX = 4;
 
@@ -517,7 +519,7 @@
 			const el = scroller?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
 			if (!el) return;
 			const reveal = () =>
-				el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+				el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
 			if (unfolding.has(el)) el.addEventListener("introend", reveal, { once: true });
 			else reveal();
 		});
@@ -546,6 +548,129 @@
 			update: () => requestAnimationFrame(measure),
 			destroy: () => observer.disconnect(),
 		};
+	}
+
+	/**
+	 * The card under a tab (TabHoverCard): the whole title and the tab's
+	 * actions. It waits CARD_DELAY_MS so passing along the strip shows
+	 * nothing. Once one has shown, the next tab's opens at once, as the
+	 * tooltip does. Leaving the tab gives you CARD_GRACE_MS to reach the card.
+	 */
+	const CARD_DELAY_MS = 700;
+	const CARD_GRACE_MS = 150;
+	let cardTabId = $state<string | null>(null);
+	let cardAnchor = $state<HTMLElement | null>(null);
+	let cardTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function armCard(e: PointerEvent, tabId: string) {
+		if (e.pointerType === "touch" || mobileLayout.isMobile) return;
+		if (dndManager.session || renamingTabId || contextMenu.visible) return;
+		const node = e.currentTarget as HTMLElement;
+		clearTimeout(cardTimer);
+		const open = () => {
+			cardTabId = tabId;
+			cardAnchor = node;
+		};
+		if (cardTabId) open();
+		else cardTimer = setTimeout(open, CARD_DELAY_MS);
+	}
+
+	function leaveCard() {
+		clearTimeout(cardTimer);
+		cardTimer = setTimeout(closeCard, cardTabId ? CARD_GRACE_MS : 0);
+	}
+
+	function keepCard() {
+		clearTimeout(cardTimer);
+	}
+
+	function closeCard() {
+		clearTimeout(cardTimer);
+		cardTimer = undefined;
+		cardTabId = null;
+		cardAnchor = null;
+	}
+
+	// A drag, a rename, a menu, or the tab closing takes the card away.
+	$effect(() => {
+		if (dndManager.session || renamingTabId || contextMenu.visible) closeCard();
+	});
+	$effect(() => {
+		if (cardTabId && !tabs.some((t) => t.id === cardTabId)) closeCard();
+	});
+	onMount(() => () => clearTimeout(cardTimer));
+
+	const cardTab = $derived(cardTabId ? tabs.find((t) => t.id === cardTabId) : undefined);
+	/**
+	 * A tab with fewer than three things to do gets no card: its title
+	 * already fits (an empty new chat), and one or two buttons under it
+	 * look unfinished.
+	 */
+	const cardActionList = $derived(cardTab ? cardActions(cardTab) : []);
+
+	function cardActions(tab: Tab): TabCardAction[] {
+		const actions: TabCardAction[] = [];
+		const look = tabLook(tab);
+		const act = (run: () => void) => () => {
+			closeCard();
+			run();
+		};
+		if (tab.route && canPin(tab.route)) {
+			const pinned = isPinned(tab.route);
+			actions.push({
+				id: "pin",
+				label: pinned ? "Unpin" : "Pin",
+				icon: pinned ? "mynaui:pin-solid" : "mynaui:pin",
+				on: pinned,
+				run: act(() => {
+					togglePin({ url: tab.route, label: look.title, icon: tab.icon }).catch((err) =>
+						console.error("[WindowTabBar] pin failed:", err),
+					);
+				}),
+			});
+		}
+		if (!tab.pinned && ownedRef(tab.route ?? "")) {
+			actions.push({
+				id: "rename",
+				label: "Rename",
+				icon: "mynaui:edit",
+				run: act(() => {
+					renamingTabId = tab.id;
+					renameValue = look.title;
+				}),
+			});
+		}
+		if (isSplitMode || tabs.length > 1) {
+			const toRight = paneId !== "right";
+			actions.push({
+				id: "move-across",
+				label: toRight ? "Move to right side" : "Move to left side",
+				icon: toRight ? "mynaui:panel-right" : "mynaui:panel-left",
+				run: act(() => windowShellStore.moveTabAcross(tab.id)),
+			});
+		}
+		if (windowShellStore.canClose(tab.id)) {
+			actions.push({
+				id: "close",
+				label: "Close",
+				icon: "mynaui:x",
+				run: act(() => {
+					if (paneId) windowShellStore.closeTabInPane(tab.id, paneId);
+					else windowShellStore.closeTab(tab.id);
+				}),
+			});
+		}
+		// Compact fills the row when the tab has room for it, so the card
+		// keeps three or four actions.
+		if (actions.length < 4) {
+			actions.splice(actions.length - (windowShellStore.canClose(tab.id) ? 1 : 0), 0, {
+				id: "compact",
+				label: tab.pinned ? "Expand" : "Compact",
+				icon: "mynaui:move-horizontal",
+				run: act(() => windowShellStore.togglePin(tab.id)),
+			});
+		}
+		return actions;
 	}
 
 	function handleRenameCancel() {
@@ -605,7 +730,7 @@
 	function getDefaultIcon(type: string): string {
 		switch (type) {
 			case "chat":
-				return "mynaui:chat";
+				return "atlas:chats";
 			case "history":
 				return "mynaui:clock-circle";
 			case "wiki":
@@ -666,13 +791,12 @@
 			{@const tab = item.tab}
 			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
 			{@const identity = tabLook(tab)}
-			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
+			{@const glyph = identity.icon || (ownedRef(tab.route) ? kindIcon(tab.route) : item.icon) || getDefaultIcon(tab.type)}
 			{@const chatId = chatOf(tab)}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
 				class:lq={tab.id === activeTabId}
-				class:lq-selected={tab.id === activeTabId}
 				class:only={dndItems.length === 1}
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
@@ -685,6 +809,9 @@
 				onoutroend={recountAfterFold}
 				onclick={() =>
 					tab.id !== renamingTabId && handleTabClick(tab.id)}
+				onpointerenter={(e) => armCard(e, tab.id)}
+				onpointerleave={leaveCard}
+				onpointerdown={closeCard}
 				ondblclick={(e) => handleDoubleClick(e, tab.id)}
 				onauxclick={(e) => handleMiddleClick(e, tab.id)}
 				oncontextmenu={(e) => handleContextMenu(e, tab.id)}
@@ -692,8 +819,6 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				data-tip={tab.id !== renamingTabId ? identity.title : ""}
-				data-tip-clipped
 				role="button"
 				tabindex="0"
 			>
@@ -728,15 +853,19 @@
 				</span>
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
-						<input
-							type="text"
-							class="tab-rename-input"
-							bind:value={renameValue}
-							onkeydown={handleRenameKeydown}
-							onblur={handleRenameSubmit}
-							onclick={(e) => e.stopPropagation()}
-							use:focusAndSelect
-						/>
+						<span class="rename-sizer" data-value={renameValue}>
+							<input
+								type="text"
+								class="rename-input"
+								size="1"
+								aria-label="Name"
+								bind:value={renameValue}
+								onkeydown={handleRenameKeydown}
+								onblur={handleRenameSubmit}
+								onclick={(e) => e.stopPropagation()}
+								use:focusAndSelect
+							/>
+						</span>
 					{:else}
 						<!-- On a ⌘ hold each tab's own label becomes its number:
 						     the title slides up and out, ⌘N slides up and in.
@@ -757,7 +886,7 @@
 						</span>
 					{/if}
 				{/if}
-				{#if !tab.pinned && tab.id !== renamingTabId && windowShellStore.canClose(tab.id)}
+				{#if !tab.pinned && windowShellStore.canClose(tab.id)}
 					<button
 						class="tab-close"
 						onclick={(e) => handleTabClose(e, tab.id)}
@@ -783,6 +912,16 @@
 	>
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
+
+	{#if cardTab && cardAnchor && cardActionList.length >= 3}
+		<TabHoverCard
+			anchor={cardAnchor}
+			title={tabLook(cardTab).title}
+			actions={cardActionList}
+			onenter={keepCard}
+			onleave={leaveCard}
+		/>
+	{/if}
 
 
 </div>
@@ -837,8 +976,8 @@
 		display: none;
 	}
 
-	/* A tab is a pill on the painting. The one you are on is glass
-	   (`.lq.lq-selected`, app.css); the others are their icon and label,
+	/* A tab is a pill on the painting. The one you are on is the shell's
+	   glass (`.lq`, app.css); the others are their icon and label,
 	   with a wash under the pointer. */
 	.tab {
 		display: flex;
@@ -854,22 +993,26 @@
 		color: var(--color-foreground-muted);
 		/* The sidebar rows' size, so the header and the column read as one. */
 		font-size: 13px;
-		cursor: pointer;
+		/* The arrow, as a browser tab has. The drag library sets an inline
+		   grab cursor on every tab it can drag, hence !important. */
+		cursor: default !important;
 		white-space: nowrap;
-		/* Sized to its label up to 200px, so the gaps between tabs are even
-		   and the + sits one gap after the last. Past that the tabs shrink
-		   together, down to their icon. */
-		max-width: 200px;
+		/* Every tab is the same width whatever its title, so the strip reads
+		   as a row of equal slots and a tab does not jump when its chat names
+		   itself. The title fades where it is cut and the hover card shows it
+		   whole. In a crowded strip the tabs shrink together, down to their
+		   icon. */
+		flex: 0 1 200px;
+		width: 200px;
 		min-width: 36px;
-		flex-shrink: 1;
-		/* Switching tabs moves the glass at once, as in a browser. Only the
+		/* Switching tabs moves the glass at once, as in a browser: the glass,
+		   its edge and the ink change in one frame (`.tab.active`). Only the
 		   hover wash fades. Opening and closing a tab are transitions
 		   (unfold, foldAway), so the tabs already open when the window loads
 		   do not animate in. */
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),
 			color var(--motion-hover-out) var(--ease-premium),
-			box-shadow var(--motion-hover-out) var(--ease-premium),
 			transform var(--motion-release) var(--ease-glass);
 	}
 
@@ -879,7 +1022,7 @@
 
 	.tab:not(.active):hover {
 		background-color: var(--hover-bg);
-		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
 	/* Rows and tabs take the press fill (design.md, "Grays"). The glass of
@@ -891,12 +1034,7 @@
 
 	.tab.active:active {
 		transform: scale(0.97);
-		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
-	}
-
-	.tab:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+		transition-duration: 0s, 0s, var(--motion-press);
 	}
 
 	/* The tab you are on: full ink on glass. Never marked by weight: a
@@ -908,16 +1046,9 @@
 		   minimum, it lost its label and its × ran into the next tab. */
 		flex-shrink: 0;
 		color: var(--color-foreground);
-		/* The glass settles onto the tab you switch to: it grows in from a
-		   little smaller and springs to size, once, on the switch. */
-		animation: tab-glass-in 280ms var(--ease-glass);
-	}
-
-	@keyframes tab-glass-in {
-		from {
-			scale: 0.92;
-			opacity: 0.4;
-		}
+		/* Lit in one frame when you switch to it; the page under it is what
+		   arrives ($lib/tabs/arrive). */
+		transition-duration: 0s, 0s, var(--motion-release);
 	}
 
 	/* A closing tab takes no pointer, so the tab gliding in under it does.
@@ -1026,6 +1157,8 @@
 	   in the window — a theme accent asserting meaning where the only fact is
 	   "this tab is short". Narrow is legible from being narrow. */
 	.tab.pinned {
+		flex: 0 0 auto;
+		width: auto;
 		min-width: auto;
 		max-width: none;
 		padding: 0 8px;
@@ -1148,10 +1281,6 @@
 			transform: none;
 		}
 
-		.tab.active {
-			animation: none;
-		}
-
 		.tab-unread {
 			animation: none;
 		}
@@ -1164,22 +1293,24 @@
 	/* The label's own face and size, so the title does not move or change
 	   size when it becomes editable. The field shows as a wash around the
 	   text, drawn as a spread shadow so it takes no room. */
-	.tab-rename-input {
-		flex: 1;
-		min-width: 60px;
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
-		/* design-ok: the field's wash spread past the text, not depth */
-		box-shadow: 0 0 0 3px var(--hover-bg);
-		color: var(--color-foreground);
-		font: inherit;
-		outline: none;
-		caret-color: var(--color-primary);
+	/* Renaming: the tab is the field (app.css). It outranks the glass of
+	   the tab you are on and the hover wash. */
+	/* The × can't be seen or pressed while you type. */
+	.tab.renaming .tab-close {
+		visibility: hidden;
 	}
 
-	.tab.renaming {
+	/* The field takes the label's room. */
+	.tab.renaming .rename-sizer {
+		flex: 1;
+	}
+
+	.tab.renaming,
+	.tab.renaming:hover {
+		background: var(--rename-fill);
+		color: var(--color-foreground);
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
 		cursor: text;
 	}
 
@@ -1194,7 +1325,13 @@
 
 
 
+	/* The × sits over the end of the tab rather than beside the title, so
+	   a tab whose × is hidden gives its title the full width. While the ×
+	   shows, the title stops short of it and fades before it. */
 	.tab-close {
+		position: absolute;
+		top: calc(50% - 10px);
+		right: 8px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1221,6 +1358,16 @@
 		opacity: 1;
 	}
 
+	.tab:hover .tab-label,
+	.tab.active:not(.only) .tab-label {
+		margin-right: 20px;
+	}
+
+	/* A compact tab shows its icon and, on hover, its × beside it. */
+	.tab-bar.compact .tab:not(.active) .tab-close {
+		position: static;
+	}
+
 	/* Neutral, not red. Red is for destructive-with-consequence; closing a tab
 	   loses nothing and is one ⌘⇧T away from undone. The old error-tinted
 	   treatment (plus a red wash over the whole tab) read as a warning for an
@@ -1236,8 +1383,6 @@
 
 	.tab-close:focus-visible {
 		opacity: 1;
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	.new-tab-btn {
@@ -1283,8 +1428,6 @@
 	}
 
 	.new-tab-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 		color: var(--color-foreground);
 	}
 

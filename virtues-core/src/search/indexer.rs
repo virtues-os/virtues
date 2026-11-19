@@ -174,7 +174,8 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
 /// until a short batch signals the backlog is empty (or [`MAX_DRAIN_DURATION`]
 /// trips). One invocation therefore drains an entire onboarding backlog in
 /// hours instead of trickling `BATCH_SIZE` records per 15-minute cron tick.
-/// No sleep between batches — the embed sidecar is the natural rate limiter.
+/// No sleep between batches: the embedder paces its own requests (see
+/// `LocalEmbedder::embed_batch_async`).
 pub(crate) async fn drain(pool: &PgPool, _lock: &IndexerLock) -> Result<u64> {
     let embedder = get_embedder().await?;
 
@@ -460,7 +461,8 @@ async fn evict_out_of_scope(
 ///
 /// 32 is a deliberate middle: large enough that per-request overhead disappears,
 /// small enough that a single oversized input cannot fail a huge group, and that
-/// the sidecar's memory stays bounded on a box with no GPU.
+/// the sidecar's memory stays bounded on a box with no GPU. The embedder may
+/// split a group into smaller requests on a slow machine.
 const EMBED_BATCH: usize = 32;
 
 /// Embed every chunk, in groups, preserving order.
@@ -1294,7 +1296,7 @@ pub(crate) mod geometry_tests {
             "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a \
              WHERE (a.attrelid, a.attname) IN (('search_vectors'::regclass, 'embedding'), \
                    ('search_topic_cache'::regclass, 'embedding'), \
-                   ('app_projects'::regclass, 'centroid')) \
+                   ('app_threads'::regclass, 'centroid')) \
              ORDER BY a.attrelid::regclass::text",
         )
         .fetch_all(pool)

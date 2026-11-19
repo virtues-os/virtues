@@ -231,7 +231,15 @@
 				{@const url = token?.href}
 				{@const target = linkTarget(url)}
 				{@const web = target.kind === 'external' ? citations?.byUrl.get(webKey(url)) : undefined}
-				{#if target.kind === 'query' && citations?.queries.has(target.callId)}
+				{@const figureOf = target.kind === 'query' && target.figure ? citations?.queries.get(target.callId) : undefined}
+				{#if target.kind === 'query' && target.figure && (token?.text ?? '').length <= 24 && figureOf?.series?.[figureOf.columns[target.figure - 1]]}
+					<!-- A figure with the rows behind it: plain text here. Once the
+					     turn ends, the show call's ShowSeries makes it open its
+					     series, or sets a sparkline after it. A longer link is a
+					     phrase, not a figure: it stays a link, and the figure is
+					     found in the text by its value. -->
+					<span data-vk-figure={target.figure} data-vk-call={target.callId}>{@render children()}</span>
+				{:else if target.kind === 'query' && citations?.queries.has(target.callId)}
 					<!-- The rows behind a figure: a citation like a record's.
 					     A click opens its card; Cmd-click opens the rows beside. -->
 					<button

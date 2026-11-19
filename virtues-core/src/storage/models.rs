@@ -71,6 +71,11 @@ pub struct UserProfile {
     /// Timezone of the box's physical home location (IANA). Stable anchor +
     /// fallback floor — NOT the owner's current location. See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
+    /// The units the owner reads in: 'us' or 'metric' (`api::profile::Units`).
+    pub units: String,
+    /// How long audio recordings are kept, in days; None keeps them forever
+    /// (`api::recordings`).
+    pub keep_recordings_days: Option<i32>,
     /// Getting-started sections the owner dismissed from Home (section ids).
     /// Dismissed means gone, not collapsed — the features stay reachable where
     /// they permanently live. See agents/record/getting-started.md.
@@ -115,6 +120,9 @@ pub struct AssistantProfile {
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
+    /// Unread. The assistant reads every kind of record; the column stays
+    /// until the owner decides to drop it.
+    pub reading: serde_json::Value,
     /// How the owner wants to be spoken to, in their own words. Added beneath
     /// the assistant's character in the prompt, never in place of it.
     /// NULL = no notes. Migration 0035.

@@ -14,15 +14,17 @@
 	 * their own. The fix was not a bigger API — it already took snippets. It
 	 * was speaking the same language as everything around it.
 	 *
-	 * Shape is design-grammar.md §6: pills, 40px tall, `0 22px`, one filled
-	 * claret action per page. The sizes are the 8pt grid either side of that.
+	 * Shape is design.md, "Primitives": a box at `--radius-md`, and one filled
+	 * action per page, in the accent. One height, `--control-h`, and 44px on
+	 * a touch screen.
 	 *
 	 * `variant` is a claim about the button's job, not its color:
 	 *
-	 *   primary    the one action the page is for. Claret. At most one per page.
+	 *   primary    the one action the page is for, filled with the accent. At most one per page.
 	 *   secondary  a real action that is not the point of the page.
 	 *   ghost      a control in chrome; nothing on the desk may out-shout the page.
-	 *   danger     destroys something. Never also the primary.
+	 *   danger     destroys something. Never also the primary. Red ink and an
+	 *              edge at rest; it fills only under the pointer.
 	 *
 	 * The ramp (`--hover-bg` / `--active-bg`) is a foreground mix, never a
 	 * surface token — `--surface-elevated` against `--surface` is a 4% step
@@ -46,7 +48,6 @@
 	 */
 	let {
 		variant = "primary",
-		size = "md",
 		disabled = false,
 		loading = false,
 		icon,
@@ -56,7 +57,6 @@
 		children,
 	}: {
 		variant?: "primary" | "secondary" | "ghost" | "danger";
-		size?: "sm" | "md" | "lg";
 		disabled?: boolean;
 		/** Working. Holds its size, stops taking clicks, and says `aria-busy`. */
 		loading?: boolean;
@@ -73,7 +73,6 @@
 	{type}
 	class="v-btn {className}"
 	data-variant={variant}
-	data-size={size}
 	data-loading={loading ? "true" : undefined}
 	disabled={disabled || loading}
 	aria-busy={loading || undefined}
@@ -104,15 +103,28 @@
 		justify-content: center;
 		gap: 6px;
 		border: 1px solid transparent;
-		border-radius: var(--radius-full);
+		/* A control's box radius (design.md, "Radius"): the pill is the
+		   composer's alone. */
+		border-radius: var(--radius-md);
 		font-family: var(--font-sans);
 		font-weight: 500;
 		white-space: nowrap;
 		cursor: pointer;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow, and a press fills at once. A labelled button takes the
+		   fill only, like a row: a wide control that shrank would wobble. */
 		transition:
-			background-color 120ms ease,
-			border-color 120ms ease,
-			color 120ms ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			border-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.v-btn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.v-btn:active:not(:disabled) {
+		transition-duration: var(--motion-press);
 	}
 
 	.v-btn:disabled {
@@ -153,7 +165,7 @@
 
 	.v-btn-spinner :global(svg) {
 		display: block;
-		animation: v-btn-spin 1s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	/* Busy is not disabled. The button takes no clicks while it works, but the
@@ -164,55 +176,34 @@
 		cursor: progress;
 	}
 
-	@keyframes v-btn-spin {
-		from {
-			transform: rotate(0deg);
+	/* One height (design.md, "Controls"): the 34px every box you click
+	   shares, and the thumb's 44px on a touch screen. */
+	.v-btn {
+		height: var(--control-h);
+		padding: 0 16px;
+		font-size: var(--text-label);
+	}
+
+	@media (pointer: coarse) {
+		.v-btn {
+			height: var(--control-touch-h);
+			padding: 0 20px;
 		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-btn:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-	}
-
-	/* Sizes — 8pt grid, with the grammar's 40px in the middle. */
-	.v-btn[data-size="sm"] {
-		height: 32px;
-		padding: 0 14px;
-		font-size: 13px;
-	}
-
-	.v-btn[data-size="md"] {
-		height: 40px;
-		padding: 0 22px;
-		font-size: 14px;
-	}
-
-	.v-btn[data-size="lg"] {
-		height: 48px;
-		padding: 0 28px;
-		font-size: 15px;
-	}
-
-	/* Claret (`--color-secondary`) is the page's single filled action, and is
-	   the one exception to `--color-primary` being the only color the pane
-	   carries (design-grammar.md §5). Never a rule, a fill, a border for
-	   emphasis, or a second button. */
+	/* The page's single filled action, in the accent (design.md, "Accent").
+	   One per page: never a second filled button. */
 	.v-btn[data-variant="primary"] {
-		background: var(--color-secondary);
+		background: var(--color-primary);
 		color: var(--color-surface);
 	}
 
 	.v-btn[data-variant="primary"]:hover:not(:disabled) {
-		background: var(--color-secondary-hover);
+		background: var(--color-primary-hover);
 	}
 
 	.v-btn[data-variant="primary"]:active:not(:disabled) {
-		background: var(--color-secondary-active);
+		background: var(--color-primary-active);
 	}
 
 	.v-btn[data-variant="secondary"] {
@@ -227,7 +218,7 @@
 	}
 
 	.v-btn[data-variant="secondary"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	.v-btn[data-variant="ghost"] {
@@ -241,16 +232,30 @@
 	}
 
 	.v-btn[data-variant="ghost"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
+	/* Danger is drawn, not filled, until you point at it: the one filled
+	   button on a page is the action the page is for (design.md,
+	   "Primitives"), and a destructive one must not look like it at rest. */
 	.v-btn[data-variant="danger"] {
-		background: var(--color-error);
-		color: var(--color-surface);
+		background: var(--color-surface);
+		border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+		color: var(--color-error);
 	}
 
 	.v-btn[data-variant="danger"]:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-error) 88%, black);
+		background: var(--color-error);
+		border-color: var(--color-error);
+		color: var(--color-surface);
+	}
+
+	.v-btn[data-variant="danger"]:active:not(:disabled) {
+		/* Toward the ink, not toward black: in Dark that lightens the red
+		   instead of sinking it into the ground. */
+		background: color-mix(in srgb, var(--color-error) 85%, var(--color-foreground));
+		border-color: transparent;
+		color: var(--color-surface);
 	}
 
 	/* Keep the information, drop the travel (StateBlock.svelte does the same).

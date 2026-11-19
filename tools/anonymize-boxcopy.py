@@ -326,13 +326,13 @@ def main():
              f"where kind is distinct from 'article'", tuples=False)
     print("  app_pages: user-written pages blanked")
 
-    # Names the owner chose: projects and chat titles. These render in the
+    # Names the owner chose: threads and chat titles. These render in the
     # sidebar of EVERY screenshot, and an authored title routinely names a
     # relationship, a diagnosis or an employer outright — more identifying than
     # anything the prose says. Renamed, not substituted: they are labels a
     # person wrote, not entity mentions, so no mapping reaches them.
     for table, col, pool in [
-        ("app_projects", "name",
+        ("app_threads", "name",
          ["Reading", "Field notes", "House", "Training", "Travel", "Recipes",
           "Projects", "Music", "Garden", "Letters"]),
         ("app_chats", "title",
@@ -347,7 +347,7 @@ def main():
         print(f"  {table}.{col}: {len(ups)} renamed")
 
     # Pinned sidebar shortcuts carry their OWN label, copied from whatever they
-    # pointed at when they were pinned — so renaming the project leaves the
+    # pointed at when they were pinned — so renaming the thread leaves the
     # original title sitting in the sidebar of every screenshot. Re-derive each
     # label from its target, and fall back to a neutral one.
     pins = psql(db, "select id, coalesce(url,'') from app_pins order by sort_order")
@@ -355,7 +355,7 @@ def main():
     for i, (pid, url) in enumerate(pins):
         label = None
         if "/project/" in url:
-            nb = psql(db, f"select name from app_projects where id="
+            nb = psql(db, f"select name from app_threads where id="
                           f"{q(url.rsplit('/', 1)[-1])}")
             label = nb[0][0] if nb else None
         elif "/page/" in url:

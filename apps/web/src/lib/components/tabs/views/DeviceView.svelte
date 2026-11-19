@@ -1,33 +1,20 @@
 <!--
-  One device — the only page about a device, whichever device it is.
+  One device, the only page about a device, whichever device it is.
 
-  Replaces three: DeviceDetailView (the box's thin view of any device),
-  ThisMacView (the Mac's local instrument panel), and ThisDeviceView (the same
-  for iOS). They were three because a device can be looked at from two places —
-  what your SERVER knows about it, and what the DEVICE knows about itself — and
-  those answer different questions with different data.
-
-  Splitting them by vantage was right; making the reader discover the vantage
-  was not. Permissions appeared on two pages with different values, the version
-  appeared on two pages in different shapes, and nothing said why they
-  disagreed. On 2026-08-28 that cost a day: a collector reporting 1.0.0 beside
-  an app reporting 1.0.25, and no screen able to say which number governed what.
-
-  So the vantage is furniture now. Every section states where its facts come
-  from — `measured here` or `as your server heard it` — and the local sections
-  say so plainly rather than rendering empty panels that read as broken.
-
-  What the box holds per device is `DeviceListItem`: identity, pairing, last
-  contact, reported build, self-reported permissions. Everything richer —
-  queue depth, live permission probes, the update state — comes from a Tauri
-  plugin over local IPC and exists only on the machine it describes.
+  A device can be looked at from two places: what your server knows about it,
+  and what the device knows about itself. The box holds `DeviceListItem` per
+  device: identity, pairing, last contact, reported build and self-reported
+  permissions. Everything richer (queue depth, live permission probes, the
+  update state) comes from a Tauri plugin over local IPC and exists only on
+  the machine it describes, so those sections show only on that machine.
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
+	import { Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
-	import { onDestroy, onMount } from "svelte";
+	import { onMount } from "svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { listDevices } from "$lib/api/client";
@@ -38,7 +25,6 @@
 		kindIcon,
 		collectorOf,
 		revokeDeviceFlow,
-		backToDevices,
 		type Device,
 		type DevicesResponse,
 	} from "$lib/devices/shared";
@@ -97,21 +83,28 @@
 	let shell = $state<ShellIdentity | null>(null);
 	let upd = $state<AppUpdateState | null>(null);
 	let toggling = $state(false);
-	let poll: ReturnType<typeof setInterval> | null = null;
 
 	async function readLocal() {
 		status = await getCollectorStatus();
 		upd = await appUpdateState();
 	}
 
-	onMount(async () => {
-		if (!local) return;
-		shell = await shellIdentity();
-		await readLocal();
-		poll = setInterval(() => void readLocal(), 2000);
+	onMount(() => {
+		if (local) void shellIdentity().then((s) => (shell = s));
 	});
-	onDestroy(() => {
-		if (poll) clearInterval(poll);
+
+	// Each reading starts the collector CLI as a process, so read only while
+	// this view is on screen: not in a kept-alive tab behind another, and not
+	// while the window is in the background. The timer starts here, not after
+	// an await in onMount, where a view closed during the await kept polling
+	// forever.
+	$effect(() => {
+		if (!local || active === false) return;
+		void readLocal();
+		const timer = setInterval(() => {
+			if (document.visibilityState === "visible") void readLocal();
+		}, 2000);
+		return () => clearInterval(timer);
 	});
 
 	async function recheck() {
@@ -217,11 +210,13 @@
 {:else if res.error}
 	<ErrorState message={String(res.error)} />
 {:else if !device}
-	<Page title="No such device" description="Someone may have revoked it.">
-		<Button variant="secondary" onclick={backToDevices}>Back to devices</Button>
-	</Page>
+	<SettingsPage title="No such device" lede="It may have been unpaired." back={{ route: "/virtues/devices", label: "Devices" }} />
 {:else}
-	<Page title={device.label} description="What this device runs, and whether it is reaching your server.">
+	<SettingsPage
+		title={device.label}
+		lede="What this device runs, and whether it is reaching your server."
+		back={{ route: "/virtues/devices", label: "Devices" }}
+	>
 		<!-- ── Header: the two questions people open this page for ─────────── -->
 		<Card>
 			<div class="flex items-center gap-3">
@@ -231,7 +226,7 @@
 						{kindLabel(device.kind)}
 						{#if device.paired_at}
 							<span class="text-foreground-subtle font-normal">
-								· paired {formatTimeAgo(device.paired_at)}
+								· paired {formatTimeAgo(device.paired_at)}{device.paired_from_ip ? ` from ${device.paired_from_ip}` : ""}
 							</span>
 						{/if}
 					</div>
@@ -259,7 +254,7 @@
 
 		<!-- ── Now — live, and only where there is something live to read ──── -->
 		{#if localMac}
-			<Section title="Now" note="measured here">
+			<Section title="Now">
 			<Card>
 				<div class="flex items-center gap-3">
 					<span
@@ -295,7 +290,7 @@
 		     server, the collector ships inside the app. Printing three bare
 		     numbers is what made "is this current?" unanswerable. -->
 		{#if hasApp}
-		<Section title="Software" note={local ? "measured here" : "as your server heard it"}>
+		<Section title="Software">
 		<Card list>
 		<ul>
 			<Field
@@ -349,7 +344,7 @@
 		     told about months ago is not the same claim as one read a second
 		     ago, and the label is what keeps them apart. -->
 		{#if localMac || reporter?.permissions}
-			<Section title="Permissions" note={localMac ? "measured here" : "as this device last reported"}>
+			<Section title="Permissions">
 			<Card list>
 				{#if localMac}
 					<MacPermissions {status} onRecheck={recheck} />
@@ -362,7 +357,7 @@
 
 		<!-- ── Feeds ───────────────────────────────────────────────────────── -->
 		{#if device.source_id}
-			<Section title="Feeds" note="as your server heard it">
+			<Section title="Feeds">
 			<Card class="text-sm text-foreground">
 				Sends as <span class="font-mono text-foreground-muted">{device.source_id}</span>
 			</Card>
@@ -382,8 +377,8 @@
 
 		<div class="mt-8">
 			<Button variant="ghost" onclick={() => void revokeDeviceFlow(device)}>
-				Revoke this device
+				Unpair this device
 			</Button>
 		</div>
-	</Page>
+	</SettingsPage>
 {/if}

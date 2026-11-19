@@ -1,37 +1,21 @@
 <!--
 	WikiView.svelte
+	The wiki room. Its sections are route-driven and deep-linkable, and this
+	view renders whatever the route names.
 
-	The wiki room: the wikipedia of one life. Sections are route-driven and
-	deep-linkable, navigated from the SIDEBAR — the rail's Wiki panel carries
-	the rows, and this room renders whatever the route names.
-
-	There is deliberately no in-page nav. The room had an eleven-item SubNav
-	strip across the top at the same time the sidebar panel listed the same
-	eleven words, one column to the left: the same list twice in one viewport.
-	The sidebar won because eleven items is a column's shape, not a strip's —
-	a horizontal run of eleven either wraps or scrolls, which is the same smell
-	that broke Settings' nav when it grew a second row of underline tabs.
-
-	`section` below is derived from `tab.route` and always was, so nothing here
-	depended on the strip: SubNav only ever WROTE the route, and the sidebar's
-	rows write it the same way (through `windowShellStore.navigate`, which also
-	pushes history, so Back still walks the sections).
-
-	  /wiki           Overview — the front page: standfirst, activity, on
-	                  this day, the latest entry, and the index.
-	  /wiki/days      Days — the temporal spine, a six-month heatmap + chronicle.
-	  /wiki/entities  Entities — one index; person/place/org are filters.
-	  /wiki/identity  Narrative identity — user-authored, essay register.
+	  /wiki           The front page (WikiFront): find, this week, your life,
+	                  on this day and lately. Its links reach the sections.
+	  /wiki/days      Days: a year's heatmap and the chronicle.
+	  /wiki/entities  One index; person, place and organization are filters.
+	  /wiki/identity  Narrative identity, written by you.
+	  /wiki/years, /wiki/chapters, /wiki/things, /wiki/history
 
 	Legacy routes (/wiki/people, /wiki/places, /wiki/orgs, /wiki/unlinked,
 	/entities) fold into the entities section, presetting its type filter.
-
-	The overview is set as an essay with a marginalia rail: the main column
-	carries the text and the charts; the margin carries the numbers and
-	asides. Charts and inline components stay crisp; the prose stays serif.
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { TextAction } from '$lib';
 	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
@@ -47,12 +31,10 @@
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { onMount, untrack } from 'svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import { Button } from '$lib';
-	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
-	import { lede, ledeSentence } from '$lib/wiki/lede';
+	import { getLocalDateSlug } from '$lib/utils/dateUtils';
+	import { ledeSentence } from '$lib/wiki/lede';
 	import { veilMarks } from '$lib/wiki/dayArticle';
 	import { veiled } from '$lib/actions/veil';
 	import { veil } from '$lib/stores/veil.svelte';
@@ -60,25 +42,13 @@
 		listPeople,
 		listPlaces,
 		listOrganizations,
-		listDays,
-		listDayActivity,
 		listYears,
 		getYear,
-		getChapters,
-		type ChapterApi,
 		type YearApi,
 		type YearSummaryApi,
-		listOnThisDay,
-		getNarrativeIdentity,
-		getLifeline,
-		listHistory,
-		editKey,
-		countOpenNotes,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
 		type WikiOrganizationListItem,
-		type OnThisDayApi,
-		type HistoryEntry,
 	} from '$lib/wiki/api';
 	import { activityThresholds, toActivityDays } from '$lib/wiki/activity';
 	import { getProfile } from '$lib/api/client';
@@ -87,28 +57,24 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
-	import { WIKI_MODE } from '$lib/sidebar/modes';
-	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
+	import WikiFront from '$lib/components/wiki/WikiFront.svelte';
+	import ListRow from '$lib/components/datagrid/ListRow.svelte';
+	import PersonPicture from '$lib/components/wiki/PersonPicture.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// The section list lives in ONE place: WIKI_MODE in `lib/sidebar/modes.ts`,
-	// which the overview renders as its index. People/Places/Orgs stay their
-	// own rows there even though the content folds them into one Entities
-	// index — the legacy segment presets the index's type filter (see
-	// LEGACY_TYPE below).
-	//
-	// Two sections here have no row in that index, on purpose:
-	//   - `overview` is the index's own page, `/wiki`, which the sidebar's
-	//     Wiki door opens.
-	//   - the day page is its own route (`/day`), not a `/wiki/<section>` one,
-	//     so the index's "Today" row points outside this view.
+	// The section list lives in one place: WIKI_MODE in `lib/sidebar/modes.ts`,
+	// whose Time and Subjects rows the front page links to. People, Places and
+	// Organizations stay their own rows there even though the content folds
+	// them into one Entities index: the legacy segment presets the index's type
+	// filter (see LEGACY_TYPE below). History has no row; the front page links
+	// to it at the bottom.
 
 	type Section = 'overview' | 'things' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history';
 
 
-	// The active section comes from the route; the overview's index does the linking.
+	// The active section comes from the route.
 	// Legacy per-type routes land in the unified entities section.
 	const LEGACY_TYPE: Record<string, 'person' | 'place' | 'org'> = {
 		people: 'person',
@@ -146,6 +112,13 @@
 					: (routeSegment as Section)
 	);
 
+	// Each section of the room keeps its own width: the days' grid is full,
+	// the lists and articles are set to the reading measure. The overview
+	// (WikiFront) sets its own.
+	const width = usePageWidth(() => (section === 'overview' ? null : section === 'days' ? 'full' : 'reading'), {
+		part: () => section,
+	});
+
 	// The lifeline left the wiki for the Timeline, the rail's own room for a
 	// life laid out in time. Its old door lands there.
 	$effect(() => {
@@ -162,9 +135,6 @@
 	// window of day activity, with a comment explaining that no years endpoint
 	// existed — so a year before the record simply was not a year, and every
 	// row linked to the days index regardless of which year you clicked.
-	/** Their chapters, for the front page. */
-	let overviewChapters = $state<ChapterApi[]>([]);
-
 	let years = $state<YearSummaryApi[]>([]);
 	let yearsLoaded = $state(false);
 
@@ -191,6 +161,8 @@
 		id: string;
 		name: string;
 		entityType: 'person' | 'place' | 'org';
+		/** A person's picture, usually their contact photo. Places and orgs have none. */
+		picture: string | null;
 		subtitle: string | null;
 		route: string;
 		refCount: number;
@@ -234,6 +206,7 @@
 					id: p.id,
 					name: p.name,
 					entityType: 'person',
+					picture: p.picture,
 					subtitle: p.relationship_category,
 					route: `/person/${p.id}`,
 					refCount: p.ref_count ?? 0,
@@ -243,6 +216,7 @@
 					id: p.id,
 					name: p.name,
 					entityType: 'place',
+					picture: null,
 					subtitle: p.category || p.address,
 					route: `/place/${p.id}`,
 					refCount: p.ref_count ?? 0,
@@ -252,6 +226,7 @@
 					id: o.id,
 					name: o.name,
 					entityType: 'org',
+					picture: null,
 					subtitle: o.organization_type || o.relationship_type,
 					route: `/org/${o.id}`,
 					refCount: o.ref_count ?? 0,
@@ -275,41 +250,26 @@
 		}
 	}
 
+	// The list is read, not scanned: a name and a line under it, grouped by
+	// kind. Within a group the order is by mentions (see loadAllEntities).
 	const entityColumns: Column<UnifiedEntity>[] = [
-		{
-			key: 'name',
-			label: 'Name',
-			icon: 'mynaui:users-group',
-			width: '45%',
-			minWidth: '200px',
-		},
+		{ key: 'name', label: 'Name' },
+		{ key: 'subtitle', label: 'Details', hidden: true },
 		{
 			key: 'entityType',
-			label: 'Type',
-			icon: 'mynaui:tag',
-			width: '20%',
-			minWidth: '120px',
-			getValue: (item) =>
-				item.isSelf ? `${typeConfig[item.entityType].label} · You` : typeConfig[item.entityType].label,
-		},
-		{
-			key: 'subtitle',
-			label: 'Details',
-			icon: 'mynaui:info-circle',
-			width: '25%',
-			minWidth: '140px',
-			hideOnMobile: true,
-		},
-		{
-			key: 'refCount',
-			label: 'Mentions',
-			icon: 'mynaui:link',
-			width: '10%',
-			minWidth: '90px',
-			hideOnMobile: true,
-			getValue: (item) => (item.refCount ? item.refCount.toLocaleString() : '—'),
+			label: 'Kind',
+			hidden: true,
+			groupable: true,
+			groupOrder: ['People', 'Places', 'Organizations'],
+			getValue: (item) => typeConfig[item.entityType].plural,
 		},
 	];
+
+	/** The row's second line, with its first letter raised: "friend" reads "Friend". */
+	function detailLine(entity: UnifiedEntity): string {
+		const text = entity.subtitle?.trim() ?? '';
+		return text ? text[0].toUpperCase() + text.slice(1) : '';
+	}
 
 	/**
 	 * Row menu: the grid's default items, plus the one correction this index
@@ -396,140 +356,23 @@
 		}
 	}
 
-	// One filter instead of three tabs: person/place/org narrow the same index.
-	const entityFilters = $derived<FilterDef<UnifiedEntity>[]>([
-		{
-			id: 'type',
-			label: 'Type',
-			kind: 'multi',
-			field: 'entityType',
-			defaultValue: entityTypePreset ? [entityTypePreset] : null,
-			options: [
-				{ value: 'person', label: 'People', icon: typeConfig.person.icon },
-				{ value: 'place', label: 'Places', icon: typeConfig.place.icon },
-				{ value: 'org', label: 'Organizations', icon: typeConfig.org.icon },
-			],
-		},
-	]);
+	// Grouping by kind does what a type filter would. A legacy per-kind
+	// route (/wiki/people) lists that kind alone.
+	const listedEntities = $derived(
+		entityTypePreset ? allEntities.filter((e) => e.entityType === entityTypePreset) : allEntities
+	);
 
-	// --- Overview data ---
+	// What the front page's finder looks through.
+	const findable = $derived(
+		allEntities.map((e) => ({
+			name: e.name,
+			route: e.route,
+			kind: e.isSelf ? 'You' : typeConfig[e.entityType].label,
+		}))
+	);
 
-	let unwrittenDays = $state(0);
-	let onThisDay = $state<OnThisDayApi[]>([]);
-	let latestEntry = $state<{ slug: string; label: string; lede: string | null } | null>(null);
-	let standfirst = $state<string | null>(null);
-
-	// The whole record's lanes, read for two facts: when the record starts,
-	// and which lanes have gone quiet ("where it's thin").
-	let recordSince = $state<string | null>(null);
-	let thinLanes = $state<string[]>([]);
-
-	// What changed: the review loop's front door — recent article edits and
-	// the open-note count. Without this the machine writes into a room nobody
-	// visits.
-	let recentEdits = $state<HistoryEntry[]>([]);
-	let openNoteCount = $state(0);
-
-	// The window the overview counts unwritten days over.
-	const UNWRITTEN_WEEKS = 26;
-
-	onMount(async () => {
+	onMount(() => {
 		loadAllEntities();
-
-		try {
-			const endDate = new Date();
-			const startDate = new Date();
-			startDate.setDate(startDate.getDate() - UNWRITTEN_WEEKS * 7);
-			const recentStart = new Date();
-			recentStart.setDate(recentStart.getDate() - 45);
-
-			const [activity, otd, recent, identity, lifeline, edits, openNotes, chapters] =
-				await Promise.all([
-					listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
-					listOnThisDay(),
-					listDays(getLocalDateSlug(recentStart), getLocalDateSlug(endDate)),
-					getNarrativeIdentity(),
-					// No window: the whole record, to find where it starts.
-					getLifeline(560),
-					listHistory(6),
-					countOpenNotes(),
-					getChapters(),
-				]);
-
-			overviewChapters = chapters ?? [];
-
-			if (lifeline && lifeline.lanes.length) {
-				recordSince = new Date(lifeline.from).toLocaleDateString('en-US', {
-					month: 'long',
-					year: 'numeric',
-				});
-
-				// A lane that was collecting and has gone quiet for over a week.
-				const fromMs = new Date(lifeline.from).getTime();
-				const toMs = new Date(lifeline.to).getTime();
-				const quiet: string[] = [];
-				for (const l of lifeline.lanes) {
-					if (!l.first_seen) continue; // never collected — the console's story
-					let last = -1;
-					for (let i = l.density.length - 1; i >= 0; i--) {
-						if (l.density[i] > 0) {
-							last = i;
-							break;
-						}
-					}
-					if (last < 0) continue;
-					const lastMs = fromMs + ((last + 1) / l.density.length) * (toMs - fromMs);
-					if (Date.now() - lastMs > 7 * 86_400_000) {
-						const label = l.id.charAt(0).toUpperCase() + l.id.slice(1);
-						const since = new Date(lastMs).toLocaleDateString('en-US', {
-							month: 'short',
-							day: 'numeric',
-						});
-						quiet.push(`No ${label.toLowerCase()} data since ${since}`);
-					}
-				}
-				thinLanes = quiet.slice(0, 3);
-			}
-			recentEdits = edits;
-			openNoteCount = openNotes;
-
-			unwrittenDays = activity.filter((d) => d.event_count > 0 && !d.narrated).length;
-
-			onThisDay = otd;
-
-			// recent is date DESC; the latest narrated day is the featured entry.
-			const featured = recent.find((d) => d.article);
-			if (featured) {
-				latestEntry = {
-					slug: featured.date,
-					label: new Date(featured.date + 'T12:00:00').toLocaleDateString('en-US', {
-						weekday: 'long',
-						month: 'long',
-						day: 'numeric',
-						year: 'numeric',
-					}),
-					// The day's own opening paragraph, which is its short form
-					// everywhere. `epigraph` was a column the narrate prompt
-					// forbids, so this card showed nothing on every box.
-					lede: lede(featured.article),
-				};
-			}
-
-			// The identity's first PROSE line is the front page's standfirst —
-			// headings are skipped, since the document now arrives whole
-			// ("## Where you have been" would otherwise be the standfirst).
-			const firstLine = identity?.content
-				?.split('\n')
-				.filter((l) => !l.trim().startsWith('#'))
-				.map((l) => l.replace(/^[>*\-\s]+/, '').trim())
-				.find((l) => l.length > 0);
-			if (firstLine) {
-				standfirst =
-					firstLine.length > 180 ? firstLine.slice(0, 177) + '…' : firstLine;
-			}
-		} catch (e) {
-			console.error('Failed to load overview data:', e);
-		}
 	});
 
 	// --- Days: one year as a heatmap ---
@@ -598,225 +441,15 @@
 		windowShellStore.openTabFromRoute(entity.route);
 	}
 
-	// The Wiki's sections, grouped as WIKI_MODE groups them (Time, Subjects,
-	// Drive). The sidebar has one Wiki door, so this index is how the
-	// sections are reached; it is the same list, in the same order.
-	const sectionGroups = $derived.by(() => {
-		const groups: { name: string; rows: typeof WIKI_MODE.rows }[] = [];
-		for (const row of WIKI_MODE.rows) {
-			const name = row.group ?? '';
-			const last = groups.at(-1);
-			if (last && last.name === name) last.rows.push(row);
-			else groups.push({ name, rows: [row] });
-		}
-		return groups;
-	});
-
-	// Overview cards switch this pane to the matching section.
-	function goTo(path: string) {
-		windowShellStore.updateTab(tab.id, { route: path });
-	}
-
-	// Today's formatted date
 	const today = new Date();
 	const todaySlug = getLocalDateSlug(today);
-	const todayFormatted = formatLongDate(today);
 
-	function yearOf(slug: string): string {
-		return slug.slice(0, 4);
-	}
 </script>
 
-<div class="wiki-view">
+<div class="wiki-view" style:--page-width={width.css}>
 	<main class="content">
 		{#if section === 'overview'}
-			<div class="ovw">
-				<header class="mast">
-					<h1>Wiki</h1>
-					<p class="standfirst">
-						{standfirst ??
-							'A record of your life - its days, its people and places, and the story they add up to.'}
-					</p>
-					<!-- Computed, never written (§17.2): every number here is SQL,
-					     so the line is always current and never goes stale. -->
-					<p class="record-line">
-						{counts.person}
-						{counts.person === 1 ? 'person' : 'people'} · {counts.place}
-						{counts.place === 1 ? 'place' : 'places'} · {counts.org}
-						{counts.org === 1 ? 'organization' : 'organizations'}{#if recordSince}&nbsp;— records
-							since {recordSince}{/if}
-					</p>
-					<p class="today-line">
-						Today's entry is
-						<TextAction inline onclick={() => openDay(todaySlug)}>
-							{todayFormatted}
-						</TextAction>
-					</p>
-				</header>
-
-				<!-- The sections. Moving to one moves this tab, as any view moving
-				     within itself does; Back returns here. -->
-				<nav class="ovw-index" aria-label="Wiki sections">
-					{#each sectionGroups as group (group.name)}
-						<div class="ovw-index-group">
-							<h2 class="ovw-index-head">{group.name}</h2>
-							{#each group.rows as row (row.id)}
-								<button
-									type="button"
-									class="ovw-index-row"
-									onclick={() => windowShellStore.navigate(row.href, { label: `Wiki · ${row.label}` })}
-								>
-									{#if row.glyph}<AtlasIcon name={row.glyph} size={SHELL_GLYPH_PX} bare />{/if}
-									<span>{row.label}</span>
-								</button>
-							{/each}
-						</div>
-					{/each}
-				</nav>
-
-				<!-- Their own partition of their life. The front page led with a heatmap of how much data
-				     arrived, which is a fact about the collector rather than about
-				     the life; the chapters are the first thing here the person
-				     actually wrote. -->
-				{#if overviewChapters.length}
-					<section class="sec">
-						<div class="sec-main">
-							<h2>Chapters</h2>
-							<ol class="chapter-list">
-								{#each overviewChapters as c (c.id)}
-									<li>
-										<span class="ch-name">{c.title ?? 'An unnamed stretch'}</span>
-										<span class="ch-span">
-											{c.started_at.slice(0, 4)} – {c.ended_at ? c.ended_at.slice(0, 4) : 'now'}
-										</span>
-									</li>
-								{/each}
-							</ol>
-						</div>
-						<aside class="sec-aside">
-							<p class="aside-note">
-								You name every chapter yourself. Each day in your history falls inside
-								exactly one.
-							</p>
-							<a class="aside-link" href="/wiki/chapters">All chapters →</a>
-						</aside>
-					</section>
-				{/if}
-
-				<section class="sec">
-					<div class="sec-main">
-						<h2>On this day</h2>
-						{#if onThisDay.length === 0}
-							<p class="quiet">
-								No earlier years have data for this date yet.
-							</p>
-						{:else}
-							<ul class="otd">
-								{#each onThisDay as entry (entry.date)}
-									<li>
-										<button class="otd-row" onclick={() => openDay(entry.date)}>
-											<span class="otd-year">{yearOf(entry.date)}</span>
-											{#if entry.lede}
-												<span class="otd-epigraph">{entry.lede}</span>
-											{:else if entry.narrated}
-												<span class="otd-epigraph">A narrated day</span>
-											{:else}
-												<span class="otd-stub">
-													{entry.event_count}
-													{entry.event_count === 1 ? 'event' : 'events'}, unwritten
-												</span>
-											{/if}
-										</button>
-									</li>
-								{/each}
-							</ul>
-						{/if}
-					</div>
-					<aside class="sec-aside">
-						<p class="aside-note">{todayFormatted.replace(/,\s*\d{4}$/, '')} in earlier years.</p>
-					</aside>
-				</section>
-
-				{#if latestEntry}
-					<section class="sec">
-						<div class="sec-main">
-							<h2>The latest entry</h2>
-							<button class="featured" onclick={() => openDay(latestEntry!.slug)}>
-								<span class="featured-date">{latestEntry.label}</span>
-								{#if latestEntry.lede}
-									<blockquote class="featured-epigraph">
-										{latestEntry.lede}
-									</blockquote>
-								{/if}
-								<span class="featured-open">Read the entry →</span>
-							</button>
-						</div>
-						<aside class="sec-aside">
-							<p class="aside-note">The most recent day the nightly narration has written.</p>
-						</aside>
-					</section>
-				{/if}
-
-				<!-- What changed: the front door to the review loop (§17.4).
-				     The entity index that used to sit here duplicated the
-				     sidebar and turned the front page into a table of contents;
-				     the masthead's computed line carries the counts now. -->
-				<section class="sec">
-					<div class="sec-main">
-						<h2>What changed</h2>
-						{#if recentEdits.length === 0}
-							<p class="quiet">
-								No article edits yet. When AI writes or updates an
-								article, the edit shows up here, and its diff is in History.
-							</p>
-						{:else}
-							<ul class="wc">
-								{#each recentEdits as e (`${e.route}/${editKey(e)}`)}
-									<li>
-										<button class="wc-row" onclick={() => windowShellStore.openTabFromRoute(e.route)}>
-											<span class="wc-title">{e.title}</span>
-											<span class="wc-meta">
-												{e.author === 'ai' ? 'AI' : 'you'} ·
-												{new Date(e.at).toLocaleDateString('en-US', {
-													month: 'short',
-													day: 'numeric',
-												})}
-											</span>
-										</button>
-									</li>
-								{/each}
-							</ul>
-							<p class="wc-all">
-								<TextAction onclick={() => goTo('/wiki/history')}>All history →</TextAction>
-							</p>
-						{/if}
-					</div>
-					<aside class="sec-aside">
-						<dl class="stat-stack">
-							<div>
-								<dt>Open notes</dt>
-								<dd>{openNoteCount}</dd>
-							</div>
-						</dl>
-						{#if thinLanes.length || unwrittenDays > 0}
-							<!-- Where it's thin (§17.5): a record that says where it
-							     is incomplete is more trustworthy than one that
-							     presents itself as finished. -->
-							<ul class="thin">
-								{#each thinLanes as t (t)}
-									<li>{t}</li>
-								{/each}
-								{#if unwrittenDays > 0}
-									<li>
-										{unwrittenDays}
-										{unwrittenDays === 1 ? 'day' : 'days'} with events, unwritten
-									</li>
-								{/if}
-							</ul>
-						{/if}
-					</aside>
-				</section>
-			</div>
+			<WikiFront entities={findable} />
 		{:else if section === 'history'}
 			<div class="measure">
 				<WikiHistory />
@@ -910,59 +543,57 @@
 				<DaysChronicle onOpenDay={openDay} />
 			</div>
 		{:else if section === 'entities'}
-			<div class="grid-wrap">
+			<div class="list-wrap">
 				{#key entityTypePreset}
 					<UniversalDataGrid
-						items={allEntities}
+						items={listedEntities}
 						columns={entityColumns}
-						entityType="entities"
+						entityType="entities-list"
+						viewModes={['list']}
+						defaultViewMode="list"
+						defaultGroupBy="entityType"
+						showCounts={false}
+						pageSize={100000}
 						{loading}
 						{error}
-						filters={entityFilters}
 						emptyIcon="mynaui:users-group"
-						emptyMessage="No people, places, or organizations yet"
+						emptyMessage="People, places and organizations show up here as your server finds them in your records. Add someone with New person."
 						loadingMessage="Loading…"
-						searchPlaceholder="Search people, places, organizations…"
+						searchPlaceholder={entityTypePreset ? `Search ${typeConfig[entityTypePreset].plural.toLowerCase()}` : 'Search people, places, organizations'}
 						onItemClick={openEntity}
 						onItemContextMenu={entityContextMenu}
 						onRetry={loadAllEntities}
 					>
 						{#snippet toolbarActions()}
+							{#if !entityTypePreset || entityTypePreset === 'person'}
 							<!-- People arrived only by resolution before this: from a
 							     contact sync or an email sender. The people who matter
 							     most are often the ones you never email. -->
 							<Button
-								variant="ghost"
-								size="sm"
+								variant="secondary"
 								icon="mynaui:user-plus"
 								onclick={addPerson}>New person</Button
 							>
-						{/snippet}
-						{#snippet tableRow(entity: UnifiedEntity)}
-							<td class="col-name">
-								<div class="name-cell">
-									<Icon icon={typeConfig[entity.entityType].icon} width="16" />
-									<span class="name-text">{entity.name}</span>
-								</div>
-							</td>
-							<td class="col-type">
-								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-							</td>
-							<td class="col-details hide-mobile">
-								{#if entity.subtitle}
-									<span class="subtitle-text">{entity.subtitle}</span>
-								{:else}
-									<span class="empty-cell">—</span>
-								{/if}
-							</td>
+							{/if}
 						{/snippet}
 
-						{#snippet card(entity: UnifiedEntity)}
-							<div class="card-content">
-								<Icon icon={typeConfig[entity.entityType].icon} width="28" />
-								<span class="card-name">{entity.name}</span>
-								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-							</div>
+						{#snippet listRow(entity: UnifiedEntity)}
+							<!-- A person shows their face, or their initials without one,
+							     the same as on their page. Places and orgs keep a glyph. -->
+							<ListRow
+								icon={typeConfig[entity.entityType].icon}
+								title={entity.name}
+								line={detailLine(entity)}
+								note={entity.isSelf ? 'You' : null}
+							>
+								{#snippet lead()}
+									{#if entity.entityType === 'person'}
+										<span class="row-picture"><PersonPicture name={entity.name} picture={entity.picture} size={28} /></span>
+									{:else}
+										<Icon icon={typeConfig[entity.entityType].icon} width="16" />
+									{/if}
+								{/snippet}
+							</ListRow>
 						{/snippet}
 					</UniversalDataGrid>
 				{/key}
@@ -987,29 +618,11 @@
 </div>
 
 <style>
-	.chapter-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.chapter-list li {
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.3rem 0;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.ch-name {
-		font-family: var(--font-serif);
-	}
-
-	.ch-span {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
+	/* ListRow sets its glyph 0.25rem down to sit on the name's first line; a
+	   28px picture is taller than that line, so it moves up to center on it. */
+	.row-picture {
+		display: block;
+		margin-top: -0.375rem;
 	}
 
 	.wiki-view {
@@ -1044,15 +657,16 @@
 		}
 	}
 
-	/* Two measures, not five — the same rule the Page shell states, applied to
-	   this room's hand-rolled wraps. `wide` (72rem) for anything gridded,
-	   `prose` (48rem) for reading, both on the shell's 3rem padding. These
-	   sections used to run 72 / 54 / 50 / 44rem at 1.5rem padding, so moving
-	   between the room's own tabs — and between the room and its neighbours —
-	   shifted the column every time. */
-	.grid-wrap,
+	/* This room's own wraps take the section's width (`usePageWidth`), on
+	   the shell's 3rem padding, so the column does not shift between the
+	   room's tabs or its neighbors. */
 	.days-wrap {
-		max-width: 72rem;
+		max-width: var(--page-width);
+		width: 100%;
+		margin: 0 auto;
+	}
+	.list-wrap {
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -1106,179 +720,11 @@
 	}
 
 	.identity-wrap {
-		max-width: 48rem;
+		max-width: var(--page-width);
 		width: 100%;
 		margin: 0 auto;
 	}
 
-
-
-	/* ===== Overview: essay column + marginalia rail ===== */
-
-	.ovw {
-		max-width: 72rem;
-		width: 100%;
-		margin: 0 auto;
-		padding-bottom: 1rem;
-	}
-
-	.mast {
-		margin-bottom: 2.5rem;
-	}
-
-	/* 400 is the only weight this face has. A 500 request on the serif resolves
-	   back to the regular inside the family and returns silently, so the mast
-	   never once rendered the way the declaration read (agents/build/typography.md).
-	   The rank it was reaching for is already here: 32px in full foreground
-	   above a 17px muted standfirst. Stated rather than omitted so the next
-	   reader doesn't re-add it. */
-	.mast h1 {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 2rem;
-		font-weight: 400;
-		letter-spacing: -0.01em;
-		color: var(--color-foreground);
-		margin: 0 0 0.625rem;
-	}
-
-	.standfirst {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.0625rem;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1rem;
-		max-width: 40rem;
-	}
-
-	.record-line {
-		font-size: 0.875rem;
-		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
-		margin: 0 0 0.375rem;
-	}
-
-	.today-line {
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
-
-	/* The sections, three short columns under the mast. */
-	.ovw-index {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-		gap: 1.5rem 2rem;
-		margin-bottom: 3rem;
-	}
-
-	.ovw-index-head {
-		margin: 0 0 0.25rem;
-		font-size: 0.75rem;
-		font-weight: 400;
-		color: var(--color-foreground-subtle);
-	}
-
-	.ovw-index-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		height: 28px;
-		padding: 0 8px;
-		margin-left: -8px;
-		border: none;
-		border-radius: var(--card-radius);
-		background: none;
-		color: var(--color-foreground);
-		font-size: 13px;
-		text-align: left;
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.ovw-index-row :global(svg) {
-		color: var(--color-foreground-muted);
-	}
-
-	.ovw-index-row:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-
-	.ovw-index-row:active {
-		background: var(--press-bg);
-	}
-
-	.ovw-index-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.ovw-index-row {
-			transition: none;
-		}
-	}
-
-	/* Each section is one grid row: the essay column and its margin. */
-	.sec {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 11rem;
-		gap: 2.25rem;
-		padding: 1.75rem 0;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.sec-main h2 {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.25rem;
-		font-weight: 400;
-		color: var(--color-foreground);
-		margin: 0 0 1rem;
-	}
-
-	/* Marginalia: quiet, small, aligned to the section's first baseline. */
-	.sec-aside {
-		padding-top: 0.375rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.aside-note {
-		font-size: 0.6875rem;
-		line-height: 1.5;
-		letter-spacing: 0.02em;
-		color: var(--color-foreground-subtle);
-		margin: 0;
-	}
-
-	.stat-stack {
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	.stat-stack div {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-
-	.stat-stack dt {
-		font-size: 0.6875rem;
-		letter-spacing: 0.02em;
-		color: var(--color-foreground-subtle);
-		flex: 1;
-	}
-
-	.stat-stack dd {
-		margin: 0;
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground);
-	}
 
 	.quiet {
 		font-size: 0.875rem;
@@ -1288,7 +734,9 @@
 
 	/* Years: a plain index, set to the reading measure. */
 	.measure {
-		max-width: 42rem;
+		max-width: var(--page-width);
+		width: 100%;
+		margin: 0 auto;
 		padding: 1.5rem 0;
 	}
 
@@ -1314,249 +762,6 @@
 
 	.years a:hover {
 		text-decoration: underline;
-	}
-
-	/* On this day */
-	.otd {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.otd-row {
-		display: flex;
-		align-items: baseline;
-		gap: 1rem;
-		width: 100%;
-		padding: 0.4375rem 0;
-		background: none;
-		border: none;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.otd-row:last-child {
-		border-bottom: none;
-	}
-
-	.otd-year {
-		flex: none;
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-muted);
-	}
-
-	.otd-row:hover .otd-year {
-		color: var(--color-primary);
-	}
-
-	.otd-epigraph {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.otd-stub {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	/* Featured entry */
-	.featured {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.625rem;
-		width: 100%;
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.featured-date {
-		font-size: 0.75rem;
-		letter-spacing: 0.04em;
-		color: var(--color-foreground-muted);
-	}
-
-	.featured-epigraph {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.1875rem;
-		line-height: 1.5;
-		color: var(--color-foreground);
-		margin: 0;
-		padding-left: 1rem;
-		border-left: 2px solid var(--color-border);
-	}
-
-	.featured-open {
-		font-size: 0.8125rem;
-		color: var(--color-primary);
-	}
-
-	.featured:hover .featured-open {
-		text-decoration: underline;
-	}
-
-	/* What changed */
-	.wc {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.wc-row {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 1rem;
-		width: 100%;
-		padding: 0.4375rem 0;
-		background: none;
-		border: none;
-		border-bottom: 1px solid var(--color-border);
-		cursor: pointer;
-		font: inherit;
-		text-align: left;
-	}
-
-	.wc-title {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-	}
-
-	.wc-row:hover .wc-title {
-		color: var(--color-primary);
-	}
-
-	.wc-meta {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		white-space: nowrap;
-	}
-
-	.wc-all {
-		margin: 0.625rem 0 0;
-	}
-
-	/* Where it's thin */
-	.thin {
-		list-style: none;
-		margin: 0.875rem 0 0;
-		padding: 0;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.thin li {
-		margin-bottom: 0.25rem;
-	}
-
-	/* Unified entity grid cells */
-	.name-cell {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.name-text {
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-
-	.subtitle-text {
-		color: var(--color-foreground-muted);
-		font-size: 0.8125rem;
-		text-transform: capitalize;
-	}
-
-	.empty-cell {
-		color: var(--color-foreground-subtle);
-	}
-
-	.col-name {
-		width: 45%;
-		min-width: 200px;
-		padding: 0.625rem 0.75rem;
-		padding-left: 0;
-	}
-
-	.col-type {
-		width: 20%;
-		min-width: 120px;
-		padding: 0.625rem 0.75rem;
-	}
-
-	.col-details {
-		width: 35%;
-		min-width: 140px;
-		padding: 0.625rem 0.75rem;
-		padding-right: 0;
-	}
-
-	/* Card mode */
-	.card-content {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-		text-align: center;
-		color: var(--color-foreground-subtle);
-	}
-
-	.card-name {
-		font-weight: 600;
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-		line-height: 1.3;
-	}
-
-	@media (max-width: 768px) {
-		.hide-mobile {
-			display: none;
-		}
-	}
-
-	/* The margin collapses before the essay column does. */
-	@media (max-width: 880px) {
-		.sec {
-			grid-template-columns: 1fr;
-			gap: 0.875rem;
-		}
-
-		.sec-aside {
-			padding-top: 0;
-		}
-
-		.stat-stack {
-			flex-direction: row;
-			gap: 1.25rem;
-		}
-	}
-
-	/* Touch sizing, last in the sheet so it wins on source order against the
-	   base rules it restates (same selectors, same specificity — a media query
-	   adds none).
-
-	   Today's-entry link is deliberately not here: it is a link inside a
-	   sentence, and a 44pt box around it would reach into the lines above and
-	   below and swallow their taps. Inline prose links are the honest exception
-	   to the floor; a list row is not. `TextAction inline` now carries that
-	   exemption itself, which is why the link takes no rule here at all. */
-	@media (max-width: 768px), (pointer: coarse) {
-		.wc-row {
-			padding: 0.75rem 0;
-		}
 	}
 
 </style>

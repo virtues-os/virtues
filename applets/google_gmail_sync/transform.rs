@@ -16,7 +16,7 @@ use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
 type EmailRow = (
     String,                 // id
     String,                 // message_id
-    Option<String>,         // thread_id
+    Option<String>,         // conversation_id
     Option<String>,         // subject
     Option<String>,         // body
     Option<String>,         // body_preview
@@ -62,7 +62,7 @@ pub async fn write_messages(
 
 fn shape_one(msg: &Value, user_email: &str) -> Option<EmailRow> {
     let gid = msg.get("id").and_then(|v| v.as_str())?;
-    let thread_id = msg.get("threadId").and_then(|v| v.as_str()).map(String::from);
+    let conversation_id = msg.get("threadId").and_then(|v| v.as_str()).map(String::from);
 
     let payload = msg.get("payload")?;
     let headers = payload
@@ -129,7 +129,7 @@ fn shape_one(msg: &Value, user_email: &str) -> Option<EmailRow> {
 
     let metadata = serde_json::json!({
         "gmail_id": gid,
-        "thread_id": thread_id,
+        "conversation_id": conversation_id,
         "label_ids": label_ids,
         "size_estimate": msg.get("sizeEstimate"),
     });
@@ -143,7 +143,7 @@ fn shape_one(msg: &Value, user_email: &str) -> Option<EmailRow> {
     Some((
         id,
         gid.to_string(),
-        thread_id,
+        conversation_id,
         subject,
         body,
         body_preview,
@@ -257,7 +257,7 @@ async fn flush(db: &PgPool, records: &[EmailRow]) -> Result<usize> {
         &[
             "id",
             "message_id",
-            "thread_id",
+            "conversation_id",
             "subject",
             "body",
             "body_preview",

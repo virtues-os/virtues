@@ -223,8 +223,26 @@ export function nearestCity(lat: number, lng: number): City {
 	return best;
 }
 
+/** A zone's last part as words: "America/Chicago" → "Chicago". */
+export function zoneLeaf(zone: string): string {
+	return zone.split('/').pop()!.replace(/_/g, ' ');
+}
+
+/** "Central Time", "Japan Time"; the zone's leaf when the engine has no name. */
+export function zoneName(zone: string): string {
+	try {
+		const n = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longGeneric' })
+			.formatToParts(new Date())
+			.find((p) => p.type === 'timeZoneName')?.value;
+		if (n && !n.startsWith('GMT')) return n;
+	} catch {
+		// An unknown zone falls through to its name.
+	}
+	return zoneLeaf(zone);
+}
+
 /** The city for a zone, if the list has one ("America/Chicago" → Chicago). */
 export function cityForZone(zone: string): City | null {
-	const leaf = zone.split('/').pop()!.replace(/_/g, ' ');
+	const leaf = zoneLeaf(zone);
 	return CITIES.find((c) => c.zone === zone && c.name === leaf) ?? CITIES.find((c) => c.zone === zone) ?? null;
 }

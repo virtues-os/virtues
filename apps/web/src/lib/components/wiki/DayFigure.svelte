@@ -212,12 +212,6 @@
 		cursor: pointer;
 	}
 
-	button.hit:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 4px;
-		border-radius: var(--radius-md);
-	}
-
 	/* ── quote ── */
 	.fig-quote q {
 		display: block;
@@ -232,7 +226,7 @@
 
 	.fig-quote q::before,
 	.fig-quote q::after {
-		color: var(--color-secondary);
+		color: var(--color-primary);
 	}
 
 	.who {

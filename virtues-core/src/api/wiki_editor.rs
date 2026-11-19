@@ -89,26 +89,19 @@ pub async fn handover(pool: &sqlx::PgPool, subject_type: &str, task: &str) -> Re
 /// article WITHOUT the standing rules and nothing would ever say so. That is
 /// the failure class `.claude/rules/query-errors.md` exists for.
 pub async fn standing_rules(pool: &sqlx::PgPool) -> Result<Vec<String>> {
-    // `kind` is half the rule. The stored text is a bare subject — the
-    // interview writes 'my brother' with kind 'avoid' — so dropping the kind
-    // and rendering the rest under "these are absolute instructions" turned
-    // every AVOID into an instruction to write about the thing. Chat renders
-    // the two apart for exactly this reason; this read did not even select it.
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
+    // A rule is a subject never to bring up (kind 'avoid'). The stored text is
+    // the bare subject ('my brother'), so it is rendered as the instruction it
+    // stands for; rendered bare under "absolute instructions" it would read as
+    // a topic to write about. Rows of the retired 'defend' kind stay stored
+    // and are not read.
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT rule FROM wiki_rules WHERE active AND kind = 'avoid' ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to read the standing rules: {e}")))?;
 
-    Ok(rows
-        .into_iter()
-        .map(|(kind, rule)| match kind.as_str() {
-            "avoid" => format!("Do not write about {rule}."),
-            "defend" => format!("Write about {rule} plainly; do not soften it."),
-            other => format!("{other}: {rule}"),
-        })
-        .collect())
+    Ok(rows.into_iter().map(|rule| format!("Do not write about {rule}.")).collect())
 }
 
 /// The LEDE: an article's opening paragraph, which is the short form every
@@ -1371,7 +1364,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn standing_rules_render_each_kind_as_an_instruction(pool: sqlx::PgPool) {
+    async fn standing_rules_render_as_subjects_not_to_write_about(pool: sqlx::PgPool) {
         sqlx::query(
             "INSERT INTO wiki_rules (id, kind, rule, active) VALUES \
              ('rule_1', 'avoid', 'my brother', true), \
@@ -1384,11 +1377,8 @@ mod tests {
         let rules = standing_rules(&pool).await.unwrap();
         assert_eq!(
             rules,
-            vec![
-                "Do not write about my brother.".to_string(),
-                "Write about the move plainly; do not soften it.".to_string(),
-            ],
-            "an inactive rule does not ride, and an avoid is never rendered as a topic"
+            vec!["Do not write about my brother.".to_string()],
+            "an inactive rule and a retired hold-me-to rule do not ride, and an avoid is never rendered as a topic"
         );
     }
 

@@ -16,11 +16,13 @@
 	 * (`usePageStatus`), then what the page lets you do: the controls a
 	 * view hands over with `usePageActions`, then the buttons it publishes
 	 * with `paneActions.set`, two inline and the rest behind a `···`, since a
-	 * split pane can be dragged to a third of the window.
+	 * split pane can be dragged to a third of the window. Last is the page's
+	 * width (`usePageWidth`), on every page that has a column of content.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { pageWidth, PAGE_WIDTHS } from "$lib/stores/pageWidth.svelte";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { canPin, isPinned, togglePin } from "$lib/pins/pinAction";
@@ -43,6 +45,8 @@
 	const path = $derived(paneActions.crumbsFor(tab.id) ?? crumbsForRoute(tab.route, title));
 	/** Which segment is the page itself, or -1 when the path leaves it out. */
 	const pageAt = $derived(path.withoutPage ? -1 : path.crumbs.length - 1);
+	/** A door whose segment lists its own views (Threads) opens that menu on its own page too. */
+	const listsViews = (crumb: { menu?: { kind: string } }) => crumb.menu?.kind === 'threads';
 	const pinnable = $derived(canPin(tab.route));
 	const pinned = $derived(pinnable && isPinned(tab.route));
 
@@ -60,7 +64,7 @@
 		const next = draft?.trim();
 		draft = null;
 		if (!next || next === (path.crumbs.at(-1)?.label ?? title)) return;
-		renameRef(tab.route, next).catch((err) => console.error("[ActionToolbar] rename failed:", err));
+		void renameRef(tab.route, next);
 	}
 
 	function renameKeydown(e: KeyboardEvent) {
@@ -147,6 +151,32 @@
 		);
 	}
 
+	const declared = $derived(pageWidth.declaredFor(tab.id));
+	const width = $derived(declared ? pageWidth.widthFor(declared.kind, declared.initial, declared.sheet) : undefined);
+	const widthLabel = $derived(PAGE_WIDTHS.find((w) => w.value === width)?.label);
+
+	/** The widths this page can take, the page's own marked as its default. */
+	function showWidths(e: MouseEvent) {
+		e.stopPropagation();
+		const d = declared;
+		if (!d) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show(
+			{ x: rect.right, y: rect.bottom + 4 },
+			PAGE_WIDTHS.filter((w) => w.value !== "sheet" || d.sheet).map((w) => ({
+				id: `width-${w.value}`,
+				label: w.value === d.initial ? `${w.label} (default)` : w.label,
+				role: "menuitemradio" as const,
+				checked: w.value === width,
+				action: () => pageWidth.choose(d.kind, w.value, d.initial),
+			})),
+			{
+				anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+				placement: "bottom-end",
+			},
+		);
+	}
+
 	function showOverflow(e: MouseEvent) {
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -193,7 +223,7 @@
 		<nav class="crumbs" aria-label="Where this page is" bind:this={crumbsEl}>
 			{#each path.crumbs as crumb, i (i)}
 				{#if i > 0}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
-				{#if crumb.menu && i !== pageAt}
+				{#if crumb.menu && (i !== pageAt || listsViews(crumb))}
 					<button
 						class="crumb link menu"
 						class:root={i === 0}
@@ -208,15 +238,17 @@
 						>{crumb.label}</button
 					>
 				{:else if i === pageAt && draft !== null}
-					<input
-						class="crumb current rename"
-						bind:value={draft}
-						onkeydown={renameKeydown}
-						onblur={commitRename}
-						style:width="{Math.max(draft.length, 4) + 2}ch"
-						aria-label="Name"
-						use:focusAndSelect
-					/>
+					<span class="rename-sizer crumb-field" data-value={draft}>
+						<input
+							class="crumb current rename"
+							size="1"
+							bind:value={draft}
+							onkeydown={renameKeydown}
+							onblur={commitRename}
+							aria-label="Name"
+							use:focusAndSelect
+						/>
+					</span>
 				{:else}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<span
@@ -245,7 +277,7 @@
 		{/if}
 	</div>
 
-	{#if status || controls.length > 0 || actions.length > 0}
+	{#if status || controls.length > 0 || actions.length > 0 || declared}
 		<div class="actions">
 			{#if status}
 				<svelte:element
@@ -284,6 +316,18 @@
 			{#if overflowActions.length > 0}
 				<button class="action" onclick={showOverflow} aria-label="More actions" data-tip="More actions">
 					<Icon icon="mynaui:dots" />
+				</button>
+			{/if}
+
+			{#if declared}
+				<button
+					class="action"
+					onclick={showWidths}
+					aria-haspopup="menu"
+					aria-label="Page width: {widthLabel}"
+					data-tip="Page width: {widthLabel}"
+				>
+					<Icon icon="mynaui:move-horizontal" />
 				</button>
 			{/if}
 		</div>
@@ -406,6 +450,12 @@
 	.crumb.menu.open {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.crumb.menu:active {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
 	}
 
 	.crumb.current {
@@ -417,20 +467,35 @@
 		cursor: text;
 	}
 
-	/* The name as a field: the same type, on a quiet well, so the path does
-	   not jump when it opens. */
-	.crumb.rename {
-		min-width: 6ch;
+	/* The name as a field, in the same look as a renaming tab or sidebar
+	   row (app.css). It keeps the crumb's type and padding, and the sizer
+	   keeps it as wide as the name, so the path does not jump when it
+	   opens. The sizer's hidden copy takes the same padding and weight. */
+	.crumb-field {
+		flex: none;
 		max-width: 60%;
+	}
+
+	.crumb-field::after {
+		padding: 0 6px;
+		font-weight: 500;
+	}
+
+	.crumb.rename {
+		min-width: 4ch;
+		/* The sizer holds the crumb's 60% cap; on the input it would be 60%
+		   of the sizer. */
+		max-width: none;
 		height: 24px;
 		border: none;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--rename-fill);
 		font: inherit;
 		font-weight: 500;
 		color: var(--color-foreground);
-		outline: 1px solid var(--color-border);
-		outline-offset: 0;
+		caret-color: var(--color-primary);
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
 	}
 
 	.crumb-sep {
@@ -451,6 +516,18 @@
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
+		transition:
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.pin:hover {
+		transition-duration: var(--motion-hover-in), var(--motion-release);
+	}
+
+	.pin:active {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
 	}
 
 	.pin:hover,
@@ -538,12 +615,27 @@
 		cursor: pointer;
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),
-			color var(--motion-hover-out) var(--ease-premium);
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
+	/* Hover comes on fast and goes off slow; a press fills at once, and a
+	   square button sinks to 94% and springs back (design.md, Motion). */
 	.action:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.action:active:not(:disabled) {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
+	/* A labelled action is wide, and a wide control that shrank would
+	   wobble: it takes the fill only. */
+	.action:not(.primary):active:not(:disabled) {
+		transform: scale(0.94);
 	}
 
 	.action.primary {
@@ -580,11 +672,16 @@
 		cursor: default;
 	}
 
-	.action:focus-visible,
-	.status:focus-visible,
-	.pin:focus-visible,
-	.crumb.link:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	/* Keep the fill, drop the sink. */
+	@media (prefers-reduced-motion: reduce) {
+		.action,
+		.pin,
+		.crumb.link {
+			transition: none;
+		}
+		.action:active:not(:disabled),
+		.pin:active {
+			transform: none;
+		}
 	}
 </style>

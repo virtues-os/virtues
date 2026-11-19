@@ -909,14 +909,14 @@
 		<button
 			class="stream link"
 			type="button"
-			onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Profile" })}
+			onclick={() => windowShellStore.openTabFromRoute("/virtues", { label: "Settings" })}
 		>
 			<div class="s-icon">
 				<Icon icon="mynaui:user" width={18} />
 			</div>
 			<div class="s-body">
-				<div class="s-title">Profile</div>
-				<div class="s-sub">Your name, and how the app looks</div>
+				<div class="s-title">Settings</div>
+				<div class="s-sub">You, your assistant, and how the app looks</div>
 			</div>
 			<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 		</button>

@@ -202,7 +202,7 @@ pub const TREE_CONTENT_REFUSED: &str =
 const TREE_PAGES_OFF: &str = "Block pages are turned off on this server.";
 
 /// Summary of a page (for list views)
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageSummary {
     pub id: String,
     pub title: String,
@@ -210,8 +210,68 @@ pub struct PageSummary {
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
+    /// The page's first line of text after its title, as plain text. Empty
+    /// for a page with no text yet.
+    pub excerpt: String,
+    /// The open threads that hold this page, oldest membership first. A page
+    /// can be in several.
+    pub threads: Vec<PageThread>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// A thread a page belongs to, as the Pages list names it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageThread {
+    pub id: String,
+    pub name: String,
+}
+
+/// One row of the Pages list query, before the excerpt is cut from `content`.
+#[derive(sqlx::FromRow)]
+struct PageSummaryRow {
+    id: String,
+    title: String,
+    content: String,
+    icon: Option<String>,
+    icon_color: Option<String>,
+    cover_url: Option<String>,
+    tags: Option<serde_json::Value>,
+    threads: sqlx::types::Json<Vec<PageThread>>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+}
+
+/// The longest excerpt the Pages list gets, in characters.
+const EXCERPT_CHARS: usize = 200;
+
+/// The first line of `content` that says something: not blank, not a rule,
+/// fence, image or table line, and not the title repeated as a heading.
+fn page_excerpt(title: &str, content: &str) -> String {
+    let title = title.trim();
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty()
+            || t.starts_with("```")
+            || t.starts_with("![")
+            || t.starts_with('|')
+            || t.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '))
+        {
+            continue;
+        }
+        let plain = strip_markdown(t);
+        // A task-list item's box is markup, not text.
+        let plain = ["[ ]", "[x]", "[X]"]
+            .iter()
+            .find_map(|b| plain.strip_prefix(b))
+            .unwrap_or(&plain)
+            .trim();
+        if plain.is_empty() || plain == title {
+            continue;
+        }
+        return truncate_chars(plain, EXCERPT_CHARS);
+    }
+    String::new()
 }
 
 /// Request to create a page
@@ -220,8 +280,8 @@ pub struct CreatePageRequest {
     pub title: String,
     #[serde(default)]
     pub content: String,
-    #[serde(rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<String>,  // For auto-add to project_items (not stored on page)
+    #[serde(rename = "threadId")]
+    pub thread_id: Option<String>,  // Adds the new page to this thread (not stored on the page)
     pub icon: Option<String>,
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
@@ -505,12 +565,21 @@ pub async fn list_pages(
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
 
-    let pages = sqlx::query_as::<_, PageSummary>(
+    let rows = sqlx::query_as::<_, PageSummaryRow>(
         r#"
-        SELECT id, title, icon, icon_color, cover_url, tags, created_at, updated_at
-        FROM app_pages
-        WHERE kind = 'page' AND deleted_at IS NULL
-        ORDER BY updated_at DESC
+        SELECT p.id, p.title, p.content, p.icon, p.icon_color, p.cover_url, p.tags,
+               COALESCE((
+                   SELECT json_agg(json_build_object('id', s.id, 'name', s.name)
+                                   ORDER BY i.added_at)
+                   FROM app_thread_items i
+                   JOIN app_threads s ON s.id = i.thread_id
+                   WHERE i.url = '/page/' || p.id
+                     AND s.deleted_at IS NULL AND s.archived_at IS NULL
+               ), '[]'::json) AS threads,
+               p.created_at, p.updated_at
+        FROM app_pages p
+        WHERE p.kind = 'page' AND p.deleted_at IS NULL
+        ORDER BY p.updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
     )
@@ -519,6 +588,22 @@ pub async fn list_pages(
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list pages: {}", e)))?;
+
+    let pages = rows
+        .into_iter()
+        .map(|r| PageSummary {
+            excerpt: page_excerpt(&r.title, &r.content),
+            id: r.id,
+            title: r.title,
+            icon: r.icon,
+            icon_color: r.icon_color,
+            cover_url: r.cover_url,
+            tags: r.tags,
+            threads: r.threads.0,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect();
 
     Ok(PageListResponse {
         pages,
@@ -669,7 +754,7 @@ async fn create_page_reporting_if(pool: &PgPool, req: CreatePageRequest, block_p
 /// empty document writes its own into it. Markdown the converter refuses
 /// creates nothing.
 ///
-/// If project_id is provided, the page is added to that project.
+/// If thread_id is provided, the page is added to that project.
 pub async fn create_page_as(
     pool: &PgPool,
     req: CreatePageRequest,
@@ -714,16 +799,16 @@ pub async fn create_page_as(
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
     // Auto-add the page as a member of the Project it was created in.
-    if let Some(project_id) = &req.project_id {
+    if let Some(thread_id) = &req.thread_id {
         let url = format!("/page/{}", page.id);
-        if let Err(e) = crate::api::projects::add_project_item(
+        if let Err(e) = crate::api::threads::add_thread_item(
             pool,
-            project_id,
-            crate::api::projects::AddProjectItemRequest { url },
+            thread_id,
+            crate::api::threads::AddThreadItemRequest { url },
         )
         .await
         {
-            tracing::warn!("Failed to auto-add page to project {}: {}", project_id, e);
+            tracing::warn!("Failed to auto-add page to project {}: {}", thread_id, e);
             // Don't fail page creation if auto-add fails
         }
     }
@@ -883,7 +968,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "page" => format!("/page/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
-        "project" => format!("/project/{}", id),
+        "thread" => format!("/thread/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
     }
@@ -980,7 +1065,7 @@ pub async fn search_refs(
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM app_projects
+        FROM app_threads
         WHERE name ILIKE $1 AND deleted_at IS NULL
         ) refs
         WHERE ($5::text[] IS NULL OR entity_type = ANY($5))
@@ -1965,13 +2050,25 @@ mod tests {
     use super::*;
     use crate::server::yjs::YjsState;
 
+    #[test]
+    fn excerpt_skips_the_title_and_markup() {
+        let content = "# Neighborhoods we liked\n\n---\n![map](/f/1.png)\n- Sellwood felt the most like [home](/page/x).\n";
+        assert_eq!(
+            page_excerpt("Neighborhoods we liked", content),
+            "Sellwood felt the most like home."
+        );
+        assert_eq!(page_excerpt("Untitled", "\n\n"), "");
+        assert_eq!(page_excerpt("Errands", "- [ ] Return the library books"), "Return the library books");
+        assert_eq!(page_excerpt("Errands", "- [x] Call the plumber"), "Call the plumber");
+    }
+
     async fn page(pool: &PgPool, content: &str) -> String {
         create_page(
             pool,
             CreatePageRequest {
                 title: "Notes".into(),
                 content: content.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -2123,7 +2220,7 @@ mod tests {
         CreatePageRequest {
             title: "Trip".into(),
             content: content.into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,

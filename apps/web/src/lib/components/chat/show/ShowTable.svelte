@@ -128,11 +128,6 @@
 		cursor: pointer;
 		color: var(--color-primary);
 	}
-	.open:focus-visible,
-	.more:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-	}
 	.more {
 		all: unset;
 		cursor: pointer;
@@ -152,9 +147,5 @@
 		cursor: pointer;
 		font-size: 0.875rem;
 		color: var(--color-primary);
-	}
-	.toggle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 </style>

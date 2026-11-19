@@ -125,7 +125,7 @@ pub struct ChatListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
+    pub thread_id: Option<String>,
     pub first_message_at: Timestamp,
     /// When anything on the row last changed: a rename, a filing, an icon.
     pub last_updated: Timestamp,
@@ -166,10 +166,10 @@ pub struct ConversationMeta {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// The project this chat is filed in. On the chat itself because the chat
+    /// The thread this chat is filed in. On the chat itself because the chat
     /// list holds only the most recent chats, and an older chat opened from a
-    /// project could not otherwise say where it lives.
-    pub project_id: Option<String>,
+    /// thread could not otherwise say where it lives.
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,10 +210,10 @@ pub struct UpdateChatRequest {
     pub icon: Option<Option<String>>,
     #[serde(default)]
     pub icon_color: Option<Option<String>>,
-    /// Tri-state: absent = leave, null = detach from Project, value = set Project.
-    /// Routed through `projects::set_chat_project` (also folds chat into membership).
-    #[serde(default, rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<Option<String>>,
+    /// Tri-state: absent = leave, null = take out of its thread, value = file in that thread.
+    /// Routed through `threads::set_chat_thread` (also folds chat into membership).
+    #[serde(default, rename = "threadId")]
+    pub thread_id: Option<Option<String>>,
 }
 
 /// Request to create a new chat with initial messages
@@ -221,8 +221,8 @@ pub struct UpdateChatRequest {
 pub struct CreateChatRequest {
     pub title: String,
     pub messages: Vec<ChatMessage>,
-    #[serde(rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<String>, // For auto-add to project_items (not stored on chat)
+    #[serde(rename = "threadId")]
+    pub thread_id: Option<String>, // Files the new chat in this thread
 }
 
 /// Response after creating a chat
@@ -285,16 +285,29 @@ const SETTLE_AFTER_USER_TURNS: i64 = 6;
 // Functions
 // ============================================================================
 
-/// List recent chats (without messages)
-pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
-    let rows = sqlx::query(
-        r#"
+/// A chat's messages, oldest first. Onboarding's synthetic triggers are left
+/// out so a revisit shows only the AI's opening message. A constant for
+/// `query_plan_tests`.
+const TRANSCRIPT_SQL: &str = r#"
+    SELECT
+        id, role, content, model, provider, agent_id,
+        reasoning, tool_calls, intent, subject, created_at, parts,
+        started_at, ended_at
+    FROM app_chat_messages
+    WHERE chat_id = $1
+      AND (subject IS NULL OR subject != 'onboarding_synthetic')
+    ORDER BY sequence_num ASC
+"#;
+
+/// The chat list's query. A constant so `query_plan_tests` plans the very
+/// SQL this runs.
+const LIST_CHATS_SQL: &str = r#"
         SELECT
             id,
             title,
             icon,
             icon_color,
-            project_id,
+            thread_id,
             message_count,
             created_at,
             updated_at,
@@ -314,11 +327,14 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
           AND NOT EXISTS (SELECT 1 FROM app_tasks t WHERE t.chat_id = c.id)
         ORDER BY last_message_at DESC
         LIMIT $1
-        "#,
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+"#;
+
+/// List recent chats (without messages)
+pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
+    let rows = sqlx::query(LIST_CHATS_SQL)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
 
     let conversations = rows
         .into_iter()
@@ -328,7 +344,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let title: String = row.get("title");
             let icon: Option<String> = row.get("icon");
             let icon_color: Option<String> = row.get("icon_color");
-            let project_id: Option<String> = row.get("project_id");
+            let thread_id: Option<String> = row.get("thread_id");
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
@@ -340,7 +356,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 message_count: message_count as i32,
                 icon,
                 icon_color,
-                project_id,
+                thread_id,
                 first_message_at,
                 last_updated,
                 last_message_at,
@@ -380,7 +396,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             id,
             title,
             icon,
-            project_id,
+            thread_id,
             message_count,
             created_at,
             updated_at
@@ -398,26 +414,12 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let id: String = row.get("id");
     let title: String = row.get("title");
     let icon: Option<String> = row.get("icon");
-    let project_id: Option<String> = row.get("project_id");
+    let thread_id: Option<String> = row.get("thread_id");
     let message_count: i64 = row.get("message_count");
     let created_at: Timestamp = row.get("created_at");
     let updated_at: Timestamp = row.get("updated_at");
 
-        // Query messages from normalized table
-        // Filter out onboarding synthetic triggers (subject='onboarding_synthetic')
-        // so the user only sees the AI's opening message on revisit
-        let message_rows = sqlx::query(
-            r#"
-            SELECT
-                id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, created_at, parts,
-                started_at, ended_at
-            FROM app_chat_messages
-            WHERE chat_id = $1
-              AND (subject IS NULL OR subject != 'onboarding_synthetic')
-            ORDER BY sequence_num ASC
-            "#,
-        )
+        let message_rows = sqlx::query(TRANSCRIPT_SQL)
         .bind(&chat_id_str)
         .fetch_all(pool)
         .await?;
@@ -494,7 +496,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
         message_count: message_count as i32,
         model: last_message.and_then(|m| m.model.clone()),
         provider: None, // Provider not stored in MessageResponse
-        project_id,
+        thread_id,
     };
 
     Ok(ChatDetailResponse {
@@ -598,15 +600,15 @@ pub async fn create_chat(
 }
 
 /// Create a new chat with initial messages (public API)
-/// If project_id is provided and not the system project, auto-adds to project_items
+/// If thread_id is provided and not the system project, auto-adds to project_items
 pub async fn create_chat_from_request(
     pool: &PgPool,
     request: CreateChatRequest,
 ) -> Result<CreateChatResponse> {
     let chat = create_chat(pool, &request.title, request.messages).await?;
 
-    // Bind the chat to its Project (stores project_id + folds into membership).
-    if let Err(e) = crate::api::projects::set_chat_project(pool, &chat.id, request.project_id.as_deref()).await {
+    // Bind the chat to its Project (stores thread_id + folds into membership).
+    if let Err(e) = crate::api::threads::set_chat_thread(pool, &chat.id, request.thread_id.as_deref()).await {
         tracing::warn!("Failed to set chat project: {}", e);
         // Don't fail chat creation if the binding fails
     }
@@ -664,8 +666,8 @@ pub async fn update_chat(
     let row = row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
 
     // Bind/unbind the chat's Project if the field was provided.
-    if let Some(ref project_id) = request.project_id {
-        crate::api::projects::set_chat_project(pool, &chat_id, project_id.as_deref()).await?;
+    if let Some(ref thread_id) = request.thread_id {
+        crate::api::threads::set_chat_thread(pool, &chat_id, thread_id.as_deref()).await?;
     }
 
     use sqlx::Row;
@@ -1131,6 +1133,54 @@ Conversation:
     }
 }
 
+/// The hot chat queries are planned without a sequential scan.
+///
+/// The chat list runs on launch, on focus and after every turn, and the
+/// transcript on every chat open, so a full scan of `app_chat_messages` in
+/// either grows with every message ever written. With sequential scans turned
+/// off, Postgres picks one only when no index can serve a table's part of the
+/// query, so these fail when an index is dropped or the SQL stops matching
+/// one. A full scan of an index still passes: the chat list reads every row
+/// of `app_chats` by its primary key.
+#[cfg(test)]
+mod query_plan_tests {
+    use super::{LIST_CHATS_SQL, TRANSCRIPT_SQL};
+    use sqlx::PgPool;
+
+    /// Every `Seq Scan` in `sql`'s generic plan, by relation.
+    async fn seq_scans(pool: &PgPool, sql: &str) -> Vec<String> {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await.unwrap();
+        // The simple protocol: a prepared statement would count `$1` and want
+        // it bound, and a generic plan is the plan without one.
+        use sqlx::Row;
+        let explain = format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}");
+        let plan: serde_json::Value =
+            sqlx::raw_sql(&explain).fetch_one(&mut *tx).await.unwrap().get(0);
+        fn walk(node: &serde_json::Value, out: &mut Vec<String>) {
+            if node["Node Type"] == "Seq Scan" {
+                out.push(node["Relation Name"].as_str().unwrap_or("?").to_string());
+            }
+            for child in node["Plans"].as_array().into_iter().flatten() {
+                walk(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&plan[0]["Plan"], &mut out);
+        out
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn chat_list_scans_no_table(pool: PgPool) {
+        assert_eq!(seq_scans(&pool, LIST_CHATS_SQL).await, Vec::<String>::new());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn transcript_scans_no_table(pool: PgPool) {
+        assert_eq!(seq_scans(&pool, TRANSCRIPT_SQL).await, Vec::<String>::new());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,7 +1381,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let req = UpdateChatRequest { title: Some("Mine".into()), icon: None, icon_color: None, project_id: None };
+        let req = UpdateChatRequest { title: Some("Mine".into()), icon: None, icon_color: None, thread_id: None };
         update_chat(&pool, "chat_r".into(), &req).await.unwrap();
         let source: String = sqlx::query_scalar("SELECT title_source FROM app_chats WHERE id = 'chat_r'")
             .fetch_one(&pool)

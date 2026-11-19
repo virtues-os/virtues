@@ -180,7 +180,7 @@
 								{hasTile && !noTileShown && perm.dragFix ? perm.dragFix : perm.fix}
 							</div>
 							<div class="mt-2">
-								<Button variant="secondary" size="sm" onclick={(e) => open(e, perm)}>
+								<Button variant="secondary" onclick={(e) => open(e, perm)}>
 									Open {perm.pane}{local ? "" : " on this Mac"}
 								</Button>
 							</div>

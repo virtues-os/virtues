@@ -130,11 +130,14 @@ impl axum::response::IntoResponse for Error {
             tracing::error!(status = status.as_u16(), error = %self, "request failed");
         }
 
-        (
-            status,
-            axum::Json(serde_json::json!({ "error": self.to_string() })),
-        )
-            .into_response()
+        // A 400's message is written for the person who sent the request
+        // ("That change was already undone."), so it goes out without the
+        // "Invalid input:" label the log line carries.
+        let message = match self {
+            Error::InvalidInput(message) => message,
+            other => other.to_string(),
+        };
+        (status, axum::Json(serde_json::json!({ "error": message }))).into_response()
     }
 }
 

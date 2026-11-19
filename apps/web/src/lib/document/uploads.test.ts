@@ -236,9 +236,11 @@ describe('a file this device holds', () => {
 	it('stays at stake once its retries run out, and goes again when the device is back online', async () => {
 		sendEnds = () => 0;
 		startUpload(ID, photo());
+		// What a block on the page holds: the store, taken while it uploads.
+		const block = watchUpload(ID);
 		await vi.advanceTimersByTimeAsync(SENDER_TRIES_FOR_MS);
 		expect(sends).toHaveLength(5);
-		expect(get(watchUpload(ID))).toMatchObject({ phase: 'failed', refused: false });
+		expect(get(block)).toMatchObject({ phase: 'failed', refused: false });
 		expect(uploadsAtStake()).toBe(1);
 		expect(asksBeforeClosing()).toBe(true);
 
@@ -246,7 +248,7 @@ describe('a file this device holds', () => {
 		window.dispatchEvent(new Event('online'));
 		await vi.advanceTimersByTimeAsync(0);
 		expect(sends).toHaveLength(6);
-		expect(get(watchUpload(ID))).toMatchObject({ phase: 'done' });
+		expect(get(block)).toMatchObject({ phase: 'done' });
 		expect(uploadsAtStake()).toBe(0);
 		expect(asksBeforeClosing()).toBe(false);
 	});
@@ -258,9 +260,11 @@ describe('a file this device holds', () => {
 	it('out of retries, is tried again every few minutes, and at once when the server is back', async () => {
 		sendEnds = () => 0;
 		startUpload(ID, photo());
+		// What a block on the page holds: the store, taken while it uploads.
+		const block = watchUpload(ID);
 		await vi.advanceTimersByTimeAsync(SENDER_TRIES_FOR_MS);
 		expect(sends).toHaveLength(5);
-		expect(get(watchUpload(ID))).toMatchObject({ phase: 'failed', refused: false });
+		expect(get(block)).toMatchObject({ phase: 'failed', refused: false });
 		await vi.advanceTimersByTimeAsync(TRY_AGAIN_EVERY_MS);
 		expect(sends).toHaveLength(6);
 		expect(uploadsAtStake()).toBe(1);
@@ -268,7 +272,7 @@ describe('a file this device holds', () => {
 		sendEnds = () => 201;
 		await vi.advanceTimersByTimeAsync(SENDER_TRIES_FOR_MS + TRY_AGAIN_EVERY_MS);
 		expect(sends.length).toBeGreaterThan(6);
-		expect(get(watchUpload(ID))).toMatchObject({ phase: 'done' });
+		expect(get(block)).toMatchObject({ phase: 'done' });
 		expect(uploadsAtStake()).toBe(0);
 		expect(asksBeforeClosing()).toBe(false);
 
@@ -291,6 +295,8 @@ describe('a file this device holds', () => {
 	it('out of retries, is let go once no page names it, whatever device took its block out', async () => {
 		sendEnds = () => 507;
 		startUpload(ID, photo());
+		// What a block on the page holds: the store, taken while it uploads.
+		const block = watchUpload(ID);
 		// Cut here: the server says the page it was pasted into holds it.
 		uploadBlocksLeft([ID]);
 		await vi.advanceTimersByTimeAsync(SENDER_TRIES_FOR_MS);
@@ -314,7 +320,7 @@ describe('a file this device holds', () => {
 		named = () => true;
 		sendEnds = () => 201;
 		await vi.advanceTimersByTimeAsync(TRY_AGAIN_EVERY_MS);
-		expect(get(watchUpload(ID))).toMatchObject({ phase: 'done' });
+		expect(get(block)).toMatchObject({ phase: 'done' });
 	});
 
 	// A block copied into a page that was then closed is that page's: the
@@ -340,6 +346,39 @@ describe('a file this device holds', () => {
 		window.dispatchEvent(new Event('online'));
 		await vi.advanceTimersByTimeAsync(0);
 		expect(sends).toHaveLength(1);
+	});
+	// Every file pasted or dropped into a page stayed in memory, bytes and
+	// image preview, for the life of the window.
+	describe('once settled', () => {
+		const made: string[] = [];
+		const revoked: string[] = [];
+		beforeEach(() => {
+			made.length = revoked.length = 0;
+			vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+				made.push(`blob:preview-${made.length}`);
+				return made[made.length - 1];
+			});
+			vi.spyOn(URL, 'revokeObjectURL').mockImplementation((u: string) => void revoked.push(u));
+		});
+
+		it('a stored file leaves memory, its preview released, and its block keeps saying done', async () => {
+			sendEnds = () => 201;
+			startUpload(ID, photo());
+			const block = watchUpload(ID);
+			expect(get(block)).toMatchObject({ phase: 'uploading', preview: made[0] });
+			await vi.advanceTimersByTimeAsync(0);
+			expect(get(block)).toMatchObject({ phase: 'done', preview: null });
+			expect(revoked).toEqual(made);
+			expect(get(watchUpload(ID)), 'a block mounted later draws the server copy').toBeNull();
+		});
+
+		it('a refused file keeps saying why, without its preview', async () => {
+			sendEnds = () => 413;
+			startUpload(ID, photo());
+			await vi.advanceTimersByTimeAsync(SENDER_TRIES_FOR_MS);
+			expect(get(watchUpload(ID))).toMatchObject({ phase: 'failed', refused: true, preview: null });
+			expect(revoked).toEqual(made);
+		});
 	});
 });
 

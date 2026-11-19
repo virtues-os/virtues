@@ -24,6 +24,19 @@
 		hidden?: boolean;
 		/** Order group keys explicitly; anything unlisted follows, alphabetically. */
 		groupOrder?: string[];
+		/** `appearance`: groups come in the order their first row appears, so a
+		 *  list sorted newest first puts the group with the newest row on top. */
+		groupSort?: 'appearance';
+		/** The groups a row belongs to, when it can be in several (a page in
+		 *  two threads). The row appears under each. Overrides the rendered value. */
+		groupValues?: (item: T) => string[];
+		/** The group for a row with no group value, listed last. Default '—'. */
+		groupFallback?: string;
+	}
+
+	export interface GroupInfo<T> {
+		key: string;
+		items: T[];
 	}
 
 	export interface RowMeta {
@@ -37,10 +50,11 @@
 
 <script lang="ts" generics="T extends { id: string }">
 	import type { Snippet } from 'svelte';
-	import { fly } from 'svelte/transition';
-	import { flip } from 'svelte/animate';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
+	import { flip, fly } from '$lib/utils/transitions';
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
+	import SearchField from '$lib/components/SearchField.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
@@ -111,6 +125,16 @@
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
 		tableRow?: Snippet<[T, RowMeta]>;
 		card?: Snippet<[T, RowMeta]>;
+		/** Row renderer for the List view. Supplying it is what makes List
+		 *  available: rows you read (a title, a line of text, one date) with no
+		 *  column headers. */
+		listRow?: Snippet<[T, RowMeta]>;
+		/** Replaces a group's header. The group still collapses from its chevron. */
+		groupHeader?: Snippet<[GroupInfo<T>]>;
+		/** The grouping when no stored preference exists: a groupable column key. */
+		defaultGroupBy?: string;
+		/** Show "38 items" in the toolbar and a count on each group. Default true. */
+		showCounts?: boolean;
 		/**
 		 * Tile renderer for the Wall. Supplying it is what makes the Wall mode
 		 * available at all — the grid can pack tiles, but only the consumer
@@ -129,7 +153,8 @@
 		/** Rendered in the bulk bar while rows are selected. */
 		bulkActions?: Snippet<[T[], () => void]>;
 		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
-		 *  way a right-click-only menu never is. */
+		 *  way a right-click-only menu never is. In the List view they sit
+		 *  beside the row and always show. */
 		rowActions?: Snippet<[T]>;
 		/** Leading glyph for a row. It shares one column with the select box:
 		 *  the icon is what you see at rest, the checkbox is what you see on
@@ -179,6 +204,10 @@
 		onRetry,
 		tableRow,
 		card,
+		listRow,
+		groupHeader,
+		defaultGroupBy = '',
+		showCounts = true,
 		wallTile,
 		viewModes,
 		toolbarActions,
@@ -555,11 +584,17 @@
 		table: { icon: 'mynaui:list-check', label: 'Table' },
 		grid: { icon: 'mynaui:grid', label: 'Cards' },
 		wall: { icon: 'mynaui:image-rectangle', label: 'Wall' },
+		list: { icon: 'mynaui:list', label: 'List' },
 	};
 
 	/** Wall is offered only where a tile renderer was supplied. */
 	const availableModes = $derived<ViewMode[]>(
-		viewModes ?? (wallTile ? ['table', 'grid', 'wall'] : ['table', 'grid'])
+		viewModes ?? [
+			...(listRow ? (['list'] as ViewMode[]) : []),
+			'table',
+			'grid',
+			...(wallTile ? (['wall'] as ViewMode[]) : []),
+		]
 	);
 
 	/**
@@ -575,7 +610,7 @@
 	 */
 	const pinnedMobileTable = $derived(mobileLayout.isMobile && mobileViewMode === 'table');
 	const effectiveViewMode = $derived<ViewMode>(
-		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : 'table'
+		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : (availableModes[0] ?? 'table')
 	);
 
 	function toggleViewMode() {
@@ -671,16 +706,13 @@
 		focusedIndex = clamped;
 		const item = visualOrder[clamped];
 		if (!item) return;
-		// The DOM order matches the flat order within each group, so target by id.
-		gridEl
-			?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(item.id)}"]`)
-			?.focus({ preventScroll: false });
+		// By position, not id: a row listed in two groups has two copies.
+		gridEl?.querySelector<HTMLElement>(`[data-row-index="${clamped}"]`)?.focus({ preventScroll: false });
 	}
 
 	let gridEl = $state<HTMLElement | null>(null);
 
-	function handleKeyDown(e: KeyboardEvent, item: T) {
-		const index = visualOrder.findIndex((i) => i.id === item.id);
+	function handleKeyDown(e: KeyboardEvent, item: T, index: number) {
 		switch (e.key) {
 			case 'Enter':
 				e.preventDefault();
@@ -788,7 +820,7 @@
 		groupInitialized = true;
 		const stored = dataGridPrefs.hasGroupBy(entityType)
 			? dataGridPrefs.getGroupBy(entityType)
-			: '';
+			: defaultGroupBy;
 		// A stored key whose column has since gone away must not strand the grid
 		// in a grouping the user can no longer see or clear.
 		groupKey = groupableCols.some((c) => String(c.key) === stored) ? stored : '';
@@ -812,16 +844,25 @@
 	const groupedItems = $derived.by<{ key: string; items: T[] }[]>(() => {
 		const col = activeGroupCol;
 		if (!col) return [{ key: '', items: displayedItems }];
+		const fallback = col.groupFallback ?? '—';
 		const buckets = new Map<string, T[]>();
 		for (const item of displayedItems) {
-			const key = getValue(item, col) || '—';
-			const bucket = buckets.get(key);
-			if (bucket) bucket.push(item);
-			else buckets.set(key, [item]);
+			const keys = col.groupValues ? col.groupValues(item) : [getValue(item, col)];
+			const present = keys.filter((k) => !!k);
+			for (const key of present.length ? present : [fallback]) {
+				const bucket = buckets.get(key);
+				if (bucket) bucket.push(item);
+				else buckets.set(key, [item]);
+			}
 		}
 		const order = col.groupOrder ?? [];
-		return [...buckets.entries()]
-			.map(([key, items]) => ({ key, items }))
+		const groups = [...buckets.entries()].map(([key, items]) => ({ key, items }));
+		if (col.groupSort === 'appearance') {
+			// Map keeps insertion order, which is first appearance. The
+			// fallback group goes last whatever its rows' order.
+			return [...groups.filter((g) => g.key !== fallback), ...groups.filter((g) => g.key === fallback)];
+		}
+		return groups
 			.sort((a, b) => {
 				const ai = order.indexOf(a.key);
 				const bi = order.indexOf(b.key);
@@ -841,10 +882,25 @@
 	const visualOrder = $derived(
 		groupedItems.filter((g) => !collapsedGroups.has(g.key)).flatMap((g) => g.items),
 	);
-	/** Row index in visual order, for RowMeta, the stagger, and range selection. */
-	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
+	/**
+	 * Where each open group starts in visual order. A row's index is its
+	 * group's start plus its place in the group, so a row listed in two
+	 * groups (a page in two threads) is two rows to the keyboard, each with
+	 * its own index. Used for RowMeta, the stagger and range selection.
+	 */
+	const groupStart = $derived.by(() => {
+		const starts = new Map<string, number>();
+		let at = 0;
+		for (const g of groupedItems) {
+			if (collapsedGroups.has(g.key)) continue;
+			starts.set(g.key, at);
+			at += g.items.length;
+		}
+		return starts;
+	});
 
 	const isTable = $derived(effectiveViewMode === 'table');
+	const isList = $derived(effectiveViewMode === 'list' && !!listRow);
 	const isWall = $derived(effectiveViewMode === 'wall');
 	/** Cards + a grouping = a board. That is the whole of what Board ever was. */
 	const asBoard = $derived(effectiveViewMode === 'grid' && isGrouped);
@@ -853,8 +909,7 @@
 	// transitions don't honour the media query on their own — the CSS-only
 	// `@media (prefers-reduced-motion)` block can't reach them.
 	const prefersReducedMotion =
-		typeof window !== 'undefined' &&
-		window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+		reducedMotion();
 	const motionMs = prefersReducedMotion ? 0 : 180;
 </script>
 
@@ -872,25 +927,14 @@
 				{#if bulkActions}
 					{@render bulkActions(selectedItems, clearSelection)}
 				{/if}
-				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
+				<Button variant="ghost" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
-				<Icon icon="mynaui:search" width="16" />
-				<input
-					type="text"
-					bind:this={searchInputEl}
-					bind:value={searchQuery}
-					placeholder={searchPlaceholder}
-					class="search-input"
-				/>
-				{#if searchQuery}
-					<button class="search-clear" onclick={() => (searchQuery = '')}>
-						<Icon icon="mynaui:x" width="16" />
-					</button>
-				{/if}
+				<SearchField bind:value={searchQuery} bind:input={searchInputEl} placeholder={searchPlaceholder} />
 			</div>
 
 			<div class="toolbar-meta">
+				{#if showCounts}
 				<span class="item-count">
 					<!-- Any narrowing counts, not just search. With a filter chip set, the
 					     count went on reporting the unfiltered total, so the number
@@ -902,6 +946,7 @@
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
 					{/if}
 				</span>
+				{/if}
 				{#if filters && filters.length > 0 && availableFilters.length > 0}
 					<div class="filter-add">
 						<Popover bind:open={addOpen} placement="bottom-end" offset={4}>
@@ -1027,9 +1072,9 @@
 			<Icon icon="mynaui:danger-circle" width="24" />
 			<span>{effectiveError}</span>
 			{#if serverMode}
-				<Button variant="secondary" size="sm" onclick={retryServer}>Retry</Button>
+				<Button variant="secondary" onclick={retryServer}>Retry</Button>
 			{:else if onRetry}
-				<Button variant="secondary" size="sm" onclick={onRetry}>Retry</Button>
+				<Button variant="secondary" onclick={onRetry}>Retry</Button>
 			{/if}
 		</div>
 	{:else if displayedItems.length === 0 && !isNarrowed}
@@ -1042,12 +1087,72 @@
 			<Icon icon="mynaui:search" width="32" />
 			{#if searchQuery.trim()}
 				<p>No results for "{searchQuery}"</p>
-				<Button variant="secondary" size="sm" onclick={() => (searchQuery = '')}>
+				<Button variant="secondary" onclick={() => (searchQuery = '')}>
 					Clear search
 				</Button>
 			{:else}
 				<p>No results match the active filters</p>
 			{/if}
+		</div>
+	{:else if isList && listRow}
+		{@const total = displayedItems.length}
+		<!-- The List: rows you read. No headers, because each row says what it
+		     is in its own words; a group's header is the only heading. -->
+		<div class="list-view" bind:this={gridEl} in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
+			{#each groupedItems as group (group.key)}
+				{@const closed = collapsedGroups.has(group.key)}
+				<!-- One group needs no heading: it would only repeat the page's title. -->
+				<section class="list-group" class:ungrouped={!isGrouped || groupedItems.length < 2}>
+					{#if isGrouped && groupedItems.length > 1}
+						<header class="list-group-head">
+							<button
+								type="button"
+								class="list-group-chev"
+								class:closed
+								onclick={() => toggleGroup(group.key)}
+								aria-expanded={!closed}
+								aria-label={closed ? `Show ${group.key}` : `Hide ${group.key}`}
+							>
+								<Icon icon="mynaui:chevron-down" width="14" />
+							</button>
+							{#if groupHeader}
+								{@render groupHeader(group)}
+							{:else}
+								<span class="list-group-name">{group.key}</span>
+							{/if}
+							{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
+						</header>
+					{/if}
+					{#if !closed}
+						<ul class="list-rows">
+							{#each group.items as item, j (item.id)}
+								{@const i = (groupStart.get(group.key) ?? 0) + j}
+								<li class="list-item">
+									<button
+										type="button"
+										class="list-row"
+										data-row-id={item.id}
+										data-row-index={i}
+										onclick={() => handleRowClick(item)}
+										oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
+										onkeydown={(e) => handleKeyDown(e, item, i)}
+										onfocus={() => (focusedIndex = i)}
+										tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
+										aria-label={`Open ${getItemLabel(item)}`}
+									>
+										{@render listRow(item, { rowIndex: i, colIndex: 0, total })}
+									</button>
+									{#if rowActions}
+										<!-- Beside the row, not in it: the row is a button, and a
+										     button cannot hold another. -->
+										<div class="list-row-actions">{@render rowActions(item)}</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			{/each}
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
@@ -1136,14 +1241,14 @@
 										>
 											<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 											<span class="group-name">{group.key}</span>
-											<span class="group-count">{group.items.length}</span>
+											{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
 										</button>
 									</td>
 								</tr>
 							{/if}
 							{#if !collapsedGroups.has(group.key)}
-						{#each group.items as item (item.id)}
-							{@const i = rowIndexById.get(item.id) ?? 0}
+						{#each group.items as item, j (item.id)}
+							{@const i = (groupStart.get(group.key) ?? 0) + j}
 							{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 							<tr
 								class="data-row"
@@ -1152,6 +1257,7 @@
 								class:animate-in={animateMount && !!tableRow}
 								style:--stagger="{staggerMs(i, 0)}ms"
 								data-row-id={item.id}
+										data-row-index={i}
 								onclick={(e) => {
 									// Shift-click extends a selection rather than opening; without
 									// this the only way to select a range is one row at a time.
@@ -1161,7 +1267,7 @@
 									} else handleRowClick(item);
 								}}
 								oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-								onkeydown={(e) => handleKeyDown(e, item)}
+								onkeydown={(e) => handleKeyDown(e, item, i)}
 								onfocus={() => (focusedIndex = i)}
 								tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
 								role={selectable ? 'row' : 'button'}
@@ -1270,11 +1376,12 @@
 					{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 					<button
 						class="wall-tile"
+						data-row-index={i}
 						class:animate-in={animateMount}
 						style:--stagger="{staggerMs(Math.floor(i / 3), i % 3)}ms"
 						onclick={() => handleRowClick(item)}
 						oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-						onkeydown={(e) => handleKeyDown(e, item)}
+						onkeydown={(e) => handleKeyDown(e, item, i)}
 						aria-label={`Open ${getItemLabel(item)}`}
 					>
 						{@render wallTile(item, meta)}
@@ -1304,7 +1411,7 @@
 								<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 							{/if}
 							<span class="group-name">{group.key}</span>
-							<span class="group-count">{group.items.length}</span>
+							{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
 						</button>
 					{/if}
 					{#if !collapsedGroups.has(group.key)}
@@ -1313,8 +1420,8 @@
 						class:board-stack={asBoard}
 						style:--grid-min={gridMinWidth}
 					>
-				{#each group.items as item (item.id)}
-					{@const i = rowIndexById.get(item.id) ?? 0}
+				{#each group.items as item, j (item.id)}
+					{@const i = (groupStart.get(group.key) ?? 0) + j}
 					{@const meta = {
 						rowIndex: Math.floor(i / cardCols),
 						colIndex: i % cardCols,
@@ -1331,11 +1438,12 @@
 					>
 						<button
 							class="card"
+							data-row-index={i}
 							class:animate-in={animateMount}
 							style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 							onclick={() => handleRowClick(item)}
 							oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-							onkeydown={(e) => handleKeyDown(e, item)}
+							onkeydown={(e) => handleKeyDown(e, item, i)}
 							aria-label={`Open ${getItemLabel(item)}`}
 							aria-expanded={expandDetail ? open : undefined}
 						>
@@ -1375,7 +1483,6 @@
 		<div class="pagination">
 			<Button
 				variant="secondary"
-				size="sm"
 				disabled={currentPage <= 1 || (serverMode && serverLoading)}
 				onclick={() => currentPage--}
 			>
@@ -1394,7 +1501,6 @@
 			{/if}
 			<Button
 				variant="secondary"
-				size="sm"
 				disabled={currentPage >= totalPages || (serverMode && serverLoading)}
 				onclick={() => currentPage++}
 			>
@@ -1432,75 +1538,13 @@
 		gap: 0.5rem;
 	}
 
-	/* Search — matches the project's standard Input.svelte styling */
+	/* Search: the shared SearchField, given the toolbar's width. */
 	.search-container {
 		position: relative;
 		display: flex;
 		align-items: center;
 		flex: 1;
 		max-width: 360px;
-	}
-
-	.search-container > :global(svg:first-child) {
-		position: absolute;
-		left: 10px;
-		color: var(--color-foreground-subtle);
-		pointer-events: none;
-		z-index: 2;
-	}
-
-	.search-input {
-		width: 100%;
-		/* Fixed so the toolbar's height is a known quantity: the row swaps between
-		   this and the selection controls, and it must not resize when it does. */
-		height: 34px;
-		padding: 0 30px;
-		font-family: var(--font-sans);
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		outline: none;
-		transition: border-color 0.25s ease, box-shadow 0.25s ease;
-	}
-
-	.search-input::placeholder {
-		color: var(--color-foreground-subtle);
-	}
-
-	.search-input:hover:not(:focus) {
-		border-color: var(--color-border-strong);
-	}
-
-	.search-input:focus {
-		border-color: var(--color-primary);
-		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
-	}
-
-	.search-clear {
-		position: absolute;
-		right: 8px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		z-index: 2;
-	}
-
-	.search-clear:hover {
-		color: var(--color-foreground);
-	}
-
-	.search-clear:hover {
-		color: var(--color-foreground);
-		background: var(--color-background-hover);
 	}
 
 	.item-count {
@@ -1519,7 +1563,7 @@
 		justify-content: center;
 		width: 32px;
 		height: 32px;
-		background: var(--color-background-secondary);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		color: var(--color-foreground-muted);
@@ -1530,11 +1574,6 @@
 	.ctrl-btn:hover {
 		color: var(--color-foreground);
 		background: var(--color-background-hover);
-	}
-
-	.ctrl-btn:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	.ctrl-btn.has-active {
@@ -1551,17 +1590,17 @@
 		white-space: nowrap;
 	}
 
-	/* Menu shared by the group control. Same surface as .add-popover — one
-	   popover look for the whole toolbar. */
+	/* Menu shared by the group control. Same surface and shadow as the
+	   context menu, so every menu in the app is one look. */
 	.menu-popover {
 		min-width: 170px;
 		display: flex;
 		flex-direction: column;
 		padding: 0.25rem;
-		background: var(--color-background, #fff);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--shadow-float);
 	}
 	/* Filter add: button + popover wrapper */
 	.filter-add {
@@ -1581,7 +1620,7 @@
 		font-size: 10px;
 		font-weight: 600;
 		line-height: 1;
-		color: white;
+		color: var(--color-surface);
 		background: var(--color-primary);
 		border-radius: var(--radius-full);
 		box-sizing: border-box;
@@ -1595,10 +1634,10 @@
 		display: flex;
 		flex-direction: column;
 		padding: 0.25rem;
-		background: var(--color-background, #fff);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--shadow-float);
 	}
 
 	/* States */
@@ -1615,12 +1654,7 @@
 	}
 
 	.loading-state :global(svg) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.empty-state :global(svg) {
@@ -1734,11 +1768,6 @@
 		color: var(--color-foreground);
 	}
 
-	.th-sort:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
 	.th-content :global(svg),
 	.th-sort :global(svg) {
 		opacity: 0.7;
@@ -1772,8 +1801,6 @@
 	}
 
 	.data-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
@@ -1886,10 +1913,6 @@
 		transform: scale(1);
 		clip-path: inset(42% 8% 42% 8%);
 	}
-	.sel-box:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	@media (prefers-reduced-motion: reduce) {
 		.sel-box, .sel-box::before { transition: none; }
 	}
@@ -1975,13 +1998,110 @@
 		cursor: pointer;
 	}
 	.group-toggle:hover { color: var(--color-foreground); }
-	.group-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 	.group-toggle :global(.group-chev) {
 		color: var(--color-foreground-subtle);
 		transition: transform 0.16s ease;
 		flex-shrink: 0;
 	}
 	.group-toggle.closed :global(.group-chev) { transform: rotate(-90deg); }
+	/* List view */
+	.list-view {
+		padding-top: 1.5rem;
+	}
+	.list-group {
+		margin-bottom: 2.5rem;
+	}
+	.list-group.ungrouped {
+		margin-bottom: 0;
+	}
+	.list-group-head {
+		position: relative;
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding-bottom: 0.5rem;
+		margin-bottom: 0.25rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+	/* The chevron hangs in the margin and shows on hover, so a group header
+	   reads as a heading until you reach for it. */
+	.list-group-chev {
+		position: absolute;
+		left: -1.75rem;
+		top: 0.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		padding: 0;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		opacity: 0;
+		cursor: pointer;
+		transition: opacity 120ms ease, transform 160ms ease;
+	}
+	.list-group-head:hover .list-group-chev,
+	.list-group-chev:focus-visible,
+	.list-group-chev.closed {
+		opacity: 1;
+	}
+	.list-group-chev.closed {
+		transform: rotate(-90deg);
+	}
+	.list-group-name {
+		font-family: var(--font-serif);
+		font-size: var(--md-h2-size);
+		color: var(--color-foreground);
+	}
+	.list-rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	/* One rule per group, under its heading; rows are set apart by space and
+	   a fill under the pointer, not a line each. */
+	.list-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		border-radius: var(--radius-md);
+	}
+	/* The row with keyboard focus takes the hover tint: there are no focus
+	   rings, so the tint is how you see where you are. */
+	.list-item:hover,
+	.list-item:has(.list-row:focus-visible) {
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
+	}
+	.list-row {
+		display: block;
+		flex: 1 1 auto;
+		min-width: 0;
+		padding: 0.75rem 0.5rem;
+		border: 0;
+		border-radius: var(--radius-md);
+		background: none;
+		font: inherit;
+		text-align: left;
+		color: inherit;
+		cursor: pointer;
+	}
+	.list-row-actions {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding-right: 0.5rem;
+	}
+	@media (max-width: 768px) {
+		.list-group-chev {
+			position: static;
+			opacity: 1;
+		}
+	}
+
 	.group-count {
 		font-family: var(--font-mono);
 		font-size: 0.625rem;
@@ -2055,12 +2175,6 @@
 		cursor: pointer;
 	}
 
-	.wall-tile:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-md);
-	}
-
 	@media (max-width: 900px) {
 		.wall {
 			columns: 2;
@@ -2108,12 +2222,6 @@
 		width: 100%;
 		font: inherit;
 		color: inherit;
-	}
-
-	.card:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-lg);
 	}
 
 	/* The default card body. `.card` itself stays an unstyled button because

@@ -26,7 +26,7 @@ pub const VISIT_RETENTION_DAYS: i64 = 90;
 /// Two opens of one record inside this window are one visit.
 const DEDUPE_WINDOW: &str = "1 minute";
 
-const KINDS: [&str; 4] = ["chat", "page", "project", "applet"];
+const KINDS: [&str; 4] = ["chat", "page", "thread", "applet"];
 
 /// How many records `recent` returns. The sidebar shows ten after it drops
 /// pinned and deleted records, so this leaves room for both.
@@ -49,7 +49,7 @@ pub struct Frecency {
 pub async fn record_visit(pool: &PgPool, req: RecordVisitRequest) -> Result<()> {
     if !KINDS.contains(&req.kind.as_str()) {
         return Err(Error::InvalidInput(format!(
-            "unknown visit kind '{}' (chat | page | project | applet)",
+            "unknown visit kind '{}' (chat | page | thread | applet)",
             req.kind
         )));
     }

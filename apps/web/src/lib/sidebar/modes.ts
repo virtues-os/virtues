@@ -13,6 +13,7 @@
  */
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
+import { LANDING } from '$lib/settings';
 
 export interface ModeRow {
 	id: string;
@@ -64,141 +65,58 @@ export interface SidebarMode {
 	rows: ModeRow[];
 }
 
+/** Each Settings page's glyph in the crumb menus, and the Remix name kept beside it. */
+const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
+	'/virtues/assistant': { icon: 'mynaui:sparkles', glyph: 'assistant' },
+	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
+	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
+	'/virtues/data': { icon: 'mynaui:database' },
+	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
+	'/virtues/appearance': { icon: 'mynaui:sun' },
+	'/virtues/billing': { icon: 'mynaui:credit-card', glyph: 'billing' },
+	'/virtues/system': { icon: 'mynaui:servers', glyph: 'system' },
+	'/virtues/devices': { icon: 'mynaui:mobile', glyph: 'devices' },
+	'/virtues/server': { icon: 'mynaui:refresh' },
+	'/virtues/backup': { icon: 'mynaui:archive' },
+	'/virtues/keys': { icon: 'mynaui:key', glyph: 'keys' },
+	'/virtues/shared': { icon: 'mynaui:share', glyph: 'shared' },
+	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
+	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
+};
+
+function settingsRow(href: string, label: string, group: string): ModeRow {
+	return { id: href.slice('/virtues/'.length).replace(/\//g, '-'), label, href, group, ...(SETTINGS_ICONS[href] ?? { icon: 'mynaui:cog' }) };
+}
+
 /**
- * Settings: every room that is the server's plumbing rather than the record,
- * under four headings, the way the wiki asks Time and Subjects.
+ * Settings' pages, for the crumbs on those pages and the menus the crumbs
+ * open. They come from the landing page's site map (LANDING in lib/settings),
+ * so a page sits under the same heading in both: Assistant, You, Your server.
  *
- *   ACCOUNT — you, your assistant, what AI costs you.
- *   SERVER — the machine, the devices paired to it, the screen on it.
- *   SOURCES — what fills the record. Its own rail door until 2026-10-05; the
- *     rail now holds only what you read (Home, Wiki, Timeline), and
- *     connecting a source is a setting you make, then leave. Streams, the
- *     raw rows each source sent, sits here too: it is the other end of a
- *     source, and it left Drive's page on 2026-10-21.
- *   DEVELOPER — the SQL and terminal consoles. Tools, not preferences, which
- *     is why they sit under their own heading at the foot rather than mixed
- *     into the rows above.
- *
- * Sources and the consoles keep their routes (`/sources/*`,
- * `/virtues/developer/*`); only the door moved. `rowForRoute` matches both,
- * so either lights the sidebar's Settings row and carries the section list.
+ * One row per page. A site-map link that names a row on a page points at a
+ * page another link already lists, so the page goes under its plain link
+ * where it has one, and otherwise under its group's name.
  */
+function settingsRows(): ModeRow[] {
+	const rows: ModeRow[] = [];
+	for (const group of LANDING) {
+		for (const { route } of group.links) {
+			if (rows.some((r) => r.href === route)) continue;
+			const plain = LANDING.flatMap((g) => g.links.filter((l) => l.route === route && !l.setting).map((l) => ({ g, l })))[0];
+			if (plain && plain.g !== group) continue;
+			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
+		}
+	}
+	// Pages the site map leaves out: search settings are found by searching,
+	// and Applets is reached from the Applets door.
+	rows.push(settingsRow('/virtues/search', 'Search', 'Your server'), settingsRow('/virtues/applets', 'Applets', 'Your server'));
+	return rows;
+}
+
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
-	rows: [
-		// "Profile", not "You": the wiki has the other "You", the narrative
-		// identity, and two rows with one label in two rooms is a question the
-		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/you', group: 'Account' },
-		{
-			id: 'assistant',
-			label: 'Assistant',
-			icon: 'mynaui:sparkles',
-			glyph: 'assistant',
-			href: '/virtues/assistant',
-			group: 'Account',
-		},
-		// What AI costs and how it gets paid for: standing, balance, routing and
-		// the call log on one page, because each answers the others.
-		{
-			id: 'billing',
-			label: 'Billing',
-			icon: 'mynaui:credit-card',
-			glyph: 'billing',
-			href: '/virtues/billing',
-			group: 'Account',
-		},
-		// The secrets the server keeps: sources' sign-ins and the named keys
-		// applets use. Values show only when asked for.
-		{
-			id: 'keys',
-			label: 'Keys',
-			icon: 'mynaui:key',
-			glyph: 'keys',
-			href: '/virtues/keys',
-			group: 'Account',
-		},
-		// The machine itself and what is physically attached to it: its readings,
-		// its network (/virtues/system/network).
-		{ id: 'system', label: 'System', icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Server' },
-		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
-		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Server' },
-		// Every participant, the server first: the release it runs is a fact
-		// about a device.
-		{
-			id: 'devices',
-			label: 'Devices',
-			icon: 'mynaui:mobile',
-			glyph: 'devices',
-			href: '/virtues/devices',
-			group: 'Server',
-		},
-		// Every link the owner has shared, live or ended, with revoke.
-		{
-			id: 'shared',
-			label: 'Shared links',
-			icon: 'mynaui:share',
-			glyph: 'shared',
-			href: '/virtues/shared',
-			group: 'Server',
-		},
-		// Every applet on the server, built-in ones included: when each runs and
-		// how its runs went. The Applets page in Home is where you use them;
-		// this is where you check them.
-		{
-			id: 'applets',
-			label: 'Applets',
-			icon: 'atlas:applets',
-			glyph: 'applets',
-			href: '/virtues/applets',
-			group: 'Server',
-		},
-		// In the order the questions get asked: is anything broken right now,
-		// what can I plug in, and what has actually been running.
-		{ id: 'sources', label: 'Overview', icon: 'mynaui:layout-dashboard', glyph: 'overview', href: '/sources', group: 'Sources' },
-		{
-			id: 'catalog',
-			label: 'Catalog',
-			icon: 'mynaui:grid',
-			glyph: 'catalog',
-			href: '/sources/catalog',
-			group: 'Sources',
-		},
-		{
-			id: 'activity',
-			label: 'Activity',
-			icon: 'mynaui:clock-circle',
-			glyph: 'history',
-			href: '/sources/activity',
-			group: 'Sources',
-		},
-		// The route stays under `/storage`; only the door moved.
-		{
-			id: 'streams',
-			label: 'Streams',
-			icon: 'mynaui:database',
-			glyph: 'streams',
-			href: '/storage/streams',
-			group: 'Sources',
-		},
-		{
-			id: 'sql',
-			label: 'SQL',
-			icon: 'mynaui:terminal',
-			glyph: 'sql',
-			href: '/virtues/developer/sql',
-			group: 'Developer',
-		},
-		{
-			id: 'terminal',
-			label: 'Terminal',
-			icon: 'mynaui:terminal',
-			glyph: 'terminal',
-			href: '/virtues/developer/terminal',
-			group: 'Developer',
-		},
-	],
+	rows: settingsRows(),
 };
 
 /**
@@ -336,27 +254,34 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/things',
 			group: 'Subjects',
 		},
+	],
+};
+
+/**
+ * Storage: what your server keeps that you file or save, apart from the
+ * wiki's story of your life. Its door opens the front page at `/storage`,
+ * which links to these rows.
+ */
+export const STORAGE_MODE: SidebarMode = {
+	id: 'storage',
+	title: 'Storage',
+	rows: [
 		{
 			id: 'files',
 			label: 'Files',
 			icon: 'mynaui:hard-drive',
 			glyph: 'files',
-			href: '/storage',
-			// Every Storage section sits under `/storage`, Streams included, which
-			// is a Settings row. Files is the bare route and the folders under
-			// `/storage/drive`.
-			activeWhen: (route) => route === '/storage' || route.startsWith('/storage/drive'),
-			group: 'Drive',
+			href: '/storage/drive',
 		},
-		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media', group: 'Drive' },
 		{
 			id: 'bookmarks',
 			label: 'Bookmarks',
 			icon: 'mynaui:bookmark',
 			glyph: 'bookmarks',
 			href: '/bookmarks',
-			group: 'Drive',
+			activeWhen: (route) => route === '/bookmarks' || route.startsWith('/bookmark/'),
 		},
+		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media' },
 		// Saved logins. Kept on the box and never read by the assistant
 		// (api/passwords.rs); API keys stay in Settings → Keys.
 		{
@@ -365,7 +290,6 @@ export const WIKI_MODE: SidebarMode = {
 			icon: 'mynaui:lock-password',
 			glyph: 'passwords',
 			href: '/passwords',
-			group: 'Drive',
 		},
 		{
 			id: 'trash',
@@ -373,7 +297,6 @@ export const WIKI_MODE: SidebarMode = {
 			icon: 'mynaui:trash',
 			glyph: 'trash',
 			href: '/storage/trash',
-			group: 'Drive',
 		},
 	],
 };

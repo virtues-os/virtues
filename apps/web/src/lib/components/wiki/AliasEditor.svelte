@@ -106,7 +106,7 @@
 			<IconButton
 				icon="mynaui:x"
 				label="Remove alias {alias}"
-				size="xs"
+				size="nested"
 				disabled={saving}
 				onclick={() => remove(alias)}
 			/>
@@ -172,13 +172,12 @@
 	}
 
 	.alias-input:focus {
-		outline: none;
 		border-bottom: 1px solid var(--color-border);
 	}
 
 	.alias-error {
 		margin-top: 0.25rem;
 		font-size: 12px;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 </style>

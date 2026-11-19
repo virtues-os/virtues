@@ -10,9 +10,10 @@
 		chats: 'mynaui:chat',
 		'new-chat': 'mynaui:chat-plus',
 		pages: 'mynaui:file-text',
-		projects: 'mynaui:folder',
+		// A thread is more than a container, so it is not a folder.
+		projects: 'mynaui:layers-three',
 		tasks: 'mynaui:check-square',
-		applets: 'mynaui:sparkles',
+		applets: 'mynaui:grid',
 		wiki: 'mynaui:globe',
 		bookmarks: 'mynaui:bookmark',
 		calendar: 'mynaui:calendar',
@@ -81,9 +82,9 @@
 		chats: 'mynaui:chat-solid',
 		'new-chat': 'mynaui:chat-plus-solid',
 		pages: 'mynaui:file-text-solid',
-		projects: 'mynaui:folder-solid',
+		projects: 'mynaui:layers-three-solid',
 		tasks: 'mynaui:check-square-solid',
-		applets: 'mynaui:sparkles-solid',
+		applets: 'mynaui:grid-solid',
 		wiki: 'mynaui:globe-solid',
 		bookmarks: 'mynaui:bookmark-solid',
 		calendar: 'mynaui:calendar-solid',
@@ -94,9 +95,16 @@
 	};
 
 	/**
-	 * The size of a glyph on the sidebar's rows and in the window header.
+	 * The size of a glyph in the window header.
 	 */
 	export const SHELL_GLYPH_PX = 16;
+
+	/**
+	 * The size of a door's glyph on the sidebar's rows. Pins draw an 18px
+	 * tile to match (PinGlyph). At 16px in the 44px rail the glyphs looked
+	 * small for their rows.
+	 */
+	export const ROW_GLYPH_PX = 18;
 </script>
 
 <script lang="ts">
@@ -111,7 +119,7 @@
 		/**
 		 * Stroke weight, in the 24-unit box's units. Leave it unset: it is
 		 * derived from `size` so every glyph renders at the scale's one line,
-		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "The scale").
+		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "Glyphs").
 		 */
 		stroke?: number;
 		/**

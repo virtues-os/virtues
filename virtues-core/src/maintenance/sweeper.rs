@@ -21,6 +21,9 @@
 //!   - `app_visits` rows past `VISIT_RETENTION_DAYS` are pruned; frecency
 //!     never reads further back than that anyway.
 //!
+//!   - Audio past the owner's Keep recordings choice is deleted once it is
+//!     transcribed (`api::recordings::delete_expired_audio`); off by default.
+//!
 //! No job queue, no worker pool, no PID file — one tokio task spawned by
 //! `server::run`. Stops when the daemon stops.
 
@@ -147,6 +150,17 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
             0
         }
     };
+
+    let audio = match crate::api::recordings::delete_expired_audio(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: deleting expired audio failed: {e:#}");
+            0
+        }
+    };
+    if audio > 0 {
+        tracing::info!(recordings = audio, "sweeper: deleted audio past Keep recordings");
+    }
 
     Ok(Counts {
         pair_tokens,

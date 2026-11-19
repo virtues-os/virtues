@@ -37,7 +37,7 @@
 <script lang="ts">
 	import { useShowing } from "../showing";
 	import { onDestroy, onMount } from "svelte";
-	import { fade } from "svelte/transition";
+	import { fade } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";

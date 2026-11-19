@@ -20,7 +20,7 @@ export function browserLabel(url: string | null): string {
 	}
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { THREAD_ICON } from '$lib/utils/iconHelpers';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -30,27 +30,27 @@ const BrowserView: ViewLoader = () => import('$lib/components/tabs/views/Browser
 const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/HistoryView.svelte');
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
-const WikiListView: ViewLoader = () => import('$lib/components/tabs/views/WikiListView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
 const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
-const TasksView: ViewLoader = () => import('$lib/components/tabs/views/TasksView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
 const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
 const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
+const DesignView: ViewLoader = () => import('$lib/components/tabs/views/DesignView.svelte');
 const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView.svelte');
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
 const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/PasswordsView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
-const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/ProjectsListView.svelte');
-const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
+const ThreadsView: ViewLoader = () => import('$lib/components/tabs/views/ThreadsView.svelte');
+const ThreadView: ViewLoader = () => import('$lib/components/tabs/views/ThreadView.svelte');
+const TaskView: ViewLoader = () => import('$lib/components/tabs/views/TaskView.svelte');
+const InsightView: ViewLoader = () => import('$lib/components/tabs/views/InsightView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
-const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
 export interface TabDefinition {
@@ -98,7 +98,7 @@ export const WIKI_SECTION_RE =
  *
  * Overview is the bare `/sources` and so is not in this list.
  */
-export const SOURCES_SECTIONS = ['catalog', 'activity'] as const;
+export const SOURCES_SECTIONS = ['catalog', 'activity', 'streams', 'query'] as const;
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
 
 export const tabRegistry: Record<TabType, TabDefinition> = {
@@ -115,7 +115,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'chat',
 					label: temporary ? 'Temporary chat' : 'New chat',
-					icon: temporary ? 'mynaui:incognito' : 'mynaui:chat',
+					icon: temporary ? 'mynaui:incognito' : 'atlas:chats',
 					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
 			}
@@ -124,7 +124,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'chat',
 				label: 'Chat',
-				icon: 'mynaui:chat',
+				icon: 'atlas:chats',
 				entityId: match?.[1],
 			};
 		},
@@ -135,7 +135,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/chat';
 		},
-		icon: 'mynaui:chat',
+		icon: 'atlas:chats',
 		defaultLabel: 'Chats',
 		component: ChatView,
 		detailComponent: ChatView,
@@ -184,7 +184,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'page',
 					label: 'Pages',
-					icon: 'mynaui:file-text',
+					icon: 'atlas:pages',
 				};
 			}
 			// Detail view
@@ -192,7 +192,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'page',
 				label: 'Page',
-				icon: 'mynaui:file-text',
+				icon: 'atlas:pages',
 				entityId: match?.[1],
 			};
 		},
@@ -203,7 +203,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/page';
 		},
-		icon: 'mynaui:file-text',
+		icon: 'atlas:pages',
 		defaultLabel: 'Pages',
 		component: PagesView,
 		detailComponent: PageDetailView,
@@ -233,16 +233,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PERSON NAMESPACE: /person, /person/{id}
+	// PERSON NAMESPACE: /person/{id}
+	//
+	// The list is the wiki's index, `/wiki/people`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	person: {
 		match: (path) => path === '/person' || /^\/person\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/person') {
 				return {
-					type: 'person',
-					label: 'People',
-					icon: 'mynaui:user',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/people',
 				};
 			}
 			const match = path.match(/^\/person\/([^/]+)$/);
@@ -258,25 +262,29 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'person') {
 				return `/person/${serialized}`;
 			}
-			return '/person';
+			return '/wiki/people';
 		},
 		icon: 'mynaui:user',
 		defaultLabel: 'People',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
 	// ========================================================================
-	// PLACE NAMESPACE: /place, /place/{id}
+	// PLACE NAMESPACE: /place/{id}
+	//
+	// The list is the wiki's index, `/wiki/places`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	place: {
 		match: (path) => path === '/place' || /^\/place\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/place') {
 				return {
-					type: 'place',
-					label: 'Places',
-					icon: 'mynaui:map-pin',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/places',
 				};
 			}
 			const match = path.match(/^\/place\/([^/]+)$/);
@@ -292,25 +300,29 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'place') {
 				return `/place/${serialized}`;
 			}
-			return '/place';
+			return '/wiki/places';
 		},
 		icon: 'mynaui:map-pin',
 		defaultLabel: 'Places',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
 	// ========================================================================
-	// ORG NAMESPACE: /org, /org/{id}
+	// ORG NAMESPACE: /org/{id}
+	//
+	// The list is the wiki's index, `/wiki/orgs`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	org: {
 		match: (path) => path === '/org' || /^\/org\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/org') {
 				return {
-					type: 'org',
-					label: 'Organizations',
-					icon: 'mynaui:building',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/orgs',
 				};
 			}
 			const match = path.match(/^\/org\/([^/]+)$/);
@@ -326,11 +338,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'org') {
 				return `/org/${serialized}`;
 			}
-			return '/org';
+			return '/wiki/orgs';
 		},
 		icon: 'mynaui:building',
 		defaultLabel: 'Organizations',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
@@ -399,7 +411,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: BookmarksView,
 	},
 
-	// PASSWORDS: /passwords — the logins saved on the box, in Drive beside
+	// PASSWORDS: /passwords — the logins saved on the box, in Storage beside
 	// Bookmarks. Its own namespace, not under /storage, because nothing here
 	// is a file and Storage's search and indexing must never reach it.
 	passwords: {
@@ -417,7 +429,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: PasswordsView,
 	},
 
-	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /project/{id}.
+	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /thread/{id}.
 	bookmark: {
 		match: (path) => /^\/bookmark\/.+$/.test(path),
 		parse: (path) => ({
@@ -436,53 +448,106 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PROJECT NAMESPACE: /projects (list), /project/{id} (detail)
+	// THREAD NAMESPACE: /threads (the door), /thread/{id} (a thread's page)
 	//
-	// A Project is the "room" a chat lives in — a workspace lens over the graph:
-	// a Library of materials, filed chats, entities, and pages. (id may be a
-	// legacy `space_…` or a new `nb_…` — both route the same.)
+	// A thread is something happening that you follow. It holds tasks, filed
+	// chats, pages, files and records.
+	// TODO(2026-11-17): migrate projectStore, projectActions, ProjectGlyph and
+	// the Project* types in api/client.ts to thread names once the files that
+	// import them hold no other session's uncommitted work.
 	//
-	// Projects were called notebooks until 2026-09. The legacy `/notebooks` and
-	// `/notebook/{id}` spellings still match — old pins, citations and serialized
-	// tab URLs carry them — and parse to a `project` tab with `normalizedRoute`
-	// rewritten to the `/project…` form, so nothing downstream sees the old name.
+	// Tasks live in the Threads door. `/tasks` (and `/tasks/assistant`,
+	// `/tasks/all`, from when that page had filter tabs) opens the door's
+	// Tasks view, keeping `?task=<id>`, which opens that task in the list.
 	// ========================================================================
-	project: {
+	thread: {
 		match: (path) =>
-			path === '/projects' ||
-			path === '/project' ||
-			path === '/notebooks' ||
-			path === '/notebook' ||
-			/^\/(?:project|notebook)\/[^/]+$/.test(path),
-		parse: (path) => {
-			if (path === '/projects' || path === '/project' || path === '/notebooks' || path === '/notebook') {
+			path === '/threads' ||
+			/^\/tasks(\/(assistant|all))?$/.test(path) ||
+			path === '/thread' ||
+			/^\/thread\/[^/]+$/.test(path),
+		parse: (path, params) => {
+			if (!/^\/thread\/[^/]+$/.test(path)) {
+				// The door. `/tasks` and `?task=` open its Tasks view.
+				const task = params?.get('task');
+				const tasks = path.startsWith('/tasks') || !!task || params?.get('view') === 'tasks';
+				const other = params?.get('view');
+				const threads = other === 'threads' || other === 'insights';
+				const query = task
+					? `?view=tasks&task=${encodeURIComponent(task)}`
+					: tasks
+						? '?view=tasks'
+						: threads
+							? `?view=${other}`
+							: '';
 				return {
-					type: 'project',
-					label: 'Projects',
-					icon: PROJECT_ICON,
-					normalizedRoute: '/projects',
+					type: 'thread',
+					label: 'Threads',
+					icon: THREAD_ICON,
+					normalizedRoute: `/threads${query}`,
 				};
 			}
-			const match = path.match(/^\/(project|notebook)\/([^/]+)$/);
+			const match = path.match(/^\/thread\/([^/]+)$/);
 			return {
-				type: 'project',
-				label: 'Project',
-				icon: PROJECT_ICON,
-				entityId: match?.[2],
-				// Rewrite the legacy spelling; the canonical form is a no-op.
-				...(match?.[1] === 'notebook' && { normalizedRoute: `/project/${match[2]}` }),
+				type: 'thread',
+				label: 'Thread',
+				icon: THREAD_ICON,
+				entityId: match?.[1],
 			};
 		},
 		// Prefixed like `bookmark_`, not bare like `person_…`: a bare `nb_…` id
 		// has no tab type in front of it, so `deserializeTab` read it as type
-		// "nb" and every project tab restored as Home.
-		serialize: (id) => (id ? `project_${id}` : 'projects'),
+		// "nb" and every thread tab restored as Home.
+		serialize: (id) => (id ? `thread_${id}` : 'threads'),
 		deserialize: (serialized) =>
-			serialized.startsWith('project_') ? `/project/${serialized.slice(8)}` : '/projects',
-		icon: PROJECT_ICON,
-		defaultLabel: 'Projects',
-		component: ProjectsListView,
-		detailComponent: ProjectDetailView,
+			serialized.startsWith('thread_') ? `/thread/${serialized.slice(7)}` : '/threads',
+		icon: THREAD_ICON,
+		defaultLabel: 'Threads',
+		component: ThreadsView,
+		detailComponent: ThreadView,
+	},
+
+	// ========================================================================
+	// INSIGHT: /insight/{key}, one note's page. It sits under the Threads
+	// door. A note's key holds colons, so the route carries it encoded.
+	// ========================================================================
+	insight: {
+		match: (path) => /^\/insight\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'insight',
+			label: 'Insight',
+			icon: 'mynaui:sparkles',
+			entityId: path.match(/^\/insight\/([^/]+)$/)?.[1],
+		}),
+		serialize: (id) => (id ? `insight_${id}` : 'insight'),
+		deserialize: (serialized) =>
+			serialized.startsWith('insight_') ? `/insight/${serialized.slice(8)}` : '/threads?view=insights',
+		icon: 'mynaui:sparkles',
+		defaultLabel: 'Insight',
+		component: InsightView,
+		detailComponent: InsightView,
+	},
+
+	// ========================================================================
+	// TASK: /task/{id}, one task's page. It sits under the Threads door.
+	// ========================================================================
+	task: {
+		match: (path) => /^\/task\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'task',
+			label: 'Task',
+			icon: 'atlas:tasks',
+			entityId: path.match(/^\/task\/([^/]+)$/)?.[1],
+		}),
+		// Task ids carry their own `task_` prefix, so the serialized form is
+		// `task_task_…`, and the type prefix comes off whole.
+		serialize: (id) => (id ? `task_${id}` : 'task'),
+		deserialize: (serialized) =>
+			serialized.startsWith('task_') && serialized.length > 5 ? `/task/${serialized.slice(5)}` : '/threads?view=tasks',
+		icon: 'atlas:tasks',
+		defaultLabel: 'Task',
+		component: TaskView,
+		detailComponent: TaskView,
 	},
 
 	// ========================================================================
@@ -563,25 +628,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: WikiDetailView,
 	},
 
-	// ========================================================================
-	// SETUP: /setup, /setup/{step}
-	//   Only once someone is in the app; before that `/setup` is the
-	//   full-screen stage, and nothing sends it here (setup/inApp.ts).
-	// ========================================================================
-	setup: {
-		match: (path) => path === '/setup' || /^\/setup\/[a-z]+$/.test(path),
-		parse: (path) => ({
-			type: 'setup',
-			label: 'Setup',
-			icon: 'mynaui:list-check',
-			normalizedRoute: path,
-		}),
-		serialize: (id) => (id ? `setup_${id}` : 'setup'),
-		deserialize: (serialized) => (serialized.startsWith('setup_') ? `/setup/${serialized.slice(6)}` : '/setup'),
-		icon: 'mynaui:list-check',
-		defaultLabel: 'Setup',
-		component: SetupView,
-	},
 
 	// ========================================================================
 	// NARRATIVE IDENTITY: /narrative-identity
@@ -652,25 +698,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// owns the whole namespace and dispatches the detail itself, against the
 		// same SOURCES_SECTIONS list the matcher above uses.
 		component: SourcesView,
-	},
-
-	// ========================================================================
-	// TASKS: /tasks — the to-do list the owner and the assistant share
-	// ========================================================================
-	tasks: {
-		// One page. /tasks/assistant and /tasks/all are links from when the
-		// page had filter tabs; they still open it.
-		match: (path) => /^\/tasks(\/(assistant|all))?$/.test(path),
-		parse: () => ({
-			type: 'tasks',
-			label: 'Tasks',
-			icon: 'atlas:tasks',
-		}),
-		serialize: () => 'tasks',
-		deserialize: () => '/tasks',
-		icon: 'atlas:tasks',
-		defaultLabel: 'Tasks',
-		component: TasksView,
 	},
 
 	// ========================================================================
@@ -774,7 +801,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// /chat/<chat>/tool/<call> — the rows one query returned, which a chat
 		// answer's figure links to. Matched before `chat`, whose own routes
 		// stop at the chat id.
-		match: (path) => /^\/chat\/[^/]+\/tool\/[^/]+$/.test(path),
+		match: (path) => /^\/chat\/[^/]+\/tool\/[^/#]+(#\d)?$/.test(path),
 		parse: (path) => ({
 			type: 'query',
 			label: 'Query',
@@ -850,10 +877,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (sub === 'trash') {
 				return { type: 'storage', label: 'Recently deleted', icon: 'mynaui:trash' };
 			}
-			// Drive, possibly deep inside a folder: /storage/drive/Documents/2026
+			// The front page: what Storage holds, newest first.
+			if (path === '/storage') {
+				return { type: 'storage', label: 'Storage', icon: 'mynaui:archive' };
+			}
+			// Files, possibly deep inside a folder: /storage/drive/Documents/2026
 			const storagePath = path.replace(/^\/storage\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'storage', label: 'Drive', icon: 'mynaui:hard-drive' };
+				return { type: 'storage', label: 'Files', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'storage',
@@ -869,8 +900,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/storage';
 		},
-		icon: 'mynaui:hard-drive',
-		defaultLabel: 'Drive',
+		icon: 'mynaui:archive',
+		defaultLabel: 'Storage',
 		component: StorageView,
 	},
 
@@ -883,7 +914,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => {
 			const storagePath = path.replace(/^\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'drive', label: 'Drive', icon: 'mynaui:hard-drive' };
+				return { type: 'drive', label: 'Files', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'drive',
@@ -897,7 +928,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('drive_')) {
 				return `/storage/drive/${decodeURIComponent(serialized.slice(6))}`;
 			}
-			return '/storage';
+			return '/storage/drive';
 		},
 		icon: 'mynaui:hard-drive',
 		defaultLabel: 'Drive',
@@ -936,6 +967,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'mynaui:path',
 		defaultLabel: 'Timeline',
 		component: TimelineView,
+	},
+
+	// ========================================================================
+	// DESIGN: /design. The design system, agents/build/design.md rendered
+	// with live specimens. No door opens it; it is reached by its address.
+	// ========================================================================
+	design: {
+		match: (path) => path === '/design',
+		parse: () => ({ type: 'design', label: 'Design system', icon: 'mynaui:swatches' }),
+		serialize: () => 'design',
+		deserialize: () => '/design',
+		icon: 'mynaui:swatches',
+		defaultLabel: 'Design system',
+		component: DesignView,
 	},
 
 	// ========================================================================
@@ -1004,7 +1049,6 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
-		'tasks', // The shared to-do list
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
@@ -1016,6 +1060,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
 		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
+		'design', // The design system: /design
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /
@@ -1025,7 +1070,9 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'thing',
-		'project',
+		'thread',
+		'task',
+		'insight',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices
 		// that BOTH have to be listed here. An entry in `tabRegistry` alone is
@@ -1036,7 +1083,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'day',
 		'year',
 		'narrative-identity',
-		'setup',
 	];
 
 	for (const type of orderedTypes) {
@@ -1050,7 +1096,7 @@ export function parseRoute(route: string): ParsedRoute {
 	return {
 		type: 'chat',
 		label: 'New chat',
-		icon: 'mynaui:chat',
+		icon: 'atlas:chats',
 	};
 }
 

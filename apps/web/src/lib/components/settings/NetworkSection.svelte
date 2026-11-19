@@ -1,22 +1,21 @@
 <script lang="ts">
 	/**
-	 * Settings → System → Network: the relay switch. Whether this server keeps
+	 * Settings → Updates and network: the relay switch. Whether this server keeps
 	 * a rendezvous on the Virtues relay, so devices find it away from home, and
-	 * which relay that is. The server's own network connection is the owner's
-	 * to manage on that machine.
+	 * which relay that is. The relay is a baked default
+	 * (relay.rs::DEFAULT_RELAY_URL), so the row names it and can turn it off.
+	 * What the relay can and can't see is in agents/build/privacy-boundary.md.
 	 */
 	import { apiGet, apiSend } from '$lib/api/client';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import SettingRow from './SettingRow.svelte';
+	import Switch from './Switch.svelte';
 
-	// ── The rendezvous, named out loud ────────────────────────────────────
-	// The relay is a baked default (relay.rs::DEFAULT_RELAY_URL) — disclosure
-	// plus a real off switch is what separates a default from a secret.
 	type Relay = { enabled: boolean; relay_url: string | null; default_url: string; homed: boolean };
 	let relay = $state<Relay | null>(null);
-	let relayBusy = $state(false);
-	let relayError = $state<string | null>(null);
+	let busy = $state(false);
+	let error = $state<string | null>(null);
 
-	async function refreshRelay() {
+	async function refresh() {
 		try {
 			relay = await apiGet<Relay>('/network/relay');
 		} catch {
@@ -24,90 +23,39 @@
 		}
 	}
 
-	async function toggleRelay() {
-		if (!relay || relayBusy) return;
-		relayBusy = true;
-		relayError = null;
+	async function toggle(on: boolean) {
+		if (!relay || busy) return;
+		busy = true;
+		error = null;
 		try {
-			await apiSend('PUT', '/network/relay', { enabled: !relay.enabled });
+			await apiSend('PUT', '/network/relay', { enabled: on });
 			// The rebind takes a moment; read back after it settles.
-			setTimeout(() => void refreshRelay(), 2500);
-			await refreshRelay();
-		} catch (e) {
-			relayError = String(e);
+			setTimeout(() => void refresh(), 2500);
+			await refresh();
+		} catch {
+			error = "Your server couldn't change this. Try again.";
 		} finally {
-			relayBusy = false;
+			busy = false;
 		}
 	}
 
-	void refreshRelay();
+	void refresh();
+
+	const host = $derived(relay ? (relay.relay_url ?? relay.default_url).replace(/^https?:\/\//, '') : '');
+	const help = $derived(
+		error ??
+			(!relay
+				? ''
+				: !relay.enabled
+					? 'Off. Your devices reach this server on your home network only.'
+					: relay.homed
+						? `Your devices find this server from anywhere through ${host}, which passes encrypted traffic it can't read.`
+						: `Connecting to ${host}.`),
+	);
 </script>
 
-<!-- No <Page>: this renders INSIDE System as a chapter. -->
-<section class="chapter">
-	<h2 class="settings-label">Network</h2>
-	{#if relay}
-		<div class="statusrow">
-			<span class="dot" class:warn={relay.enabled && !relay.homed} class:off={!relay.enabled}></span>
-			<div>
-				<div class="text-sm text-foreground">
-					Reach
-					{#if relay.enabled}
-						<span class="ml-2 font-mono text-xs text-foreground-subtle"
-							>{(relay.relay_url ?? relay.default_url).replace('https://', '')}</span
-						>
-					{/if}
-				</div>
-				<div class="text-xs text-foreground-subtle">
-					{#if !relay.enabled}
-						Off. Your devices reach this server on the local network only.
-					{:else if relay.homed}
-						Your devices find this server from anywhere through this relay. It moves
-						encrypted traffic it cannot read, and keeps no account of who connects.
-					{:else}
-						Connecting to the relay…
-					{/if}
-				</div>
-				{#if relayError}<p class="mt-1 text-xs warntext">{relayError}</p>{/if}
-				<div class="relayact">
-					<TextAction quiet loading={relayBusy} onclick={toggleRelay}>
-						{relay.enabled ? 'Turn off' : 'Turn on'}
-					</TextAction>
-				</div>
-			</div>
-		</div>
-	{/if}
-
-</section>
-
-<style>
-	.statusrow {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.6rem;
-		margin-top: 0.75rem;
-	}
-	.dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--color-success, #4a9);
-		margin-top: 0.35rem;
-		flex: none;
-	}
-	.dot.warn {
-		background: var(--color-warning, #c92);
-	}
-	.dot.off {
-		background: var(--color-foreground-subtle, #999);
-	}
-	/* Placement only. The action itself is TextAction — the margin lives on a
-	   wrapper because the primitive's own `margin: 0` is a scoped rule and
-	   outranks anything forwarded onto it. */
-	.relayact {
-		margin-top: 0.35rem;
-	}
-	.warntext {
-		color: var(--color-warning, #c92);
-	}
-</style>
+{#if relay}
+	<SettingRow id="reach" label="Reach your server away from home" {help}>
+		<Switch checked={relay.enabled} label="Reach your server away from home" disabled={busy} onchange={toggle} />
+	</SettingRow>
+{/if}

@@ -232,7 +232,6 @@
 }
 
 .ob-input:focus {
-	outline: none;
 	border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
 }
 

@@ -1,7 +1,7 @@
 <!--
 	Recently deleted — one list for everything deleted anywhere in the app.
 
-	Chats, pages and projects (the box's `api::trash`, migration 0030) and
+	Chats, pages and threads (the box's `api::trash`, migration 0030) and
 	Drive files (the older `/api/drive/trash`) wait here 30 days with a
 	restore, and then the server removes them for good. Two APIs, one room:
 	a second "trash" would be two lists that must agree, and the person
@@ -32,7 +32,7 @@
 	import { refreshAfterRestore } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import { onMount } from "svelte";
-	import { PROJECT_ICON } from "$lib/utils/iconHelpers";
+	import { THREAD_ICON } from "$lib/utils/iconHelpers";
 
 	let { tab: _tab, active: _active }: { tab: Tab; active: boolean } = $props();
 
@@ -65,14 +65,14 @@
 	const KIND_LABEL: Record<RowKind, string> = {
 		chat: "Chat",
 		page: "Page",
-		project: "Project",
+		thread: "Thread",
 		file: "File",
 	};
 
 	const KIND_ICON: Record<RowKind, string> = {
 		chat: "mynaui:message",
 		page: "mynaui:file-text",
-		project: PROJECT_ICON,
+		thread: THREAD_ICON,
 		file: "mynaui:file",
 	};
 
@@ -224,12 +224,12 @@
 
 <Page
 	title="Recently deleted"
-	description="Deleted chats, pages, projects and files stay here for 30 days. After that your server removes them for good."
-	maxWidth="wide"
+	description="Deleted chats, pages, threads and files stay here for 30 days. After that your server removes them for good."
+	maxWidth="full"
 >
 	{#snippet actions()}
 		{#if rows.length > 0}
-			<Button variant="danger" size="sm" icon="mynaui:trash" disabled={busy} onclick={emptyAll}>
+			<Button variant="danger" icon="mynaui:trash" disabled={busy} onclick={emptyAll}>
 				Empty
 			</Button>
 		{/if}
@@ -259,7 +259,7 @@
 			<IconButton
 				icon="mynaui:undo"
 				label={`Restore ${row.title}`}
-				size="sm"
+				size="nested"
 				disabled={busy}
 				onclick={(e) => {
 					e.stopPropagation();
@@ -269,7 +269,7 @@
 			<IconButton
 				icon="mynaui:trash"
 				label={`Delete ${row.title} forever`}
-				size="sm"
+				size="nested"
 				variant="danger"
 				disabled={busy}
 				onclick={(e) => {

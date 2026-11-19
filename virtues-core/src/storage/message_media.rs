@@ -178,6 +178,34 @@ pub async fn link_attachment(
     Ok(done.rows_affected() > 0)
 }
 
+/// Delete the stored bytes of every attachment a message row's `metadata`
+/// names, and their `lake_objects` rows. Returns how many were removed. The
+/// caller clears or deletes the row afterwards.
+pub async fn delete_attachment_bytes(pool: &PgPool, storage: &Storage, metadata: &Value) -> Result<u64> {
+    let mut removed = 0u64;
+    for key in media_keys(metadata) {
+        // Only keys this module writes. The key came back out of a JSONB
+        // column that devices can influence, so do not delete anything a
+        // stray value could name.
+        if !key.starts_with(&format!("media/{PROVIDER}/{STREAM}/")) {
+            tracing::warn!(key, "attachment ref outside the attachment prefix — not deleting");
+            continue;
+        }
+        if let Err(e) = storage.delete(&key).await {
+            // Already gone is fine; anything else is the caller's to retry.
+            if !is_not_found(&e) {
+                return Err(e);
+            }
+        }
+        sqlx::query("DELETE FROM lake_objects WHERE storage_key = $1 AND kind = 'media'")
+            .bind(&key)
+            .execute(pool)
+            .await?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 /// Messages the source no longer has: tombstone each row and delete its stored
 /// attachment bytes. Returns `(messages tombstoned, blobs removed)`.
 ///
@@ -204,26 +232,7 @@ pub async fn purge_deleted_messages(
         // Bytes first, row second: if a delete fails the ref is still on the
         // row, so the next report of this deletion finds and retries it. The
         // other order would leave bytes nothing points at.
-        for key in media_keys(&metadata) {
-            // Only keys this module writes. The key came back out of a JSONB
-            // column that devices can influence, so do not delete anything a
-            // stray value could name.
-            if !key.starts_with(&format!("media/{PROVIDER}/{STREAM}/")) {
-                tracing::warn!(key, "attachment ref outside the attachment prefix — not deleting");
-                continue;
-            }
-            if let Err(e) = storage.delete(&key).await {
-                // Already gone is fine; anything else is retried by the device.
-                if !is_not_found(&e) {
-                    return Err(e);
-                }
-            }
-            sqlx::query("DELETE FROM lake_objects WHERE storage_key = $1 AND kind = 'media'")
-                .bind(&key)
-                .execute(pool)
-                .await?;
-            removed += 1;
-        }
+        removed += delete_attachment_bytes(pool, storage, &metadata).await?;
 
         let done = sqlx::query(
             "UPDATE data_communication_message

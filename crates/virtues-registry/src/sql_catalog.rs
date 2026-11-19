@@ -206,7 +206,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_email", TableMetadata {
         description: "Email messages from Gmail, etc.",
         category: "communication",
-        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
+        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "conversation_id", "occurred_at"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
         // The model reads `labels` as text[] and writes `labels && ARRAY[...]`,
         // which Postgres rejects for jsonb.
@@ -215,7 +215,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
-        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "occurred_at"],
+        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "conversation_id", "occurred_at"],
         // A message links to the person on the other end via wiki_refs:
         // role='sender' for messages you received, role='recipient' for messages you
         // sent. Filter both to get a full thread with someone; the message's own
@@ -386,11 +386,18 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // The task list, read here; written only through create_task and
     // update_task so every change reaches the task's history.
     m.insert("app_tasks", TableMetadata {
-        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer. A task sits under a project (project_id), a thing (thing_id) or neither. One that recurs comes back recur_every recur_unit after the owner finishes it",
+        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer. Its home, one at most: thread_id (app_threads), else person_id, place_id, org_id or thing_id; app_task_links lists what else it is about. One that recurs comes back recur_every recur_unit after the owner finishes it",
         category: "tasks",
-        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "thing_id", "recur_every", "recur_unit", "closed_at", "result", "result_url"],
+        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "thread_id", "person_id", "place_id", "org_id", "thing_id", "recur_every", "recur_unit", "closed_at", "result", "result_url"],
         join_hint: None,
         note: Some("not closed: status IN ('open','active','ready')"),
+    });
+    m.insert("app_task_links", TableMetadata {
+        description: "What else a task is about: one target per row",
+        category: "tasks",
+        key_columns: &["task_id", "thread_id", "person_id", "place_id", "org_id", "thing_id"],
+        join_hint: None,
+        note: None,
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
@@ -425,7 +432,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: Some("id is 'year_YYYY'"),
     });
     m.insert("wiki_things", TableMetadata {
-        description: "Things: what goes on in the owner's life and cannot be finished, named by the owner (the garden, a bike, guitar). Not a person, place or organization. Projects and tasks can sit under one",
+        description: "Things: nouns in the owner's life that are not a person, place or organization, named by the owner (a pet, the car, the house). Threads and tasks can sit under one",
         category: "wiki",
         key_columns: &["title", "summary", "started_at", "ended_at"],
         join_hint: Some("a thing's tasks: app_tasks WHERE thing_id = wiki_things.id; dates are optional and often absent"),

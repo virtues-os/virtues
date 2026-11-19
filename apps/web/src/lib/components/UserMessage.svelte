@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/utils/transitions';
 	import Ref from './Ref.svelte';
 	import Icon from './Icon.svelte';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
@@ -110,7 +110,7 @@
 		height: 1.375rem;
 		padding: 0 0.375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		vertical-align: 0.0625rem;
 		white-space: nowrap;

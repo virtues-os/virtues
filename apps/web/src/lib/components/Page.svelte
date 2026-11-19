@@ -2,6 +2,8 @@
     import { twMerge } from "tailwind-merge";
     import type { Snippet } from "svelte";
     import PageHeading from "./PageHeading.svelte";
+    import { usePageActions } from "$lib/stores/paneActions.svelte";
+    import { usePageWidth, type PageWidth } from "$lib/stores/pageWidth.svelte";
 
     let {
         title,
@@ -17,14 +19,13 @@
         title?: string;
         description?: string;
         /**
-         * Two measures, so views read as siblings: `prose` for reading, `wide`
-         * for tables and grids. (Was five — narrow/full were each used once or
-         * twice and only made neighboring pages disagree by a few rem.)
-         *
-         * This is chrome, chosen by the view. The *reader's* width preference
-         * is a different thing and lives in `stores/pageDisplay.svelte.ts`.
+         * The width the page is designed for (stores/pageWidth.svelte.ts):
+         * `reading` for text and plain lists, `medium` for a page with a side
+         * column, `full` for tables and grids. You can change it from the
+         * page bar. `none` is a page without a column, which has no width
+         * to change.
          */
-        maxWidth?: "none" | "prose" | "wide";
+        maxWidth?: "none" | PageWidth;
         padding?: "default" | "compact" | "none";
         scrollable?: boolean;
         class?: string;
@@ -64,29 +65,46 @@
         none: "",
     }[padding]);
 
-    const maxWidthClass = $derived({
-        none: "",
-        prose: "max-w-3xl mx-auto",
-        wide: "max-w-6xl mx-auto",
-    }[maxWidth]);
+    // On the desktop the page's title is the last segment of its tab's
+    // action toolbar, and its controls sit at the toolbar's end. The phone
+    // has no toolbar, so there both stay at the top of the page.
+    const toolbar = usePageActions(() => actions);
+    const headingTitle = $derived(toolbar.inToolbar ? undefined : title);
+    const headingActions = $derived(toolbar.inToolbar ? undefined : actions);
+    const showHeading = $derived(!!headingTitle || !!description);
+
+    const width = usePageWidth(() => (maxWidth === "none" ? null : maxWidth));
 </script>
 
 <div class={twMerge("page-container h-full", paddingClass, scrollable && "overflow-y-auto", className)}>
-    {#if maxWidthClass}
-        <div class={maxWidthClass}>
+    {#if maxWidth !== "none"}
+        <div class="page-column" style:max-width={width.css}>
             {#if heading}
                 {@render heading()}
-            {:else if title}
-                <PageHeading {title} {description} {actions} />
+            {:else if title && showHeading}
+                <PageHeading title={headingTitle} {description} actions={headingActions} />
             {/if}
             {@render children()}
         </div>
     {:else}
         {#if heading}
             {@render heading()}
-        {:else if title}
-            <PageHeading {title} {description} {actions} />
+        {:else if title && showHeading}
+            <PageHeading title={headingTitle} {description} actions={headingActions} />
         {/if}
         {@render children()}
     {/if}
 </div>
+
+<style>
+    .page-column {
+        margin-inline: auto;
+        transition: max-width var(--motion-hover-out, 0.2s) var(--ease-premium, ease-out);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .page-column {
+            transition: none;
+        }
+    }
+</style>

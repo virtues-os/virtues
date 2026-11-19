@@ -75,6 +75,20 @@ pub fn routes() -> Router<AppState> {
             "/api/assistant-profile",
             get(get_assistant_profile_handler).put(update_assistant_profile_handler),
         )
+        // Changed lately, at the top of the Settings page: what the owner
+        // changed (recorded by the two profile saves above), pairings, and
+        // what needs them (api/settings_changes.rs).
+        .route("/api/settings/changes", get(settings_changes_handler))
+        .route("/api/settings/changes/:id/undo", post(undo_settings_change_handler))
+        // Return in the Settings search field: the assistant drafts changes,
+        // and the owner applies the ones they accept.
+        .route("/api/settings/draft", post(settings_draft_handler))
+        .route("/api/settings/draft/apply", post(apply_settings_draft_handler))
+        // What the assistant can do: one switch per capability.
+        .route("/api/settings/capabilities", get(list_capabilities_handler))
+        .route("/api/settings/capabilities/:id", put(set_capability_handler))
+        // A sample reply in the style notes being typed.
+        .route("/api/settings/style-preview", post(style_preview_handler))
         // Models API
         .route("/api/models", get(list_models_handler))
         .route(
@@ -255,7 +269,24 @@ pub async fn update_profile_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::profile::UpdateProfileRequest>,
 ) -> Response {
-    api_response(crate::api::profile::update_profile(state.db.pool(), request).await)
+    let pool = state.db.pool();
+    let _saving = crate::api::settings_changes::saving().await;
+    // The record before the save, for Changed lately. If it can't be read
+    // there is nothing to compare against: the save goes ahead, unrecorded.
+    let before = match crate::api::profile::get_profile(pool).await {
+        Ok(p) => serde_json::to_value(p).ok(),
+        Err(e) => {
+            tracing::warn!("changed lately: profile unreadable before save: {e}");
+            None
+        }
+    };
+    let result = crate::api::profile::update_profile(pool, request).await;
+    if let (Some(before), Ok(after)) = (&before, &result) {
+        if let Ok(after) = serde_json::to_value(after) {
+            crate::api::settings_changes::record_diff(pool, before, &after, crate::api::settings_changes::PROFILE_FIELDS).await;
+        }
+    }
+    api_response(result)
 }
 
 // =============================================================================
@@ -272,7 +303,98 @@ pub async fn update_assistant_profile_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::assistant_profile::UpdateAssistantProfileRequest>,
 ) -> Response {
-    api_response(crate::api::assistant_profile::update_assistant_profile(state.db.pool(), request).await)
+    let pool = state.db.pool();
+    let _saving = crate::api::settings_changes::saving().await;
+    // The record before the save, for Changed lately. If it can't be read
+    // there is nothing to compare against: the save goes ahead, unrecorded.
+    let before = match crate::api::assistant_profile::get_assistant_profile(pool).await {
+        Ok(p) => serde_json::to_value(p).ok(),
+        Err(e) => {
+            tracing::warn!("changed lately: assistant profile unreadable before save: {e}");
+            None
+        }
+    };
+    let result = crate::api::assistant_profile::update_assistant_profile(pool, request).await;
+    if let (Some(before), Ok(after)) = (&before, &result) {
+        if let Ok(after) = serde_json::to_value(after) {
+            crate::api::settings_changes::record_diff(pool, before, &after, crate::api::settings_changes::ASSISTANT_FIELDS).await;
+            crate::api::settings_changes::record_theme(pool, before, &after).await;
+        }
+    }
+    api_response(result)
+}
+
+// =============================================================================
+// Changed lately
+// =============================================================================
+
+/// GET /api/settings/changes — the settings changed and devices paired in the last four weeks.
+pub async fn settings_changes_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::settings_changes::lately(&state.db).await)
+}
+
+#[derive(Deserialize)]
+pub struct SettingsDraftBody {
+    text: String,
+    /// The appearance values the page has now, which live in the browser.
+    #[serde(default)]
+    app: serde_json::Value,
+}
+
+/// POST /api/settings/draft — the settings agent's card for what was typed. Saves nothing.
+pub async fn settings_draft_handler(State(state): State<AppState>, Json(body): Json<SettingsDraftBody>) -> Response {
+    api_response(crate::api::settings_draft::draft(state.db.pool(), &body.text, &body.app).await)
+}
+
+#[derive(Deserialize)]
+pub struct ApplySettingsDraftBody {
+    changes: Vec<crate::api::settings_draft::ApplyChange>,
+}
+
+/// POST /api/settings/draft/apply — save the drafted changes the owner accepted.
+pub async fn apply_settings_draft_handler(
+    State(state): State<AppState>,
+    Json(body): Json<ApplySettingsDraftBody>,
+) -> Response {
+    api_response(
+        crate::api::settings_draft::apply_draft(state.db.pool(), body.changes)
+            .await
+            .map(|()| serde_json::json!({ "ok": true })),
+    )
+}
+
+/// GET /api/settings/capabilities — each thing the assistant can do, on or off.
+pub async fn list_capabilities_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::capabilities::list(state.db.pool()).await)
+}
+
+#[derive(Deserialize)]
+pub struct SetCapabilityBody {
+    on: bool,
+}
+
+/// PUT /api/settings/capabilities/:id — turn one on or off. Returns them all.
+pub async fn set_capability_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetCapabilityBody>,
+) -> Response {
+    api_response(crate::api::capabilities::set(state.db.pool(), &id, body.on).await)
+}
+
+#[derive(Deserialize)]
+pub struct StylePreviewBody {
+    notes: String,
+}
+
+/// POST /api/settings/style-preview — a sample reply in these notes' style. Saves nothing.
+pub async fn style_preview_handler(State(state): State<AppState>, Json(body): Json<StylePreviewBody>) -> Response {
+    api_response(crate::api::style_preview::preview(state.db.pool(), &body.notes).await)
+}
+
+/// POST /api/settings/changes/:id/undo — write a change's old value back.
+pub async fn undo_settings_change_handler(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    api_response(crate::api::settings_changes::undo(state.db.pool(), id).await.map(|()| serde_json::json!({ "ok": true })))
 }
 
 // =============================================================================
@@ -514,10 +636,17 @@ pub async fn subscribe_billing_handler(State(pool): State<sqlx::PgPool>) -> Resp
 /// entries: [{ ts, micros, kind, real_micros }] }`, or a clean `{error}`
 /// (never a 500) when not linked / the proxy is unreachable.
 pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
+    // Fully local dev presents `VIRTUES_API_KEY` verbatim (virtues_api::client)
+    // and reports itself subscribed (api::subscription), so it counts as linked
+    // here too.
+    let dev_key = crate::middleware::auth::is_dev()
+        && std::env::var("VIRTUES_API_KEY").is_ok_and(|k| !k.is_empty());
+    // absent-ok: a vault read that fails is treated as not linked, which shows
+    // the connect prompt instead of a balance; the handler never 500s.
+    if !dev_key && !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
             StatusCode::OK,
-            Json(serde_json::json!({ "error": "Connect your Virtues account to see your balance." })),
+            Json(serde_json::json!({ "unlinked": true, "error": "Connect your Virtues account to see your balance." })),
         )
             .into_response();
     }
@@ -535,13 +664,14 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
     }
 }
 
-/// GET /api/usage/summary — box-local AI spend breakdown for the Usage tab.
+/// GET /api/usage/summary — what AI has cost this month, from the box's own
+/// call log (`app_ai_calls`, each call priced by the gateway's `usage.cost`).
 ///
-/// Reads `app_ai_calls` (the per-call cost log) and returns spend grouped by
-/// feature and by model since the start of the current UTC month, plus the
-/// month boundary. The wallet headline (balance/month-to-date) comes from the
-/// separate `/api/billing/usage` proxy — this endpoint is purely the local
-/// "where did my money go" detail. No egress.
+/// Spend since the start of the current UTC month by feature, by model and
+/// by day, plus last month to the same point. The cost page adds its month
+/// total from these rows, so the total, the chart, the kinds and the call
+/// list all come from one log and agree. The balance is the wallet's
+/// (`/api/billing/usage`). No egress.
 pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
     use chrono::Datelike;
     let now = chrono::Utc::now();
@@ -562,12 +692,10 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         Ok(v) => v,
         Err(e) => return error_response(e.into()),
     };
-    // The Billing chart: the last 14 UTC days, today included. Days with no
-    // calls are absent from the rows; the client fills the run.
-    let since = (now - chrono::Duration::days(13)).date_naive().and_hms_opt(0, 0, 0)
-        .map(|dt| dt.and_utc())
-        .unwrap_or(now);
-    let by_day = match crate::api::ai_calls::spend_by_day(pool, since).await {
+    // The cost page's chart: each UTC day of this month so far, the same
+    // span as the month's total and its kinds. Days with no calls are absent
+    // from the rows; the client fills the run.
+    let by_day = match crate::api::ai_calls::spend_by_day(pool, month_start).await {
         Ok(v) => v,
         Err(e) => return error_response(e.into()),
     };
@@ -700,9 +828,22 @@ pub async fn update_status_handler() -> Response {
 
 /// PUT /api/system/update/channel — follow stable or prerelease.
 pub async fn set_channel_handler(
+    State(state): State<AppState>,
     Json(request): Json<crate::api::updates::SetChannelRequest>,
 ) -> Response {
-    api_response(crate::api::updates::set_channel(request))
+    // Read both before and after the call, not from its result: the channel
+    // can change even when the auto-install part then fails.
+    let (channel_before, auto_before) = (crate::api::updates::channel_name(), crate::cli::auto_update::enabled());
+    let result = crate::api::updates::set_channel(request);
+    let (channel_after, auto_after) = (crate::api::updates::channel_name(), crate::cli::auto_update::enabled());
+    let pool = state.db.pool();
+    if channel_after != channel_before {
+        crate::api::settings_changes::record(pool, "update-channel", "update_channel", &serde_json::json!(channel_before), &serde_json::json!(channel_after)).await;
+    }
+    if auto_after != auto_before {
+        crate::api::settings_changes::record(pool, "auto-install", "auto_update", &serde_json::json!(auto_before), &serde_json::json!(auto_after)).await;
+    }
+    api_response(result)
 }
 
 /// POST /api/system/update/apply — start an upgrade.

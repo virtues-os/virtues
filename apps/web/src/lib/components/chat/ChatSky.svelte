@@ -34,8 +34,9 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { cubicOut } from 'svelte/easing';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import Icon from '$lib/components/Icon.svelte';
 	import NewChatMark from './NewChatMark.svelte';
 	import { portal } from '$lib/actions/portal';
@@ -732,7 +733,7 @@
 	// their place and size); only a mark the last level did not have appears,
 	// out of where `from` says, after its `delay`.
 	function appear(node: Element, { from, delay = 0 }: { from?: { dx: number; dy: number }; delay?: number }) {
-		const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		const still = reducedMotion();
 		const dx = from?.dx ?? 0;
 		const dy = from?.dy ?? 0;
 		return {
@@ -1052,12 +1053,6 @@
 		background: color-mix(in srgb, currentColor 75%, transparent);
 	}
 
-	.rung:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 1px;
-		border-radius: var(--radius-full);
-	}
-
 	.rung-name {
 		position: absolute;
 		left: 24px;
@@ -1067,12 +1062,6 @@
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 		pointer-events: none;
-	}
-
-	.sky:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 8px;
-		border-radius: var(--radius-md);
 	}
 
 	.moment-head,
@@ -1351,13 +1340,6 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.thread:focus-visible,
-	.petal button:focus-visible,
-	.bloom-title:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 2px;
-	}
-
 	.bloom-head {
 		text-align: center;
 		white-space: nowrap;
@@ -1394,11 +1376,6 @@
 		color: var(--color-foreground);
 	}
 
-	.note-add:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 2px;
-	}
-
 	.note-input {
 		display: block;
 		width: 220px;
@@ -1413,7 +1390,6 @@
 	}
 
 	.note-input:focus {
-		outline: none;
 		border-color: var(--color-border-focus);
 	}
 

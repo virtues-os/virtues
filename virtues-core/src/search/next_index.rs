@@ -29,8 +29,11 @@ use sqlx::PgPool;
 use super::embedder::{EndpointConfig, LocalEmbedder, ENDPOINT_KEYS};
 use super::indexer::IndexerLock;
 
-/// Chunks read and embedded per round trip to the database.
-const BATCH: i64 = 256;
+/// Chunks read and embedded per round trip to the database. Each batch is
+/// committed before the deadline is checked, and the run is killed at its time
+/// limit a few minutes after that, so a batch must finish well inside the
+/// grace: 64 chunks are about 70 s on a Dragon's CPU, 256 were over 4 minutes.
+const BATCH: i64 = 64;
 
 /// The share of chunks the new model may refuse before the swap waits. A chunk
 /// the new model can't embed loses its vector, not its words: BM25 still finds
@@ -189,10 +192,11 @@ async fn rescore_pending(pool: &PgPool) -> Result<bool> {
 }
 
 /// What follows a swap, outside its lock: stamp the chunks with the new model,
-/// forget the old model's event embeddings, resize project centroids, and
-/// rescore every day's events. Safe to run again from the start, and it is,
-/// by every indexer run, until it completes and clears `rescore_pending`.
-/// Whatever invalidates scores must restore them (`dayline::rescore_all_days`).
+/// resize project centroids, and rescore every day's events, whose old
+/// embeddings the swap forgot. Each step is safe to repeat, and rescoring skips
+/// the events a cut-off run already scored, so every indexer run continues it
+/// until it completes and clears `rescore_pending`. Whatever invalidates scores
+/// must restore them (`dayline::rescore_all_days`).
 async fn finish(pool: &PgPool) -> Result<()> {
     let Some((model, dim)) = super::indexer::recorded_geometry(pool).await? else {
         return Err(anyhow!("a model change is finishing but the index records no model"));
@@ -203,7 +207,6 @@ async fn finish(pool: &PgPool) -> Result<()> {
         .bind(&model)
         .execute(pool)
         .await?;
-    sqlx::query(crate::cli::reindex::FORGET_EVENT_EMBEDDINGS).execute(pool).await?;
     resize_centroids(pool, dim).await;
     let (days, scored) = crate::dayline::rescore_all_days(pool)
         .await
@@ -216,7 +219,7 @@ async fn finish(pool: &PgPool) -> Result<()> {
 }
 
 /// Centroids share the index's geometry but have no reader (see
-/// `Database::ensure_embedding_dims`). Their ALTER needs `app_projects` to
+/// `Database::ensure_embedding_dims`). Their ALTER needs `app_threads` to
 /// itself; a few short tries rather than one long wait that would hold project
 /// reads behind it. If none lands, bringup resizes the column on its own.
 async fn resize_centroids(pool: &PgPool, dim: i32) {
@@ -224,11 +227,11 @@ async fn resize_centroids(pool: &PgPool, dim: i32) {
         let result = async {
             let mut tx = pool.begin().await?;
             sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
-            sqlx::query("UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL")
+            sqlx::query("UPDATE app_threads SET centroid = NULL WHERE centroid IS NOT NULL")
                 .execute(&mut *tx)
                 .await?;
             sqlx::query(&format!(
-                "ALTER TABLE app_projects ALTER COLUMN centroid TYPE halfvec({dim}) \
+                "ALTER TABLE app_threads ALTER COLUMN centroid TYPE halfvec({dim}) \
                  USING centroid::halfvec({dim})"
             ))
             .execute(&mut *tx)
@@ -278,6 +281,11 @@ async fn begin(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
         "DROP INDEX IF EXISTS search_vectors_next_hnsw".to_string(),
         // `dim` is a validated integer, so the interpolation is injection-safe.
         format!("ALTER TABLE search_vectors_next ALTER COLUMN embedding TYPE halfvec({dim})"),
+        // On the empty table, so every insert keeps it current and the swap
+        // has nothing to build. Built at the swap instead, a large index on a
+        // Dragon's CPU could outlast the run's time limit, and a killed build
+        // starts over on the next run.
+        crate::database::hnsw_index_sql("search_vectors_next_hnsw", "search_vectors_next", false),
     ] {
         sqlx::query(&stmt).execute(&mut *tx).await?;
     }
@@ -347,6 +355,11 @@ async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
         // swap inside it; they are a cache, so emptying them loses nothing.
         "TRUNCATE search_topic_cache".to_string(),
         format!("ALTER TABLE search_topic_cache ALTER COLUMN embedding TYPE halfvec({dim})"),
+        // The old model's event embeddings and the scores that stand on them
+        // go here, with the swap, and so exactly once. Done in `finish`, every
+        // retry wiped what the last one had rescored, and a rescoring longer
+        // than one run never finished.
+        crate::cli::reindex::FORGET_EVENT_EMBEDDINGS.to_string(),
     ] {
         sqlx::query(&stmt).execute(&mut *tx).await?;
     }
@@ -362,9 +375,11 @@ async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
     Ok(())
 }
 
-/// The next table's HNSW index, built CONCURRENTLY so that deleting a chunk
-/// (which cascades into this table) doesn't wait minutes on the build. A build
-/// cut off leaves an invalid index behind; drop it and build again.
+/// The next table's HNSW index, for a build begun before [`begin`] created it
+/// on the empty table (a valid index returns at once). Built CONCURRENTLY so
+/// that deleting a chunk (which cascades into this table) doesn't wait minutes
+/// on the build. A build cut off leaves an invalid index behind; drop it and
+/// build again.
 async fn build_next_hnsw(pool: &PgPool) -> Result<()> {
     let valid: Option<bool> = sqlx::query_scalar(
         "SELECT i.indisvalid FROM pg_index i \
@@ -443,6 +458,13 @@ mod tests {
         insert_vector(&pool, 384).await.unwrap();
 
         begin(&pool, "n", 768).await.unwrap();
+        let built_at_begin: bool = sqlx::query_scalar(
+            "SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass('search_vectors_next_hnsw')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(built_at_begin, "the index is made on the empty table, so the swap has nothing to build");
         fill_next(&pool, 768).await;
         assert_eq!(counts(&pool).await.unwrap(), (1, 1));
         swap(&pool, "n", 768).await.unwrap();

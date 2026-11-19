@@ -1,8 +1,8 @@
 <!--
   /founders-letter — the letter, to read again.
 
-  The letter is Setup's preface (/setup plays it after Hello). This route is where it can be read on its own
-  afterward: from Setup's tab, from the profile, from old links.
+  Setup offers the letter at Arrival, as "A note from us". This route is where it
+  can be read on its own afterward: from Arrival, from the profile, from old links.
   It asks nothing and changes nothing; its one button goes back to wherever
   the reader came from.
 
@@ -13,10 +13,11 @@
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	function close() {
 		if (history.length > 1) history.back();

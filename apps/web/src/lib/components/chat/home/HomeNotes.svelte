@@ -2,16 +2,19 @@
 	/**
 	 * Home's notes line, between the message box and the tiles. It shows one
 	 * note at a time, with its action,
-	 * "Not now" and "Next". Notes come from three places, most pressing first:
-	 * what the server says needs you (`attention`, the ∴ inbox's list), chats
-	 * with a reply you haven't read, and the box's suggested question. "Not
-	 * now" hides a note until the app reloads; a condition the server still
-	 * sees comes back then. Nothing here counts.
+	 * "Not now" and "Next". Notes come from four places, most pressing first:
+	 * what the server says needs you (`attention`, the ∴ inbox's list), what
+	 * it noticed about your tasks and threads (`notes`), chats with a reply
+	 * you haven't read, and the box's suggested question. "Not now" on a
+	 * task or thread note sets it aside on the server until its condition
+	 * changes; on the others it hides the note until the app reloads.
+	 * Nothing here counts.
 	 */
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import type { SuggestedQuestion } from '$lib/api/client';
 	import { attention } from '$lib/stores/attention.svelte';
+	import { notesStore } from '$lib/stores/notes.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -29,7 +32,14 @@
 		onShown?: (note: SuggestedQuestion) => void;
 	} = $props();
 
-	onMount(() => attention.start());
+	onMount(() => {
+		attention.start();
+		notesStore.start();
+		return () => {
+			attention.stop();
+			notesStore.stop();
+		};
+	});
 
 	let hidden = $state<string[]>([]);
 	let at = $state(0);
@@ -42,6 +52,15 @@
 				text: item.title,
 				action: 'Open',
 				run: () => windowShellStore.openTabFromRoute(item.route, { label: item.title, focusExisting: true })
+			});
+		}
+		for (const n of notesStore.items) {
+			out.push({
+				key: `note:${n.key}`,
+				text: n.text,
+				action: n.action,
+				run: () => windowShellStore.openTabFromRoute(n.action_route, { focusExisting: true }),
+				dismiss: () => void notesStore.dismiss(n)
 			});
 		}
 		for (const s of chatSessions.sessions.filter((s) => s.unread).slice(0, 3)) {

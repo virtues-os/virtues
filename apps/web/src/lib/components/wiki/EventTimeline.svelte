@@ -367,7 +367,7 @@
 
 	/* The day line marks the same event in the same colour. */
 	.dot.novel {
-		background: var(--color-secondary);
+		background: var(--color-primary);
 		width: 8px;
 		height: 8px;
 	}
@@ -376,8 +376,8 @@
 		font-size: 0.625rem;
 		font-weight: 500;
 		white-space: nowrap;
-		color: var(--color-secondary);
-		background: color-mix(in srgb, var(--color-secondary) 8%, transparent);
+		color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 		padding: 0.0625rem 0.5rem;
 		border-radius: var(--radius-full);
 	}

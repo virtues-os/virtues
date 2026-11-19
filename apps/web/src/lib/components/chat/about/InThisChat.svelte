@@ -23,9 +23,9 @@
 
 <script lang="ts">
 	import { onMount, tick, type Snippet } from "svelte";
-	import { slide } from "svelte/transition";
-	import { flip } from "svelte/animate";
-	import { prefersReducedMotion } from "svelte/motion";
+	import { motion } from "$lib/stores/motion.svelte";
+	import { slide } from "$lib/utils/transitions";
+	import { flip } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import PersonPicture from "$lib/components/wiki/PersonPicture.svelte";
 	import { inThisChat, keyForHref, type AsideItem } from "./inThisChat";
@@ -148,7 +148,7 @@
 		}
 	});
 
-	const moveMs = () => (prefersReducedMotion.current ? 0 : motionMs("--motion-layout", 300));
+	const moveMs = () => (motion.reduced ? 0 : motionMs("--motion-layout", 300));
 	const rowIn = (node: Element) => (settled ? slide(node, { duration: moveMs(), easing: easePremium }) : { duration: 0 });
 	const rowFlip = (node: Element, rects: { from: DOMRect; to: DOMRect }) =>
 		flip(node, rects, { duration: settled ? moveMs() : 0, easing: easePremium });
@@ -459,6 +459,14 @@
 		opacity: 0.8;
 	}
 
+	/* Keep the information, drop the travel: the chevron is simply there or not. */
+	@media (prefers-reduced-motion: reduce) {
+		.group-head .chev,
+		.group-head.folded .chev {
+			transition: none;
+		}
+	}
+
 	.group-head.folded .chev {
 		transform: rotate(-90deg);
 	}
@@ -691,11 +699,6 @@
 		font-size: 13px;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
-	}
-
-	button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	@media (hover: none) {

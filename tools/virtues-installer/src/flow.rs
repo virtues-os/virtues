@@ -57,7 +57,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or an embedding server you run");
+        ui::skip("  • Inference: this machine's CPU (recommended, and a Dragon's without asking) or an embedding server you run");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip("  • Automatic security updates (apt systems)");
@@ -79,11 +79,11 @@ pub async fn run(cli: Config) -> Result<()> {
     // system: a user whose endpoint is broken should learn that before we
     // start installing packages, not after.
     ui::section("Inference");
-    let inference = InferenceMode::resolve()?;
+    let inference = InferenceMode::resolve(&cfg.env_file_path())?;
     let validation = match &inference {
-        // Dragon + Bundled both provision our own local sidecars — nothing to
-        // validate (we control the endpoint).
-        InferenceMode::Dragon | InferenceMode::Bundled => None,
+        // Bundled provisions our own local sidecar — nothing to validate (we
+        // control the endpoint).
+        InferenceMode::Bundled => None,
         InferenceMode::Manual { embed_url, embed_model } => Some(
             mode::validate_manual(embed_url, embed_model).await?,
         ),
@@ -103,12 +103,13 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── Virtues ────────────────────────────────────────────────────────
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
-    // After the tarball, provision local inference. Dragon → the QNN NPU daemon
-    // (context binaries + tokenizers + virtues-qnnd.service). Bundled → the
-    // portable CPU llama-server sidecars. Manual → nothing (the user's endpoints
-    // were validated above).
+    // After the tarball, provision local inference. Bundled → the portable CPU
+    // llama-server sidecar (paced on a Dragon). Manual → nothing (the user's
+    // endpoints were validated above).
     match &inference {
-        InferenceMode::Dragon => install::install_qnn(&cfg).await?,
+        InferenceMode::Bundled if install::npu_still_serving() => {
+            ui::skip("This Dragon's search moves from its NPU to the CPU at the end of the install")
+        }
         InferenceMode::Bundled => install::install_inference(&cfg).await?,
         InferenceMode::Manual { .. } => {
             ui::skip("Manual inference — skipping local sidecar provisioning")
@@ -144,6 +145,10 @@ pub async fn run(cli: Config) -> Result<()> {
     let mut restart = tokio::process::Command::new("systemctl");
     restart.args(["restart", "virtues"]);
     steps::run_step("Start virtues service on the new binary", restart).await?;
+
+    if matches!(inference, InferenceMode::Bundled) && install::npu_still_serving() {
+        install::move_off_npu(&cfg).await;
+    }
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");

@@ -4,7 +4,7 @@
 	/**
 	 * A text action: a verb you can press, with no box around it.
 	 *
-	 * design-grammar.md §6 has always had the rule — "Everything else is a
+	 * design.md, "Primitives" has always had the rule — "Everything else is a
 	 * quiet link in `--color-primary` at 14px/500 sans" — and on 2026-09-16
 	 * nothing in the tree obeyed it. A sweep found **18 independent
 	 * definitions** of this one affordance (seven of them literally named
@@ -204,13 +204,6 @@
 	.v-textaction[aria-busy="true"]:disabled {
 		opacity: 1;
 		cursor: progress;
-	}
-
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-textaction:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-		border-radius: var(--radius-md);
 	}
 
 	/* The way back. Muted ink, so "Cancel" beside "Send a link" reads as the

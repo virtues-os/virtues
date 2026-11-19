@@ -34,7 +34,7 @@ impl SemanticSearchTool {
     pub async fn execute(
         &self,
         arguments: serde_json::Value,
-        project_id: Option<&str>,
+        thread_id: Option<&str>,
         scope_mode: crate::search::ScopeMode,
         timezone: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
@@ -99,7 +99,7 @@ impl SemanticSearchTool {
             date_after: date_after.map(str::to_string),
             date_before: date_before.map(str::to_string),
             entities: entities.unwrap_or_default(),
-            project_id: project_id.map(str::to_string),
+            thread_id: thread_id.map(str::to_string),
             scope_mode,
             limit: num_results,
         };
@@ -113,7 +113,7 @@ impl SemanticSearchTool {
         // results. Not when the agent asked for particular sources, nor in a
         // chat scoped to a project's materials alone.
         let scoped = !opts.ontologies.is_empty()
-            || (project_id.is_some() && scope_mode == crate::search::ScopeMode::Exclusive);
+            || (thread_id.is_some() && scope_mode == crate::search::ScopeMode::Exclusive);
         let mut from_wiki = Vec::new();
         if !scoped {
             let parse = |d: Option<&str>| d.and_then(crate::search::query::parse_date_filter);

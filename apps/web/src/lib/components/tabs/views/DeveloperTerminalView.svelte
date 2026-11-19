@@ -220,12 +220,15 @@
             // `use:dropZone` on the container.
             terminal.textarea?.addEventListener("paste", handlePaste, true);
 
-            // Watch for theme changes (data-theme attribute on html element)
+            // Re-read the colors when the theme or the accent changes: both
+            // are attributes on <html>, and the blue and cyan ANSI colors
+            // draw in the accent.
             themeObserver = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
                     if (
                         mutation.type === "attributes" &&
-                        mutation.attributeName === "data-theme"
+                        (mutation.attributeName === "data-theme" ||
+                            mutation.attributeName === "data-accent")
                     ) {
                         // Update terminal theme
                         if (terminal) {
@@ -618,16 +621,7 @@
        instead, via the universal selector — which is what reaches an element
        this component never writes. */
 
-    @keyframes spin {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
     .animate-spin {
-        animation: spin 1s linear infinite;
+        animation: virtues-spin 1s linear infinite;
     }
 </style>

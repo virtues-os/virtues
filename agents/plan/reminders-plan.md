@@ -27,7 +27,7 @@ A reminder is the first thing that needs the box to go the other way.
 
 ## Scope
 
-**Revised 2026-10-05 by [notifications-plan.md](notifications-plan.md).** A
+**Revised 2026-10-05 by [archive/notifications-plan.md](../archive/notifications-plan.md).** A
 reminder is still the owner's object and the owner's word: they say a sentence
 in chat and it comes back later. What it *sends* is now a notification — one
 object shared with broken streams, applets and the box's own warnings — and
@@ -276,7 +276,7 @@ encryption adds almost no work.
   the text in the push: it put a cold iroh dial on the user-visible path and
   failed precisely when the box was unreachable.
 - **Mac-first notifications** (for reminders; a Mac banner for a fix that can
-  only happen on that Mac is allowed by `notifications-plan.md`). Free to build and zero-infrastructure,
+  only happen on that Mac is allowed by `archive/notifications-plan.md`). Free to build and zero-infrastructure,
   but a desktop banner is a weak product surface and would not have told us
   whether the feature is any good. Dropped 2026-09-22.
 - **A channel list — Telegram, Slack, Discord, Signal, email — with the owner's

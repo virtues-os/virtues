@@ -11,7 +11,8 @@
 -->
 <script lang="ts">
 	import { onDestroy } from "svelte";
-	import { fly } from "svelte/transition";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import { fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
@@ -41,7 +42,7 @@
 	// incoming one settles in from just below. Anyone who has asked not to be
 	// moved gets the swap with no travel and no time.
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 	const IN = { y: still ? 0 : 8, duration: still ? 0 : 260, easing: cubicOut, delay: still ? 0 : 60 };
 	const OUT = { y: still ? 0 : -6, duration: still ? 0 : 150, easing: cubicOut };
 

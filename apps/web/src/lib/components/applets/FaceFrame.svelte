@@ -4,6 +4,7 @@
 	import { parseRoute } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import type { TabType } from '$lib/tabs/types';
+	import { getTheme, isThemeDark } from '$lib/utils/theme';
 
 	/**
 	 * The applet face runtime: face/index.html rendered in a sandboxed
@@ -25,7 +26,6 @@
 	const OPENABLE: ReadonlySet<TabType> = new Set<TabType>([
 		'chat',
 		'page',
-		'tasks',
 		'day',
 		'year',
 		'timeline',
@@ -33,7 +33,7 @@
 		'person',
 		'place',
 		'org',
-		'project',
+		'thread',
 		'bookmark',
 		'bookmarks',
 		'applets',
@@ -61,7 +61,8 @@
 		void (async () => {
 			try {
 				const { token } = await mintFaceToken(id);
-				const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+				// The face's stylesheet knows only light and dark (faces.rs, VIRTUES_CSS).
+				const theme = isThemeDark(getTheme()) ? 'dark' : 'light';
 				// Absolute on mobile: an iframe src bypasses the fetch shim, so a
 				// root-relative path would resolve against the bundled tauri://
 				// origin and render an empty frame.

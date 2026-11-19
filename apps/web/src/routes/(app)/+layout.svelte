@@ -12,6 +12,7 @@
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
+	import NewTaskDialog from "$lib/components/tasks/NewTaskDialog.svelte";
 	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -34,8 +35,6 @@
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
-	import { afterNavigate, beforeNavigate } from "$app/navigation";
-	import { IN_APP_PREFIX, setupOpensInApp } from "$lib/components/setup/inApp";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
 	import { goto } from "$app/navigation";
@@ -106,7 +105,6 @@
 		const showing = windowShellStore.panes.map((p) => p.tabs.find((t) => t.id === p.activeTabId)?.route ?? "");
 		return reloadLosesNothing({
 			temporaryChat: tabs.some((t) => isTemporaryRoute(t.route)),
-			setupShowing: showing.some((r) => r === "/setup" || r.startsWith("/setup/")),
 			replying: chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted"),
 			focused: document.activeElement,
 		});
@@ -145,30 +143,6 @@
 		return () => document.body.classList.remove("focus-mode");
 	});
 
-	// SETUP OPENS HERE once someone is in the app (setup/inApp.ts). A link
-	// to `/setup` from inside it (the sidebar's Setup panel, the wiki's "Draw
-	// your chapters") is caught before it leaves for the full-screen stage,
-	// and opens Setup's tab instead, the one already open if there is one.
-	beforeNavigate((nav) => {
-		const to = nav.to?.url;
-		const path = to?.pathname ?? "";
-		// Back and Forward are let through: cancelling one moves the browser
-		// back where it was, and opening the tab on top of that pushed a copy
-		// of the entry Back had just left, so Back could never get past it.
-		// They reach the tab by way of the stage's redirect, below.
-		if (nav.type === "leave" || nav.type === "popstate" || !to) return;
-		if (!(path === "/setup" || path.startsWith("/setup/")) || !setupOpensInApp(to)) return;
-		nav.cancel();
-		windowShellStore.openSetup(path);
-	});
-	// Arriving by the stage's redirect (IN_APP_PREFIX + the address) once the
-	// shell is up: the tab takes over that history entry, not a new one.
-	afterNavigate((nav) => {
-		const path = nav.to?.url.pathname ?? "";
-		if (!initialized || nav.type === "enter" || !path.startsWith(IN_APP_PREFIX)) return;
-		windowShellStore.openSetup(path.slice(IN_APP_PREFIX.length), { replace: true });
-	});
-
 	// A link to the web opens in the Browser tab or the default browser, in
 	// the app on a computer (`webLinks.ts`).
 	onMount(() => listenForWebLinks());
@@ -176,16 +150,40 @@
 	// Glass catches the light where the pointer is: the glass under it keeps
 	// the pointer's place in --lq-x and --lq-y, which its glint is drawn at
 	// (`.lq`, app.css). One listener for the whole window.
+	//
+	// Only glass that draws a glint (a button), and at most once a frame:
+	// measuring the glass on every pointer event, right after the last write,
+	// forced a style and layout pass per event over the blurred shell. The
+	// box is read inside the frame, before the write, so a frame lays out at
+	// most once.
 	onMount(() => {
-		const follow = (e: PointerEvent) => {
-			const glass = (e.target as Element | null)?.closest?.<HTMLElement>(".lq");
-			if (!glass) return;
+		// The ∴ beside the Mac app's window buttons draws its glass on a layer
+		// inside it (HeaderMark), so it is named here; the layer inherits the
+		// place from the button.
+		const GLINTS = ':is(button, [role="button"]).lq, .header-mark.standalone';
+		let glass: HTMLElement | null = null;
+		let x = 0;
+		let y = 0;
+		let frame = 0;
+		const draw = () => {
+			frame = 0;
+			if (!glass?.isConnected) return;
 			const box = glass.getBoundingClientRect();
-			glass.style.setProperty("--lq-x", `${Math.round(e.clientX - box.left)}px`);
-			glass.style.setProperty("--lq-y", `${Math.round(e.clientY - box.top)}px`);
+			glass.style.setProperty("--lq-x", `${Math.round(x - box.left)}px`);
+			glass.style.setProperty("--lq-y", `${Math.round(y - box.top)}px`);
+		};
+		const follow = (e: PointerEvent) => {
+			glass = (e.target as Element | null)?.closest?.<HTMLElement>(GLINTS) ?? null;
+			if (!glass) return;
+			x = e.clientX;
+			y = e.clientY;
+			frame ||= requestAnimationFrame(draw);
 		};
 		document.addEventListener("pointermove", follow, { passive: true });
-		return () => document.removeEventListener("pointermove", follow);
+		return () => {
+			document.removeEventListener("pointermove", follow);
+			cancelAnimationFrame(frame);
+		};
 	});
 
 	// Load chat sessions, workspaces, and initialize theme on mount
@@ -228,10 +226,7 @@
 
 		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
-		// Setup's redirect into the app carries its address behind a prefix.
-		const urlPath = $page.url.pathname.startsWith(IN_APP_PREFIX)
-			? $page.url.pathname.slice(IN_APP_PREFIX.length)
-			: $page.url.pathname;
+		const urlPath = $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
 		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
 		// only ?right= belongs to the shell itself.
@@ -432,6 +427,7 @@
 
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
+<NewTaskDialog />
 
 <!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
      is where it used to live: the sidebar doesn't render on the phone shell,
@@ -443,13 +439,18 @@
 	class:desk={!mobileLayout.isMobile}
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
-	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
 	<!-- The painting along the bottom of the whole window, behind the
 	     sidebar and the panes alike. It does not move between pages: the
 	     glass floats over it and the paper covers it. -->
 	{#if !mobileLayout.isMobile}
-		<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" />
+		<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+		     macOS (174 KB), the JPEG last (508 KB). -->
+		<picture>
+			<source srcset="/scenes/lake.avif" type="image/avif" />
+			<source srcset="/scenes/lake.webp" type="image/webp" />
+			<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" />
+		</picture>
 	{/if}
 
 	<!-- One row across the whole window: the ∴ over the sidebar, each pane's
@@ -472,9 +473,6 @@
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:split-desk={!mobileLayout.isMobile}
 		class:is-mobile={mobileLayout.isMobile}
-		style={mobileLayout.isMobile
-			? "background-image: var(--background-image); background-blend-mode: multiply;"
-			: undefined}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -534,7 +532,6 @@
 				color={iconPickerStore.currentColor}
 				label={iconPickerStore.label}
 				fallback={iconPickerStore.fallback}
-				autoColor={iconPickerStore.autoColor}
 				onColorSelect={iconPickerStore.colorEnabled
 					? (c) => iconPickerStore.selectColor(c)
 					: undefined}

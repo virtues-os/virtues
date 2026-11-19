@@ -1,31 +1,28 @@
 <script lang="ts">
 	/**
-	 * Settings → Keys: the sign-ins and named keys your server keeps for you.
-	 * Saved passwords are in Drive → Passwords (`PasswordsView`).
+	 * Settings → Keys: the named keys your server keeps for you. Saved
+	 * passwords are in Drive → Passwords (`PasswordsView`), and your sources'
+	 * sign-ins are reconnected in Sources.
 	 *
-	 * Sign-ins are the sessions your sources use; they are reconnected in
-	 * Sources, so each row opens it. Keys are named values that applets declare
-	 * they need (`OPENAI_API_KEY`), set and removed here. The list carries names
+	 * Keys are named values that applets declare they need (`OPENAI_API_KEY`),
+	 * set and removed here. The list carries names
 	 * only: a value is fetched when you ask to see it, and nothing the
 	 * assistant can call reads one (`api/keys.rs`).
 	 */
 	import { onMount } from 'svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { Button, Input, Page } from '$lib';
+	import { Button, Input } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import {
 		deleteKey,
 		getKeys,
 		revealKey,
 		setKey,
-		type Credential,
 		type KeyItem
 	} from '$lib/api/client';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
-	let signIns = $state<Credential[]>([]);
 	/** The grid keys its rows by `id`; a key's name is unique, so it is the id. */
 	type KeyRow = KeyItem & { id: string };
 	let keys = $state<KeyRow[]>([]);
@@ -49,7 +46,6 @@
 		error = null;
 		try {
 			const o = await getKeys();
-			signIns = o.sign_ins.filter((c) => c.status !== 'pending');
 			keys = o.keys.map((k) => ({ ...k, id: k.name }));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -59,23 +55,6 @@
 	}
 
 	onMount(load);
-
-	function signInState(c: Credential): string {
-		switch (c.status) {
-			case 'active':
-				return 'Working';
-			case 'reauth_required':
-				return 'Needs you to sign in again';
-			case 'revoked':
-				return 'Disconnected';
-			default:
-				return 'Not connecting';
-		}
-	}
-
-	function openSources() {
-		windowShellStore.openTabFromRoute('/sources', { label: 'Sources' });
-	}
 
 	function startAdd() {
 		editing = { name: '', isNew: true };
@@ -160,37 +139,15 @@
 	];
 </script>
 
-<Page title="Keys" description="Sign-ins and keys saved on your server." maxWidth="wide">
+<SettingsPage
+	title="Keys"
+	lede="What your applets sign in with, such as an API key. An applet gets only the keys it lists, and the assistant sees their names, never their values."
+	width="medium"
+>
+	{#snippet actions()}
+		<Button variant="primary" onclick={startAdd}>Add a key</Button>
+	{/snippet}
 	<section class="block">
-		<h2 class="block-title">Sign-ins</h2>
-		<p class="block-body">
-			The sessions your sources use. Reconnect one in Sources when it stops working.
-		</p>
-		{#if signIns.length === 0 && !loading}
-			<p class="quiet">No sources are signed in.</p>
-		{:else}
-			<ul class="sign-ins">
-				{#each signIns as c (c.id)}
-					<li>
-						<button type="button" class="sign-in" onclick={openSources}>
-							<span class="sign-in-name">{c.name}</span>
-							<span class="sign-in-state" class:attention={c.status !== 'active'}>
-								{signInState(c)}
-							</span>
-							<Icon icon="mynaui:chevron-right" width="14" />
-						</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
-
-	<section class="block">
-		<h2 class="block-title">Keys</h2>
-		<p class="block-body">
-			Named values that applets need, such as an API key. An applet gets only the keys it
-			lists, and the assistant sees their names, never their values.
-		</p>
 		{#if actionError}
 			<p class="form-error">{actionError}</p>
 		{/if}
@@ -205,13 +162,10 @@
 			loadingMessage="Loading keys…"
 			searchPlaceholder="Search keys…"
 			defaultViewMode="table"
+			showCounts={false}
 			onItemClick={startReplace}
 			onRetry={load}
 		>
-			{#snippet toolbarActions()}
-				<Button variant="secondary" size="sm" onclick={startAdd}>Add a key</Button>
-			{/snippet}
-
 			{#snippet tableRow(k: KeyRow)}
 				<td class="col-name"><code>{k.name}</code></td>
 				<td class="col-dim" class:attention={!k.is_set}>{k.is_set ? 'Set' : 'Not set'}</td>
@@ -224,7 +178,7 @@
 						<IconButton
 							icon="mynaui:eye"
 							label={`Show ${k.name}`}
-							size="sm"
+							size="nested"
 							onclick={(e) => {
 								e.stopPropagation();
 								show(k);
@@ -234,7 +188,7 @@
 					<IconButton
 						icon="mynaui:edit"
 						label={k.is_set ? `Replace ${k.name}` : `Set ${k.name}`}
-						size="sm"
+						size="nested"
 						onclick={(e) => {
 							e.stopPropagation();
 							startReplace(k);
@@ -244,7 +198,7 @@
 						<IconButton
 							icon="mynaui:trash"
 							label={`Remove ${k.name}`}
-							size="sm"
+							size="nested"
 							onclick={(e) => {
 								e.stopPropagation();
 								removing = k;
@@ -255,7 +209,7 @@
 			{/snippet}
 		</UniversalDataGrid>
 	</section>
-</Page>
+</SettingsPage>
 
 <Modal
 	open={editing !== null}
@@ -327,51 +281,11 @@
 	.block {
 		margin-bottom: 2.5rem;
 	}
-	.block-title {
-		margin: 0 0 0.25rem;
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--color-foreground);
-	}
 	.block-body {
 		margin: 0 0 1rem;
 		max-width: 60ch;
 		font-size: 0.875rem;
 		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-	.quiet {
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-	}
-	.sign-ins {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-	}
-	.sign-in {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		width: 100%;
-		padding: 0.5rem 0;
-		border: 0;
-		border-bottom: 1px solid var(--color-border);
-		background: none;
-		font: inherit;
-		text-align: left;
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-	.sign-in-name {
-		flex: 1;
-		font-weight: 500;
-	}
-	.sign-in-state {
-		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 	}
 	.attention {

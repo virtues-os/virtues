@@ -13,7 +13,7 @@
  * `--cat-*` tokens. So the dot a pin got for free was muted cloth and the dot
  * they chose was bright candy, in the same column, and neither could be
  * reached from the other. Worse, bookcloth was pure TypeScript: six literal
- * hexes that ignored all sixteen themes, which is exactly the failure the
+ * hexes that ignored the themes, which is exactly the failure the
  * token rule exists to prevent.
  *
  * Now there is one palette: `--cat-*`, nine hues, authored per theme with a
@@ -45,10 +45,9 @@ export const PIN_COLORS: { key: string; label: string }[] = [
 const KEYS = PIN_COLORS.map((c) => c.key);
 
 /**
- * The automatic color for a thing that hasn't chosen one: a stable hash of its
- * id into the same nine. No schema and no migration — the same pin gets the
- * same hue on every device — and because it lands on a token rather than a
- * literal, it adapts per theme like everything else.
+ * A chart color for a thread that hasn't chosen one: a stable hash of its id
+ * into the same nine. The same thread gets the same hue on every device, and
+ * because it lands on a token rather than a literal, it adapts per theme.
  */
 export function pinColor(id: string): string {
 	let h = 0;
@@ -188,24 +187,11 @@ export function accentCss(value: string | null | undefined): string | null {
 }
 
 /**
- * The color for a pinned thing: its chosen one if it has one, otherwise the
- * hash of its url.
- *
- * Keyed on the URL, not on a species. Anything with a route can be pinned —
- * a project, an applet, a PDF in Drive, a single day, a person, an external
- * link — so asking "what kind of thing is this?" would be both fragile and
- * beside the point. The url IS the identity.
- */
-export function clothFor(pin: { url: string; color?: string | null }): string {
-	return accentCss(pin.color) ?? `var(--cat-${pinColor(pin.url)})`;
-}
-
-/**
- * A project's color: the one it was given, otherwise the same hash a pin of it
- * gets (keyed on its route), so every project has one and a pinned project
- * wears the color its own row does. Every surface that tints a project reads
- * this; none reads `accent_color` directly.
+ * A thread's color in a chart: the one it was given, otherwise a hash of its
+ * route, so the week chart and the thread lines can tell threads apart.
+ * Icons don't use this. A thread with no color draws its icon in the text
+ * color around it (`ProjectGlyph`).
  */
 export function projectColor(project: { id: string; accent_color?: string | null }): string {
-	return clothFor({ url: `/project/${project.id}`, color: project.accent_color });
+	return accentCss(project.accent_color) ?? `var(--cat-${pinColor(`/thread/${project.id}`)})`;
 }

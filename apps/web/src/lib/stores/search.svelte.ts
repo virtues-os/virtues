@@ -15,6 +15,8 @@ let open = $state(false);
 let startQuery = $state("");
 /** Where the keyboard was when search opened, so closing can put it back. */
 let returnFocus: HTMLElement | null = null;
+/** The last close was a hand-off to a page (`$lib/search/handoff`): the card sinks instead of blurring away. */
+let sink = false;
 
 export const search = {
 	get open(): boolean {
@@ -29,13 +31,19 @@ export const search = {
 		startQuery = query;
 		open = true;
 	},
+	/** Whether the close in progress hands off to a page. */
+	get sinking(): boolean {
+		return sink;
+	},
 	/**
 	 * Close, and put the keyboard back where it was, unless a result took it
 	 * somewhere else. Checked after the flush that opens a chosen result, so
-	 * that result can take focus first.
+	 * that result can take focus first. `sink` is the hand-off's close: the
+	 * card drops away as the page it opened comes up.
 	 */
-	hide(): void {
+	hide(opts: { sink?: boolean } = {}): void {
 		if (!open) return;
+		sink = !!opts.sink;
 		open = false;
 		const back = returnFocus;
 		returnFocus = null;

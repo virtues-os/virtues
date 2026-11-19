@@ -3,8 +3,8 @@
  *
  * Svelte's `animate:` and `transition:` and the Web Animations API cannot
  * read a CSS easing or a `prefers-reduced-motion` media query. These helpers
- * give them the same curves and durations the stylesheets use (themes.css,
- * "The scale").
+ * give them the same curves and durations the stylesheets use (themes.css;
+ * design.md, "Motion").
  */
 
 /** A CSS `cubic-bezier(x1, y1, x2, y2)` as an easing function of progress 0..1. */

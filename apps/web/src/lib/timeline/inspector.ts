@@ -6,6 +6,7 @@
  * section stays lit for its whole span while its rows light and dim inside it.
  */
 import { gapVerdict } from "./day";
+import { formatDistance } from "$lib/utils/units";
 
 /** One stretch of the day, as `/api/timeline/derived` serves it. */
 export interface DerivedSpan {
@@ -143,12 +144,8 @@ const FLIGHT_KMH = 350;
 const WALK_AVG_KMH = 7;
 const WALK_PEAK_KMH = 15;
 
-/** "12 km", "3.4 km", "800 m". */
-export function fmtDistance(meters: number): string {
-	if (meters < 1000) return `${Math.round(meters / 10) * 10} m`;
-	const km = meters / 1000;
-	return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
-}
+/** A distance in the owner's units (Settings · Profile): "3.4 km" or "2.1 mi". */
+export const fmtDistance = (meters: number): string => formatDistance(meters);
 
 /** A trip's title: its mode only where speed alone proves it (Flight,
  *  Walk), else "Moving"; then how far the track went. */
@@ -276,6 +273,5 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 }
 
 function walkTitle(meta: Record<string, unknown>): string {
-	const km = Number(meta.path_meters ?? 0) / 1000;
-	return `${Number(meta.kmh ?? 0) < 8 ? "Walk" : "Moved"} · ${km.toFixed(1)} km`;
+	return `${Number(meta.kmh ?? 0) < 8 ? "Walk" : "Moved"} · ${fmtDistance(Number(meta.path_meters ?? 0))}`;
 }

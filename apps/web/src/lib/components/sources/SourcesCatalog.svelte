@@ -501,7 +501,7 @@
 <Page
 	title="Catalog"
 	description="Services you can connect. Some sync your data to your server. In others, the assistant can act for you when you ask in chat."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#if store.error}
 		<div class="error">{store.error}</div>
@@ -533,7 +533,7 @@
 	>
 		{#snippet rowActions(row: Row)}
 			{#if row.source}
-				<Button variant="secondary" size="sm" onclick={() => void connect(row.source!)}>
+				<Button variant="secondary" onclick={() => void connect(row.source!)}>
 					{connectLabel(row)}
 				</Button>
 			{:else if row.service?.id}
@@ -542,7 +542,6 @@
 				{#if service.needsSignIn}
 					<Button
 						variant="secondary"
-						size="sm"
 						loading={busy === id}
 						disabled={busy !== null}
 						onclick={() => void signInAgain(service)}
@@ -561,7 +560,6 @@
 				{@const registry = row.service.registry}
 				<Button
 					variant="secondary"
-					size="sm"
 					loading={busy === registry}
 					disabled={busy !== null}
 					onclick={() => void connectService({ registry }, registry)}
@@ -598,7 +596,6 @@
 							</div>
 							<Button
 								variant="secondary"
-								size="sm"
 								loading={busy === l.registry}
 								disabled={busy !== null}
 								onclick={() => void connectService({ registry: l.registry }, l.registry)}
@@ -645,7 +642,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 

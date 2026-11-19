@@ -168,7 +168,7 @@
 		circumstances: 'Circumstances',
 		coverage: 'Coverage',
 		active_project: 'Project',
-		scoped: 'Scoped to the project',
+		scoped: 'Scoped to the thread',
 		compacted_conversation: 'Earlier conversation, summarized',
 		applet: 'Applet',
 		active_context: 'Open page',
@@ -195,7 +195,7 @@
 <Page
 	title={sessionDetail?.conversation.title || untitled('chat')}
 	description={sessionDetail ? `Started ${formatDate(sessionDetail.conversation.first_message_at)}` : undefined}
-	maxWidth="prose"
+	maxWidth="reading"
 >
 	{#if contextViewLoading}
 		<div class="cv-loading">Loading...</div>
@@ -624,7 +624,7 @@
 	}
 
 	.cv-compact-btn:hover:not(:disabled) {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.cv-compact-btn:disabled {

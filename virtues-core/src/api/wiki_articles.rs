@@ -995,7 +995,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                project_id: None,
+                thread_id: None,
                 format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )

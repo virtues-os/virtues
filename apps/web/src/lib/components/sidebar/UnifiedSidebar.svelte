@@ -125,6 +125,13 @@
 				run: toggleSearch,
 			},
 			{
+				id: "settings.open",
+				keys: "mod+,",
+				label: "Open Settings",
+				group: "Go to",
+				run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }),
+			},
+			{
 				id: "wiki.open",
 				keys: "mod+w",
 				label: "Open the wiki",
@@ -164,7 +171,7 @@
 	}
 
 	function handleNewTask() {
-		void newTask((route, label) => windowShellStore.openTabFromRoute(route, { label, focusExisting: true }));
+		newTask();
 	}
 
 	function toggleCollapse() {
@@ -457,7 +464,7 @@
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
 	<div
-		class="sidebar-glass lq lq-regular"
+		class="sidebar-glass lq"
 		class:railed={isCollapsed}
 		class:reaches-top={reachesTop}
 		class:unmeasured={isCollapsed && railBottom === 0}
@@ -486,7 +493,7 @@
 			{:else}
 				<!-- One list, always: the sidebar never changes. Every door opens
 				     a page, and a page that has sections carries their list
-				     itself (the Wiki's index, Settings' SectionNav, Setup's
+				     itself (the Wiki's index, Sources' tabs, Setup's
 				     step strip). -->
 				<div class="panel-body">
 					<HomePanel />
@@ -754,14 +761,16 @@
 			height var(--motion-sidebar) var(--ease-sidebar) 100ms;
 	}
 
-	/* The glass (`.lq-regular`, app.css) behind the column: the opened
+	/* The glass (`.lq`, app.css) behind the column: the opened
 	   sidebar's panel, or the rail. It changes shape in two beats, so the
 	   rail reads as the same piece of glass growing into the panel.
 	   Opening, it runs down to full height first, quickly, and widens on a
 	   spring that carries it a few pixels into the gap before it settles
 	   (--ease-sidebar-glass). Closing, it narrows and draws up to the
-	   rail's last glyph together, on the sidebar's clock. It follows the
-	   pointer with no easing while the seam is dragged. */
+	   rail's last glyph together, on the sidebar's clock. In the Mac app
+	   the rail starts below the header, so the top edge moves too: up
+	   around the ∴ with the height when opening, back down when closing.
+	   It follows the pointer with no easing while the seam is dragged. */
 	.sidebar-glass {
 		position: fixed;
 		z-index: 0;
@@ -769,13 +778,15 @@
 		pointer-events: none;
 		transition:
 			width 560ms var(--ease-sidebar-glass),
-			height 300ms var(--ease-sidebar);
+			height 300ms var(--ease-sidebar),
+			top 300ms var(--ease-sidebar);
 	}
 
 	.sidebar-glass.railed {
 		transition:
 			width var(--motion-sidebar) var(--ease-sidebar),
-			height var(--motion-sidebar) var(--ease-sidebar);
+			height var(--motion-sidebar) var(--ease-sidebar),
+			top var(--motion-sidebar) var(--ease-sidebar);
 	}
 
 	.sidebar-glass.resizing {
@@ -834,10 +845,6 @@
 		}
 	}
 
-	.railed .panel-body {
-		overflow-y: hidden;
-	}
-
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
@@ -858,15 +865,10 @@
 	.panel-body {
 		height: 100%;
 		min-height: 0;
-		overflow-y: auto;
-		overflow-x: hidden;
+		/* No scrolling: Recent shows only the rows that fit (HomePanel). */
+		overflow: hidden;
 		padding: calc(var(--chrome-control-top) + var(--chrome-tab-h) + 16px - var(--chrome-row-h)) 4px 12px;
 		transition: padding var(--motion-sidebar) var(--ease-sidebar);
-	}
-
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
 	}
 
 	.loading-state {
@@ -878,5 +880,5 @@
 		font-size: 13px;
 	}
 
-	.spinner { animation: spin 1s linear infinite; }
+	.spinner { animation: virtues-spin 1s linear infinite; }
 </style>

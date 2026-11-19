@@ -36,6 +36,7 @@
  */
 
 import { mobileLayout } from './mobileLayout.svelte';
+import { reducedMotion } from '$lib/stores/motion.svelte';
 
 /**
  * Below this the inset is treated as nothing. Rounding, rubber-banding and
@@ -81,8 +82,7 @@ function animateTo(target: number, durationMs: number): void {
 	if (
 		durationMs <= 0 ||
 		Math.abs(target - from) < 1 ||
-		(typeof matchMedia !== 'undefined' &&
-			matchMedia('(prefers-reduced-motion: reduce)').matches)
+		(reducedMotion())
 	) {
 		if (target !== painted) setVar(target);
 		return;

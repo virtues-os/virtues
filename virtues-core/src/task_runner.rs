@@ -93,7 +93,7 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task, run_limit:
         user_id: Some("system".to_string()),
         chat_id: Some(chat_id.clone()),
         task_id: Some(task.id.clone()),
-        project_id: task.project_id.clone(),
+        thread_id: task.thread_id.clone(),
         turn: Some(crate::api::chat::generate_id()),
         ..Default::default()
     };
@@ -125,7 +125,7 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task, run_limit:
         let said = outcome.message.unwrap_or_default();
         let result = format!(
             "{said}\n\nI stopped here because this request reached its spending limit of {} for one run. \
-             Reply to let me continue, or raise the limit in Settings under Assistant.",
+             Reply to let me continue, or raise the limit in Settings under Billing.",
             format_usd(run_limit)
         );
         tasks::finish_request_run(pool, &task.id, result.trim(), &writer).await?;
@@ -171,7 +171,7 @@ async fn owner_replies(pool: &PgPool, task_id: &str) -> Result<Option<String>> {
 async fn system_prompt(pool: &PgPool, task: &Task) -> String {
     let assistant_name = crate::api::assistant_profile::get_assistant_name(pool)
         .await
-        .unwrap_or_else(|_| "Ari".to_string());
+        .unwrap_or_else(|_| crate::api::assistant_profile::DEFAULT_ASSISTANT_NAME.to_string());
     let user_name = crate::api::profile::get_display_name(pool)
         .await
         .unwrap_or_else(|_| "there".to_string());

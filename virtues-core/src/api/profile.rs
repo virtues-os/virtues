@@ -16,7 +16,9 @@ pub struct UpdateProfileRequest {
     pub preferred_name: Option<String>,
     /// Parsed by serde from `"YYYY-MM-DD"` (what an HTML date input submits);
     /// bound as a real DATE — a String bind fails Postgres's type check.
-    pub birth_date: Option<chrono::NaiveDate>,
+    /// Doubly optional: absent leaves it, `null` clears it.
+    #[serde(default, deserialize_with = "crate::api::assistant_profile::double_option")]
+    pub birth_date: Option<Option<chrono::NaiveDate>>,
     // Physical/Biometric
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,
@@ -36,6 +38,11 @@ pub struct UpdateProfileRequest {
     pub theme: Option<String>,
     /// Timezone of the box's physical home location (IANA). See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
+    /// 'us' or 'metric'. Anything else is refused.
+    pub units: Option<String>,
+    /// Days to keep audio recordings (30, 90, 365), or `null` for forever.
+    #[serde(default, deserialize_with = "crate::api::assistant_profile::double_option")]
+    pub keep_recordings_days: Option<Option<i32>>,
     /// Getting-started sections dismissed from Home. The full array each time —
     /// the client owns the merge, the box just remembers it.
     pub getting_started_dismissed: Option<Vec<String>>,
@@ -79,10 +86,51 @@ pub async fn get_profile(db: &PgPool) -> Result<UserProfile> {
     Ok(profile)
 }
 
+/// The units the owner reads in, set in Settings · Profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Units {
+    Us,
+    Metric,
+}
+
+impl Units {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "us" => Some(Self::Us),
+            "metric" => Some(Self::Metric),
+            _ => None,
+        }
+    }
+
+    /// The sentence that tells a writing model which units to use.
+    pub fn instruction(self) -> &'static str {
+        match self {
+            Self::Us => "Write measurements in US units: miles and feet, pounds, and degrees Fahrenheit.",
+            Self::Metric => "Write measurements in metric units: kilometres and metres, kilograms, and degrees Celsius.",
+        }
+    }
+}
+
+/// The owner's units. A value the column's check would refuse reads as US.
+pub async fn get_units(db: &PgPool) -> Result<Units> {
+    let profile = get_profile(db).await?;
+    // absent-ok: the column is NOT NULL with a check, so only 'us' or 'metric' arrive.
+    Ok(Units::parse(&profile.units).unwrap_or(Units::Us))
+}
+
+/// A text value to store: trimmed, and NULL when nothing is left.
+fn cleared(v: &str) -> Option<&str> {
+    let v = v.trim();
+    (!v.is_empty()).then_some(v)
+}
+
 /// Update the user's profile
 ///
-/// Only updates fields that are present in the request (not None).
-/// Returns the updated profile.
+/// Only updates fields that are present in the request (not None). The text
+/// fields Settings edits (names, work, employer, time zone) take an empty
+/// string as "clear it" and store NULL, the way `home_city` does; birth date
+/// takes `null`. Returns the updated profile.
+
 pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Result<UserProfile> {
     // Build dynamic UPDATE with positional pg placeholders ($1, $2, …).
     let mut set_clauses: Vec<String> = Vec::new();
@@ -106,6 +154,18 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
     if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
+    if let Some(ref units) = request.units {
+        if Units::parse(units).is_none() {
+            return Err(Error::InvalidInput("Units are 'us' or 'metric'.".into()));
+        }
+        push("units", &mut set_clauses, &mut next);
+    }
+    if let Some(days) = request.keep_recordings_days {
+        if days.is_some_and(|d| !crate::api::recordings::CHOICES.contains(&d)) {
+            return Err(Error::InvalidInput("Recordings are kept forever, or for 30, 90 or 365 days.".into()));
+        }
+        push("keep_recordings_days", &mut set_clauses, &mut next);
+    }
     if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
     if let Some(ref doors) = request.sidebar_doors {
         check_sidebar_doors(doors)?;
@@ -130,12 +190,12 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
 
     // Bind in the same order as set_clauses
     if let Some(ref v) = request.full_name {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.preferred_name {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
-    if let Some(ref v) = request.birth_date {
+    if let Some(v) = request.birth_date {
         query_builder = query_builder.bind(v);
     }
     if let Some(v) = request.height_cm {
@@ -148,10 +208,10 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.occupation {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.employer {
-        query_builder = query_builder.bind(v);
+        query_builder = query_builder.bind(cleared(v));
     }
     if let Some(ref v) = request.home_place_id {
         query_builder = query_builder.bind(v);
@@ -171,6 +231,12 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.home_timezone {
+        query_builder = query_builder.bind(cleared(v));
+    }
+    if let Some(ref v) = request.units {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.keep_recordings_days {
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.getting_started_dismissed {
@@ -258,6 +324,23 @@ mod tests {
     use super::*;
 
     #[sqlx::test]
+    async fn units_default_to_us_take_metric_and_refuse_anything_else(pool: PgPool) {
+        assert_eq!(get_units(&pool).await.unwrap(), Units::Us);
+        update_profile(&pool, UpdateProfileRequest { units: Some("metric".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(get_units(&pool).await.unwrap(), Units::Metric);
+        let refused = update_profile(&pool, UpdateProfileRequest { units: Some("imperial".into()), ..Default::default() }).await;
+        assert!(refused.is_err());
+        assert_eq!(get_units(&pool).await.unwrap(), Units::Metric);
+    }
+
+    #[sqlx::test]
+    async fn a_cleared_text_field_is_stored_as_nothing(pool: PgPool) {
+        update_profile(&pool, UpdateProfileRequest { employer: Some("Northwind".into()), ..Default::default() }).await.unwrap();
+        let p = update_profile(&pool, UpdateProfileRequest { employer: Some("  ".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(p.employer, None);
+    }
+
+    #[sqlx::test]
     async fn the_sidebar_doors_round_trip_and_junk_is_refused(pool: PgPool) {
         assert_eq!(get_profile(&pool).await.unwrap().sidebar_doors, None, "shipped arrangement");
         let doors = SidebarDoors {
@@ -286,7 +369,7 @@ mod tests {
         let d = chrono::NaiveDate::from_ymd_opt(1990, 1, 15).unwrap();
         let updated = update_profile(
             &pool,
-            UpdateProfileRequest { birth_date: Some(d), ..Default::default() },
+            UpdateProfileRequest { birth_date: Some(Some(d)), ..Default::default() },
         )
         .await
         .expect("update with a birth date");

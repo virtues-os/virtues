@@ -27,6 +27,8 @@ class ChatActivityStore {
 	private timer: ReturnType<typeof setTimeout> | null = null;
 	/** Focus and visibility fire together; one ask at a time keeps one loop. */
 	private asking = false;
+	/** A view's own turn ended: the next poll refreshes the list once, whatever the box says. */
+	private refreshAfterPoll = false;
 
 	running(chatId: string): boolean {
 		return this.localRunning.includes(chatId) || this.boxRunning.includes(chatId);
@@ -45,8 +47,10 @@ class ChatActivityStore {
 			this.localRunning = [...this.localRunning, chatId];
 		} else if (!running && has) {
 			this.localRunning = this.localRunning.filter((id) => id !== chatId);
+			// One refresh, from the poll. Refreshing here as well fetched the
+			// list twice when the box had been running the turn too.
+			this.refreshAfterPoll = true;
 			void this.poll();
-			void chatSessions.refresh();
 		}
 	}
 
@@ -69,12 +73,20 @@ class ChatActivityStore {
 		try {
 			running = (await listLiveChats()).running ?? [];
 		} catch {
+			if (this.refreshAfterPoll) {
+				this.refreshAfterPoll = false;
+				void chatSessions.refresh();
+			}
 			return;
 		} finally {
 			this.asking = false;
 		}
-		// A turn the box finished: its reply is in the list now, and so is its dot.
-		if (this.boxRunning.some((id) => !running.includes(id))) void chatSessions.refresh();
+		// A turn the box finished, or this view's own: its reply is in the
+		// list now, and so is its dot.
+		if (this.refreshAfterPoll || this.boxRunning.some((id) => !running.includes(id))) {
+			this.refreshAfterPoll = false;
+			void chatSessions.refresh();
+		}
 		if (running.length !== this.boxRunning.length || running.some((id) => !this.boxRunning.includes(id))) {
 			this.boxRunning = running;
 		}

@@ -82,8 +82,8 @@ describe('AssistantNameSettings', () => {
 	it('sends the default by name when the field is cleared', async () => {
 		enter('   ');
 		await vi.waitFor(() => expect(updateAssistantProfile).toHaveBeenCalledOnce());
-		expect(updateAssistantProfile).toHaveBeenCalledWith({ assistant_name: 'Ari' });
-		expect(field().value).toBe('Ari');
+		expect(updateAssistantProfile).toHaveBeenCalledWith({ assistant_name: 'Virtues' });
+		expect(field().value).toBe('Virtues');
 	});
 
 	it('keeps a pasted paragraph to 100 characters', async () => {

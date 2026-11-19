@@ -87,6 +87,20 @@ pub async fn build_coverage(pool: &PgPool, today: NaiveDate) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A table with rows gets a line in the block.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_table_with_rows_is_described(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_calendar_event (id, title, started_at, ended_at, source_stream_id, source_table, source_provider)
+             VALUES ('ev_1', 'Second coat', '2030-01-12T10:00:00Z', '2030-01-12T13:00:00Z', 's1', 'google_calendar', 'google')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let today = NaiveDate::from_ymd_opt(2030, 1, 13).unwrap();
+        assert!(build_coverage(&pool, today).await.unwrap().contains("data_calendar_event"));
+    }
+
     /// Every registry timestamp column named for a catalog table must exist
     /// on the migrated schema, or the line is silently omitted forever. And
     /// an empty box renders no block at all — nothing to say is not a

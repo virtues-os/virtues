@@ -1,29 +1,20 @@
 /**
- * Theme management utilities for Virtues
+ * Theme management for Virtues (agents/build/design.md, "Themes").
  *
- * Single global theme stored in user preferences (database) with localStorage cache.
- * Themes are applied via data-theme attribute on <html> and CSS custom properties.
+ * Two themes paint the app: Oxford (Light) and Asgard (Dark). What a person
+ * picks is a choice: Light, Dark, or Match system, which follows the
+ * device's `prefers-color-scheme`. The choice is stored in the assistant
+ * profile's `ui_preferences.theme` and cached in localStorage; the theme it
+ * resolves to is set as `data-theme` on <html>.
  */
 
 import { getAssistantProfile, updateUiPreferences } from '$lib/api/client';
 
-export type Theme =
-	| 'pemberley'
-	| 'caladan'
-	| 'rivendell'
-	| 'oxford'
-	| 'netherfield'
-	| 'lothlorien'
-	| 'hogwarts'
-	| 'tatooine'
-	| 'baker-street'
-	| 'narnia'
-	| 'canterbury'
-	| 'borghese'
-	| 'lyceum'
-	| 'asgard'
-	| 'agora'
-	| 'shire';
+/** A theme `themes.css` defines. */
+export type Theme = 'oxford' | 'asgard';
+
+/** What a person picks. `system` resolves to one of the two themes. */
+export type ThemeChoice = Theme | 'system';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
 
@@ -35,276 +26,212 @@ const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
  *
  * Both shells cover the window in the page: the phone's `.viewport` and the
  * desktop's main card both take `var(--color-page)`. Painting anything else
- * first (`body`'s `--background`, or `--surface`, which differ from the page on
- * some themes) shows one colour for ~270ms and then steps to another under it
- * (measured on a real launch, 2026-09-14). The key keeps its name because
- * app.html and the Mac app's connect.html read it.
+ * first shows one colour for a few hundred milliseconds and then steps to
+ * another under it. The key keeps its name because app.html and the Mac
+ * app's connect.html read it.
  */
 const THEME_SURFACE_STORAGE_KEY = 'virtues-theme-surface';
 
 /**
- * The two themes Virtues stands behind — one light, one dark.
+ * The two themes, by role.
  *
- * Sixteen themes with no marked pair is sixteen equal strangers: nothing tells
- * you which one the app was designed in, so picking is guesswork and the answer
- * to "just give me dark mode" is a shrug. These two are that answer. They are
- * surfaced by name — Pemberley stays Pemberley — with the role as a qualifier,
- * because the names are part of the product and "Light"/"Dark" are not names.
- *
- * `light` must agree with virtues-registry's DEFAULT_THEME (Rust), which is what
- * a new box actually lands on. Calling a theme the default while new boxes open
- * on a different one would be a label that isn't true.
+ * `light` must agree with virtues-registry's DEFAULT_THEME (Rust), which is
+ * what a new box lands on, or a cold start paints one theme and swaps to
+ * another the moment the profile arrives.
  */
 export const DEFAULT_THEMES = {
 	light: 'oxford',
 	dark: 'asgard'
 } as const satisfies Record<'light' | 'dark', Theme>;
 
-/** "Virtues Light" / "Virtues Dark" for the two above; null for the rest. */
-export function themeDefaultLabel(theme: Theme): string | null {
-	if (theme === DEFAULT_THEMES.light) return 'Virtues Light';
-	if (theme === DEFAULT_THEMES.dark) return 'Virtues Dark';
-	return null;
-}
-
-// Fallback theme used only before the API responds (flash prevention).
-// The real default is set in virtues-registry (Rust) and delivered via
-// /api/assistant-profile; this must match it, or a cold start paints one theme
-// and swaps to another the moment the profile lands.
-const FALLBACK_THEME: Theme = DEFAULT_THEMES.light;
+const FALLBACK_CHOICE: ThemeChoice = DEFAULT_THEMES.light;
 
 /**
- * Themes that no longer exist, and where their users go instead.
+ * Theme names that no longer exist, and where their users go.
  *
- * A removed theme can't just fail `isValidTheme` and fall through to the
- * default: someone who chose a dark theme would be dropped onto a white one
- * with no explanation, which reads as the app losing their settings. Gatsby was
- * dark olive with a magenta accent, so Borghese (dark, dramatic) is the nearest
- * surviving neighbour.
+ * A removed name can't just fail validation and fall through to the default:
+ * someone who chose a dark theme would be dropped onto a white page, which
+ * reads as the app losing their settings. Each lands on the theme that
+ * matches its darkness.
  */
 const RETIRED_THEMES: Record<string, Theme> = {
-	gatsby: 'borghese',
+	pemberley: 'oxford',
+	caladan: 'oxford',
+	rivendell: 'oxford',
+	netherfield: 'oxford',
+	hogwarts: 'oxford',
+	tatooine: 'oxford',
+	lothlorien: 'asgard',
+	'baker-street': 'asgard',
+	narnia: 'asgard',
+	canterbury: 'asgard',
+	borghese: 'asgard',
+	lyceum: 'asgard',
+	agora: 'asgard',
+	shire: 'asgard',
+	gatsby: 'asgard'
 };
 
-/** Resolve a stored theme name, following retirements. */
-function resolveTheme(stored: string | null | undefined): Theme | null {
+/** Whether a string is a choice a person can make. */
+export function isValidTheme(value: string): value is ThemeChoice {
+	return value === 'oxford' || value === 'asgard' || value === 'system';
+}
+
+/** Resolve a stored name, following retirements. */
+function resolveChoice(stored: string | null | undefined): ThemeChoice | null {
 	if (!stored) return null;
 	if (isValidTheme(stored)) return stored;
 	return RETIRED_THEMES[stored] ?? null;
 }
 
-/**
- * Get the current theme from localStorage cache
- */
-export function getTheme(): Theme {
-	if (typeof window === 'undefined') {
-		return FALLBACK_THEME;
-	}
+const darkQuery = (): MediaQueryList | null =>
+	typeof window === 'undefined' || !window.matchMedia ? null : window.matchMedia('(prefers-color-scheme: dark)');
 
-	return resolveTheme(localStorage.getItem(THEME_STORAGE_KEY)) ?? FALLBACK_THEME;
+/** The theme a choice paints right now. */
+export function themeFor(choice: ThemeChoice): Theme {
+	if (choice !== 'system') return choice;
+	return darkQuery()?.matches ? DEFAULT_THEMES.dark : DEFAULT_THEMES.light;
 }
 
-/**
- * Apply theme to the document (visual only, no persistence)
- */
-export function applyTheme(theme: Theme): void {
-	if (typeof window === 'undefined') return;
-
-	// Follows retirements, so a stored `gatsby` lands on its successor and is
-	// rewritten below rather than silently becoming the default every load.
-	theme = resolveTheme(theme) ?? FALLBACK_THEME;
-
-	document.documentElement.setAttribute('data-theme', theme);
-	localStorage.setItem(THEME_STORAGE_KEY, theme);
-
-	// Cache the resolved background so the pre-paint script in app.html can
-	// paint the right colour on the very first frame — otherwise a cold start
-	// (notably the Tauri webview) flashes white before the stylesheet lands,
-	// which is worst for anyone on a dark theme. Read back from the cascade
-	// rather than duplicating the palette here, so it can't drift.
-	const styles = getComputedStyle(document.documentElement);
-	const bg = styles.getPropertyValue('--background').trim();
-	if (bg) {
-		localStorage.setItem(THEME_BG_STORAGE_KEY, bg);
+/** The stored choice, from the localStorage cache. */
+export function getThemeChoice(): ThemeChoice {
+	if (typeof window === 'undefined') return FALLBACK_CHOICE;
+	try {
+		return resolveChoice(localStorage.getItem(THEME_STORAGE_KEY)) ?? FALLBACK_CHOICE;
+	} catch {
+		return FALLBACK_CHOICE;
 	}
-	const page = styles.getPropertyValue('--page').trim();
-	if (page) {
-		localStorage.setItem(THEME_SURFACE_STORAGE_KEY, page);
+}
+
+/** The theme painted now: the stored choice, resolved. */
+export function getTheme(): Theme {
+	return themeFor(getThemeChoice());
+}
+
+/** Re-resolves Match system when the device switches between light and dark. */
+let systemListener: (() => void) | null = null;
+
+function followSystem(on: boolean): void {
+	const query = darkQuery();
+	if (!query) return;
+	if (systemListener) {
+		query.removeEventListener('change', systemListener);
+		systemListener = null;
+	}
+	if (on) {
+		systemListener = () => paint(themeFor('system'), 'system');
+		query.addEventListener('change', systemListener);
+	}
+}
+
+function paint(theme: Theme, choice: ThemeChoice): void {
+	document.documentElement.setAttribute('data-theme', theme);
+
+	// Cache the resolved colours so the pre-paint script in app.html paints
+	// the right one on the very first frame. Read back from the cascade rather
+	// than duplicating the palette here, so it can't drift.
+	const styles = getComputedStyle(document.documentElement);
+	try {
+		const bg = styles.getPropertyValue('--background').trim();
+		if (bg) localStorage.setItem(THEME_BG_STORAGE_KEY, bg);
+		const page = styles.getPropertyValue('--page').trim();
+		if (page) localStorage.setItem(THEME_SURFACE_STORAGE_KEY, page);
+	} catch {
+		// Storage disabled: the stylesheet still paints.
 	}
 
 	// Hand the background back to the stylesheet. The bootstrap sets it as an
-	// inline style, which outranks any rule — leaving it in place would pin the
-	// page to whatever was cached (or to the light fallback on a first run)
-	// even after the real theme loaded.
+	// inline style, which outranks any rule.
 	document.documentElement.style.backgroundColor = '';
 
-	window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
+	window.dispatchEvent(new CustomEvent('themechange', { detail: { theme, choice } }));
 }
 
-/**
- * Set the theme - applies immediately and persists to database
- */
-export async function setTheme(theme: Theme): Promise<void> {
+/** Apply a choice to the document (visual only, no persistence). */
+export function applyTheme(choice: ThemeChoice): void {
 	if (typeof window === 'undefined') return;
-
-	if (!isValidTheme(theme)) {
-		console.warn(`Invalid theme: ${theme}. Using default.`);
-		theme = FALLBACK_THEME;
-	}
-
-	// Apply immediately for instant feedback
-	applyTheme(theme);
-
-	// Persist to database
+	choice = resolveChoice(choice) ?? FALLBACK_CHOICE;
 	try {
-		await updateUiPreferences({ theme });
+		localStorage.setItem(THEME_STORAGE_KEY, choice);
+	} catch {
+		// Storage disabled: the choice lasts for this page.
+	}
+	followSystem(choice === 'system');
+	paint(themeFor(choice), choice);
+}
+
+/** Apply a choice and save it to the profile. */
+export async function setTheme(choice: ThemeChoice): Promise<void> {
+	if (typeof window === 'undefined') return;
+	if (!isValidTheme(choice)) choice = FALLBACK_CHOICE;
+	applyTheme(choice);
+	try {
+		await updateUiPreferences({ theme: choice });
 	} catch (error) {
 		console.error('Failed to save theme to database:', error);
 	}
 }
 
 /**
- * Load theme from database and apply it
- * Call this on app initialization
+ * Load the choice from the profile and apply it. A retired name is written
+ * back as its successor, so it is remapped once rather than on every load.
  */
-export async function loadThemeFromDB(): Promise<Theme> {
-	if (typeof window === 'undefined') return FALLBACK_THEME;
+export async function loadThemeFromDB(): Promise<ThemeChoice> {
+	if (typeof window === 'undefined') return FALLBACK_CHOICE;
 
 	try {
-		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string } }>();
-		// Through `resolveTheme`, so a retired theme stored in the DB lands on
-		// its successor. `setTheme` then writes the successor back, retiring the
-		// old name for good rather than remapping it on every load.
-		const theme = resolveTheme(profile.ui_preferences?.theme);
-		if (theme) {
-			if (theme !== profile.ui_preferences?.theme) {
-				void setTheme(theme);
-			} else {
-				applyTheme(theme);
-			}
-			return theme;
+		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string; accent?: string } }>();
+		applyAccent(isAccent(profile.ui_preferences?.accent) ? profile.ui_preferences.accent : DEFAULT_ACCENT);
+		const stored = profile.ui_preferences?.theme;
+		const choice = resolveChoice(stored);
+		if (choice) {
+			if (choice !== stored) void setTheme(choice);
+			else applyTheme(choice);
+			return choice;
 		}
 	} catch (error) {
 		console.error('Failed to load theme from database:', error);
 	}
 
-	// Fall back to localStorage or default
-	const cached = getTheme();
+	const cached = getThemeChoice();
 	applyTheme(cached);
 	return cached;
 }
 
-/**
- * Initialize theme on page load
- * Uses localStorage cache for instant display, then syncs with DB
- */
+/** Apply the cached choice at once, then sync with the profile. */
 export function initTheme(): void {
 	if (typeof window === 'undefined') return;
-
-	// Apply cached theme immediately (no flash)
-	const cached = getTheme();
-	document.documentElement.setAttribute('data-theme', cached);
-
-	// Then load from DB and update if different
-	loadThemeFromDB();
+	applyAccent(getAccent());
+	applyTheme(getThemeChoice());
+	void loadThemeFromDB();
 }
 
 /**
- * Type guard to check if a string is a valid theme
- */
-export function isValidTheme(theme: string): theme is Theme {
-	return [
-		'pemberley',
-		'oxford',
-		'caladan',
-		'rivendell',
-		'netherfield',
-		'lothlorien',
-		'hogwarts',
-		'tatooine',
-		'baker-street',
-		'narnia',
-		'canterbury',
-		'borghese',
-		'lyceum',
-		'asgard',
-		'agora',
-		'shire'
-	].includes(theme);
-}
-
-
-/**
- * Whether a theme reads as dark (its background luminance is below mid-gray).
- * Used by the native mobile shell to pick status-bar / keyboard appearance —
- * themes are user-picked, so darkness can't be inferred from the OS setting.
+ * Whether a theme is dark. The native mobile shell uses it to pick the status
+ * bar and keyboard appearance.
  */
 export function isThemeDark(theme: Theme): boolean {
-	const hex = themePreviewColors[theme]?.background ?? '#ffffff';
-	const n = parseInt(hex.slice(1), 16);
-	const r = (n >> 16) & 0xff;
-	const g = (n >> 8) & 0xff;
-	const b = n & 0xff;
-	// Perceived luminance (ITU-R BT.601), 0–255.
-	return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+	return theme === DEFAULT_THEMES.dark;
 }
 
-/**
- * Get all available themes.
- *
- * The two defaults lead, light then dark, so the pair reads as a pair. Every
- * surface that lists themes uses this order, which is the only thing keeping
- * "recommended" from meaning something different in ⌘K than in Settings.
- */
-export function getAvailableThemes(): Theme[] {
-	return [
-		DEFAULT_THEMES.light,
-		DEFAULT_THEMES.dark,
-		'pemberley',
-		'caladan',
-		'rivendell',
-		'netherfield',
-		'lothlorien',
-		'hogwarts',
-		'tatooine',
-		'baker-street',
-		'narnia',
-		'canterbury',
-		'borghese',
-		'lyceum',
-		'agora',
-		'shire'
-	];
+/** Every choice, in the order every list shows them. */
+export function getAvailableThemes(): ThemeChoice[] {
+	return [DEFAULT_THEMES.light, DEFAULT_THEMES.dark, 'system'];
 }
 
-/**
- * Get theme display name
- */
-export function getThemeDisplayName(theme: Theme): string {
-	const names: Record<Theme, string> = {
-		pemberley: 'Pemberley',
-		caladan: 'Caladan',
-		rivendell: 'Rivendell',
-		oxford: 'Oxford',
-		netherfield: 'Netherfield',
-		lothlorien: 'Lothlorien',
-		hogwarts: 'Hogwarts',
-		tatooine: 'Tatooine',
-		'baker-street': 'Baker Street',
-		narnia: 'Narnia',
-		canterbury: 'Canterbury',
-		borghese: 'Borghese',
-		lyceum: 'The Lyceum',
-		asgard: 'Asgard',
-		agora: 'Agora',
-		shire: 'The Shire'
-	};
-	return names[theme];
+const DISPLAY_NAMES: Record<ThemeChoice, string> = {
+	oxford: 'Light',
+	asgard: 'Dark',
+	system: 'Match system'
+};
+
+/** A choice's name in the interface. */
+export function getThemeDisplayName(choice: ThemeChoice): string {
+	return DISPLAY_NAMES[choice];
 }
 
-/**
- * Theme preview colors for theme cards
- */
+/** Preview colors for the theme cards. The accent is the chosen swatch's
+ * tuning for each theme, so the cards follow the Accent setting. */
 export const themePreviewColors: Record<
 	Theme,
 	{
@@ -314,228 +241,178 @@ export const themePreviewColors: Record<
 		foreground: string;
 		foregroundMuted: string;
 		primary: string;
-		// Syntax highlighting colors for code preview
-		syntax: string[];
 	}
 > = {
-	pemberley: {
-		background: '#FFFFFF',
-		surface: '#FFFFFF',
-		surfaceElevated: '#FFFFFF',
-		foreground: '#17171A',
-		foregroundMuted: '#3F3F46',
-		primary: '#0A84FF',
-		syntax: ['#C4322B', '#0A84FF', '#7C3AED', '#0060DF', '#71717A', '#17171A']
-	},
-	caladan: {
-		background: '#FFFFFF',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F5F5F5',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
-	},
-	rivendell: {
-		background: '#FFFFFF',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F5F5F5',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#D97757',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
-	},
 	oxford: {
 		background: '#FDFCF9',
 		surface: '#FFFFFF',
 		surfaceElevated: '#F4F3F0',
 		foreground: '#1A2030',
 		foregroundMuted: '#3E4459',
-		primary: '#1D4572',
-		syntax: ['#9A2B2E', '#1D4572', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
-	},
-	netherfield: {
-		background: '#FFFFFF',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F5F5F5',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
-	},
-	lothlorien: {
-		background: '#1a1a2e',
-		surface: '#1f1f35',
-		surfaceElevated: '#25253d',
-		foreground: '#e8e8f0',
-		foregroundMuted: '#a0a0b8',
-		primary: '#E8A87C',
-		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
-	},
-	hogwarts: {
-		background: '#F7F7F4',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F0EFE9',
-		foreground: '#26251E',
-		foregroundMuted: '#3D3B33',
-		primary: '#EB5601',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
-	},
-	tatooine: {
-		background: '#fdf6e3',
-		surface: '#fdf6e3',
-		surfaceElevated: '#eee8d5',
-		foreground: '#2d3632',
-		foregroundMuted: '#5d665e',
-		primary: '#268bd2',
-		syntax: ['#859900', '#2aa198', '#268bd2', '#cb4b16', '#8f918a', '#5d665e']
-	},
-	'baker-street': {
-		background: '#0a0a0a',
-		surface: '#171717',
-		surfaceElevated: '#262626',
-		foreground: '#fafafa',
-		foregroundMuted: '#a3a3a3',
-		primary: '#60a5fa',
-		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
-	},
-	narnia: {
-		background: '#0F1821',
-		surface: '#131E28',
-		surfaceElevated: '#18242F',
-		foreground: '#EDF1F4',
-		foregroundMuted: '#9BA7B2',
-		primary: '#7CC3DE',
-		syntax: ['#bb9af7', '#9ece6a', '#7aa2f7', '#ff9e64', '#565f89', '#a9b1d6']
-	},
-	canterbury: {
-		background: '#14120B',
-		surface: '#1B1913',
-		surfaceElevated: '#221E15',
-		foreground: '#EDECEC',
-		foregroundMuted: '#A9A39A',
-		primary: '#E4B873',
-		syntax: ['#cb7676', '#c98a7d', '#80a665', '#e6cc77', '#758575', '#dbd7ca']
-	},
-	borghese: {
-		background: '#000000',
-		surface: '#000000',
-		surfaceElevated: '#1a1a1a',
-		foreground: '#FFFFFF',
-		foregroundMuted: '#999999',
-		primary: '#FFFFFF',
-		syntax: ['#ff9492', '#addcff', '#dcbdfb', '#91cbff', '#9198a1', '#f0f3f6']
-	},
-	lyceum: {
-		background: '#292d34',
-		surface: '#2f333d',
-		surfaceElevated: '#383e4a',
-		foreground: '#c8cdd6',
-		foregroundMuted: '#7c8490',
-		primary: '#61afef',
-		syntax: ['#c678dd', '#98c379', '#61afef', '#d19a66', '#5c6370', '#abb2bf']
+		primary: 'var(--accent-light)'
 	},
 	asgard: {
-		background: '#141414',
-		surface: '#181818',
-		surfaceElevated: '#1e1e1e',
-		foreground: '#D4D4D4',
-		foregroundMuted: '#898989',
-		primary: '#88C0D0',
-		syntax: ['#cb7676', '#c98a7d', '#80a665', '#e6cc77', '#758575', '#dbd7ca']
-	},
-	agora: {
-		background: '#282a36',
-		surface: '#2d303e',
-		surfaceElevated: '#343746',
-		foreground: '#f8f8f2',
-		foregroundMuted: '#6272a4',
-		primary: '#ff79c6',
-		syntax: ['#ff79c6', '#f1fa8c', '#50fa7b', '#bd93f9', '#6272a4', '#f8f8f2']
-	},
-	shire: {
-		background: '#232136',
-		surface: '#2a273f',
-		surfaceElevated: '#312e47',
-		foreground: '#e0def4',
-		foregroundMuted: '#908caa',
-		primary: '#ea9a97',
-		syntax: ['#c4a7e7', '#f6c177', '#9ccfd8', '#ea9a97', '#6e6a86', '#e0def4']
+		background: '#0E0E0F',
+		surface: '#141416',
+		surfaceElevated: '#1B1C1F',
+		foreground: '#EDEDEF',
+		foregroundMuted: '#A1A2A8',
+		primary: 'var(--accent-dark)'
 	}
 };
 
-/**
- * Theme metadata for theme selection UI
- */
-export const themeMetadata: Record<
-	Theme,
-	{
-		icon: string;
-		description: string;
-	}
-> = {
-	pemberley: {
-		icon: 'mynaui:circle',
-		description: 'White on white, hairlines & one blue'
-	},
-	caladan: {
-		icon: 'mynaui:waves',
-		description: 'Atreides ocean world'
-	},
-	rivendell: {
-		icon: 'mynaui:leaf',
-		description: 'Elven refuge, warm light'
-	},
-	oxford: {
-		icon: 'mynaui:pen',
-		description: 'Heritage, navy & claret'
-	},
-	netherfield: {
-		icon: 'mynaui:building',
-		description: 'Austen elegance, pristine'
-	},
-	lothlorien: {
-		icon: 'mynaui:tree',
-		description: 'Golden wood twilight'
-	},
-	hogwarts: {
-		icon: 'mynaui:sparkles',
-		description: 'Warm parchment, candlelit'
-	},
-	tatooine: {
-		icon: 'mynaui:sun',
-		description: 'Twin suns, desert warmth'
-	},
-	'baker-street': {
-		icon: 'mynaui:search',
-		description: 'Victorian gaslight'
-	},
-	narnia: {
-		icon: 'mynaui:ruler',
-		description: 'Blueprint under lamplight'
-	},
-	canterbury: {
-		icon: 'mynaui:path',
-		description: 'Pilgrim earth tones'
-	},
-	borghese: {
-		icon: 'mynaui:circle-half',
-		description: 'Dramatic light and shadow'
-	},
-	lyceum: {
-		icon: 'mynaui:graduation-cap',
-		description: 'Aristotelian cool blues'
-	},
-	asgard: {
-		icon: 'mynaui:lightning',
-		description: 'Norse realm, cold majesty'
-	},
-	agora: {
-		icon: 'mynaui:columns',
-		description: 'Greek marketplace purple'
-	},
-	shire: {
-		icon: 'mynaui:home',
-		description: 'Cozy hobbit pastels'
-	}
+/** Icon and one line for each choice in the ⌘K theme list. */
+export const themeMetadata: Record<ThemeChoice, { icon: string; description: string }> = {
+	oxford: { icon: 'mynaui:sun', description: 'Dark ink on white' },
+	asgard: { icon: 'mynaui:moon', description: 'Light ink on near-black' },
+	system: { icon: 'mynaui:circle-half', description: 'Follows your device' }
 };
+
+// ── Accent ──────────────────────────────────────────────────────────────────
+// The one color a page carries (design.md, "Accent"): a swatch that
+// themes.css tunes once for Light and once for Dark, or a color the person
+// chooses, which tuneAccent fits to both themes here. It is saved on the
+// profile beside the theme (`ui_preferences.accent`, a swatch id or a
+// `#rrggbb`), cached for app.html's pre-paint, and set as `data-accent` on
+// <html>. A chosen color sets `data-accent="custom"` and its two tunings as
+// --accent-light and --accent-dark on <html>.
+
+export type AccentSwatch = 'navy' | 'blue' | 'indigo' | 'purple' | 'pink' | 'teal' | 'graphite';
+
+/** A swatch id, or a color the person chose as `#rrggbb`. */
+export type Accent = AccentSwatch | `#${string}`;
+
+export const DEFAULT_ACCENT: Accent = 'navy';
+
+/** Every swatch, in the order the picker shows them. */
+export const ACCENTS: readonly { id: AccentSwatch; name: string }[] = [
+	{ id: 'navy', name: 'Navy' },
+	{ id: 'blue', name: 'Blue' },
+	{ id: 'indigo', name: 'Indigo' },
+	{ id: 'purple', name: 'Purple' },
+	{ id: 'pink', name: 'Pink' },
+	{ id: 'teal', name: 'Teal' },
+	{ id: 'graphite', name: 'Graphite' }
+];
+
+const ACCENT_STORAGE_KEY = 'virtues-accent';
+/** A chosen color's two tunings, "light dark", for app.html's pre-paint. */
+const ACCENT_TUNED_STORAGE_KEY = 'virtues-accent-tuned';
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** Whether a value is a chosen color rather than a swatch. */
+export function isCustomAccent(value: unknown): value is `#${string}` {
+	return typeof value === 'string' && HEX.test(value);
+}
+
+export function isAccent(value: unknown): value is Accent {
+	return isCustomAccent(value) || (typeof value === 'string' && ACCENTS.some((a) => a.id === value));
+}
+
+/** The cached accent. */
+export function getAccent(): Accent {
+	if (typeof window === 'undefined') return DEFAULT_ACCENT;
+	try {
+		const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
+		return isAccent(stored) ? stored : DEFAULT_ACCENT;
+	} catch {
+		return DEFAULT_ACCENT;
+	}
+}
+
+// Contrast, as WCAG measures it.
+function luminance(hex: string): number {
+	const [r, g, b] = [1, 3, 5].map((i) => {
+		const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+		return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (hi + 0.05) / (lo + 0.05);
+}
+
+function toHsl(hex: string): [number, number, number] {
+	const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const l = (max + min) / 2;
+	if (max === min) return [0, 0, l];
+	const d = max - min;
+	const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+	const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return [h * 60, s, l];
+}
+
+function fromHsl(h: number, s: number, l: number): string {
+	const k = (n: number) => (n + h / 30) % 12;
+	const a = s * Math.min(l, 1 - l);
+	const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+	return '#' + [0, 8, 4].map((n) => Math.round(f(n) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/**
+ * Walk a color's lightness toward `step`'s direction until it clears
+ * `target` against `page`, keeping its hue and saturation.
+ */
+function fit(hex: string, page: string, target: number, step: number): string {
+	const [h, s, l0] = toHsl(hex);
+	let out = hex.toUpperCase();
+	for (let l = l0; contrast(out, page) < target && l >= 0 && l <= 1; l += step) {
+		out = fromHsl(h, s, l);
+	}
+	return out;
+}
+
+/**
+ * A chosen color, fitted to both themes the way the swatches are tuned by
+ * hand: darkened until links and the filled button's white label clear
+ * 4.6:1 on Light's page, and lightened until they clear 7:1 on Dark's,
+ * where the swatches sit. A color that already clears is kept as it is.
+ */
+export function tuneAccent(hex: string): { light: string; dark: string } {
+	return {
+		light: fit(hex, themePreviewColors.oxford.surface, 4.6, -0.005),
+		dark: fit(hex, themePreviewColors.asgard.surface, 7, 0.005)
+	};
+}
+
+/** Paint an accent (visual only, no persistence). */
+export function applyAccent(accent: Accent): void {
+	if (typeof window === 'undefined') return;
+	const root = document.documentElement;
+	let tuned: string | null = null;
+	if (isCustomAccent(accent)) {
+		const { light, dark } = tuneAccent(accent);
+		root.style.setProperty('--accent-light', light);
+		root.style.setProperty('--accent-dark', dark);
+		root.setAttribute('data-accent', 'custom');
+		tuned = `${light} ${dark}`;
+	} else {
+		root.style.removeProperty('--accent-light');
+		root.style.removeProperty('--accent-dark');
+		root.setAttribute('data-accent', accent);
+	}
+	try {
+		localStorage.setItem(ACCENT_STORAGE_KEY, accent);
+		if (tuned) localStorage.setItem(ACCENT_TUNED_STORAGE_KEY, tuned);
+		else localStorage.removeItem(ACCENT_TUNED_STORAGE_KEY);
+	} catch {
+		// Storage disabled: the accent lasts for this page.
+	}
+	window.dispatchEvent(new CustomEvent('accentchange', { detail: { accent } }));
+}
+
+/** Paint an accent and save it to the profile. */
+export async function setAccent(accent: Accent): Promise<void> {
+	if (typeof window === 'undefined') return;
+	applyAccent(accent);
+	try {
+		await updateUiPreferences({ accent });
+	} catch (error) {
+		console.error('Failed to save accent:', error);
+	}
+}

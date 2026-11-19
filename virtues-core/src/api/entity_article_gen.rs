@@ -344,9 +344,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         for (heading, sample) in sample_offsets(total, DOSSIER_RECORDS as i64) {
             let mut lines = Vec::new();
             for (offset, limit) in sample {
-                let page = super::wiki::get_entity_records_page(
-                    pool, &entity.id, offset, limit, "", &[], false,
-                )
+                let page = super::wiki::get_entity_records_page(pool, &entity.id, offset, limit, "", &[], false)
                 .await?;
                 lines.extend(page.items.iter().map(record_line));
             }

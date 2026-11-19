@@ -18,16 +18,16 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'thing' // Wiki things: /thing/thing_{id}
-	| 'project' // Projects (rooms a chat lives in): /projects, /project/{id}
+	| 'thread' // Threads: the door at /threads, a thread at /thread/{id}
+	| 'task' // One task's page: /task/{id}
+	| 'insight' // One note's page: /insight/{key}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'passwords' // Saved logins, in Drive: /passwords
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
-	| 'setup' // Setup, in the app once someone is in it: /setup, /setup/{step}
 	| 'source' // Data sources: /source, /source/source_{id}
-	| 'tasks' // The shared to-do list: /tasks
 	| 'applets' // Applets list: /applets
 	| 'applet' // Applet detail: /applet/applet_{id}
 	| 'applet-view' // Applet full-page face: /applet/applet_{id}/view
@@ -40,6 +40,8 @@ export type TabType =
 	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// The Timeline: one day on a map
 	| 'timeline' // Timeline: /timeline
+	// The design system: agents/build/design.md with live specimens
+	| 'design' // /design
 	// System namespace
 	| 'browser' // The in-app browser, beside the current view (Mac): /browser?url=…
 	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}

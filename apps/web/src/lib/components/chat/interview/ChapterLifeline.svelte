@@ -319,7 +319,7 @@
 					</text>
 				{/each}
 
-				<!-- now: the one claret thing on the plate -->
+				<!-- now: the one thing in the accent on the plate -->
 				<line x1={L.X(L.now)} y1={L.BASE - BH - 10} x2={L.X(L.now)} y2={L.rulerBottom + 8} class="now" />
 				<text x={L.X(L.now)} y={L.H - 8} text-anchor="middle" class="t-now">now</text>
 			</svg>
@@ -483,7 +483,7 @@
 	}
 
 	.now {
-		stroke: #9a2b2e;
+		stroke: var(--color-primary);
 		stroke-width: 1;
 	}
 
@@ -492,7 +492,7 @@
 		font-size: 12px;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		fill: #9a2b2e;
+		fill: var(--color-primary);
 	}
 
 	.legend {

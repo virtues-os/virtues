@@ -12,6 +12,8 @@
  * Module state, not storage: a reload in the middle of it should simply not
  * play it, which is exactly what a module flag does.
  */
+
+import { reducedMotion } from '$lib/stores/motion.svelte';
 let pending = false;
 
 export const appOpening = {
@@ -38,7 +40,7 @@ export const appOpening = {
 export async function openApp(next: string, fallback?: () => Promise<void>): Promise<void> {
 	const { goto } = await import('$app/navigation');
 	const reduced =
-		typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+		reducedMotion();
 	if (reduced) return goto(next);
 	appOpening.arm();
 	const doc = document as Document & {

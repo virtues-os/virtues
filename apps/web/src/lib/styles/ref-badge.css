@@ -136,7 +136,3 @@
 	transition: background-color var(--motion-hover-in) var(--ease-premium);
 }
 
-.ref-link.ref-link--cite:focus-visible {
-	outline: 2px solid var(--color-border-focus);
-	outline-offset: 2px;
-}

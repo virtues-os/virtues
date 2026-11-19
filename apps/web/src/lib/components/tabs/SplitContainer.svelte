@@ -10,6 +10,8 @@
 	} from "$lib/stores/dndManager.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
+	import { arrive } from "$lib/tabs/arrive";
+	import { beginTabToPane, tabBecomesPane, tabRect } from "$lib/tabs/split";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
 	import { onMount, untrack } from "svelte";
 	import { listenForBrowserOpen } from "./browserPaneListener";
@@ -213,6 +215,27 @@
 			entering.set(id, { side, clip: grew(side) });
 		}
 
+		// Splitting by moving a tab across: the tab becomes the new pane
+		// ($lib/tabs/split). Its place in the first strip is read now, before
+		// the strips change.
+		if (!before.split && after.split) {
+			for (const [id, side] of after.visible) {
+				if (side !== "right" || before.panes.get(id) !== "left") continue;
+				const from = tabRect(id);
+				if (!from || !containerRef || !beginTabToPane(containerRef)) continue;
+				requestAnimationFrame(() => {
+					if (!containerRef) return;
+					const { width, height } = containerRef.getBoundingClientRect();
+					tabBecomesPane(containerRef, id, from, {
+						left: (width * to.left) / 100 + to.gutter / 2,
+						top: 0,
+						width: (width * to.right) / 100 - to.gutter / 2,
+						height,
+					});
+				});
+			}
+		}
+
 		clearTimeout(motionTimer);
 		settling = false;
 		motion = { leaving, entering, survivor };
@@ -242,7 +265,9 @@
 			panes: new Map(allTabs.map((t) => [t.id, windowShellStore.findTabPane(t.id)])),
 		};
 		untrack(() => {
-			if (previous && !isResizing) startMotion(previous, next);
+			if (previous) {
+				if (!isResizing) startMotion(previous, next);
+			}
 			previous = next;
 		});
 	});
@@ -505,6 +530,8 @@
 		{@const box = slotBox(side, leaving ? leaving.frame : frame)}
 		<div
 			class="tab-slot"
+			use:arrive={{ route: tab.route, active: isActive }}
+			data-tab-id={tab.id}
 			data-side={side}
 			data-active={isActive ? "" : undefined}
 			data-motion={leaving ? "leave" : entering ? "enter" : undefined}
@@ -576,8 +603,6 @@
 		min-width: 0;
 		overflow: hidden;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		border: 1px solid var(--card-edge);
 		border-radius: var(--radius-xl);
 		transition:
@@ -600,44 +625,11 @@
 
 	/* Nor a toolbar: there is nothing on home to go back from or to name.
 	   When the chat begins the paper fades in under it (the transition
-	   above) and the toolbar arrives a beat later (below). */
+	   above) and the toolbar comes in with the page as the chat gets its
+	   route ($lib/tabs/arrive). The toolbar has no motion of its own, so a
+	   tab switch does not replay one. */
 	.tab-slot:has(:global(.page-container.home)) :global(.action-toolbar) {
 		display: none;
-	}
-
-	/* A page you switch to comes in, rather than cutting: it fades up from
-	   a few pixels below, quickly enough that switching still feels
-	   instant. Its toolbar follows a beat later, and does the same when a
-	   chat leaves home. Moving between panes has its own motion (below),
-	   which takes precedence. Home does not fade: a fading ancestor cuts
-	   its glass cards off from the painting, and they would frost only
-	   once the fade ended. */
-	.tab-slot[data-active]:not(:has(:global(.page-container.home))) {
-		animation: slot-page-in 200ms var(--ease-premium);
-	}
-
-	.tab-slot :global(.action-toolbar) {
-		animation: slot-toolbar-in 260ms var(--ease-premium) 40ms backwards;
-	}
-
-	@keyframes slot-page-in {
-		from {
-			opacity: 0.4;
-			translate: 0 4px;
-		}
-	}
-
-	@keyframes slot-toolbar-in {
-		from {
-			opacity: 0;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.tab-slot[data-active]:not(:has(:global(.page-container.home))),
-		.tab-slot :global(.action-toolbar) {
-			animation: none;
-		}
 	}
 
 	/* A pane that has closed leaves its border behind as a 1px sliver, so
@@ -679,8 +671,24 @@
 	.in-motion .tab-slot:not([data-motion="leave"]) {
 		z-index: 1;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
+	}
+
+	/* The card that opens out of a tab when it becomes a pane
+	   ($lib/tabs/split), drawn over the panes while it grows. Both cards
+	   move on its spring meanwhile. */
+	.split-container:global(.tab-to-pane) > .pane-shell,
+	.split-container:global(.tab-to-pane) > .tab-slot {
+		transition-duration: var(--split-ms);
+		transition-timing-function: var(--split-ease);
+	}
+
+	.split-container :global(.pane-stand-in) {
+		position: absolute;
+		z-index: 4;
+		pointer-events: none;
+		background-color: var(--color-page);
+		border: 1px solid var(--card-edge);
+		border-radius: var(--radius-xl);
 	}
 
 	.tab-slot[data-motion="leave"] {

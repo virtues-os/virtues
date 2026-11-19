@@ -3,18 +3,18 @@
 
 	Detail page for a single credential (source connection). Mounts at
 	`/sources/<credential_id>`. Shows:
-	  - Source + name + status badge
+	  - Source, name and status
 	  - Device info (for self_issued_bearer pairings)
 	  - Linked applets list with last-run badges
-	  - Revoke button
+	  - Disconnect button
 -->
 
 <script lang="ts">
+	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { type Tab, routeToEntityId } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import {
 		listCredentials,
@@ -29,6 +29,8 @@
 	import { relativeTime } from '$lib/applets/palette';
 
 	let { tab }: { tab: Tab } = $props();
+
+	const width = usePageWidth(() => 'medium');
 
 	const credentialId = $derived(routeToEntityId(tab.route) ?? '');
 
@@ -81,12 +83,12 @@
 		return 'mynaui:cloud';
 	}
 
-	async function handleRevoke() {
+	async function disconnect() {
 		if (!credential) return;
 		const ok = await confirmAction({
-			title: `Revoke "${credential.name}"?`,
-			body: `This disables all ${credential.applet_count} linked applets. You'll need to reconnect to restore them.`,
-			confirmLabel: 'Revoke',
+			title: `Disconnect ${credential.name}?`,
+			body: 'Applets that use it stop running until you connect it again.',
+			confirmLabel: 'Disconnect',
 			danger: true,
 		});
 		if (!ok) return;
@@ -120,10 +122,10 @@
 		}
 	}
 
-	function statusVariant(s: string): 'success' | 'warning' | 'muted' {
-		if (s === 'active') return 'success';
-		if (s === 'revoked') return 'warning';
-		return 'muted';
+	function statusLabel(s: string): string {
+		if (s === 'active') return 'Connected';
+		if (s === 'revoked') return 'Disconnected';
+		return s;
 	}
 
 	function backToSources() {
@@ -131,7 +133,7 @@
 	}
 </script>
 
-<section class="cred-detail">
+<section style:max-width={width.css} class="cred-detail">
 	{#if loading}
 		<div class="state">
 			<Icon icon="mynaui:spinner" width="20" />
@@ -173,7 +175,7 @@
 					<div class="title-meta">
 						<span class="provider">{sourceMeta?.name ?? credential.provider}</span>
 						<span class="sep">·</span>
-						<Badge variant={statusVariant(credential.status)}>{credential.status}</Badge>
+						<span>{statusLabel(credential.status)}</span>
 						{#if credential.last_seen_at}
 							<span class="sep">·</span>
 							<span class="dim">last seen {relativeTime(credential.last_seen_at)}</span>
@@ -181,10 +183,7 @@
 					</div>
 				</div>
 				{#if credential.is_active}
-					<Button variant="ghost" onclick={handleRevoke}>
-						<Icon icon="mynaui:trash" width="14" />
-						Revoke
-					</Button>
+					<Button variant="ghost" onclick={disconnect}>Disconnect</Button>
 				{/if}
 			</div>
 		</header>
@@ -210,17 +209,9 @@
 		{/if}
 
 		<section class="card">
-			<h2>
-				Applets
-				<span class="count">{applets.length}</span>
-			</h2>
+			<h2>Applets</h2>
 			{#if applets.length === 0}
-				<p class="dim">
-					No applets linked to this credential yet.
-					{#if credential.status === 'active'}
-						The reconcile may still be fanning out — check back in a few seconds.
-					{/if}
-				</p>
+				<p class="dim">No applets use it yet.</p>
 			{:else}
 				<ul class="applet-list">
 					{#each applets as a}
@@ -228,18 +219,12 @@
 							<div class="applet-name">{a.name}</div>
 							<div class="applet-meta">
 								{#if a.last_run}
-									<Badge
-										variant={a.last_run.status === 'success'
-											? 'success'
-											: a.last_run.status === 'error'
-												? 'error'
-												: 'muted'}
-									>
-										{a.last_run.status}
-									</Badge>
-									<span class="dim small">{relativeTime(a.last_run.started_at)}</span>
+									<span class="dim small">
+										{a.last_run.status === 'success' ? 'Ran' : a.last_run.status === 'error' ? 'Failed' : 'Started'}
+										{relativeTime(a.last_run.started_at)}
+									</span>
 								{:else}
-									<span class="dim small">no runs yet</span>
+									<span class="dim small">Hasn't run yet</span>
 								{/if}
 							</div>
 						</li>
@@ -256,7 +241,6 @@
 		flex-direction: column;
 		gap: 1.25rem;
 		padding: 1rem 0.5rem;
-		max-width: 64rem;
 	}
 
 	.state {
@@ -266,7 +250,7 @@
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.state.error {
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 	}
 
 	.back {
@@ -370,13 +354,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.375rem;
-	}
-	.count {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-muted, #6b7280);
-		font-weight: 500;
-		letter-spacing: normal;
-		text-transform: none;
 	}
 
 	.dl {

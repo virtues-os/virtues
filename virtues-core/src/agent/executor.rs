@@ -395,10 +395,23 @@ fn attach_query_ref(tool_call: &ToolCall, context: &ToolContext, result: &mut To
     if !obj.get("rows").is_some_and(|r| r.is_array()) {
         return;
     }
-    obj.insert(
-        "ref".to_string(),
-        Value::String(format!("/chat/{chat_id}/tool/{}", tool_call.id)),
-    );
+    let call_ref = format!("/chat/{chat_id}/tool/{}", tool_call.id);
+    // A figure's series is cited by the call's ref and the figure's place
+    // among the columns, from 1: `#2` is the second figure's rows.
+    let columns: Vec<String> = obj
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if let Some(series) = obj.get_mut("series").and_then(Value::as_object_mut) {
+        for (column, s) in series.iter_mut() {
+            let Some(place) = columns.iter().position(|c| c == column) else { continue };
+            if let Some(s) = s.as_object_mut() {
+                s.insert("ref".to_string(), Value::String(format!("{call_ref}#{}", place + 1)));
+            }
+        }
+    }
+    obj.insert("ref".to_string(), Value::String(call_ref));
 }
 
 /// Build the tool result message for the LLM
@@ -520,6 +533,14 @@ mod query_ref_tests {
         let mut r = ToolResult::success(serde_json::json!({"kind": "chart", "rows": [{"n": 3}]}));
         attach_query_ref(&call("show"), &ctx(Some("chat_1")), &mut r);
         assert_eq!(r.data["ref"], "/chat/chat_1/tool/call_9");
+
+        // A figure's series is cited by the call's ref and the figure's place.
+        let mut r = ToolResult::success(serde_json::json!({
+            "kind": "numbers", "columns": ["Total", "Average"], "rows": [{"Total": 9, "Average": 3}],
+            "series": {"Average": {"rows": []}}
+        }));
+        attach_query_ref(&call("show"), &ctx(Some("chat_1")), &mut r);
+        assert_eq!(r.data["series"]["Average"]["ref"], "/chat/chat_1/tool/call_9#2");
 
         let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
         attach_query_ref(&call("semantic_search"), &ctx(Some("chat_1")), &mut r);

@@ -40,6 +40,8 @@ pub const RUNS_AS_SERVICE_USER: &[&str] = &[
     "reindex",
     "configure-inference",
     "lake-adopt",
+    // Reads every table and the lake, both `virtues`-owned.
+    "export",
     "volumes",
     // The data verbs (`cli::data`) ride the shared pool too.
     "query",
@@ -837,6 +839,19 @@ pub enum Commands {
         /// keeps using your server until the index is rebuilt. Needs sudo.
         #[arg(long, conflicts_with_all = ["embed_url", "embed_model"])]
         recommended: bool,
+    },
+
+    /// Write everything your server holds about you as readable files: each
+    /// kind of record as JSON lines, pages as Markdown, and the lake's files.
+    /// Keys, passwords and sign-ins stay out. The folder is not encrypted.
+    Export {
+        /// Where to write; it must be new or empty. Defaults to
+        /// `/var/lib/virtues/exports/virtues-export-<utc>` on a box.
+        folder: Option<std::path::PathBuf>,
+
+        /// Leave out the lake's files (recordings, photos, documents, raw streams).
+        #[arg(long)]
+        skip_files: bool,
     },
 
     /// Adopt orphaned media into the lake: recordings written before the lake

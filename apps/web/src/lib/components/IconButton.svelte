@@ -11,7 +11,7 @@
 	 * with nowhere to go, and all 59 hand-rolled their own. A triage on
 	 * 2026-09-16 found ONE control drawn seventeen ways: ten box sizes (16,
 	 * 18, 20, 24, 26, 28, 30, 32, 36, 44) and six radii (4, 6, 8, 10, 999px,
-	 * `--radius-full`). Nine of those ten rows violate design-grammar.md §6,
+	 * `--radius-full`). Nine of those ten rows violate design.md, "Radius",
 	 * which allows `{0, 6px, 12px, 50%, a pill}` and nothing else.
 	 *
 	 * None of that variance was a decision. It is what happens when a shape is
@@ -20,8 +20,9 @@
 	 *
 	 * WHAT COLLAPSED, and to what:
 	 *
-	 *   size    the four real clusters, not ten sizes. 16/18/20 → `xs`;
-	 *           24/26 → `sm`; 28/30/32 → `md`; 36/44 → `touch`.
+	 *   size    three, from design.md, "Controls": `control` (34px, the
+	 *           default), `nested` (20px, a control inside a card, row or
+	 *           field) and `touch` (44px, chrome made for a thumb).
 	 *   radius  6px at every size. Six radii, one answer — the shell's radius
 	 *           (design.md), and already the plurality of what shipped.
 	 *   ink     `--color-foreground-muted`, the same ink `Button variant="ghost"`
@@ -70,7 +71,7 @@
 	let {
 		icon,
 		label,
-		size = "md",
+		size = "control",
 		variant = "ghost",
 		pressed,
 		expanded,
@@ -88,8 +89,8 @@
 		 * one ("Close", "Add filter"). Becomes `aria-label` and `title`.
 		 */
 		label: string;
-		/** ~20 / 24 / 28 / 44px. `touch` is a painted size, not a hit area — see the CSS. */
-		size?: "xs" | "sm" | "md" | "touch";
+		/** 34px, 20px inside a card, row or field, or 44px for a thumb. `touch` is a painted size, not a hit area; see the CSS. */
+		size?: "control" | "nested" | "touch";
 		variant?: "ghost" | "secondary" | "danger";
 		/** A toggle's state. Renders `aria-pressed`; omit entirely for a plain button. */
 		pressed?: boolean;
@@ -148,10 +149,23 @@
 		/* We paint our own :active ground; the platform's gray flash on touch
 		   would land a beat later and in a color no theme chose. */
 		-webkit-tap-highlight-color: transparent;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow; a press sinks the square to 94% at once and it springs
+		   back when you let go. */
 		transition:
-			background-color 120ms ease,
-			border-color 120ms ease,
-			color 120ms ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			border-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.v-iconbtn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.v-iconbtn:active:not(:disabled) {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
 	}
 
 	/* An inline SVG sits on the text baseline and hangs a descender's worth of
@@ -167,36 +181,22 @@
 		cursor: not-allowed;
 	}
 
-	/* Keyboard only. A mouse press should not leave a ring behind it. */
-	.v-iconbtn:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-	}
-
-	/* Sizes — the four clusters the tree actually had. Every value is a
-	   multiple of 4; 28px is the shell's own tab height and 44px is the touch
-	   floor, so neither is invented here. */
-	.v-iconbtn[data-size="xs"] {
-		width: 20px;
-		height: 20px;
+	/* Sizes (design.md, "Controls"). */
+	.v-iconbtn[data-size="nested"] {
+		width: var(--control-nested-h);
+		height: var(--control-nested-h);
 		font-size: 14px;
 	}
 
-	.v-iconbtn[data-size="sm"] {
-		width: 24px;
-		height: 24px;
-		font-size: 16px;
-	}
-
-	.v-iconbtn[data-size="md"] {
-		width: 28px;
-		height: 28px;
+	.v-iconbtn[data-size="control"] {
+		width: var(--control-h);
+		height: var(--control-h);
 		font-size: 16px;
 	}
 
 	.v-iconbtn[data-size="touch"] {
-		width: 44px;
-		height: 44px;
+		width: var(--control-touch-h);
+		height: var(--control-touch-h);
 		font-size: 20px;
 	}
 
@@ -239,7 +239,7 @@
 	}
 
 	.v-iconbtn[data-variant="ghost"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	.v-iconbtn[data-variant="secondary"] {
@@ -255,7 +255,7 @@
 	}
 
 	.v-iconbtn[data-variant="secondary"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	/* Destroys something. Quiet until touched — an always-red icon in a
@@ -267,7 +267,7 @@
 	}
 
 	.v-iconbtn[data-variant="danger"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	/* A toggle that is ON. The accent means *now* (§5), and it outranks the
@@ -284,6 +284,10 @@
 	@media (prefers-reduced-motion: reduce) {
 		.v-iconbtn {
 			transition: none;
+		}
+
+		.v-iconbtn:active:not(:disabled) {
+			transform: none;
 		}
 	}
 </style>

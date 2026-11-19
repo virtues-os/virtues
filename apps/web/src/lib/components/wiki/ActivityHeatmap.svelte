@@ -21,7 +21,7 @@
 
 <script lang="ts">
 	import { onDestroy, untrack, type Snippet } from 'svelte';
-	import { prefersReducedMotion } from 'svelte/motion';
+	import { motion } from '$lib/stores/motion.svelte';
 	import { cubicOut, quintOut } from 'svelte/easing';
 	import type { TransitionConfig } from 'svelte/transition';
 	import { animate } from 'motion';
@@ -169,7 +169,7 @@
 		};
 	}
 
-	const reduced = $derived(prefersReducedMotion.current);
+	const reduced = $derived(motion.reduced);
 	const uid = $props.id();
 
 	let rootEl = $state<HTMLDivElement>();
@@ -490,7 +490,7 @@
 			node.style.top = '0';
 		}
 		if (dir === 'instant') return { duration: 0 };
-		if (prefersReducedMotion.current) {
+		if (motion.reduced) {
 			return phase === 'in' ? { duration: FAST, css: (t) => `opacity: ${t}` } : { duration: 0 };
 		}
 		const sign = (dir || 1) * (phase === 'in' ? 1 : -1);
@@ -511,7 +511,7 @@
 		let sized = false;
 		const observer = new ResizeObserver(() => {
 			const width = inner.getBoundingClientRect().width;
-			const glide = sized && !prefersReducedMotion.current && performance.now() < widthArmedUntil;
+			const glide = sized && !motion.reduced && performance.now() < widthArmedUntil;
 			animate(frame, { width }, glide ? MORPH : JUMP);
 			sized = true;
 		});
@@ -913,9 +913,6 @@
 	.cell[data-level='4'] {
 		background: var(--level-4);
 	}
-	.cell:focus-visible {
-		outline-color: var(--color-foreground);
-	}
 	/* Days after the last day keep the year's shape: blank, not zero. */
 	.cell[data-future] {
 		border: 1px solid var(--level-0);
@@ -940,7 +937,7 @@
 		transition:
 			background-color 320ms var(--ease-premium) var(--delay),
 			transform 420ms var(--spring) var(--delay),
-			opacity 360ms var(--ease-enter) var(--delay);
+			opacity 360ms var(--ease-premium) var(--delay);
 	}
 	.grid[data-highlight] .cell:not([data-empty]) {
 		opacity: 0.2;
@@ -1062,12 +1059,8 @@
 	.swatch[data-level='4']::before {
 		background: var(--level-4);
 	}
-	.swatch[aria-pressed='true']::before,
-	.swatch:focus-visible::before {
+	.swatch[aria-pressed='true']::before {
 		outline-color: var(--color-foreground);
-	}
-	.swatch:focus-visible {
-		outline: none;
 	}
 
 	/* One bubble for the whole grid. The outer layer glides between cells; the
@@ -1103,7 +1096,7 @@
 		opacity: 1;
 		transform: translateX(-50%) scale(1);
 		transition:
-			opacity var(--duration-fast) var(--ease-enter),
+			opacity var(--duration-fast) var(--ease-premium),
 			transform 280ms var(--spring);
 	}
 	.tip-body {

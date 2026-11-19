@@ -5,7 +5,6 @@
 		type FontMode,
 		type HeadingMode,
 		type TextSize,
-		type WidthMode,
 	} from "$lib/stores/pageDisplay.svelte";
 
 	interface Props {
@@ -30,13 +29,6 @@
 	const headingModes: { value: HeadingMode; label: string; title: string }[] = [
 		{ value: "sized", label: "Sized", title: "Headings step up in size" },
 		{ value: "flat", label: "Flat", title: "Headings at the text's size, marked with # in the margin" },
-	];
-
-	const widthModes: { value: WidthMode; icon: string; label: string }[] = [
-		{ value: "small", icon: "mynaui:move-horizontal", label: "Narrow" },
-		{ value: "medium", icon: "mynaui:pause", label: "Medium" },
-		{ value: "full", icon: "mynaui:move-horizontal", label: "Wide" },
-		{ value: "page", icon: "mynaui:file-text", label: "Page (A4)" },
 	];
 </script>
 
@@ -71,22 +63,6 @@
 					onclick={() => pageDisplay.setTextSize(opt.value)}
 				>
 					{opt.label}
-				</button>
-			{/each}
-		</div>
-	</div>
-
-	<div class="row">
-		<span class="row-label">Width</span>
-		<div class="segmented">
-			{#each widthModes as opt (opt.value)}
-				<button
-					class="seg seg-icon"
-					class:active={pageDisplay.widthMode === opt.value}
-					title={opt.label}
-					onclick={() => pageDisplay.setWidth(opt.value)}
-				>
-					<Icon icon={opt.icon} width="16" />
 				</button>
 			{/each}
 		</div>
@@ -185,10 +161,6 @@
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;
-	}
-
-	.seg-icon {
-		padding: 4px 6px;
 	}
 
 	.seg:hover {

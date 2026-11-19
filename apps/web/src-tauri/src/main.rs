@@ -503,6 +503,57 @@ fn collector_path() -> std::path::PathBuf {
         .join("virtues-collector")
 }
 
+/// How long `virtues-collector status` may run before it is stopped. It
+/// answers in well under a second; one that hangs (a held lock, a stuck
+/// socket) used to hold its caller and its process forever, and the tray asks
+/// every 10 seconds.
+const COLLECTOR_STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run `status --json` on a collector command: its exit code, stdout and
+/// stderr, or an error once it has been killed for running past
+/// `COLLECTOR_STATUS_TIMEOUT`. Dropping a timed-out `.output()` would leave
+/// the process running, so this spawns it and keeps the child to kill.
+async fn run_collector_status(
+    cmd: tauri_plugin_shell::process::Command,
+) -> Result<(Option<i32>, Vec<u8>, Vec<u8>), String> {
+    use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, child) = cmd
+        .args(["status", "--json"])
+        .set_raw_out(true)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let collect = async {
+        let (mut out, mut err, mut code) = (Vec::new(), Vec::new(), None);
+        // Until the channel closes, not just until the exit event: the last
+        // chunk of stdout can arrive after it.
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(b) => out.extend(b),
+                CommandEvent::Stderr(b) => err.extend(b),
+                CommandEvent::Terminated(t) => code = t.code,
+                CommandEvent::Error(e) => return Err(e),
+                _ => {}
+            }
+        }
+        Ok((code, out, err))
+    };
+    match tokio::time::timeout(COLLECTOR_STATUS_TIMEOUT, collect).await {
+        Ok(Ok(result)) => Ok(result),
+        // A read that failed may leave the process running; stop it too.
+        Ok(Err(e)) => {
+            let _ = child.kill();
+            Err(e)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            Err(format!(
+                "collector status took longer than {}s and was stopped",
+                COLLECTOR_STATUS_TIMEOUT.as_secs()
+            ))
+        }
+    }
+}
+
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
@@ -510,22 +561,17 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
 
     let installed_path = collector_path();
 
-    let output = if installed_path.exists() {
-        shell
-            .command(installed_path.to_string_lossy().to_string())
-            .args(["status", "--json"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?
+    let (code, stdout, stderr) = if installed_path.exists() {
+        run_collector_status(shell.command(installed_path.to_string_lossy().to_string())).await?
     } else {
         match shell.sidecar("virtues-collector") {
-            Ok(cmd) => cmd.args(["status", "--json"]).output().await.map_err(|e| e.to_string())?,
+            Ok(cmd) => run_collector_status(cmd).await?,
             Err(_) => return Ok(CollectorStatus::default()),
         }
     };
 
-    if output.status.success() {
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    if code == Some(0) {
+        serde_json::from_slice(&stdout).map_err(|e| e.to_string())
     } else {
         // The installed binary (or sidecar) ran but exited non-zero — a real
         // read failure, NOT proof the collector is off. Surface it as an error
@@ -533,9 +579,8 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
         // (The genuine "never installed, no sidecar" case already returned a
         // default above.)
         Err(format!(
-            "collector status failed (exit {:?}): {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            "collector status failed (exit {code:?}): {}",
+            String::from_utf8_lossy(&stderr).trim()
         ))
     }
 }
@@ -1003,9 +1048,16 @@ const ATTENTION_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 
 #[derive(serde::Deserialize)]
 struct AttentionItem {
     key: String,
+    #[serde(default)]
+    kind: String,
     title: String,
     body: String,
 }
+
+/// Kinds that tell the owner what is happening without asking anything of
+/// them (`api/attention.rs`). The home screen shows them; a notification would
+/// be an alarm for something that needs nothing.
+const INFORM_ONLY: &[&str] = &["search"];
 
 /// Turns `GET /api/attention` into native notifications, once per problem.
 ///
@@ -1032,8 +1084,10 @@ impl AttentionNotifier {
         self.last_poll = Some(std::time::Instant::now());
         // A failed poll changes nothing: unreachable is the tray's own line.
         let Some(items) = fetch_attention_blocking() else { return };
-        let fresh: Vec<&AttentionItem> =
-            items.iter().filter(|i| !self.known.contains(&i.key)).collect();
+        let fresh: Vec<&AttentionItem> = items
+            .iter()
+            .filter(|i| !self.known.contains(&i.key) && !INFORM_ONLY.contains(&i.kind.as_str()))
+            .collect();
         notify_attention(app, &fresh);
         self.known = items.into_iter().map(|i| i.key).collect();
     }
@@ -1139,6 +1193,14 @@ fn record_update_failure(app: &AppHandle, err: String) {
 /// consecutive failures of either kind earn the one notification.
 async fn check_for_update(app: &AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
+
+    // A debug build runs as a bare binary in cargo's target dir, not from an
+    // .app. The updater takes the binary's grandparent for the bundle and
+    // installs the release over it, which replaces the whole shared
+    // `debug/` directory with a copy of Virtues.app.
+    if cfg!(debug_assertions) {
+        return;
+    }
 
     // ONE channel: the configured `mac-latest` manifest. This used to route by
     // the box's channel toward `mac-edge` — an endpoint that stopped
@@ -1385,18 +1447,69 @@ struct TrayItems {
     status: tauri::menu::IconMenuItem<tauri::Wry>,
 }
 
+/// How long the tray reuses a collector status before asking the CLI again,
+/// when the daemon's health record hasn't changed. The tray polls every 10s,
+/// and each ask starts the tens-of-megabytes collector binary as a process.
+const TRAY_STATUS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The last status the tray read: when, the health record's mtime then, and
+/// the status. The daemon rewrites `~/.virtues/health.json` whenever its state
+/// changes, so a new mtime means ask now; an unchanged one is trusted for up to
+/// `TRAY_STATUS_MAX_AGE`, which still catches a daemon that died and stopped
+/// writing.
+static TRAY_STATUS: std::sync::Mutex<
+    Option<(std::time::Instant, Option<std::time::SystemTime>, CollectorStatus)>,
+> = std::sync::Mutex::new(None);
+
+/// The collector status for the tray, from `TRAY_STATUS` when it is still good.
+fn tray_collector_status(app: &AppHandle) -> CollectorStatus {
+    let health_mtime = dirs::home_dir()
+        .map(|h| h.join(".virtues").join("health.json"))
+        .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    if let Ok(cache) = TRAY_STATUS.lock() {
+        if let Some((at, mtime, status)) = cache.as_ref() {
+            if *mtime == health_mtime && at.elapsed() < TRAY_STATUS_MAX_AGE {
+                return status.clone();
+            }
+        }
+    }
+    match tauri::async_runtime::block_on(get_collector_status(app.clone())) {
+        Ok(status) => {
+            if let Ok(mut cache) = TRAY_STATUS.lock() {
+                *cache = Some((std::time::Instant::now(), health_mtime, status.clone()));
+            }
+            status
+        }
+        // A failed read is not kept, so the next tick asks again.
+        Err(_) => CollectorStatus::default(),
+    }
+}
+
 /// Recompute the status line and apply it. Spawns its OWN thread because
-/// computing the state BLOCKS (probing the box over TCP, and shelling out to
-/// the collector CLI when installed), then hops to the main thread for the
-/// actual menu mutation — AppKit requires UI changes on the main thread.
+/// computing the state BLOCKS (shelling out to the collector CLI when its
+/// status is stale), then hops to the main thread for the actual menu
+/// mutation — AppKit requires UI changes on the main thread.
 fn refresh_tray(app: &AppHandle, items: TrayItems) {
+    // One refresh at a time. Each tick started a new thread, so a refresh
+    // that hung stacked one more thread every 10 seconds until quit.
+    static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REFRESHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                REFRESHING.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _done = Done;
         let installed = collector_installed();
         // Skip the CLI call entirely when nothing's installed: its sidecar
         // fallback would fork a process on every poll just to hand back defaults.
         let status = if installed {
-            tauri::async_runtime::block_on(get_collector_status(app.clone())).unwrap_or_default()
+            tray_collector_status(&app)
         } else {
             CollectorStatus::default()
         };
@@ -1730,12 +1843,14 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 
   // Swallow the pinch rather than leave it to the webview: a ctrl+wheel that
   // reaches WebKit unclaimed is its own zoom trigger, so ignoring it here is
-  // not the same as stopping it.
+  // not the same as stopping it. One listener: WebKit sends the legacy
+  // `mousewheel` only when nothing listens for `wheel`. It has to be
+  // non-passive to cancel, which makes every scroll's first wheel event wait
+  // on the page's JavaScript, so it does nothing but this check.
   function swallowPinch(event) {
     if (event.ctrlKey) event.preventDefault()
   }
   window.addEventListener('wheel', swallowPinch, { passive: false })
-  window.addEventListener('mousewheel', swallowPinch, { passive: false })
 })()
 "#;
 
@@ -1752,8 +1867,8 @@ fn main() {
     // the box, each page load pinned to one bundle. macOS only: Windows and
     // Linux bake no UI yet. See agents/record/local-ui.md.
     #[cfg(target_os = "macos")]
-    let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
-        virtues_lib::serve_ui(ctx.app_handle(), &request)
+    let builder = builder.register_asynchronous_uri_scheme_protocol("virtues", |ctx, request, responder| {
+        virtues_lib::serve_ui_async(ctx.app_handle().clone(), request, responder)
     });
 
     // Single-instance guard — Windows/Linux only. macOS is single-instance
@@ -1882,11 +1997,21 @@ fn main() {
             // own box reach for its session (the collector reaches the box over
             // its own embedded iroh, independent of this).
             //
-            // Only the bind happens here. Building the client resolves the
-            // box's LAN name and dials, which off the home network can take
-            // seconds, so it runs on a task and the window opens now. The bound
-            // port already listens: the webview's first requests wait in its
-            // backlog until the client is up.
+            // On the Mac only the bind happens here. Building the client
+            // resolves the box's LAN name and dials, which off the home
+            // network can take seconds, so it runs on a task and the window
+            // opens now: the Mac opens its own copy of the UI with no probe,
+            // and the bound port already listens, so the webview's first
+            // requests wait in its backlog until the client is up. Windows
+            // and Linux probe the box before choosing the window's page
+            // (below), and that probe needs the client, so they wait for it.
+            #[cfg(not(target_os = "macos"))]
+            if app.reach().is_paired() {
+                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
+                    eprintln!("[reach] ensure_serving failed: {e}");
+                }
+            }
+            #[cfg(target_os = "macos")]
             if app.reach().is_paired() {
                 match app.reach().bind_loopback() {
                     Ok(Some(bound)) => {
@@ -1980,7 +2105,7 @@ fn main() {
                 if is_paired() {
                     own_copy("")
                 } else {
-                    own_copy("setup")
+                    own_copy("onboarding")
                 }
             } else if !is_paired() {
                 // Windows and Linux bake no UI yet: the connect page, then the

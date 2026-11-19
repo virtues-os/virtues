@@ -18,7 +18,7 @@ use sqlx::PgPool;
 /// into `None`, so `{"standard_model_id": null}` was silently a no-op and a pinned
 /// slot could never be un-pinned. That is exactly what "Virtues default" needs
 /// to write — see `ModelSettings.svelte`.
-fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
+pub(crate) fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -194,15 +194,18 @@ pub async fn update_assistant_profile(
     Ok(updated_profile)
 }
 
-/// Helper to get the assistant's name for system prompts
-///
-/// Returns assistant_name if set, otherwise the default "Ari"
+/// The assistant's name until the owner gives it one: the product's own
+/// name. The column default matches it (migration 0087).
+pub const DEFAULT_ASSISTANT_NAME: &str = "Virtues";
+
+/// The assistant's name for system prompts: the one set, else
+/// [`DEFAULT_ASSISTANT_NAME`].
 pub async fn get_assistant_name(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
         .assistant_name
-        .unwrap_or_else(|| "Ari".to_string()))
+        .unwrap_or_else(|| DEFAULT_ASSISTANT_NAME.to_string()))
 }
 
 /// Helper to get the lite/background model for cheap tasks (titles, summaries)
@@ -310,5 +313,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.standard_model_id, Some(Some("x/z".to_string())));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_new_server_calls_its_assistant_virtues(pool: PgPool) {
+        assert_eq!(get_assistant_name(&pool).await.unwrap(), DEFAULT_ASSISTANT_NAME);
+        let (stored,): (Option<String>,) =
+            sqlx::query_as("SELECT assistant_name FROM app_assistant_profile").fetch_one(&pool).await.unwrap();
+        assert_eq!(stored.as_deref(), Some("Virtues"), "the row holds the name, not just the fallback");
     }
 }

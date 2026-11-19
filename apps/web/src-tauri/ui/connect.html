@@ -20,20 +20,34 @@
       BINARY (see the `virtues://` handler and `WebviewUrl::App`) so a stale
       copy in a web bundle can never shadow it.
     -->
+    <script>
+      // The theme the app cached (lib/utils/theme.ts and app.html): oxford,
+      // asgard or system. Same origin, so the same key.
+      (function () {
+        try {
+          var t = localStorage.getItem('virtues-theme');
+          if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'asgard' : 'oxford';
+          if (t === 'asgard') document.documentElement.setAttribute('data-theme', 'asgard');
+        } catch (e) { /* no storage: Light */ }
+      })();
+    </script>
     <style>
-      /* THE PEMBERLEY REGISTER, by hand. This page loads before the SPA and
-         its theme system exist, so the values are transcribed from themes.css
-         `:root` rather than imported: one paper (#FFFFFF), four steps of
-         graphite ink, hairline borders as the only structure, serif headings,
-         one blue spent only on focus/links/the live pip. Filled controls are
-         graphite, not color. If Pemberley's tokens move, move these. */
+      /* The app's two themes, by hand. This page loads before the SPA and its
+         theme system exist, so the values are transcribed from themes.css
+         rather than imported: Light from Oxford's block, Dark from Asgard's.
+         The script below picks one from the theme the app cached, before the
+         first paint; a device that has never reached the app gets Light, the
+         default. The accent is the default swatch, Navy, spent only on
+         focus, links and the live pip. Filled controls are ink, not color.
+         If those themes' tokens move, move these. */
       :root {
         color-scheme: light;
         --paper: #FFFFFF;
-        --ink: #17171A; --ink-muted: #3F3F46; --ink-subtle: #71717A; --ink-faint: #A1A1AA;
-        --line: #E7E7E9; --line-subtle: #F1F1F3; --line-strong: #D4D4D8;
-        --blue: #0A84FF; --blue-subtle: #EAF3FF;
-        --green: #1A7F45; --red: #C4322B;
+        --ink: #1A2030; --ink-muted: #3E4459; --ink-subtle: #626779; --ink-faint: #A8A395;
+        --on-ink: #FFFFFF;
+        --line: #E3E1DD; --line-subtle: #EFEEEB; --line-strong: #D4D1CC;
+        --accent: #1D4572;
+        --green: #2E6B43; --red: #B42318;
         /* `ui-serif` is New York on Apple WebKit; Windows WebView2 falls to
            Georgia. EB Garamond lives in the SPA bundle, which does not exist yet
            when this page draws. */
@@ -43,6 +57,16 @@
         --ease: cubic-bezier(0.22, 1, 0.36, 1);
         font-family: var(--sans);
       }
+      :root[data-theme="asgard"] {
+        color-scheme: dark;
+        --paper: #141416;
+        --ink: #EDEDEF; --ink-muted: #A1A2A8; --ink-subtle: #86878D; --ink-faint: #55565C;
+        --on-ink: #141416;
+        --line: #26272B; --line-subtle: #1E1F22; --line-strong: #34363B;
+        --accent: #88C0D0;
+        --green: #4CB878; --red: #F47C95;
+      }
+      :root { --accent-subtle: color-mix(in srgb, var(--accent) 12%, var(--paper)); }
       * { box-sizing: border-box; }
       body { margin: 0; background: var(--paper); color: var(--ink);
              padding: max(84px, calc(env(safe-area-inset-top) + 48px)) 22px 32px; }
@@ -104,15 +128,15 @@
               font-size: 16px; font-family: var(--sans); margin: 0 0 18px;
               transition: border-color .15s var(--ease), box-shadow .15s var(--ease); }
       input::placeholder { color: var(--ink-faint); }
-      input:focus { outline: none; border-color: var(--blue);
-                    box-shadow: 0 0 0 3px var(--blue-subtle); }
+      input:focus { outline: none; border-color: var(--accent);
+                    box-shadow: 0 0 0 3px var(--accent-subtle); }
       input#code { letter-spacing: .3em; font-variant-numeric: tabular-nums; text-align: center; }
       button { font-family: var(--sans); cursor: pointer; }
       button.primary { appearance: none; border: 0; border-radius: 10px; background: var(--ink);
-               color: #fff; font-size: 15px; font-weight: 600; padding: 14px; width: 100%;
+               color: var(--on-ink); font-size: 15px; font-weight: 600; padding: 14px; width: 100%;
                transition: background .15s var(--ease), transform .12s var(--ease); }
-      button.primary:hover:not(:disabled) { background: #2A2A2F; }
-      button.primary:active:not(:disabled) { background: #000; transform: scale(.992); }
+      button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--paper)); }
+      button.primary:active:not(:disabled) { background: color-mix(in srgb, var(--ink) 78%, var(--paper)); transform: scale(.992); }
       button.primary:disabled { opacity: .35; cursor: default; }
       button.secondary { appearance: none; border: 1px solid var(--line-strong);
                border-radius: 10px; background: var(--paper); color: var(--ink);
@@ -120,7 +144,7 @@
                transition: border-color .15s var(--ease), background .15s var(--ease); }
       button.secondary:hover:not(:disabled) { border-color: var(--ink-faint); }
       button.secondary:disabled { opacity: .35; cursor: default; }
-      a, .link { color: var(--blue); text-decoration: none; }
+      a, .link { color: var(--accent); text-decoration: none; }
       a:hover, .link:hover { text-decoration: underline; }
       .msg { margin-top: 16px; font-size: 14px; min-height: 20px; color: var(--ink-subtle); }
       .err { color: var(--red); }
@@ -163,7 +187,7 @@
       .wait { display: flex; align-items: center; gap: 10px; color: var(--ink-subtle);
               font-size: 14px; margin-bottom: 18px; }
       /* The pip is one of the few places the blue is spent: it means "live". */
-      .wait .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--blue);
+      .wait .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
                    flex: none; animation: pulse 1.6s ease-in-out infinite; }
       @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
     </style>
@@ -273,7 +297,7 @@
           // `#setup` pins the connect screen open on an already-paired device,
           // for connecting it to a second server.
           if (hash === '#setup') return 'entry';
-          // `#existing`: Setup (the app's own /setup, before pairing) sends a
+          // `#existing`: Setup (the app's own /onboarding, before pairing) sends a
           // device that is joining a server someone already set up straight
           // to the join: the QR scan on a phone, the code on a computer.
           // Setup's first half only sets up new servers (2026-09-28).
@@ -446,7 +470,7 @@
 
       /**
        * Bare paper while we decide: no chrome, no content, nothing to hand over
-       * — and in the colour the app is about to be, not this page's own white.
+       * — and in the colour the app is about to be, not this page's own paper.
        *
        * The blank IS the launch now, so its colour is the only thing on screen,
        * and a step in it is the only event. `app.html` paints the theme's
@@ -456,9 +480,9 @@
        * fallback, which is also this page's own paper: a device that has never
        * reached the app has nothing cached and nothing to match.
        *
-       * ONLY THE BLANK. Every airlock SCREEN stays on the light register this
-       * page hardcodes — `--ink` on `--paper`, Pemberley by hand. Painting a
-       * dark theme's surface behind those would be graphite text on graphite.
+       * The airlock screens themselves draw on this page's own paper, which
+       * is already the cached theme's (the head script); the blank paints the
+       * exact cached page color so the step into the app is invisible.
        */
       function blankForDecision() {
         setServer('');
@@ -556,8 +580,6 @@
         try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
         try {
           localStorage.removeItem('virtues-just-paired');
-          // No app to open Setup in any more (inApp.ts).
-          localStorage.removeItem('virtues-setup-in-app');
           sessionStorage.setItem('virtues-forgot-server', '1');
         } catch { /* best effort */ }
       }
@@ -613,7 +635,7 @@
           // Setup sends the phone to the first step still open; on a server
           // that is already set up, this phone still gets its own permissions
           // instead of going straight into the app.
-          setTimeout(() => window.location.replace('/setup/connections'), 400);
+          setTimeout(() => window.location.replace('/onboarding/connections'), 400);
           return;
         }
         try {

@@ -140,7 +140,7 @@
 	{#if file}
 		<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
 	{/if}
-	<Button variant="secondary" size="sm" icon="mynaui:download" loading={downloading} onclick={download}
+	<Button variant="secondary" icon="mynaui:download" loading={downloading} onclick={download}
 		>Download</Button
 	>
 {/snippet}
@@ -205,7 +205,6 @@
 				<span>{file?.filename}</span>
 				<Button
 					variant="secondary"
-					size="sm"
 					icon="mynaui:download"
 					loading={downloading} onclick={download}>Download</Button
 				>
@@ -295,14 +294,6 @@
 		font-size: 0.8125rem;
 	}
 	.asset-status.error {
-		color: var(--color-danger, #e5484d);
-	}
-	.asset-status :global(.spin) {
-		animation: asset-spin 0.8s linear infinite;
-	}
-	@keyframes asset-spin {
-		to {
-			transform: rotate(360deg);
-		}
+		color: var(--color-error);
 	}
 </style>

@@ -475,8 +475,7 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str, schema: Optio
 /// after each applet setup's schema apply.
 ///
 /// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
-///   `applet_*` schema (the faces' read-only bridge), except the ontologies
-///   marked `ModelAccess::OwnerOptIn`, which it revokes; and on the columns of
+///   `applet_*` schema (the faces' read-only bridge); on the columns of
 ///   `app_applet_runs` that say when each applet ran, which an applet's
 ///   `run: sql` reads to wait between runs; and on the columns of
 ///   `app_chats` and `app_chat_messages` that say who wrote what, in which
@@ -496,18 +495,8 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .await
     .map_err(|e| crate::error::Error::Database(format!("applet role membership grant failed: {e}")))?;
 
-    // Ontologies the owner has not opened to the assistant are left out of the
-    // sweep and revoked, in one transaction so there is no moment at boot when
-    // they are readable. The list rides in a transaction-local setting because
-    // a DO block takes no parameters.
-    let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
     let mut tx = pool
         .begin()
-        .await
-        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
-    sqlx::query("SELECT set_config('virtues.owner_opt_in_tables', $1, true)")
-        .bind(opt_in.join(","))
-        .execute(&mut *tx)
         .await
         .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
 
@@ -540,8 +529,6 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
                              OR c.relname LIKE 'wiki\_%'
                              OR c.relname IN ('app_pages', 'app_tasks')))
                        OR n.nspname LIKE 'applet\_%')
-                  AND NOT (c.relname = ANY (string_to_array(
-                        coalesce(current_setting('virtues.owner_opt_in_tables', true), ''), ',')))
             LOOP
                 EXECUTE format('GRANT SELECT ON %I.%I TO virtues_face_reader',
                                t.schemaname, t.tablename);
@@ -573,13 +560,6 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .await
     .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
 
-    // Table names are compile-time constants from the registry.
-    for table in &opt_in {
-        sqlx::query(&format!("REVOKE ALL ON public.{table} FROM virtues_face_reader"))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| crate::error::Error::Database(format!("revoke on {table} failed: {e}")))?;
-    }
     // A run's `run: sql` runs as the reader, and the cooldown that
     // applets/AGENTS.md recommends asks when this applet last succeeded. Only
     // those columns: a run's error and summary text stay the server's.
@@ -652,26 +632,32 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
 "#;
 
 pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables + minimal base. */
+/* The app's two themes (agents/build/design.md, "Themes"): Light is
+   Oxford and Dark is Asgard, with their values copied from
+   apps/web/src/themes.css. --color-accent is the app's --color-primary,
+   kept under the name applets already use. */
 :root {
   --color-surface: #ffffff;
-  --color-surface-elevated: #f3f4f6;
-  --color-foreground: #111827;
-  --color-foreground-subtle: #6b7280;
-  --color-border: #e5e7eb;
-  --color-accent: #1d4ed8;
-  --color-success: #047857;
-  --color-error: #b91c1c;
+  --color-surface-elevated: #f4f3f0;
+  --color-foreground: #1a2030;
+  --color-foreground-subtle: #626779;
+  --color-border: #e3e1dd;
+  --color-accent: #1d4572;
+  --color-primary: #1d4572;
+  --color-success: #2e6b43;
+  --color-error: #b42318;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --color-surface: #0b0f1a;
-  --color-surface-elevated: #161b28;
-  --color-foreground: #e5e7eb;
-  --color-foreground-subtle: #9ca3af;
-  --color-border: #253044;
-  --color-accent: #60a5fa;
-  --color-success: #34d399;
-  --color-error: #f87171;
+  --color-surface: #141416;
+  --color-surface-elevated: #1b1c1f;
+  --color-foreground: #ededef;
+  --color-foreground-subtle: #86878d;
+  --color-border: #26272b;
+  --color-accent: #88c0d0;
+  --color-primary: #88c0d0;
+  --color-success: #3fa266;
+  --color-error: #e34671;
   color-scheme: dark;
 }
 html, body {
@@ -707,17 +693,25 @@ mod tests {
         }
     }
 
-    /// The assistant reads the record as `virtues_face_reader`. An ontology
-    /// the owner has not opened must stay unreadable to it after the boot
-    /// sweep, which grants every other `data_*` table, and after a second
-    /// sweep, which is what every later boot runs.
+    /// The assistant reads the record as `virtues_face_reader`. Every
+    /// `data_*` and `wiki_*` relation must be readable to it after the boot
+    /// sweep, and after a second sweep, which is what every later boot runs.
     #[sqlx::test]
-    async fn owner_opt_in_tables_stay_unreadable_after_the_grant_sweep(pool: sqlx::PgPool) {
-        let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
-        assert!(opt_in.contains(&"data_health_cycle_log"));
+    async fn every_record_table_is_readable_after_the_grant_sweep(pool: sqlx::PgPool) {
         for _ in 0..2 {
             ensure_applet_db_grants(&pool).await.expect("grant sweep");
         }
+        let unreadable: Vec<String> = sqlx::query_scalar(
+            "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'm', 'f', 'p') \
+               AND (c.relname LIKE 'data\\_%' OR c.relname LIKE 'wiki\\_%') \
+               AND NOT has_table_privilege('virtues_face_reader', c.oid, 'SELECT') \
+             ORDER BY 1",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(unreadable.is_empty(), "unreadable by the assistant: {unreadable:?}");
         let can_read = |table: &'static str| {
             let pool = pool.clone();
             async move {
@@ -730,10 +724,7 @@ mod tests {
                 .unwrap()
             }
         };
-        for table in opt_in {
-            assert!(!can_read(table).await, "{table} is readable by the assistant");
-        }
-        assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
+        assert!(can_read("data_health_cycle_log").await, "cycle data is unreadable by the assistant");
         // The task tools send the model to sql_query for the list.
         assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
         let can_read_column = |table: &'static str, column: &'static str| {

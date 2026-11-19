@@ -2,7 +2,7 @@
  * Setup — the one flow, and the order of its steps.
  *
  * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
- * full screen at `/setup`: Welcome (the cold open, and light or dark),
+ * full screen at `/onboarding`: Welcome (the cold open, and light or dark),
  * Server (finding and pairing it), Names, this device's Connections,
  * Subscription, then Arrival and the app. Connections can be skipped; its
  * "Finish later" opens the app only once nothing required follows it.
@@ -31,6 +31,7 @@ import {
 	type StreamHealth,
 	type GettingStartedStepId,
 } from '$lib/api/client';
+import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 import type { Device, DevicesResponse } from '$lib/devices/shared';
 import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 import { prePair } from './prepair.svelte';
@@ -68,7 +69,7 @@ export interface SetupStep {
 /** The stage's steps, in order. The letter is not one of them: the pair
  *  code lasts about 15 minutes, so nothing stands between the person and
  *  it. The letter waits at the close, as "A note from us", and stays
- *  readable in the app (IN_APP) and at /founders-letter. */
+ *  readable at /founders-letter. */
 export const ORDER: SetupStepId[] = [
 	'welcome',
 	'server',
@@ -114,11 +115,6 @@ export function isSetupStep(s: string | null | undefined): s is SetupStepId {
 export function labelOf(id: SetupStepId): string {
 	return LABELS[id];
 }
-
-/** The steps Setup offers inside the app (SetupView, the rail's panel), in
- *  order. The first half is finished for anyone in the app, and Welcome's
- *  opening only plays on the stage. The letter is here to read again. */
-export const IN_APP: SetupStepId[] = ['letter', 'names', 'connections', 'subscription'];
 
 /** A button that leads INTO a step says what the person does there. */
 const INTO: Record<SetupStepId, string> = {
@@ -175,7 +171,7 @@ function readIntro(): number {
 
 class SetupStore {
 	profile = $state<Profile | null>(null);
-	assistantName = $state('Ari');
+	assistantName = $state(DEFAULT_ASSISTANT_NAME);
 	streams = $state<StreamHealth[]>([]);
 	devices = $state<Device[]>([]);
 	loaded = $state(false);
@@ -220,7 +216,7 @@ class SetupStore {
 				gettingStarted.refresh(),
 			]);
 			if (profile.status === 'fulfilled') this.profile = profile.value;
-			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || 'Ari';
+			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || DEFAULT_ASSISTANT_NAME;
 			if (streams.status === 'fulfilled') this.streams = streams.value;
 			if (devices.status === 'fulfilled') this.devices = devices.value.devices ?? [];
 			this.loaded = true;
@@ -325,9 +321,8 @@ class SetupStore {
 		return this.stepsIn(ORDER);
 	}
 
-	/** `ids` as steps, in that order: the stage's (ORDER) or the app's
-	 *  (IN_APP, which also lists the letter to reread). A step is reachable
-	 *  while every one before it in `ids` is settled. */
+	/** `ids` as steps, in that order. A step is reachable while every one
+	 *  before it in `ids` is settled. */
 	stepsIn(ids: SetupStepId[]): SetupStep[] {
 		let open = true;
 		return ids.map((id) => {
@@ -354,25 +349,6 @@ class SetupStore {
 		);
 	}
 
-	/** In the app: the first step there still open, else the first set
-	 *  aside, else nothing. The letter is only ever reread, never owed. */
-	get resumeInApp(): SetupStepId | null {
-		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
-		return (
-			steps.find((s) => s.status === 'open')?.id ?? steps.find((s) => s.status === 'skipped')?.id ?? null
-		);
-	}
-
-	/** In the app, a step opens once the required steps before it there are
-	 *  done. Not the stage's strict order: coming back, the person is
-	 *  choosing a step, not walking them; and the letter and Welcome, which
-	 *  count as read only on the device that read them, never lock anything. */
-	opensInApp(id: SetupStepId): boolean {
-		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
-		const at = steps.findIndex((s) => s.id === id);
-		return at < 0 || steps.slice(0, at).every((s) => s.optional || s.status === 'done');
-	}
-
 	/** Nothing the person does in Setup has happened yet: the flow opens
 	 *  with Hello. Anyone further along resumes at their step.
 	 *
@@ -391,14 +367,6 @@ class SetupStore {
 		return this.steps.every((s) => s.optional || s.status !== 'open');
 	}
 
-	get doneCount(): number {
-		return this.steps.filter((s) => s.status === 'done').length;
-	}
-
-	/** Every step done: the rail's Setup tile goes. A skipped step keeps it. */
-	get complete(): boolean {
-		return this.steps.every((s) => s.status === 'done');
-	}
 
 	/** Where moving on from `after` goes: the next step still to do, the
 	 *  same rule the flow's advance follows. Null opens the app. */

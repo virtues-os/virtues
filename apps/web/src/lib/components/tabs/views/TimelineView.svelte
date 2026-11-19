@@ -1527,7 +1527,7 @@
 		if (!m.getLayer('lit-glow')) return;
 		// The picked drive stands out from a drive the playhead merely passes
 		// through: twice the path's weight, over a still halo. Nothing on the
-		// page breathes but Home's now-marker (design-grammar §7).
+		// page breathes but Home's now-marker (design.md, "Motion").
 		// The picked drive turns the brighter orange (PROTOTYPE-RULES 9.21, 9.27).
 		m.setPaintProperty('lit-run', 'line-width', 6);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
@@ -1628,13 +1628,13 @@
 	<div class="date" bind:this={dateWrap}>
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
 			<div class="date-row">
-				<IconButton icon="mynaui:chevron-left" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<IconButton icon="mynaui:chevron-left" label="Previous day" onclick={() => (date = stepDay(date, -1))} />
 				<!-- Calendar's ‹ Today ›: a button between the arrows, there on
 				     every day and greyed out on today, so it never reads as the
 				     date's label and the › never moves. -->
 				<span class="date-today"><Pill disabled={date === today} onclick={() => (date = today)}>Today</Pill></span>
-				<IconButton icon="mynaui:chevron-right" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
-				<IconButton icon="mynaui:calendar" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
+				<IconButton icon="mynaui:chevron-right" label="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
+				<IconButton icon="mynaui:calendar" label="Show the month" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
@@ -1758,7 +1758,7 @@
 
 <style>
 	/* Every card over the map is the page's own material: the surface inside a
-	   hairline at 12px, and no shadow (design-grammar §6). It reads as separate
+	   hairline at 12px, and no shadow (design.md, "Elevation"). It reads as separate
 	   because it floats over the map, not because it is lifted. */
 	.timeline {
 		position: absolute;
@@ -2093,7 +2093,7 @@
 		display: none;
 	}
 	/* A stay picked from the inspector: a still ring at its place while it
-	   stays picked. Nothing here breathes (design-grammar §7). */
+	   stays picked. Nothing here breathes (design.md, "Motion"). */
 	.timeline :global(.tl-pulse) {
 		width: 20px;
 		height: 20px;

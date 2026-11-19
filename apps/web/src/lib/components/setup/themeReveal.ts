@@ -13,6 +13,7 @@
  * transitions, or with reduced motion, the theme just changes.
  */
 import { setTheme, type Theme } from '$lib/utils/theme';
+import { reducedMotion } from '$lib/stores/motion.svelte';
 
 /** The ∴'s dots on its 24-unit box: left foot, right foot, apex. */
 const DOTS = [
@@ -32,7 +33,7 @@ export async function revealTheme(
 	const doc = document as Document & {
 		startViewTransition?: (cb: () => void) => { finished: Promise<void> };
 	};
-	const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+	const reduced = reducedMotion();
 	if (!mark || !doc.startViewTransition || reduced) {
 		await setTheme(theme);
 		return;

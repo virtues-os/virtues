@@ -1,13 +1,15 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { motion } from "$lib/stores/motion.svelte";
 	import { onDestroy, onMount } from "svelte";
-	import { Spring, prefersReducedMotion } from "svelte/motion";
-	import { fly } from "svelte/transition";
+	import { Spring } from "svelte/motion";
+	import { fly } from "$lib/utils/transitions";
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";
 	import type { RefSearchResult, SkillSummary, SuggestedQuestion } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { reachability } from "$lib/stores/reachability.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
@@ -162,7 +164,7 @@
 	// The tray's height follows its content, so opening, closing and moving
 	// between views are all one height transition.
 	let trayContentHeight = $state(0);
-	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 280, easing: quintOut });
+	const viewIn = $derived({ y: 6, duration: motion.reduced ? 0 : 280, easing: quintOut });
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
@@ -648,6 +650,15 @@
 					</button>
 				{/if}
 
+				<!-- Said inside the box because sending is where being offline bites.
+				     The phone has its own banner under the header (MobileShell). -->
+				{#if reachability.unreachable && !mobileLayout.isMobile}
+					<span class="offline-note" role="status" title="Messages won't send until your server answers again.">
+						<Icon icon="mynaui:wifi-off" width="13" style="color: inherit" />
+						<span>Can't reach your server</span>
+					</span>
+				{/if}
+
 				<span class="toolbar-spacer"></span>
 
 				{#if showMic}
@@ -829,7 +840,7 @@
 		height: 1.375rem;
 		padding: 0 0.125rem 0 0.375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		color: var(--color-foreground);
 		white-space: nowrap;
@@ -907,7 +918,7 @@
 		margin-left: 0.375rem;
 		padding: 0 0.4375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		line-height: 1.375rem;
 		color: var(--color-foreground);
@@ -949,6 +960,16 @@
 		flex: 1;
 	}
 
+	.offline-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: 0.25rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
+	}
+
 
 
 	/* The field around the message as typed. The text itself is prose.css's
@@ -979,9 +1000,33 @@
 		height: 2rem;
 		border-radius: var(--radius-full);
 		cursor: pointer;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow; a press fills or darkens at once, and the button sinks to
+		   94% and springs back. */
 		transition:
-			background-color 0.15s ease,
-			opacity 0.15s ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.pill-btn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.pill-btn:active:not(:disabled) {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
+	}
+
+	/* Keep the fill, drop the sink. */
+	@media (prefers-reduced-motion: reduce) {
+		.pill-btn {
+			transition: none;
+		}
+		.pill-btn:active:not(:disabled) {
+			transform: none;
+		}
 	}
 
 	/* The composer's buttons are 32px because the pill they sit in is tight, and
@@ -1014,6 +1059,10 @@
 	.mic-button:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+	}
+	.attach-button:active,
+	.mic-button:active:not(:disabled) {
+		background: var(--press-bg);
 	}
 
 	/* Send is a soft square: grey while there is nothing to send, the navy

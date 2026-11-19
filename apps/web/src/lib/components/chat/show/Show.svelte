@@ -6,17 +6,19 @@
 	(virtues-core tools/show.rs). So this never renders anything the model
 	wrote as markup, and every figure on it came out of the record.
 
-	Unframed, like the rest of the box's turn (design-grammar §2): no border
+	Unframed, like the rest of the box's turn (design.md, "Framed and unframed blocks"): no border
 	and no ground of its own, a chart at the full width of the column.
 -->
 <script lang="ts">
-	import { isShowOutput, type ShowOutput } from "./show";
+	import { isKitMark, isShowOutput, type ShowOutput } from "./show";
 	import ShowChart from "./ShowChart.svelte";
+	import ShowMark from "./ShowMark.svelte";
 	import ShowNumbers from "./ShowNumbers.svelte";
 	import ShowTable from "./ShowTable.svelte";
 	import ShowMap from "./ShowMap.svelte";
 	import ShowTimeline from "./ShowTimeline.svelte";
 	import ShowChoices from "./ShowChoices.svelte";
+	import ShowSeries from "./ShowSeries.svelte";
 
 	interface Props {
 		part: { state?: string; input?: Record<string, unknown>; output?: unknown };
@@ -38,10 +40,29 @@
 	const title = $derived(out ? out.title : typeof part.input?.title === "string" ? part.input.title : null);
 	const columns = $derived(out?.columns ?? []);
 	const rows = $derived(out?.rows ?? []);
-	const kind = $derived(out?.kind ?? (part.input?.kind as string | undefined));
+	// While a call runs, its kind comes from the call: `chart` (the field the
+	// tool offers, virtues_registry::chart_marks), or `kind` and `purpose` from
+	// calls written before it. Numbers hold the short placeholder, so the
+	// reply doesn't jump, and choices draw no placeholder at all.
+	function kindOfCall(input: Record<string, unknown> | undefined): string | undefined {
+		const chart = input?.chart ?? input?.purpose;
+		// Figures with series stay in the sentence, so nothing holds space here.
+		if (input?.series && typeof input.series === "object") return "series";
+		if (typeof input?.kind === "string") return input.kind;
+		if (chart === "choices") return "choices";
+		if (chart === "in_sentence" || chart === "numbers") return "numbers";
+		return undefined;
+	}
+	const kind = $derived(out?.kind ?? kindOfCall(part.input as Record<string, unknown> | undefined));
+	// Figures that carry their rows open from the sentence; when none of them
+	// can be found there, the plain row of figures is drawn here instead.
+	let unplaced = $state(false);
+	const inSentence = $derived(!!out && out.kind === "numbers" && !!out.series && Object.keys(out.series).length > 0 && !unplaced);
 </script>
 
-{#if out || (drawing && kind !== "choices")}
+{#if out && inSentence}
+	<ShowSeries {out} {working} {onOpenRows} onUnplaced={() => (unplaced = true)} />
+{:else if out || (drawing && kind !== "choices" && kind !== "series")}
 	<figure class="show" class:choices={kind === "choices"} aria-busy={drawing}>
 		{#if title && kind !== "choices"}
 			<figcaption class="title">{title}</figcaption>
@@ -49,8 +70,10 @@
 
 		{#if !out}
 			<div class="drawing" class:short={kind === "numbers"}></div>
+		{:else if isKitMark(out.mark)}
+			<ShowMark out={{ ...out, mark: out.mark }} {onOpenRows} />
 		{:else if out.kind === "chart"}
-			<ShowChart {columns} {rows} mark={out.mark ?? "bar"} />
+			<ShowChart {columns} {rows} mark={out.mark === "line" ? "line" : "bar"} />
 		{:else if out.kind === "numbers" && rows[0]}
 			<ShowNumbers {columns} row={rows[0]} />
 		{:else if out.kind === "table"}
@@ -131,9 +154,5 @@
 		all: unset;
 		cursor: pointer;
 		color: var(--color-primary);
-	}
-	.source button:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 </style>

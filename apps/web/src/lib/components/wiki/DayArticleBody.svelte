@@ -29,6 +29,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { tick } from "svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import {
@@ -244,7 +245,7 @@
 		const el = next && root.querySelector<HTMLElement>(`[data-stop="${next.id}"]`);
 		if (!next || !el) return;
 		const focus = !!document.activeElement?.closest(".record-card");
-		const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+		const still = reducedMotion();
 		el.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
 		const trigger = el.nextElementSibling?.classList.contains("ev-trigger") ? (el.nextElementSibling as HTMLElement) : null;
 		show({ ...next.source, anchor: el, trigger, stop: next.id, focus });
@@ -672,28 +673,11 @@
 		font-family: var(--font-sans);
 		font-size: 0.75rem;
 		color: var(--color-foreground);
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 1px;
 	}
 
 	.s:global(.active) {
 		background-color: var(--color-highlight);
 		transition-delay: 0s;
-	}
-
-	/* Back from Data: the sentence the citation came from, lit and let go. */
-	.s:global(.flash) {
-		animation: sentence-flash 1.6s ease;
-	}
-
-	@keyframes sentence-flash {
-		0%,
-		40% {
-			background-color: var(--color-highlight);
-		}
-		100% {
-			background-color: transparent;
-		}
 	}
 
 	.s-block {
@@ -750,7 +734,7 @@
 	}
 
 	/* What the record says beside the passage: a short dashed rule before a
-	   silence, a small claret "new" before a first. */
+	   silence, a small "new" in the accent before a first. */
 	.mark {
 		display: grid;
 		grid-template-columns: 1.4rem 1fr;
@@ -766,7 +750,7 @@
 	.mark .new {
 		font-size: 0.625rem;
 		letter-spacing: 0.04em;
-		color: var(--color-secondary);
+		color: var(--color-primary);
 		padding-top: 0.08rem;
 	}
 
@@ -911,12 +895,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.s {
 			transition: none;
-		}
-
-		/* Marked without the fade; the page lifts the mark after a moment. */
-		.s:global(.flash) {
-			animation: none;
-			background-color: var(--color-highlight);
 		}
 
 		.bracket.drawing {

@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { fade } from "svelte/transition";
+	import { fade } from "$lib/utils/transitions";
 	import { isMacOS } from "$lib/utils/platform";
 	import StepFrame from "$lib/components/setup/StepFrame.svelte";
 	import { Reconnect, LISTEN_EVERY_MS, thisDevice } from "$lib/components/recovery/reconnect.svelte";

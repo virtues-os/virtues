@@ -8,12 +8,13 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Pages, Tasks, Projects, Applets, Wiki. The verb,
+	 *   doors     New chat, Pages, Projects, Applets, Wiki. The verb,
 	 *             then the places. Each place is one row that opens its
 	 *             overview; none of them lists its contents here. Search is
 	 *             not a door: it is the ⌘K palette, reached from anywhere.
-	 *             Pages, Tasks and Projects carry a `+` on hover: the word is
-	 *             the list, the plus is the new one.
+	 *             Pages and Projects carry a `+` on hover: the word is the
+	 *             list, the plus is the new one. Tasks live on the Projects
+	 *             page, above the projects.
 	 *   Pinned    what the user chose to keep, in their own order: a chat, a
 	 *             page, a project, an applet, a task, anything with a url.
 	 *             Everything you want one click away lives here, so the doors
@@ -42,9 +43,10 @@
 	 * project. The server refuses it and the menus never offer it.
 	 */
 	import { onMount, tick, untrack } from 'svelte';
-	import { crossfade, slide } from 'svelte/transition';
-	import { flip } from 'svelte/animate';
-	import { prefersReducedMotion } from 'svelte/motion';
+	// crossfade has no reduced-motion version; `moving()` below stills it.
+	import { crossfade } from 'svelte/transition';
+	import { flip, slide } from '$lib/utils/transitions';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { easePremium, motionMs } from '$lib/utils/motion';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
@@ -68,7 +70,7 @@
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
-	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
+	import { newPage as makePage } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import {
@@ -86,24 +88,10 @@
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import PinGlyph from '../PinGlyph.svelte';
-	import SetupRing from '../SetupRing.svelte';
-	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
-	import { setup } from '$lib/components/setup/setup.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { ROW_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 	import { openMenuItems } from '$lib/utils/openMenuItems';
 
-	// Skipped is not done: a step set aside keeps the door, because Finish
-	// later and Skip both mean "not now", never "not ever". It goes once every
-	// step is done.
-	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
-	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
-	// Setup's own tab, at the step to pick up: the tab carries the steps
-	// across its top, so the sidebar does not list them.
-	function openSetup() {
-		const next = setup.resumeInApp;
-		windowShellStore.openTabFromRoute(next ? `/setup/${next}` : '/setup', { label: 'Setup', focusExisting: true });
-	}
 	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
@@ -275,7 +263,7 @@
 		{ id: 'all', label: 'Everything', plural: 'things', seeAll: () => openAllChats() },
 		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
 		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
-		{ id: 'project', label: 'Projects', plural: 'projects', seeAll: () => openProjects() },
+		{ id: 'thread', label: 'Threads', plural: 'threads', seeAll: () => openProjects() },
 		{ id: 'applet', label: 'Applets', plural: 'applets', seeAll: () => openApplets() },
 	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
@@ -305,8 +293,43 @@
 	const recentsFiltered = $derived(
 		recentFilter === 'all' ? recents : recents.filter((r) => r.kind === recentFilter),
 	);
-	const recentsShown = $derived(recentsFiltered.slice(0, RECENTS_CAP));
-	const recentsMore = $derived(recentsFiltered.length > RECENTS_CAP);
+	// The sidebar does not scroll. Recent shows as many whole rows as fit
+	// below the doors and pins, up to RECENTS_CAP, and "See all" takes a row
+	// when some are left out. A shorter window shows fewer recents.
+	let recentZoneEl: HTMLDivElement | undefined = $state();
+	let recentRoom = $state(Infinity);
+	const recentFit = $derived.by(() => {
+		const all = Math.min(RECENTS_CAP, recentsFiltered.length);
+		if (recentRoom >= all) return all;
+		// "See all" stands where the last row would.
+		return Math.max(0, recentRoom - 1);
+	});
+	const recentsShown = $derived(recentsFiltered.slice(0, recentFit));
+	const recentsMore = $derived(recentsFiltered.length > recentFit);
+
+	/** Gap between two rows (UnifiedSidebar `.sidebar-expandable-inner`). */
+	const ROW_GAP_PX = 2;
+	$effect(() => {
+		const zone = recentZoneEl;
+		const body = zone?.closest<HTMLElement>('.panel-body');
+		if (!zone || !body) return;
+		const measure = () => {
+			const rows = zone.querySelector<HTMLElement>('.sidebar-expandable-inner');
+			if (!rows) return;
+			const row = parseFloat(getComputedStyle(body).getPropertyValue('--sidebar-interactive-height')) || 32;
+			const bottom = body.getBoundingClientRect().bottom - parseFloat(getComputedStyle(body).paddingBottom);
+			const room = bottom - rows.getBoundingClientRect().top;
+			recentRoom = Math.max(0, Math.floor((room + ROW_GAP_PX) / (row + ROW_GAP_PX)));
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(body);
+		// The doors and pins above Recent move it down when they grow, and
+		// they share its parent. Recent's own rows change the parent's height
+		// too, but not where its rows start, so the count settles.
+		if (zone.parentElement) observer.observe(zone.parentElement);
+		measure();
+		return () => observer.disconnect();
+	});
 	const recentLabel = $derived(recentFilter === 'all' ? 'Recent' : `Recent ${filterDef.plural}`);
 
 	function recentFilterMenu(): ContextMenuItem[] {
@@ -334,7 +357,7 @@
 	let motionOn = $state(false);
 	let motionTimer: ReturnType<typeof setTimeout> | undefined;
 	// Read on every move, so turning reduced motion on or off applies at once.
-	const moving = () => motionOn && !prefersReducedMotion.current;
+	const moving = () => motionOn && !reducedMotion();
 
 	/** Hold motion off until the lists settle. */
 	function holdMotion(ms = 400) {
@@ -458,16 +481,6 @@
 		await makePage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
-	function openTasks() {
-		windowShellStore.openTabFromRoute('/tasks', { label: 'Tasks', focusExisting: true });
-	}
-
-	async function newTask(e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		await makeTask(openTasks);
-	}
-
 	async function addProject(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -482,19 +495,23 @@
 		windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true });
 	}
 
+	function openStorage() {
+		windowShellStore.openTabFromRoute('/storage', { label: 'Storage', focusExisting: true });
+	}
+
 	/**
-	 * What each door does. Pages, Tasks and Projects carry a + on hover: the
-	 * word is the list, the plus is a new one. Tasks never shows a count: the
-	 * list does not nag from the sidebar (agents/plan/tasks-plan.md). The
-	 * Wiki opens its overview, whose index reaches its sections.
+	 * What each door does. Pages and Projects carry a + on hover: the word
+	 * is the list, the plus is a new one. Projects never shows a count: the
+	 * tasks on its page do not nag from the sidebar. The Wiki and Storage open
+	 * their front pages, whose links reach their sections.
 	 */
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: newChat },
 		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
-		tasks: { open: openTasks, add: { label: 'New task', key: 'mod+shift+e', run: newTask } },
-		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
+		threads: { open: openProjects, add: { label: 'New thread', run: addProject } },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
+		storage: { open: openStorage },
 	};
 
 	// ── arranging the doors ────────────────────────────────────────────────
@@ -678,12 +695,7 @@
 		renaming = null;
 		const title = r?.draft.trim();
 		if (!r || !title || title === r.original) return;
-		try {
-			await renameRef(r.url, title);
-		} catch (e) {
-			console.error('[HomePanel] rename failed:', e);
-			toast.error(`Your server couldn't rename "${r.original}"`, { description: 'It keeps its old name. Try again' });
-		}
+		await renameRef(r.url, title);
 	}
 
 	/** Chats, pages and projects own their names; a web or app-screen pin owns its own. */
@@ -846,7 +858,8 @@
 				p ?? {
 					id: owned.id,
 					title: look.title,
-					project_id: null,
+					excerpt: '',
+					threads: [],
 					icon: look.icon,
 					icon_color: look.color,
 					cover_url: null,
@@ -855,9 +868,11 @@
 					updated_at: '',
 				},
 			);
-		} else if (owned?.kind === 'project') {
+		} else if (owned?.kind === 'thread') {
 			const p = projects.find((x) => x.id === owned.id);
-			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null });
+			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null }, {
+				rename: () => startRename(pin.url, look.title, 'thread'),
+			});
 		}
 		if (base) {
 			const rename = base.findIndex((i) => i.id === 'rename');
@@ -909,7 +924,9 @@
 	function recentMenu(row: RecentRow): ContextMenuItem[] {
 		if (row.kind === 'chat') return chatMenu(row.session);
 		if (row.kind === 'page') return pageMenu(row.page);
-		if (row.kind === 'project') return projectRowMenuItems(row.project);
+		if (row.kind === 'thread') {
+			return projectRowMenuItems(row.project, { rename: () => startRename(row.url, row.title, 'thread') });
+		}
 		return [
 			...openMenuItems(row.url, row.title),
 			pinMenuItem({ url: row.url, label: row.title }),
@@ -960,13 +977,6 @@
 		if (e.target === e.currentTarget) showMenu(e, [customizeSidebarItem(false)]);
 	}}
 >
-	{#if setupOpen}
-		<button type="button" class="panel-row panel-door" onclick={openSetup} data-tip={railed ? 'Setup' : undefined} data-tip-side="right">
-			<SetupRing size={16} />
-			<span class="panel-row-text">Setup</span>
-			<span class="door-meta">{setupCount}</span>
-		</button>
-	{/if}
 	{#each doors as door, index (door.id)}
 		{@const act = doorActions[door.id]}
 		<!-- The slot moves as one when doors are reordered, so the Projects
@@ -1029,7 +1039,7 @@
 			}}
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
-			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare fillable />
+			<AtlasIcon name={door.glyph} size={ROW_GLYPH_PX} bare fillable />
 			<span class="panel-row-text">{door.label}</span>
 			{#if act.add}
 				{@const add = act.add}
@@ -1092,11 +1102,12 @@
 {#snippet recentRow(row: RecentRow)}
 	{@const pinned = isPinned(row.url)}
 	{@const chatId = row.kind === 'chat' ? row.session.conversation_id : null}
-	{@const home = row.kind === 'chat' && row.session.project_id ? projectStore.byId(row.session.project_id) : undefined}
+	{@const home = row.kind === 'chat' && row.session.thread_id ? projectStore.byId(row.session.thread_id) : undefined}
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === row.url}
 		class:dragging={draggingRecent === row.url}
+		class:renaming={renaming?.url === row.url}
 		class:stale-hover={staleHover}
 		role="link"
 		tabindex="0"
@@ -1162,7 +1173,7 @@
 {#snippet rowTitle(url: string, title: string, untitledTitle: boolean)}
 	{#if renaming?.url === url}
 		<input
-			class="row-rename"
+			class="rename-input"
 			aria-label="Name"
 			bind:value={renaming.draft}
 			placeholder={title}
@@ -1227,7 +1238,7 @@
 				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				{@const look = pinIdentity(pin)}
 				{@const owned = ownedRef(pin.url)}
-				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
+				{@const pinProject = owned?.kind === 'thread' ? owned.id : null}
 				<div
 					in:rowIn={pin.url}
 					out:rowOut={pin.url}
@@ -1240,6 +1251,7 @@
 					class:drop-before={pinLine === index}
 					class:drop-after={pinLine === pins.length && index === pins.length - 1}
 					class:dragging={draggingPinId === pin.id}
+					class:renaming={renaming?.url === pin.url}
 					class:stale-hover={staleHover}
 					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
 					{...{ [PIN_DROP_ATTR]: String(index) }}
@@ -1331,7 +1343,7 @@
 {/if}
 
 {#if recents.length > 0}
-<div class="recent-zone" inert={railed}>
+<div class="recent-zone" inert={railed} bind:this={recentZoneEl}>
 	{@render groupHead('recent', recentLabel, Math.max(1, recentsShown.length), recentHeadActions, recentFilter !== 'all')}
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
@@ -1388,11 +1400,6 @@
 
 	.group-label:hover {
 		color: var(--color-foreground-muted);
-	}
-
-	.group-label:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	/* ONE MOTION for the fold: chevron and body share a duration (--fold-ms,
@@ -1521,8 +1528,11 @@
 	}
 
 	/* A door's glyph is muted and its word is ink, like the header's controls
-	   above it; pointing at the door brings the glyph up to ink. */
+	   above it; pointing at the door brings the glyph up to ink. It is 18px,
+	   a pixel past the row's 16px slot on each side, so its center stays on
+	   the icons' column and the label does not move. */
 	.panel-door > :global(.atlas-icon) {
+		margin: 0 -1px;
 		color: var(--color-foreground-muted);
 		transition: color var(--motion-hover-out) var(--ease-premium);
 	}
@@ -1554,7 +1564,7 @@
 		   text instead, which WebKit tries first. */
 		user-select: none;
 		-webkit-user-select: none;
-		/* The scale's motion (design.md, "The scale"), as on the tab strip:
+		/* The scale's motion (design.md, "Motion"), as on the tab strip:
 		   hover in fast and out slow. */
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),
@@ -1585,6 +1595,15 @@
 	.panel-row.active:hover {
 		background: var(--lq-row-selected);
 		color: var(--color-foreground);
+	}
+
+	/* Pressed, a row takes the tint it will have once you are there, at once
+	   (design.md: rows take a press fill and never shrink). Let go on
+	   another row and it fades off like a hover. */
+	.panel-row:active:not(.active) {
+		background: var(--lq-row-selected);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-press);
 	}
 
 	/* A pinned project with something held over it: the row takes the drop
@@ -1675,11 +1694,6 @@
 		transition: none;
 	}
 
-	.panel-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.panel-row-text {
 		flex: 1;
 		min-width: 0;
@@ -1690,24 +1704,20 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The rename field sits exactly where the title was, in its face and size. */
-	.row-rename {
-		flex: 1;
-		min-width: 0;
-		height: 22px;
-		margin: 0 -4px;
-		padding: 0 4px;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: var(--color-page);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+	/* Renaming: the row is the field (app.css). Pin, More and the unread
+	   dot step aside, since none of them can be used while you type. The
+	   edge sits inside the row because the Pinned fold clips past it. */
+	.panel-row.renaming,
+	.panel-row.renaming:hover {
+		background: var(--rename-fill);
 		color: var(--color-foreground);
-		font: inherit;
-		outline: none;
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
+		cursor: text;
 	}
 
-	.row-rename:focus {
-		box-shadow: inset 0 0 0 1.5px var(--color-primary);
+	.panel-row.renaming :is(.row-actions, .row-unread) {
+		display: none;
 	}
 
 	/* A stand-in name ("Untitled", "New chat") looks unnamed. */
@@ -1831,11 +1841,6 @@
 		color: var(--color-foreground);
 	}
 
-	.row-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.panel-more {
 		color: var(--color-foreground-muted);
 	}
@@ -1862,10 +1867,4 @@
 		}
 	}
 
-	.door-meta {
-		margin-left: auto;
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
-	}
 </style>

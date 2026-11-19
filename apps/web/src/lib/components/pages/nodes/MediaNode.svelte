@@ -392,11 +392,6 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
-	.doc-image-handle:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
-	}
-
 	/* On touch the handle takes the pointer only on a selected image: a thumb
 	   that begins a scroll over it scrolls, and writes no width. Its hit
 	   area is a thumb's 44pt, grown around the 8px bar. */
@@ -493,13 +488,7 @@
 	}
 
 	.doc-upload :global(.doc-upload-spinner) {
-		animation: doc-upload-spin 1s linear infinite;
-	}
-
-	@keyframes doc-upload-spin {
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.doc-upload-failed {

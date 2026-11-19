@@ -10,13 +10,12 @@
 	 */
 
 	import IconButton from '$lib/components/IconButton.svelte';
-	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { TOOLBAR_OFFSET } from '$lib/document/toolbar';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 
-	/** On touch every button is 44pt (design-grammar §6): this bar is how a phone formats. */
+	/** On touch every button is 44pt (design.md, "Primitives"): this bar is how a phone formats. */
 	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
 	type MarkType = 'strong' | 'em' | 'underline' | 'code' | 'strikethrough' | 'link';
@@ -101,7 +100,6 @@
 	<div
 		bind:this={toolbarEl}
 		class="selection-toolbar"
-		transition:fade={{ duration: 100 }}
 		onmousedown={handleMouseDown}
 		role="toolbar"
 		aria-label="Text formatting"
@@ -111,7 +109,7 @@
 			<IconButton
 				icon="mynaui:sparkles"
 				label="Ask AI"
-				size={touch ? "touch" : "md"}
+				size={touch ? "touch" : "control"}
 				onclick={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -126,7 +124,7 @@
 				icon={btn.icon}
 				label={btn.label}
 				shortcut={btn.shortcut ? shortcuts.format(btn.shortcut) : undefined}
-				size={touch ? "touch" : "md"}
+				size={touch ? "touch" : "control"}
 				pressed={!!activeMarks[btn.mark]}
 				onclick={(e) => handleButtonClick(e, btn.mark)}
 			/>

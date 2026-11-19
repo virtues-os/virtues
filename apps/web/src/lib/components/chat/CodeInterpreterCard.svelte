@@ -5,7 +5,7 @@
 	 * Displays code_interpreter tool results with expandable code and output.
 	 * Matches EditDiffCard design pattern.
 	 */
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import { backendUrl } from "$lib/config/backend";
@@ -124,7 +124,7 @@
 						? "mynaui:check"
 						: "mynaui:copy"}
 					label={copySuccess ? "Copied" : "Copy output"}
-					size="sm"
+					size="nested"
 					onclick={handleCopy}
 				/>
 			{/if}
@@ -220,12 +220,12 @@
 		background: var(--color-surface);
 		border: none;
 		cursor: pointer;
-		color: var(--color-text);
+		color: var(--color-foreground);
 		transition: background 0.15s ease;
 	}
 
 	.card-header:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.header-left {
@@ -241,16 +241,7 @@
 	}
 
 	.status-icon.spinning {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.status-label {
@@ -314,7 +305,7 @@
 		padding: 0.75rem;
 		white-space: pre-wrap;
 		word-break: break-word;
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	/* Output view */
@@ -328,7 +319,7 @@
 	}
 
 	.output-view.error {
-		background: rgba(var(--color-error-rgb, 239, 68, 68), 0.05);
+		background: color-mix(in srgb, var(--color-error) 5%, transparent);
 	}
 
 	.output-text {
@@ -336,7 +327,7 @@
 		padding: 0.75rem;
 		white-space: pre-wrap;
 		word-break: break-word;
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	.output-view.error .output-text {

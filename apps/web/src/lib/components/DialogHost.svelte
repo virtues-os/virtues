@@ -58,12 +58,11 @@
 		/>
 	{/if}
 	{#snippet footer()}
-		<Button variant="secondary" size="sm" onclick={() => dialogStore.cancel()}>
+		<Button variant="secondary" onclick={() => dialogStore.cancel()}>
 			{pending?.cancelLabel ?? 'Cancel'}
 		</Button>
 		<Button
 			variant={isDanger ? 'danger' : 'primary'}
-			size="sm"
 			disabled={pending?.kind === 'prompt' && !value.trim()}
 			onclick={accept}
 		>

@@ -1,0 +1,55 @@
+{
+  "cold_load": {
+    "ready_ms": 170,
+    "waterfall_depth": 7,
+    "api_total": 21,
+    "js_transfer_kb": 529.1,
+    "heap_mb": 7.95,
+    "memory_mb": 13.86,
+    "wasm_mb": 2.21,
+    "dom_nodes": 1711.5,
+    "listeners": 259.35,
+    "documents": 2
+  },
+  "relay_load": {
+    "composer_ms": 320,
+    "sidebar_ms": 376,
+    "preflights": 2
+  },
+  "long_chat": {
+    "rendered_ms": 332,
+    "open_layout_ms": 46,
+    "resize_layout_ms": 15,
+    "scroll_layout_ms": 12,
+    "longest_task_ms": 120,
+    "heap_mb": 23.55,
+    "memory_mb": 32.53,
+    "wasm_mb": 2.21,
+    "dom_nodes": 13569.15,
+    "listeners": 297.15,
+    "documents": 2
+  },
+  "view_cycle": {
+    "heap_mb_after": 8.28,
+    "heap_mb_per_lap": 0.257,
+    "dom_nodes_per_lap": 2,
+    "listeners_per_lap": 0.5,
+    "documents_per_lap": 0
+  },
+  "sidebar_toggle": {
+    "toggle_layout_ms": 18,
+    "toggle_style_ms": 43,
+    "toggle_script_ms": 15,
+    "toggle_slow_frames": 1
+  },
+  "stream_reply": {
+    "first_token_ms": 105,
+    "stream_lag_ms": 53,
+    "stream_script_ms": 455,
+    "stream_layout_ms": 385,
+    "stream_longest_frame_ms": 67
+  },
+  "webkit_scroll": {
+    "scroll_jumps": 1
+  }
+}

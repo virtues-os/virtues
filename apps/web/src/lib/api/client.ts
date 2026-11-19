@@ -133,6 +133,9 @@ export async function request<T>(
 	const { query: _query, ...fetchInit } = init ?? {};
 	const isGet = (fetchInit.method ?? 'GET').toUpperCase() === 'GET';
 	let res: ReadResponse;
+	// A write ends sharing: a GET that starts after it must not take the
+	// answer of one that started before it and read the old state.
+	if (!isGet) inflightGets.clear();
 	if (isGet && !fetchInit.signal && fetchInit.body == null) {
 		// Headers would make two GETs differ; the shared ones are header-free.
 		const shareable = fetchInit.headers == null;
@@ -171,9 +174,19 @@ export async function request<T>(
 	return (res.text ? JSON.parse(res.text) : undefined) as T;
 }
 
-/** GET a JSON endpoint, with an optional query object. */
-export function apiGet<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
-	return request<T>(path, { query });
+/**
+ * GET a JSON endpoint, with an optional query object. `priority: 'low'` is for
+ * what no first screen shows: the browser opens at most six connections to the
+ * box (and to the apps' loopback proxy), so on a cold start over the relay a
+ * request waits its turn, and a low one waits behind the sidebar's and the
+ * chat's.
+ */
+export function apiGet<T>(
+	path: string,
+	query?: Record<string, QueryValue>,
+	opts?: { priority?: RequestPriority },
+): Promise<T> {
+	return request<T>(path, { query, priority: opts?.priority });
 }
 
 /** Send a JSON body (POST/PUT/PATCH/DELETE) and parse the JSON response. */
@@ -522,7 +535,7 @@ export function getSearchStatus(): Promise<SearchStatus> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Box updates (Settings → Box)
+// Server updates (Settings → Updates and network)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A release already downloaded, verified and preflighted on the box. */
@@ -1124,6 +1137,86 @@ export interface AttentionItem {
 	route: string;
 }
 
+/** What your server noticed about your tasks and threads (`api/notes.rs`).
+ *  Worked out on each read, so a note goes once its condition clears. */
+export interface Note {
+	key: string;
+	/** `clash` | `unplanned`. */
+	kind: string;
+	/** The note, in one sentence. */
+	text: string;
+	/** What it is about (`/thread/…`, `/task/…`); the first is the one it is listed under. */
+	subjects: string[];
+	/** The first subject's name. */
+	about: string;
+	/** When it matters, in words. */
+	when: string;
+	/** The one thing to do about it, and where. */
+	action: string;
+	action_route: string;
+	/** When its moment passes and it leaves on its own. */
+	until: string;
+}
+
+/** A calendar entry a note rests on, with the thread it is filed in. */
+export interface NoteEvent {
+	id: string;
+	title: string;
+	started_at: string;
+	ended_at: string;
+	thread_id: string;
+	thread_name: string;
+	thread_icon: string | null;
+	thread_color: string | null;
+}
+
+/** One note and what it rests on, for its page (`GET /api/notes/:key`). */
+export interface NoteDetail extends Note {
+	is_dismissed: boolean;
+	/** "A calendar clash", "No time set aside". */
+	kind_label: string;
+	/** Why it was raised, in one sentence. */
+	why: string;
+	/** How it was found. */
+	found_by: string;
+	events: NoteEvent[];
+	task: { id: string; title: string; due_on: string; thread_id: string; thread_name: string } | null;
+	/** What acting on it would change, under a heading ("If you move it"). */
+	remedy_title: string;
+	remedy: string;
+	/** When your server first worked it out. */
+	raised_at: string | null;
+	/** What happened to it, oldest first. */
+	history: { kind: 'raised' | 'set_aside' | 'brought_back'; occurred_at: string }[];
+	/** "Fewer like this" is on for its kind and threads. */
+	is_muted: boolean;
+	/** The "Fewer like this" choice, in words. */
+	mute_label: string;
+}
+
+export function getNote(key: string): Promise<NoteDetail> {
+	return apiGet<NoteDetail>(`/notes/${encodeURIComponent(key)}`);
+}
+
+export function getNotes(): Promise<Note[]> {
+	return apiGet<Note[]>('/notes');
+}
+
+/** Not now: set a note aside until its condition changes. */
+export function dismissNote(key: string): Promise<void> {
+	return apiSend<void>('POST', `/notes/${encodeURIComponent(key)}/dismiss`);
+}
+
+/** Bring a set-aside note back. */
+export function restoreNote(key: string): Promise<void> {
+	return apiSend<void>('DELETE', `/notes/${encodeURIComponent(key)}/dismiss`);
+}
+
+/** Fewer like this: stop raising this kind of note for its threads, or start again. */
+export function setNoteMuted(key: string, muted: boolean): Promise<void> {
+	return apiSend<void>(muted ? 'POST' : 'DELETE', `/notes/${encodeURIComponent(key)}/mute`);
+}
+
 export async function getAttention(): Promise<AttentionItem[]> {
 	return apiGet<AttentionItem[]>('/attention');
 }
@@ -1323,6 +1416,10 @@ export interface Profile {
 	theme?: string | null;
 	update_check_hour?: number | null;
 	home_timezone?: string | null;
+	/** The units the owner reads in (Settings · Profile). */
+	units?: 'us' | 'metric';
+	/** Days audio recordings are kept (30, 90, 365); null keeps them forever. */
+	keep_recordings_days?: number | null;
 	home_place_id?: string | null;
 	/** Which wiki_people row is the owner (migration 0080). */
 	self_person_id?: string | null;
@@ -1390,12 +1487,12 @@ export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise
 	return body?.chapters ?? [];
 }
 
-/** A rule the assistant obeys (`<rules>` in its prompt). `avoid` keeps a
- *  subject out unless the person raises it; `defend` holds them to one. */
+/** A rule the assistant obeys (`<rules>` in its prompt): a subject it never
+ *  raises unless the person does. */
 export interface NarrativeRule {
 	id: string;
 	rule: string;
-	kind: 'avoid' | 'defend';
+	kind: 'avoid';
 	active: boolean;
 }
 
@@ -1411,7 +1508,7 @@ export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; pro
  *  Settings always sends: it edits the rules in force, and proposals belong to
  *  the interview's close. */
 export async function saveNarrativeRules(
-	rules: { rule: string; kind: 'avoid' | 'defend' }[],
+	rules: { rule: string; kind: 'avoid' }[],
 	{ keepProposed = false }: { keepProposed?: boolean } = {},
 ): Promise<void> {
 	await apiSend('POST', '/narrative/rules', { rules, keep_proposed: keepProposed });
@@ -1763,7 +1860,7 @@ export async function purgeDriveFile(fileId: string): Promise<void> {
 // Recently deleted — chats, pages and projects (`api::trash` on the box)
 // ============================================================================
 
-export type TrashKind = 'chat' | 'page' | 'project';
+export type TrashKind = 'chat' | 'page' | 'thread';
 
 export interface TrashItem {
 	kind: TrashKind;
@@ -1799,7 +1896,7 @@ export function emptyTrash(): Promise<{ deleted_count: number }> {
 // Visits — the frecency log behind ⌘K (`api::visits` on the box)
 // ============================================================================
 
-export type VisitKind = 'chat' | 'page' | 'project' | 'applet';
+export type VisitKind = 'chat' | 'page' | 'thread' | 'applet';
 
 export interface Frecency {
 	kind: VisitKind;
@@ -1820,7 +1917,7 @@ export interface RecentVisit {
 
 /** GET /api/visits/recent — each record's last visit, newest first. */
 export function getRecentVisits(): Promise<RecentVisit[]> {
-	return apiGet<RecentVisit[]>('/visits/recent');
+	return apiGet<RecentVisit[]>('/visits/recent', undefined, { priority: 'low' });
 }
 
 /** GET /api/visits/frecency — every visited record's score, highest first. */
@@ -2025,7 +2122,7 @@ export function updateChat(
 		title?: string;
 		icon?: string | null;
 		icon_color?: string | null;
-		projectId?: string | null;
+		threadId?: string | null;
 	}
 ): Promise<{
 	conversation_id: string;
@@ -2051,7 +2148,7 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 // and takes more than one step. It ends finished or dropped, and can sit under
 // a thing. It gathers entities, chats, and pages as URL-native members and
 // carries an icon, a color and a brief (`instructions`).
-// A chat lives in at most one Project (see `updateChat`'s `projectId`).
+// A chat lives in at most one thread (see `updateChat`'s `threadId`).
 // =============================================================================
 
 /** Core Project row (no counts). Returned by create/update. */
@@ -2069,6 +2166,13 @@ export interface Project {
 	/** The thing it sits under and that thing's name. Absent from a box older than the fields. */
 	thing_id?: string | null;
 	thing_title?: string | null;
+	/** Where it stands, in one sentence, and when that was written. */
+	current_status?: string | null;
+	current_status_at?: string | null;
+	/** Open but waiting: Backlog. False is Active. */
+	is_backlog?: boolean;
+	/** Adding is automatic: your server also files what it is sure belongs. */
+	is_adding_automatic?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -2102,6 +2206,8 @@ export interface ProjectItem {
 	kind?: string;
 	/** Drive files only: `extraction_status` as stored. */
 	status?: string;
+	/** Records only: when it happened, so a thread's line puts it on its own day. */
+	occurred_at?: string;
 }
 
 /** One entity referenced across a project's members. */
@@ -2126,7 +2232,7 @@ export interface ProjectGraph {
 	edges: ProjectGraphEdge[];
 }
 
-/** GET /api/projects/:id — a Project plus its ordered members. */
+/** GET /api/threads/:id — a Project plus its ordered members. */
 /** A chat filed in a project, as the project's own detail lists it. */
 export interface ProjectChat {
 	id: string;
@@ -2140,40 +2246,73 @@ export interface ProjectDetail extends Project {
 	items: ProjectItem[];
 	/** Every chat filed here. Absent from a box older than the field. */
 	chats?: ProjectChat[];
+	/** Its open tasks, and open tasks homed elsewhere that are also about it. */
+	tasks?: Task[];
+	tasks_also_about?: Task[];
 }
 
-/** GET /api/projects — all Projects with counts. */
+/** One day of a thread's week: minutes spent and minutes ahead. */
+export interface ThreadWeekDay {
+	date: string;
+	done_minutes: number;
+	ahead_minutes: number;
+}
+
+/** An active thread's week, day by day. */
+export interface ThreadWeek {
+	id: string;
+	name: string;
+	icon: string | null;
+	accent_color: string | null;
+	days: ThreadWeekDay[];
+}
+
+/** GET /api/threads/week — each active thread's time over seven days. */
+export interface Week {
+	start: string;
+	today: string;
+	threads: ThreadWeek[];
+	/** Recorded minutes in no thread, one per day. */
+	unfiled_minutes: number[];
+}
+
+/** The week from `start` (`YYYY-MM-DD`), or the owner's current week. */
+export function getThreadWeek(start?: string): Promise<Week> {
+	return apiGet<Week>('/threads/week', start ? { start } : {});
+}
+
+/** GET /api/threads — all Projects with counts. */
 export async function listProjects(opts?: {
 	includeArchived?: boolean;
 	/** Only the projects holding this member url (a page asking where it is filed). */
 	member?: string;
-}): Promise<{ projects: ProjectSummary[] }> {
-	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
+}): Promise<{ threads: ProjectSummary[] }> {
+	return apiGet<{ threads: ProjectSummary[] }>('/threads', {
 		include_archived: opts?.includeArchived ? 'true' : undefined,
 		member: opts?.member,
 	});
 }
 
 /**
- * POST /api/projects/:id/archive — end a project as finished or dropped.
+ * POST /api/threads/:id/archive — end a project as finished or dropped.
  * Reversible; no confirm needed. Sent again for an ended project, it changes
  * only how it ended.
  */
 export function archiveProject(id: string, outcome: ProjectOutcome): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`, { outcome });
+	return apiSend<void>('POST', `/threads/${encodeURIComponent(id)}/archive`, { outcome });
 }
 
-/** POST /api/projects/:id/unarchive — reopen it. */
+/** POST /api/threads/:id/unarchive — reopen it. */
 export function unarchiveProject(id: string): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/unarchive`);
+	return apiSend<void>('POST', `/threads/${encodeURIComponent(id)}/unarchive`);
 }
 
-/** GET /api/projects/:id — a Project with its ordered members. */
+/** GET /api/threads/:id — a Project with its ordered members. */
 export function getProject(id: string): Promise<ProjectDetail> {
-	return apiGet<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
+	return apiGet<ProjectDetail>(`/threads/${encodeURIComponent(id)}`);
 }
 
-/** POST /api/projects — create a Project. */
+/** POST /api/threads — create a Project. */
 export function createProject(body: {
 	name: string;
 	icon?: string | null;
@@ -2181,11 +2320,11 @@ export function createProject(body: {
 	/** Start it under this thing. */
 	thing_id?: string | null;
 }): Promise<Project> {
-	return apiSend<Project>('POST', '/projects', body);
+	return apiSend<Project>('POST', '/threads', body);
 }
 
 /**
- * PUT /api/projects/:id — update a Project. For the nullable fields
+ * PUT /api/threads/:id — update a Project. For the nullable fields
  * (`icon`/`accent_color`/`instructions`/`thing_id`): omit the key to leave
  * unchanged, send `null` to clear, send a value to set.
  */
@@ -2198,14 +2337,17 @@ export function updateProject(
 		instructions?: string | null;
 		sort_order?: number;
 		thing_id?: string | null;
+		current_status?: string | null;
+		is_backlog?: boolean;
+		is_adding_automatic?: boolean;
 	}
 ): Promise<Project> {
-	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
+	return apiSend<Project>('PUT', `/threads/${encodeURIComponent(id)}`, patch);
 }
 
-/** DELETE /api/projects/:id */
+/** DELETE /api/threads/:id */
 export async function deleteProject(id: string): Promise<void> {
-	await apiSend('DELETE', `/projects/${encodeURIComponent(id)}`);
+	await apiSend('DELETE', `/threads/${encodeURIComponent(id)}`);
 }
 
 // =============================================================================
@@ -2233,42 +2375,42 @@ export interface ViewEntity {
 // no separate GET.)
 // =============================================================================
 
-/** POST /api/projects/:id/items — add a member URL to a Project. */
+/** POST /api/threads/:id/items — add a member URL to a Project. */
 export function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
-	return apiSend<ProjectItem>('POST', `/projects/${encodeURIComponent(projectId)}/items`, {
+	return apiSend<ProjectItem>('POST', `/threads/${encodeURIComponent(projectId)}/items`, {
 		url: sanitizeUrl(url),
 	});
 }
 
-/** DELETE /api/projects/:id/items — remove a member URL from a Project. */
+/** DELETE /api/threads/:id/items — remove a member URL from a Project. */
 export async function removeProjectItem(projectId: string, url: string): Promise<void> {
-	await apiSend('DELETE', `/projects/${encodeURIComponent(projectId)}/items`, { url });
+	await apiSend('DELETE', `/threads/${encodeURIComponent(projectId)}/items`, { url });
 }
 
-/** PUT /api/projects/:id/items/reorder — set the member order by URL. */
+/** PUT /api/threads/:id/items/reorder — set the member order by URL. */
 export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
-	await apiSend('PUT', `/projects/${encodeURIComponent(projectId)}/items/reorder`, { urls });
+	await apiSend('PUT', `/threads/${encodeURIComponent(projectId)}/items/reorder`, { urls });
 }
 
-/** PUT /api/projects/:id/items/role — set what a member is to the project. */
+/** PUT /api/threads/:id/items/role — set what a member is to the project. */
 export function setProjectItemRole(
 	projectId: string,
 	url: string,
 	role: ProjectItemRole
 ): Promise<ProjectItem> {
-	return apiSend<ProjectItem>('PUT', `/projects/${encodeURIComponent(projectId)}/items/role`, {
+	return apiSend<ProjectItem>('PUT', `/threads/${encodeURIComponent(projectId)}/items/role`, {
 		url,
 		role,
 	});
 }
 
 /**
- * GET /api/projects/:id/graph — entities referenced across the members.
+ * GET /api/threads/:id/graph — entities referenced across the members.
  * Built only from things explicitly filed or linked (`[@ref]`); nothing is
  * inferred, so an entity merely mentioned inside a PDF will not appear.
  */
 export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
-	return apiGet<ProjectGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
+	return apiGet<ProjectGraph>(`/threads/${encodeURIComponent(projectId)}/graph`);
 }
 
 // =============================================================================
@@ -2288,7 +2430,7 @@ export interface Page {
 	title: string;
 	/** Markdown either way: for a block page, the export of its tree. */
 	content: string;
-	project_id: string | null;
+	thread_id: string | null;
 	icon: string | null;
 	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
 	icon_color: string | null;
@@ -2324,7 +2466,10 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	project_id: string | null;
+	/** The first line of text after the title, plain. Empty when the page has no text. */
+	excerpt: string;
+	/** The open threads that hold this page. A page can be in several. */
+	threads: { id: string; name: string }[];
 	icon: string | null;
 	icon_color: string | null;
 	cover_url: string | null;
@@ -2349,6 +2494,12 @@ export type TaskActor = 'owner' | 'assistant';
 export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
 export type RecurUnit = 'day' | 'week' | 'month' | 'year';
 
+/** Something a task is about: a thread or a subject. */
+export interface TaskLink {
+	kind: 'thread' | 'person' | 'place' | 'org' | 'thing';
+	id: string;
+}
+
 export interface Task {
 	id: string;
 	title: string;
@@ -2359,9 +2510,14 @@ export interface Task {
 	due_on: string | null;
 	/** A time, only when one was given. */
 	due_at: string | null;
-	project_id: string | null;
-	/** The thing it sits under. A task has one parent at most: a project or a thing. */
+	/** Its home, one at most of these five. Absent fields: a box older than them. */
+	thread_id: string | null;
 	thing_id?: string | null;
+	person_id?: string | null;
+	place_id?: string | null;
+	org_id?: string | null;
+	/** What else it is about, besides its home. */
+	also_about?: TaskLink[];
 	/**
 	 * It recurs every `recur_every` `recur_unit`s, counted from the day it is
 	 * finished. Both null: once. Absent from a box older than the fields.
@@ -2412,16 +2568,20 @@ export interface NewTask {
 	assignee?: TaskActor;
 	due_on?: string | null;
 	due_at?: string | null;
-	project_id?: string | null;
+	thread_id?: string | null;
 	thing_id?: string | null;
+	person_id?: string | null;
+	place_id?: string | null;
+	org_id?: string | null;
+	also_about?: TaskLink[];
 	recur_every?: number | null;
 	recur_unit?: RecurUnit | null;
 }
 
 /**
  * A partial edit: `null` clears a field, an absent key leaves it. Recurrence
- * is set or cleared as a pair, and moving a task under a thing takes it out
- * of its project (and the other way round).
+ * is set or cleared as a pair. Giving a task one new home takes it out of the
+ * old one, and `also_about` replaces the whole list.
  */
 export type TaskPatch = Partial<
 	Pick<
@@ -2432,8 +2592,12 @@ export type TaskPatch = Partial<
 		| 'status'
 		| 'due_on'
 		| 'due_at'
-		| 'project_id'
+		| 'thread_id'
 		| 'thing_id'
+		| 'person_id'
+		| 'place_id'
+		| 'org_id'
+		| 'also_about'
 		| 'recur_every'
 		| 'recur_unit'
 		| 'sort_order'
@@ -2442,9 +2606,13 @@ export type TaskPatch = Partial<
 
 export function listTasks(
 	status: 'open' | 'closed' | 'all' = 'open',
-	filter: { assignee?: TaskActor; project_id?: string; thing_id?: string } = {},
+	filter: { assignee?: TaskActor; thread_id?: string; thing_id?: string } = {},
 ): Promise<Task[]> {
 	return apiGet('/tasks', { status, ...filter });
+}
+
+export function getTask(id: string): Promise<Task> {
+	return apiGet(`/tasks/${encodeURIComponent(id)}`);
 }
 
 export function createTask(task: NewTask): Promise<Task> {
@@ -2583,11 +2751,11 @@ export function getSkyMoment(date: string, id: string): Promise<SkyMomentDetail>
 	return apiGet<SkyMomentDetail>(`/sky/moment/${encodeURIComponent(date)}?id=${encodeURIComponent(id)}`);
 }
 
-/** A project, page or chat a day's moments belong to (`api::sky::Thread`). */
+/** A thread, page or chat a day's moments belong to (`api::sky::Thread`). */
 export interface SkyThread {
 	url: string;
 	label: string;
-	kind: "project" | "page" | "chat";
+	kind: "thread" | "page" | "chat";
 	/** The ids of the moments it links to. */
 	moments: string[];
 }
@@ -2617,8 +2785,8 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
-	return apiGet<PageListResponse>('/pages', { limit, offset, project_id });
+export function listPages(limit?: number, offset?: number): Promise<PageListResponse> {
+	return apiGet<PageListResponse>('/pages', { limit, offset });
 }
 
 /**
@@ -2634,10 +2802,10 @@ export function getPage(id: string): Promise<Page> {
 export function createPage(
 	title: string,
 	content: string = '',
-	project_id: string | null = null,
+	thread_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
-	return apiSend<Page>('POST', '/pages', { title, content, projectId: project_id, ...options });
+	return apiSend<Page>('POST', '/pages', { title, content, threadId: thread_id, ...options });
 }
 
 /**
@@ -2648,7 +2816,7 @@ export function updatePage(
 	updates: {
 		title?: string;
 		content?: string;
-		project_id?: string | null;
+		thread_id?: string | null;
 		icon?: string | null;
 		icon_color?: string | null;
 		cover_url?: string | null;
@@ -2835,35 +3003,6 @@ export function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
-// ── Assistant memories (the Memory section of Settings > Assistant) ──
-// The machine's per-note memory, visible and editable. Every live note rides
-// in the system prompt of every conversation.
-
-export interface AssistantMemory {
-	id: number;
-	/** facts | manner | practices */
-	lane: string;
-	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
-	author: string;
-	body: string;
-	created_at: string;
-	updated_at: string;
-}
-
-export function listAssistantMemories(): Promise<AssistantMemory[]> {
-	return apiGet<AssistantMemory[]>('/assistant/memories');
-}
-
-/** Rewrite one memory in your own words. It becomes yours. */
-export function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
-	return apiSend<AssistantMemory>('PUT', `/assistant/memories/${id}`, { body });
-}
-
-/** Remove a memory from every future conversation (soft-retired with provenance). */
-export async function retireAssistantMemory(id: number): Promise<void> {
-	await apiSend('DELETE', `/assistant/memories/${id}`);
-}
-
 export function getAssistantProfile<T = unknown>(): Promise<T> {
 	return apiGet<T>('/assistant-profile');
 }
@@ -2880,6 +3019,120 @@ export function updateAssistantProfile<T = unknown>(patch: Record<string, unknow
 export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
 	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
 	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+}
+
+// ── Changed lately (Settings) ────────────────────────────────────────────────
+/** One change on the Settings page's Changed lately list
+ *  (`api/settings_changes.rs`): a setting you changed, or a device you paired. */
+export interface SettingsChange {
+	/** `setting:<id>` or `paired:<id>`. */
+	id: string;
+	kind: 'setting' | 'paired';
+	/** The setting's id in `lib/settings`, for a setting. */
+	setting_id: string | null;
+	/** The stored field it wrote, for a setting. */
+	field: string | null;
+	old_value: unknown;
+	new_value: unknown;
+	/** The device's name, for a pairing. */
+	label: string | null;
+	actor: 'owner' | 'assistant' | null;
+	occurred_at: string;
+	can_undo: boolean;
+}
+
+export interface SettingsLately {
+	/** Changes and pairings in the last four weeks, newest first. */
+	changes: SettingsChange[];
+}
+
+export function getSettingsChanges(): Promise<SettingsLately> {
+	return apiGet<SettingsLately>('/settings/changes');
+}
+
+/** Write a setting change's old value back. `id` is the number in `setting:<id>`. */
+export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>('POST', `/settings/changes/${id}/undo`);
+}
+
+/** One thing the assistant can do, as the owner switched it (`api/capabilities.rs`). */
+export interface Capability {
+	id: 'web_search' | 'browser' | 'applets' | 'pages';
+	on: boolean;
+}
+
+export function getCapabilities(): Promise<Capability[]> {
+	return apiGet<Capability[]>('/settings/capabilities');
+}
+
+/** Turn one on or off. Returns them all. */
+export function setCapability(id: Capability['id'], on: boolean): Promise<Capability[]> {
+	return apiSend<Capability[]>('PUT', `/settings/capabilities/${id}`, { on });
+}
+
+/** A sample reply in the style notes being typed (`api/style_preview.rs`). */
+export interface StylePreview {
+	question: string;
+	reply: string;
+}
+
+export function previewStyle(notes: string, signal?: AbortSignal): Promise<StylePreview> {
+	return request<StylePreview>('/settings/style-preview', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ notes }),
+		signal,
+	});
+}
+
+/** One change the settings agent proposes, in stored form (`api/settings_draft.rs`). */
+export interface SettingsDraftChange {
+	setting_id: string;
+	field: string;
+	old_value: unknown;
+	new_value: unknown;
+	/** Appearance: the page applies it, not the server. */
+	in_app: boolean;
+	/** What happens that you should know before applying, in a sentence. */
+	consequence: string | null;
+	/** False when what it does can't be put back. */
+	can_undo: boolean;
+}
+
+/** The settings agent's card for what was typed. `kind` says which card. */
+export interface SettingsDraft {
+	kind: 'change' | 'choose' | 'open' | 'answer' | 'none';
+	changes: SettingsDraftChange[];
+	/** For `choose`: one change per option. */
+	options: SettingsDraftChange[];
+	/** For `open`: the page to send you to, and why. `{name}` is the assistant's name. */
+	open: { setting_id: string; reason: string } | null;
+	answer: string | null;
+	/** For `answer`: the settings it is about. */
+	about: string[];
+	/** One sentence, shown when nothing else came back. */
+	note: string | null;
+}
+
+/** The appearance values this browser has, which the server can't see. */
+export interface AppearanceValues {
+	theme: string;
+	accent: string;
+	glass: string;
+	text_size: string;
+	reading_font: string;
+	reduce_motion: boolean;
+}
+
+/** Ask the settings agent for a card from what was typed. Saves nothing. */
+export function draftSettings(text: string, app: AppearanceValues): Promise<SettingsDraft> {
+	return apiSend<SettingsDraft>('POST', '/settings/draft', { text, app });
+}
+
+/** Save drafted changes the owner accepted, recorded as the assistant's. */
+/** `old_value` is what the draft said the setting held; the server refuses the draft if it no longer does. */
+export function applySettingsDraft(changes: { field: string; new_value: unknown; old_value?: unknown }[]): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>('POST', '/settings/draft/apply', { changes });
 }
 
 // ── Billing / wallet ─────────────────────────────────────────────────────────
@@ -3015,7 +3268,7 @@ export function removeChatPermission<T = unknown>(id: string, entityId: string):
 
 // ── Models ───────────────────────────────────────────────────────────────────
 export function listModels<T = unknown>(): Promise<T> {
-	return apiGet<T>('/models');
+	return apiGet<T>('/models', undefined, { priority: 'low' });
 }
 export function getModel<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/models/${encodeURIComponent(id)}`);
@@ -3174,7 +3427,7 @@ export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');
 }
 export function getSubscription<T = unknown>(fresh = false): Promise<T> {
-	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined);
+	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined, { priority: 'low' });
 }
 
 // ── Narrative identity (wiki) ────────────────────────────────────────────────

@@ -288,7 +288,7 @@
 <Page
 	title="Bookmarks"
 	description="Everything you kept from the web - browser bookmarks, starred repositories, and links you saved by hand."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		<form class="save-row" onsubmit={save}>
@@ -302,7 +302,6 @@
 			/>
 			<Button
 				variant="secondary"
-				size="sm"
 				type="submit"
 				icon="mynaui:plus"
 				loading={saving}
@@ -408,14 +407,13 @@
 	}
 
 	.save-input:focus {
-		outline: none;
 		border-color: var(--color-foreground-muted);
 	}
 
 	.save-error {
 		margin: 0 0 0.75rem;
 		font-size: 0.75rem;
-		color: var(--color-danger, #dc2626);
+		color: var(--color-error);
 	}
 
 	/* ── Wall tiles ───────────────────────────────────────────────────────

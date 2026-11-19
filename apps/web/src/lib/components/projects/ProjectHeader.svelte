@@ -20,8 +20,8 @@
 	import { Popover } from '$lib/floating';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { thingsStore } from '$lib/stores/things.svelte';
-	import { projectColor } from '$lib/sidebar/pin-colors';
-	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+	import { accentCss } from '$lib/sidebar/pin-colors';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 	import {
 		changeOutcome,
 		deleteProject,
@@ -89,7 +89,7 @@
 		try {
 			await projectStore.update(project.id, { thing_id });
 		} catch (e) {
-			toast.error("Your server couldn't move that project", {
+			toast.error("Your server couldn't move that thread", {
 				description: e instanceof Error ? e.message : 'Nothing changed. Try again',
 			});
 		}
@@ -108,7 +108,7 @@
 			{#snippet trigger({ toggle }: { toggle: () => void })}
 				<button
 					class="project-icon"
-					style={`--room-accent: ${projectColor(project)}`}
+					style={`--room-accent: ${accentCss(project.accent_color) ?? 'var(--color-foreground-muted)'}`}
 					title="Change icon and color"
 					aria-label="Change icon and color"
 					onclick={toggle}
@@ -124,8 +124,7 @@
 					color={project.accent_color ?? null}
 					onColorSelect={setAccent}
 					label={project.name}
-					fallback={PROJECT_ICON}
-					autoColor={projectColor({ id: project.id })}
+					fallback={THREAD_ICON}
 				/>
 			{/snippet}
 		</Popover>
@@ -135,7 +134,7 @@
 				class="title-input font-serif"
 				bind:value={nameDraft}
 				rows="1"
-				placeholder="Untitled project"
+				placeholder="Untitled thread"
 				onfocus={() => (nameFocused = true)}
 				onblur={commitName}
 				onkeydown={(e) => {
@@ -153,7 +152,7 @@
 				class="desc-input"
 				bind:value={briefDraft}
 				rows="1"
-				placeholder="What this project is for. The assistant follows this in every chat here."
+				placeholder="What this thread is for. The assistant follows this in every chat here."
 				onfocus={() => (briefFocused = true)}
 				onblur={commitBrief}
 				onkeydown={(e) => {
@@ -168,21 +167,21 @@
 					{#snippet trigger({ toggle }: { toggle: () => void })}
 						<TextAction
 							quiet
-							title="A thing goes on and can't be finished, like a garden or a bike. A project can sit under one."
+							title="A thing goes on and can't be finished, like a garden or a bike. A thread can sit under one."
 							onclick={() => {
 								thingsStore.ensure();
 								toggle();
 							}}
 						>
-							{project.thing_title ? `Under ${project.thing_title}` : 'On its own'}
+							{project.thing_title ? `Under ${project.thing_title}` : 'Not under a thing'}
 						</TextAction>
 					{/snippet}
 					{#snippet children({ close }: { close: () => void })}
-						<div class="menu" role="menu" aria-label="The thing this project sits under">
+						<div class="menu" role="menu" aria-label="The thing this thread sits under">
 							<MenuItem
 								role="menuitemradio"
 								checked={!project.thing_id}
-								label="On its own"
+								label="Not under a thing"
 								onclick={() => {
 									close();
 									setThing(null);
@@ -200,7 +199,7 @@
 								/>
 							{/each}
 							{#if thingsStore.loaded && thingsStore.things.length === 0}
-								<p class="menu-note">Name a thing in your wiki to put this project under it.</p>
+								<p class="menu-note">Name a thing in your wiki to put this thread under it.</p>
 							{/if}
 						</div>
 					{/snippet}
@@ -209,14 +208,14 @@
 		</div>
 
 		<div class="head-actions">
-			<Button variant="secondary" size="sm" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
+			<Button variant="secondary" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
 				>New chat</Button
 			>
 			<Popover bind:open={overflowOpen} placement="bottom-end">
 				{#snippet trigger({ toggle }: { toggle: () => void })}
 					<IconButton
 						icon="mynaui:dots"
-						label="More project actions"
+						label="More thread actions"
 						expanded={overflowOpen}
 						haspopup="menu"
 						onclick={toggle}
@@ -227,7 +226,7 @@
 						{#if project.archived_at}
 							<MenuItem
 								icon="mynaui:undo"
-								label="Reopen project"
+								label="Reopen thread"
 								onclick={() => {
 									close();
 									reopenProject(project);
@@ -244,7 +243,7 @@
 						{:else}
 							<MenuItem
 								icon="mynaui:check-circle"
-								label="Finish project"
+								label="Finish thread"
 								onclick={() => {
 									close();
 									endProject(project, 'finished');
@@ -252,7 +251,7 @@
 							/>
 							<MenuItem
 								icon="mynaui:x-circle"
-								label="Drop project"
+								label="Drop thread"
 								onclick={() => {
 									close();
 									endProject(project, 'dropped');
@@ -261,7 +260,7 @@
 						{/if}
 						<MenuItem
 							icon="mynaui:trash"
-							label="Delete project"
+							label="Delete thread"
 							destructive
 							onclick={() => {
 								close();
@@ -281,10 +280,10 @@
 	<div class="ended-note">
 		<Icon icon={dropped ? 'mynaui:x-circle' : 'mynaui:check-circle'} width="15" />
 		<span>
-			You {dropped ? 'dropped' : 'finished'} this project on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+			You {dropped ? 'dropped' : 'finished'} this thread on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
 			Its chats and items are all here. Reopen it to add more.
 		</span>
-		<Button variant="secondary" size="sm" onclick={() => reopenProject(project)}>Reopen</Button>
+		<Button variant="secondary" onclick={() => reopenProject(project)}>Reopen</Button>
 	</div>
 {/if}
 

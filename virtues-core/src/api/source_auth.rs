@@ -527,8 +527,8 @@ async fn name_the_account_with(
 /// Asking a provider which account a grant was made for, when the grant does
 /// not say. The proxy hands a Google grant to the box with its tokens and
 /// scopes only, so the box asks Google for the account's address itself, with
-/// the grant's own access token, and the read of the owner's mail profile,
-/// calendar or Drive runs on the box.
+/// the grant's own access token, and the read of the owner's mail profile
+/// or calendar runs on the box.
 mod account_lookup {
     use std::sync::OnceLock;
     use std::time::Duration;
@@ -543,11 +543,10 @@ mod account_lookup {
     }
 
     /// Google's lookups, in order, one under each scope the grant asks for:
-    /// Gmail's profile under `gmail.readonly`, the primary calendar, whose id
-    /// is the account's address, under `calendar.readonly`, and Drive's
-    /// signed-in user under `drive.readonly`. The owner can untick any of
-    /// them on the consent screen, and whichever scope they keep names the
-    /// account.
+    /// Gmail's profile under `gmail.readonly`, and the primary calendar, whose
+    /// id is the account's address, under `calendar.readonly`. The owner can
+    /// untick either on the consent screen, and whichever scope they keep
+    /// names the account.
     // TODO(2026-10-28): migrate these into the google [[source]] entry in
     // applets/sources.toml, so core reads them from the catalog and holds no
     // provider's URLs (tools/arch-lint.sh, lint 1).
@@ -559,10 +558,6 @@ mod account_lookup {
         Lookup {
             url: "https://www.googleapis.com/calendar/v3/calendars/primary",
             pointer: "/id",
-        },
-        Lookup {
-            url: "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)",
-            pointer: "/user/emailAddress",
         },
     ];
 
@@ -1179,13 +1174,12 @@ mod tests {
         (StatusCode::FORBIDDEN, serde_json::json!({ "error": { "code": 403 } }))
     }
 
-    /// A stand-in for Google's three account lookups on a local port.
-    /// `/gmail`, `/calendar` and `/drive` answer with the status and JSON
+    /// A stand-in for Google's two account lookups on a local port.
+    /// `/gmail` and `/calendar` answer with the status and JSON
     /// given, and every request is recorded as "<path> <authorization header>".
     struct Google {
         gmail: String,
         calendar: String,
-        drive: String,
         seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     }
 
@@ -1193,20 +1187,17 @@ mod tests {
         async fn answering(
             gmail: (StatusCode, serde_json::Value),
             calendar: (StatusCode, serde_json::Value),
-            drive: (StatusCode, serde_json::Value),
         ) -> Self {
             let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let app = axum::Router::new()
                 .route("/gmail", Self::route("/gmail", gmail, seen.clone()))
-                .route("/calendar", Self::route("/calendar", calendar, seen.clone()))
-                .route("/drive", Self::route("/drive", drive, seen.clone()));
+                .route("/calendar", Self::route("/calendar", calendar, seen.clone()));
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             Self {
                 gmail: format!("http://{addr}/gmail"),
                 calendar: format!("http://{addr}/calendar"),
-                drive: format!("http://{addr}/drive"),
                 seen,
             }
         }
@@ -1231,7 +1222,7 @@ mod tests {
         /// The box's Google lookups, in their order and with their pointers,
         /// with the URLs pointed here.
         fn lookups(&self) -> Vec<account_lookup::Lookup<'_>> {
-            let here = [&self.gmail, &self.calendar, &self.drive];
+            let here = [&self.gmail, &self.calendar];
             let google = account_lookup::lookups_for("google");
             assert_eq!(google.len(), here.len(), "a stand-in for each of Google's lookups");
             google
@@ -1248,7 +1239,7 @@ mod tests {
 
     #[test]
     fn only_google_grants_are_looked_up() {
-        assert_eq!(account_lookup::lookups_for("google").len(), 3);
+        assert_eq!(account_lookup::lookups_for("google").len(), 2);
         for source in ["strava", "notion", "plaid", "example_source"] {
             assert!(account_lookup::lookups_for(source).is_empty(), "{source}");
         }
@@ -1259,7 +1250,6 @@ mod tests {
         let google = Google::answering(
             answers(serde_json::json!({ "emailAddress": "david@example.com" })),
             answers(serde_json::json!({ "id": "david@example.com" })),
-            answers(serde_json::json!({ "user": { "emailAddress": "david@example.com" } })),
         )
         .await;
         let mut named = email_grant("at-first", Some("nick@example.com"));
@@ -1272,11 +1262,9 @@ mod tests {
     async fn whichever_scope_the_owner_kept_names_the_account() {
         let gmail = answers(serde_json::json!({ "emailAddress": "nick@example.com", "messagesTotal": 3 }));
         let calendar = answers(serde_json::json!({ "id": "nick@example.com", "summary": "Nick" }));
-        let drive = answers(serde_json::json!({ "user": { "emailAddress": "nick@example.com" } }));
         let kept = [
-            ("/gmail", Google::answering(gmail, refused(), refused()).await),
-            ("/calendar", Google::answering(refused(), calendar, refused()).await),
-            ("/drive", Google::answering(refused(), refused(), drive).await),
+            ("/gmail", Google::answering(gmail, refused()).await),
+            ("/calendar", Google::answering(refused(), calendar).await),
         ];
         for (scope, google) in kept {
             let mut grant = grant("at-first", Some(3600));
@@ -1293,7 +1281,6 @@ mod tests {
         let google = Google::answering(
             answers(serde_json::json!({ "emailAddress": "Nick@Example.com", "messagesTotal": 3 })),
             answers(serde_json::json!({ "id": "nick@example.com" })),
-            answers(serde_json::json!({ "user": { "emailAddress": "nick@example.com" } })),
         )
         .await;
         let mut first = grant("at-first", Some(3600));
@@ -1314,7 +1301,6 @@ mod tests {
         let other_account = Google::answering(
             answers(serde_json::json!({ "emailAddress": "david@example.com" })),
             answers(serde_json::json!({ "id": "david@example.com" })),
-            answers(serde_json::json!({ "user": { "emailAddress": "david@example.com" } })),
         )
         .await;
         let mut other = grant("at-other", Some(3600));
@@ -1331,7 +1317,6 @@ mod tests {
         let calendar_only = Google::answering(
             refused(),
             answers(serde_json::json!({ "id": "nick@example.com", "summary": "Nick" })),
-            refused(),
         )
         .await;
         let mut again = grant("at-second", Some(3600));
@@ -1354,16 +1339,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Gmail and Drive refuse, and the calendar answers without an address.
+        // Gmail refuses, and the calendar answers without an address.
         let google = Google::answering(
             refused(),
             answers(serde_json::json!({ "id": "primary-calendar" })),
-            refused(),
         )
         .await;
         let mut regrant = grant("at-second", Some(3600));
         name_the_account_with(&http(), &google.lookups(), &mut regrant).await;
-        assert_eq!(google.seen().len(), 3, "every lookup was asked");
+        assert_eq!(google.seen().len(), 2, "every lookup was asked");
         assert_eq!(
             regrant.metadata,
             grant("at-second", Some(3600)).metadata,
@@ -1385,7 +1369,6 @@ mod tests {
         };
         let next = Google::answering(
             answers(serde_json::json!({ "emailAddress": "david@example.com" })),
-            refused(),
             refused(),
         )
         .await;

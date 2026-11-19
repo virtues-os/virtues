@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use super::{ToolContext, ToolResult};
-use crate::api::tasks::{self, Actor, NewTask, Origin, Status, TaskPatch, Writer};
+use crate::api::tasks::{self, Actor, NewTask, Origin, Status, Subject, TaskLink, TaskPatch, Writer};
 use crate::types::Timestamp;
 
 pub const CREATE_TOOL: &str = "create_task";
@@ -57,21 +57,25 @@ pub async fn create(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
             Some("assistant") => Actor::Assistant,
             _ => Actor::Owner,
         };
-        let thing_id = item.get("thing_id").and_then(Value::as_str).map(str::to_string);
+        let (home, also_about) = match (home(item), links(item)) {
+            (Ok(home), Ok(links)) => (home.flatten(), links),
+            (Err(e), _) | (_, Err(e)) => return ToolResult::error(e),
+        };
+        // A task given no home is filed in the chat's thread.
+        let home = home.or_else(|| context.thread_id.clone().map(|id| TaskLink { kind: Subject::Thread, id }));
+        let at = |kind: Subject| home.as_ref().filter(|h| h.kind == kind).map(|h| h.id.clone());
         new.push(NewTask {
             title: title.to_string(),
             notes: item.get("notes").and_then(Value::as_str).map(str::to_string),
             assignee: Some(assignee),
             due_on,
             due_at,
-            // A task put under a thing is not also filed in the chat's project:
-            // it has one parent.
-            project_id: item
-                .get("project_id")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| context.project_id.clone().filter(|_| thing_id.is_none())),
-            thing_id,
+            thread_id: at(Subject::Thread),
+            thing_id: at(Subject::Thing),
+            person_id: at(Subject::Person),
+            place_id: at(Subject::Place),
+            org_id: at(Subject::Org),
+            also_about,
             recur_every: item.get("recur_every").and_then(Value::as_i64).and_then(|n| i32::try_from(n).ok()),
             recur_unit: item.get("recur_unit").and_then(Value::as_str).map(str::to_string),
             source_url: context.chat_id.as_ref().map(|id| format!("/chat/{id}")),
@@ -118,11 +122,33 @@ pub async fn update(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
             }
         }
     }
-    if let Some(project) = args.get("project_id").and_then(Value::as_str) {
-        patch.project_id = Some(Some(project.to_string()).filter(|p| !p.is_empty() && p != "none"));
+    match home(args) {
+        Ok(None) => {}
+        // "none": no home. Clearing every slot leaves it with none.
+        Ok(Some(None)) => {
+            patch.thread_id = Some(None);
+            patch.thing_id = Some(None);
+            patch.person_id = Some(None);
+            patch.place_id = Some(None);
+            patch.org_id = Some(None);
+        }
+        Ok(Some(Some(link))) => {
+            let slot = match link.kind {
+                Subject::Thread => &mut patch.thread_id,
+                Subject::Thing => &mut patch.thing_id,
+                Subject::Person => &mut patch.person_id,
+                Subject::Place => &mut patch.place_id,
+                Subject::Org => &mut patch.org_id,
+            };
+            *slot = Some(Some(link.id));
+        }
+        Err(e) => return ToolResult::error(e),
     }
-    if let Some(thing) = args.get("thing_id").and_then(Value::as_str) {
-        patch.thing_id = Some(Some(thing.to_string()).filter(|t| !t.is_empty() && t != "none"));
+    if args.get("also_about").is_some() {
+        match links(args) {
+            Ok(links) => patch.also_about = Some(links),
+            Err(e) => return ToolResult::error(e),
+        }
     }
     let recur_every = args.get("recur_every").and_then(Value::as_i64).map(|n| i32::try_from(n).ok());
     match args.get("recur_unit").and_then(Value::as_str) {
@@ -276,5 +302,42 @@ mod tests {
         assert!(todo.success, "{:?}", todo.error);
         let id = todo.data["tasks"][0]["id"].as_str().unwrap();
         assert!(!update(&pool, &json!({ "id": id, "for": "assistant" }), &run).await.success);
+    }
+}
+
+/// A subject's ref, `/thread/…`, `/person/…`, `/place/…`, `/org/…` or
+/// `/thing/…`, as a link.
+fn subject(url: &str) -> Result<TaskLink, String> {
+    let bad = || format!("`{url}` is not a thread, person, place, org or thing ref, such as /person/<id>.");
+    let (kind, id) = crate::api::refs::split_ref(url.trim()).ok_or_else(bad)?;
+    let kind = match kind {
+        "thread" => Subject::Thread,
+        "person" => Subject::Person,
+        "place" => Subject::Place,
+        "org" => Subject::Org,
+        "thing" => Subject::Thing,
+        _ => return Err(bad()),
+    };
+    Ok(TaskLink { kind, id: id.to_string() })
+}
+
+/// `home`: absent, "none", or a subject's ref.
+fn home(args: &Value) -> Result<Option<Option<TaskLink>>, String> {
+    match args.get("home").and_then(Value::as_str).map(str::trim) {
+        None => Ok(None),
+        Some("" | "none") => Ok(Some(None)),
+        Some(url) => subject(url).map(|l| Some(Some(l))),
+    }
+}
+
+/// `also_about`: a list of subject refs.
+fn links(args: &Value) -> Result<Vec<TaskLink>, String> {
+    match args.get("also_about") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(urls)) => urls
+            .iter()
+            .map(|u| u.as_str().ok_or_else(|| "`also_about` is a list of refs.".to_string()).and_then(subject))
+            .collect(),
+        Some(_) => Err("`also_about` is a list of refs.".into()),
     }
 }

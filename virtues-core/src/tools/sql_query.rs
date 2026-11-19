@@ -415,6 +415,20 @@ impl SqlQueryTool {
         out
     }
 
+    /// The query `show` draws, with the row limit its mark needs. `execute`
+    /// clamps a model's limit to 200, and several marks draw more, so `show`
+    /// comes in here instead. The read-only transaction, the role, the
+    /// timeout and the byte budget are `execute_query`'s, as for any query.
+    pub(crate) async fn query_for_show(
+        &self,
+        sql: &str,
+        limit: u32,
+        timezone: Option<&str>,
+        schema: Option<&str>,
+    ) -> Result<ToolResult, ToolError> {
+        self.execute_query(sql, limit, None, timezone, schema).await
+    }
+
     /// Execute a read-only SQL query.
     ///
     /// Read-only is enforced by Postgres itself (`SET TRANSACTION READ ONLY`),
@@ -771,7 +785,7 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
 ///
 /// Was 256 KiB until 2026-09-25. A real box sent one 130 KB result through
 /// five steps of one turn, then replayed it into the rest of that chat.
-const MAX_RESULT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_RESULT_BYTES: usize = 64 * 1024;
 
 /// Convert Postgres rows to JSON array. `timestamptz` values are written on
 /// the owner's clock in `zone` (see [`crate::timezone::owner_rfc3339`]).
@@ -819,6 +833,8 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow], zone: Option<&str>) 
                     serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
                     serde_json::Value::String(v.format("%Y-%m-%d").to_string())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveTime, _>(i) {
+                    serde_json::Value::String(v.format("%H:%M:%S%.f").to_string())
                 }
                 // Interval → readable string (PgInterval has no Display)
                 else if let Ok(v) = row.try_get::<sqlx::postgres::types::PgInterval, _>(i) {
@@ -892,15 +908,15 @@ mod tests {
         const REGISTRY_ONLY: &[(&str, &str)] = &[
             (
                 "data_health_cycle_log",
-                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+                "GAP: collected, no catalog description yet, so list_tables does not name it",
             ),
             (
                 "data_health_symptom",
-                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+                "GAP: collected, no catalog description yet, so list_tables does not name it",
             ),
             (
                 "data_health_wrist_temperature",
-                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+                "GAP: collected, no catalog description yet, so list_tables does not name it",
             ),
         ];
         /// In the SQL catalog, deliberately NOT in the registry. Reason required.
@@ -1197,6 +1213,33 @@ mod tests {
             Some(false),
             "read-only transaction must leave no table behind",
         );
+    }
+
+    /// A time of day comes back as its value, so a chart that reads one can
+    /// draw it.
+    #[sqlx::test]
+    async fn a_time_column_decodes_to_its_value(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let shown = tool
+            .query_for_show("SELECT TIME '08:35:00' AS t", 10, None, None)
+            .await
+            .expect("the query runs");
+        assert_eq!(shown.data["rows"][0]["t"], "08:35:00");
+    }
+
+    /// show's door takes the limit its mark needs; a model's own query is
+    /// still clamped to 200.
+    #[sqlx::test]
+    async fn show_reads_past_the_200_row_clamp_and_a_model_query_does_not(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let sql = "SELECT g AS n FROM generate_series(1, 300) g";
+        let shown = tool.query_for_show(sql, 301, None, None).await.expect("show's query runs");
+        assert_eq!(shown.data["rows"].as_array().map(Vec::len), Some(300));
+        let asked = tool
+            .execute(serde_json::json!({ "operation": "query", "sql": sql, "limit": 301 }), None, None, None)
+            .await
+            .expect("a model's query runs");
+        assert_eq!(asked.data["rows"].as_array().map(Vec::len), Some(200));
     }
 
     /// An ordinary SELECT still works — the guard rejects writes, not reads.

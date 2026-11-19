@@ -10,6 +10,9 @@
 //! Every item's `key` stays the same for as long as its condition holds, so a
 //! client notifies once per problem, not once per poll.
 //!
+//! One kind informs rather than asks: `search`, while search moves to another
+//! model. It comes last, and the Mac app doesn't notify for it.
+//!
 //! Each source is read independently, and one that fails to read is left out
 //! rather than failing the list: a broken backup query must not hide an
 //! expired sign-in.
@@ -29,7 +32,7 @@ pub struct AttentionItem {
     /// Stable while the condition holds; a new key is a new problem.
     pub key: String,
     /// `key` | `update` | `disk` | `backup` | `source` | `connection` |
-    /// `stream` | `applet` | `applet_new`, most urgent first.
+    /// `stream` | `applet` | `applet_new` | `search`, most urgent first.
     pub kind: &'static str,
     pub title: String,
     pub body: String,
@@ -74,6 +77,11 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     match new_from_applets(db).await {
         Ok(rows) => new_applet_items(&mut items, rows),
         Err(e) => tracing::warn!("attention: applet results unreadable: {e}"),
+    }
+
+    match crate::search::next_index::status(db.pool()).await {
+        Ok(change) => search_rebuild_items(&mut items, change.map(|c| c.model)),
+        Err(e) => tracing::warn!("attention: search model change unreadable: {e}"),
     }
 
     Ok(items)
@@ -124,12 +132,29 @@ async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
     items
 }
 
-/// `(applet id, name, run id, error)` for each applet that is on and whose
-/// latest finished run failed. It stays until a run succeeds, or the owner
-/// turns the applet off.
-async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Option<String>)>> {
+/// While search moves to another model, a line saying so. It informs rather
+/// than warns, and makes no promise about search meanwhile: on most boxes the
+/// old model keeps serving, but a Dragon whose NPU never worked had no search
+/// by meaning to keep. A new index takes days on a small server. No count or
+/// percentage here; Settings → Search has the numbers for anyone who wants
+/// them.
+fn search_rebuild_items(items: &mut Vec<AttentionItem>, model: Option<String>) {
+    let Some(model) = model else { return };
+    items.push(AttentionItem {
+        key: format!("search_rebuild:{model}"),
+        kind: "search",
+        title: "Your server is updating search".into(),
+        body: "It finishes on its own. On a small server this can take a few days.".into(),
+        route: "/virtues/search".into(),
+    });
+}
+
+/// `(applet id, name, error)` for each applet that is on and whose latest
+/// finished run failed. It stays until a run succeeds, or the owner turns the
+/// applet off.
+async fn failed_applets(db: &Database) -> Result<Vec<(String, String, Option<String>)>> {
     Ok(sqlx::query_as(
-        "SELECT a.id, a.name, r.id, r.error FROM app_applets a \
+        "SELECT a.id, a.name, r.error FROM app_applets a \
          JOIN LATERAL (SELECT id, status, error FROM app_applet_runs \
                         WHERE applet_id = a.id AND status IN ('success', 'error', 'budget_exceeded') \
                         ORDER BY started_at DESC LIMIT 1) r ON true \
@@ -140,17 +165,42 @@ async fn failed_applets(db: &Database) -> Result<Vec<(String, String, String, Op
     .await?)
 }
 
-fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, String, Option<String>)>) {
-    for (id, name, run_id, error) in rows {
+/// A failure the owner can act on, in plain words, for the errors that
+/// recur across applets. Anything else is quoted as the run reported it.
+fn plain_failure(error: &str) -> Option<&'static str> {
+    let e = error.to_ascii_lowercase();
+    if e.contains("embedding endpoint unreachable") {
+        Some("Your server's embedding service isn't answering")
+    } else if e.contains("failed to spawn") {
+        Some("Its program is missing from your server")
+    } else if e.contains("timed out") || e.contains("timeout") {
+        Some("It ran out of time")
+    } else if e.contains("invalid_grant") || e.contains("unauthorized") || e.contains(" 401") {
+        Some("Its sign-in has expired. Connect the source again")
+    } else if e.contains("connection refused") || e.contains("dns error") || e.contains("error sending request") {
+        Some("It couldn't reach the service it needs")
+    } else {
+        None
+    }
+}
+
+fn failed_applet_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Option<String>)>) {
+    for (id, name, error) in rows {
         let why = error
             .as_deref()
-            .map(|e| {
-                let line = e.lines().next().unwrap_or(e);
-                line.split(". ").next().unwrap_or(line).trim_end_matches('.').trim().chars().take(160).collect::<String>()
+            .map(|e| match plain_failure(e) {
+                Some(plain) => plain.to_string(),
+                None => {
+                    let line = e.lines().next().unwrap_or(e);
+                    line.split(". ").next().unwrap_or(line).trim_end_matches('.').trim().chars().take(160).collect::<String>()
+                }
             })
             .filter(|e| !e.is_empty());
+        // Keyed by the applet, not the run: a scheduled applet that keeps
+        // failing makes a new run every few minutes, and the Mac app notifies
+        // each new key. One failure episode is one notification.
         items.push(AttentionItem {
-            key: format!("applet:{run_id}"),
+            key: format!("applet:{id}"),
             kind: "applet",
             title: format!("{name} didn't finish its last run"),
             body: match why {
@@ -265,25 +315,26 @@ fn disk_items(items: &mut Vec<AttentionItem>, free: Option<u64>) {
     });
 }
 
-fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option<i64>) {
+fn backup_items(items: &mut Vec<AttentionItem>, state: &str, _age_seconds: Option<i64>) {
     let (title, body) = match state {
         "none" => (
             "Your server has no backup".to_string(),
-            "Everything is on one disk. Open System to add a backup drive.".to_string(),
+            "Everything is on one disk. Open Backup to set up a drive.".to_string(),
         ),
         "never" => (
             "Your server hasn't backed up to the drive yet".to_string(),
-            "Your server hasn't finished a backup to it. Open System to check the drive.".to_string(),
+            "Your server hasn't finished a backup to it. Open Backup to check the drive.".to_string(),
         ),
         "failing" => (
             "Backups are failing".to_string(),
-            "Your server couldn't finish its last backup. Open System to see why.".to_string(),
+            "Your server couldn't finish its last backup. Open Backup to see why.".to_string(),
         ),
         "stale" => {
-            let days = age_seconds.unwrap_or(0) / 86_400;
+            // No day count: a number that grows each day is an overdue alarm,
+            // and the Backup page has the date for anyone who wants it.
             (
-                format!("Your last backup is {days} days old"),
-                "Plug in your backup drive, then open System to see the last backup."
+                "Your last backup is out of date".to_string(),
+                "Plug in your backup drive. Open Backup to see when it last ran."
                     .to_string(),
             )
         }
@@ -294,7 +345,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
         kind: "backup",
         title,
         body,
-        route: "/virtues/system".into(),
+        route: "/virtues/backup".into(),
     });
 }
 
@@ -581,7 +632,7 @@ mod tests {
         }
         let keys: Vec<_> = items.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, ["backup:none", "backup:never", "backup:failing", "backup:stale"]);
-        assert_eq!(items[3].title, "Your last backup is 4 days old");
+        assert_eq!(items[3].title, "Your last backup is out of date");
     }
 
     #[test]
@@ -754,9 +805,21 @@ mod tests {
     }
 
     #[test]
+    fn a_search_model_change_is_one_quiet_line_until_it_finishes() {
+        let mut items = vec![];
+        search_rebuild_items(&mut items, None);
+        assert!(items.is_empty());
+        search_rebuild_items(&mut items, Some("embeddinggemma-2".into()));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "search_rebuild:embeddinggemma-2");
+        assert_eq!(items[0].route, "/virtues/search");
+        assert!(!items[0].body.chars().any(|c| c.is_ascii_digit()), "no counts: {}", items[0].body);
+    }
+
+    #[test]
     fn an_applet_item_opens_its_applet_and_says_what_happened() {
         let mut items = vec![];
-        failed_applet_items(&mut items, vec![("applet_user__tides".into(), "Tides".into(), "run_1".into(), Some("its SQL failed: relation does not exist\nmore".into()))]);
+        failed_applet_items(&mut items, vec![("applet_user__tides".into(), "Tides".into(), Some("its SQL failed: relation does not exist\nmore".into()))]);
         new_applet_items(&mut items, vec![
             ("applet_morning_examen".into(), "Morning examen".into(), "run_2".into(), Some("Tuesday, 3 March".into()), None),
             ("applet_user__garden".into(), "Garden".into(), "run_3".into(), None, Some("The tomatoes are ready.\nAnd more.".into())),
@@ -766,6 +829,17 @@ mod tests {
         assert_eq!(items[1].title, "Morning examen wrote Tuesday, 3 March");
         assert_eq!((items[2].title.as_str(), items[2].body.as_str()), ("Garden has something for you", "The tomatoes are ready."));
         assert_ne!(items[1].key, items[2].key);
+
+        // A failure that recurs across applets is said in plain words.
+        let mut items = vec![];
+        failed_applet_items(&mut items, vec![("a".into(), "Weather sync".into(), Some("failed to spawn action command: No such file or directory (os error 2)".into()))]);
+        assert_eq!(items[0].body, "Its program is missing from your server. Open it to see what happened.");
+        assert_eq!(items[0].key, "applet:a", "one key per applet, so a run that fails again is not a new notice");
+
+        // The embedder's startup error names a Linux command; the notice says what is wrong.
+        let mut items = vec![];
+        failed_applet_items(&mut items, vec![("e".into(), "Embedding index".into(), Some("Error: embedding endpoint unreachable at http://127.0.0.1:18181 — nothing accepted a connection; check: systemctl status virtues-embed".into()))]);
+        assert_eq!(items[0].body, "Your server's embedding service isn't answering. Open it to see what happened.");
     }
 
     /// A scheduled run with something to read is in the Inbox until the

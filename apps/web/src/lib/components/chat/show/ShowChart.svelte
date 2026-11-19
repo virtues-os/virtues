@@ -3,7 +3,7 @@
 	rest are one to three series. Bars start at zero; a line takes the range
 	its values span. One accent: the first series is the primary and the
 	others are ink, told apart by weight and dash, because a second hue would
-	claim a kinship the record does not have (design-grammar §5).
+	claim a kinship the record does not have (design.md, "Color").
 -->
 <script lang="ts">
 	import {

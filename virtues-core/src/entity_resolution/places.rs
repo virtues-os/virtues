@@ -1207,7 +1207,7 @@ async fn delete_empty_places(db: &Database) -> Result<u64> {
           AND NOT EXISTS (SELECT 1 FROM wiki_refs r WHERE r.entity_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM app_user_profile u WHERE u.home_place_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM app_pins x WHERE x.url = '/place/' || p.id)
-          AND NOT EXISTS (SELECT 1 FROM app_project_items x WHERE x.url = '/place/' || p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_thread_items x WHERE x.url = '/place/' || p.id)
           AND NOT EXISTS (SELECT 1 FROM wiki_notes n WHERE n.subject_type = 'place' AND n.subject_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.subject_type = 'place' AND a.subject_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM wiki_rules w WHERE w.subject_type = 'place' AND w.subject_id = p.id)

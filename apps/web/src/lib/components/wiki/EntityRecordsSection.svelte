@@ -14,6 +14,7 @@
 -->
 
 <script lang="ts">
+	import { fade } from '$lib/utils/transitions';
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -162,7 +163,7 @@
 
 <div class="records">
 	{#if chips.length > 0}
-		<div class="chip-row" role="group" aria-label="Filter by ontology">
+		<div class="chip-row" role="group" aria-label="Filter by ontology" in:fade>
 			{#each chips as chip (chip.name)}
 				<button
 					class="chip"

@@ -197,7 +197,7 @@
 <Page
 	title="Sources"
 	description="Where your data comes from, and whether it is still arriving."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#snippet actions()}
 		<div class="head-actions">
@@ -210,11 +210,10 @@
 			<IconButton
 				icon="mynaui:refresh"
 				label="Refresh"
-				size="md"
 				disabled={refreshing}
 				onclick={() => void loadStreams()}
 			/>
-			<Button variant="secondary" size="sm" icon="mynaui:grid" onclick={openCatalog}>
+			<Button variant="secondary" icon="mynaui:grid" onclick={openCatalog}>
 				Catalog
 			</Button>
 		</div>
@@ -230,7 +229,7 @@
 			<IconButton
 				icon="mynaui:x"
 				label="Dismiss"
-				size="xs"
+				size="nested"
 				onclick={() => (noticeDismissed = true)}
 			/>
 		</div>
@@ -282,7 +281,6 @@
 						{#if c.kind === 'credential'}
 							<Button
 								variant="secondary"
-								size="sm"
 								class="shrink-0"
 								onclick={() => void reconnect(c.sourceId, c.id)}
 							>
@@ -487,7 +485,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 	.muted {
@@ -503,7 +501,7 @@
 		margin-bottom: 0.75rem;
 		border-radius: var(--radius-md);
 		font-size: 0.8125rem;
-		background: var(--color-muted, #f3f4f6);
+		background: var(--color-surface-elevated);
 		color: var(--color-foreground, #111827);
 	}
 	.notice.ok {

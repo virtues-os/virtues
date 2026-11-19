@@ -9,10 +9,16 @@
 -->
 <script lang="ts">
 	import { Button } from "$lib";
+	import Select from "$lib/components/Select.svelte";
 	import * as api from "$lib/api/client";
 
 	let file = $state<File | null>(null);
 	let provider = $state<"claude" | "chatgpt" | "gemini">("claude");
+	const PROVIDERS = [
+		{ value: "claude", label: "Claude" },
+		{ value: "chatgpt", label: "ChatGPT" },
+		{ value: "gemini", label: "Gemini" },
+	] as const;
 	let uploading = $state(false);
 	let result = $state<string | null>(null);
 	let error = $state<string | null>(null);
@@ -73,14 +79,12 @@
 				see it. Only the part your assistant needs to answer you ever goes out.
 			</p>
 
-			<label class="block">
-				<span class="text-sm text-foreground-muted">Source</span>
-				<select bind:value={provider} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-foreground">
-					<option value="claude">Claude</option>
-					<option value="chatgpt">ChatGPT</option>
-					<option value="gemini">Gemini</option>
-				</select>
-			</label>
+			<div class="block">
+				<span class="text-sm text-foreground-muted" aria-hidden="true">Source</span>
+				<div class="mt-1">
+					<Select value={provider} options={PROVIDERS} label="Source" onchange={(p) => (provider = p)} />
+				</div>
+			</div>
 
 			<Button variant="primary" onclick={doImport} disabled={!file || uploading}>
 				{uploading ? "Importing…" : "Import"}

@@ -1,7 +1,7 @@
 <!--
 	Every model the box's catalog lists, as a table to compare and choose from.
-	It is the page behind "Compare all" in the Assistant page's Models section,
-	and the two write through one store, `modelSlots`.
+	It is the page behind each role's row in Models and spending, opened with
+	that role picked (`role`), and the two write through one store, `modelSlots`.
 
 	Every fact here is the gateway's, fetched live. Nothing on this page is
 	hand-maintained (see api/model_catalog.rs for why).
@@ -32,6 +32,9 @@
 		type SlotConfig,
 	} from "$lib/stores/modelSlots.svelte";
 
+	/** A role picked from Models and spending: only its choice is offered. */
+	let { role }: { role?: string } = $props();
+
 	onMount(() => modelSlots.load());
 
 	/** Grid rows need an `id`; the model id is one. */
@@ -43,7 +46,7 @@
 
 	/** The roles a catalog row can fill. Pictures is not one of them: the
 	 *  catalog lists language models. */
-	const ROLE_SLOTS = $derived(modelSlots.slots.filter((s) => s.language));
+	const ROLE_SLOTS = $derived(modelSlots.slots.filter((s) => s.language && (!role || s.key === role)));
 
 	/** A role's failed save, on the row it concerns: the model the person
 	 *  tried to choose, or the one a failed "go back" left in place. */
@@ -272,7 +275,6 @@
 			<div>
 				<Button
 					variant="ghost"
-					size="sm"
 					loading={modelSlots.loading}
 					onclick={() => modelSlots.load(true)}>Check again</Button
 				>
@@ -292,6 +294,7 @@
 		loadingMessage="Loading the models"
 		searchPlaceholder="Search models"
 		defaultViewMode="table"
+		showCounts={false}
 	>
 		{#snippet tableRow(m: ModelRow)}
 			{@const marks = roleMarks(m)}
@@ -370,14 +373,12 @@
 									<span class="chosen">Chosen for {slot.phrase}</span>
 									<Button
 										variant="ghost"
-										size="sm"
 										onclick={() => modelSlots.choose(slot, null)}
 										>Go back to the recommended model</Button
 									>
 								{:else}
 									<Button
 										variant="secondary"
-										size="sm"
 										onclick={() => modelSlots.choose(slot, m.model_id)}
 										>Use for {slot.phrase}</Button
 									>

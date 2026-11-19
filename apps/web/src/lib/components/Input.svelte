@@ -410,19 +410,30 @@
 		border-radius: var(--radius-lg);
 	}
 
+	/* A control's height (design.md, "Controls"): 34px, and 44px with 16px
+	   text on a touch screen, where iOS zooms the page into any field set
+	   smaller than 16px. */
 	.input-field {
 		width: 100%;
-		padding: 10px 14px;
+		height: var(--control-h);
+		padding: 0 12px;
 		font-family: var(--font-sans);
-		font-size: 15px;
+		font-size: var(--text-label);
 		color: var(--color-foreground);
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-border-field);
 		border-radius: var(--radius-lg);
 		outline: none;
 		transition: border-color 0.25s ease;
 		position: relative;
 		z-index: 1;
+	}
+
+	@media (pointer: coarse) {
+		.input-field {
+			height: var(--control-touch-h);
+			font-size: 16px;
+		}
 	}
 
 	/* Remove number input spinners */
@@ -469,7 +480,7 @@
 			.error
 		):not(.warning)
 		.input-field {
-		border-color: var(--color-border-strong);
+		border-color: color-mix(in srgb, var(--color-border-field) 70%, var(--color-foreground));
 	}
 
 	/* Focus state */
@@ -481,7 +492,7 @@
 	.input-wrapper.delight.saved:not(.focused):not(.error) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-success) 30%
 		);
 	}
@@ -490,7 +501,7 @@
 	.input-wrapper.warning:not(.focused):not(.error) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 70%,
+			var(--color-border-field) 70%,
 			var(--color-warning) 30%
 		);
 	}
@@ -499,7 +510,7 @@
 	.input-wrapper.error:not(.focused) .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 50%,
+			var(--color-border-field) 50%,
 			var(--color-error) 50%
 		);
 		animation: shake 0.4s ease-out;
@@ -515,7 +526,7 @@
 	.input-wrapper.error.focused .input-field {
 		border-color: color-mix(
 			in srgb,
-			var(--color-border-strong) 50%,
+			var(--color-border-field) 50%,
 			var(--color-error) 50%
 		);
 	}
@@ -661,16 +672,7 @@
 	}
 
 	.spinner {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	/* Saved check */
@@ -713,7 +715,7 @@
 	/* ===================================
 	   REDUCED MOTION
 	   =================================== */
-	/* Keep the information, drop the travel (design-grammar §7). The shake is
+	/* Keep the information, drop the travel (design.md, "Motion"). The shake is
 	   the one thing here that moves the reader rather than the ink, and until
 	   today it could only be fired by a rejected auto-save — now `error` is a
 	   prop, so any caller's validation can shake the page of a reader who asked

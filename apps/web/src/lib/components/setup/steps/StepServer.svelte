@@ -28,6 +28,7 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import StepFrame from "../StepFrame.svelte";
 	import { rise } from "../motion";
 	import { prePair } from "../prepair.svelte";
@@ -77,7 +78,7 @@
 	let pairedAt = $state("");
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 	const nothing = $derived(network.length === 0);
 
 	/** Bumped by anything that ends a search, so a stale round can't redraw. */
@@ -425,8 +426,6 @@
 	.addr:focus,
 	.box:focus {
 		border-color: var(--color-primary);
-		outline: 2px solid var(--color-primary);
-		outline-offset: -1px;
 	}
 	.addr::placeholder {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));
@@ -515,10 +514,6 @@
 	.finder:active {
 		transform: scale(0.98);
 		transition-duration: 90ms;
-	}
-	.finder:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 3px;
 	}
 	.corner {
 		position: absolute;
@@ -705,9 +700,6 @@
 	.server:disabled {
 		cursor: default;
 		color: var(--color-foreground-muted);
-	}
-	.server:focus-visible {
-		outline: 2px solid var(--color-primary);
 	}
 	.name {
 		font-family: var(--font-serif-ui, var(--font-serif));

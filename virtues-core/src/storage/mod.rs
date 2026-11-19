@@ -2,6 +2,7 @@
 
 pub mod lake;
 pub mod message_media;
+pub mod raw_copies;
 pub mod volumes;
 pub mod models;
 

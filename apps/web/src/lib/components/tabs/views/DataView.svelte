@@ -1,10 +1,13 @@
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import type { Tab } from "$lib/tabs/types";
 	import Icon from "$lib/components/Icon.svelte";
 	import { getRecord, type OntologyRecord } from "$lib/api/client";
 	import { formatRecordDate, recordFields, recordTitle, renderValue } from "$lib/utils/recordFields";
 
 	let { tab }: { tab: Tab } = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	// Route: /record/<ontology>/<record_id>. The id may itself contain slashes in
 	// theory; ontology is the first segment, the rest is the id.
@@ -53,7 +56,7 @@
 </script>
 
 <div class="data-view">
-	<div class="inner">
+	<div style:max-width={width.css} class="inner">
 		{#if loading}
 			<div class="state">Loading record…</div>
 		{:else if error}
@@ -108,7 +111,6 @@
 		overflow-y: auto;
 	}
 	.inner {
-		max-width: 720px;
 		margin: 0 auto;
 		padding: 3.5rem 2rem 6rem;
 	}
@@ -122,7 +124,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--color-danger, #c0392b);
+		color: var(--color-error);
 	}
 
 	.head {
@@ -138,7 +140,7 @@
 		margin-bottom: 0.75rem;
 	}
 	/* 400, not 500: the serif ships one cut, so a weight request stays inside the
-	   family and returns the regular with no warning (agents/build/typography.md).
+	   family and returns the regular with no warning (agents/build/design.md, "Type").
 	   Nothing is lost — the rank here is already carried by size and ink, 28px in
 	   full foreground over an 11px mono eyebrow and a subtle dateline. */
 	.title {

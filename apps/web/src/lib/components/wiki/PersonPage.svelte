@@ -6,8 +6,10 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import { subjectHref } from "$lib/wiki/links";
 	import { untrack } from "svelte";
+	import { slide } from "$lib/utils/transitions";
 	import type { WikiPersonApi } from "$lib/wiki/api";
 	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
@@ -37,6 +39,8 @@
 	}
 
 	let { page }: Props = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	// Dates arrive as ISO strings. `parseDateSlug` reads them as LOCAL dates;
 	// `new Date("1990-09-14")` is UTC midnight, which renders as the 13th for
@@ -227,8 +231,8 @@
 
 <div class="person-page-layout">
 	<article class="person-article wiki-article">
-		<div class="person-content">
-			<WikiCrumbs bar parent={{ label: "People", href: "/wiki/people" }} current={page.name} />
+		<div style:max-width={width.css} class="person-content">
+			<WikiCrumbs bar path={[{ label: "People", route: "/wiki/people" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="person-header">
 				<button
@@ -262,18 +266,20 @@
 				<p class="picture-error" role="alert">{pictureError}</p>
 			{/if}
 
+			<!-- Found after the page is up, so it opens its own space instead of
+			     the page jumping down under it. -->
 			{#each same as other (other.id)}
-				<div class="same-person">
+				<div class="same-person" in:slide>
 					{#if confirming === other.id}
 						<p>
 							Merge {other.name} into {page.name}? Their messages, notes and pins move to
 							this page, and {other.name}'s page goes away. You can't undo this.
 						</p>
 						<div class="same-actions">
-							<Button variant="primary" size="sm" onclick={() => confirmMerge(other)} loading={merging}>
+							<Button variant="primary" onclick={() => confirmMerge(other)} loading={merging}>
 								Merge into {page.name}
 							</Button>
-							<Button variant="ghost" size="sm" onclick={() => (confirming = null)} disabled={merging}>
+							<Button variant="ghost" onclick={() => (confirming = null)} disabled={merging}>
 								Cancel
 							</Button>
 						</div>
@@ -302,7 +308,7 @@
 							if (e.key === "Escape") bondEditing = false;
 						}}
 					/>
-					<Button variant="secondary" size="sm" onclick={saveBond} loading={bondSaving}>
+					<Button variant="secondary" onclick={saveBond} loading={bondSaving}>
 						Save
 					</Button>
 				{:else if bond}
@@ -466,7 +472,6 @@
 	}
 
 	.person-content {
-		max-width: 48rem;
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;
@@ -522,11 +527,6 @@
 
 	.picture-button:hover {
 		opacity: 0.85;
-	}
-
-	.picture-button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	.picture-button.busy {

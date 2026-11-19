@@ -16,6 +16,7 @@
  */
 
 import { SvelteMap } from 'svelte/reactivity';
+import { toast } from 'svelte-sonner';
 import { resolveRefs, updateChat, updatePage, type Pin, type RefIdentity } from '$lib/api/client';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { pagesStore } from '$lib/stores/pages.svelte';
@@ -32,12 +33,12 @@ export interface Identity {
 }
 
 /** The kinds whose name, icon and color live on their own record. */
-export type OwnedKind = 'chat' | 'page' | 'project';
+export type OwnedKind = 'chat' | 'page' | 'thread';
 
 export function ownedRef(url: string): { kind: OwnedKind; id: string } | null {
 	const ref = parseRef(url);
 	if (!ref) return null;
-	if (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'project') {
+	if (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'thread') {
 		return { kind: ref.kind, id: ref.id };
 	}
 	return null;
@@ -47,7 +48,7 @@ export function ownedRef(url: string): { kind: OwnedKind; id: string } | null {
 export function untitled(kind: string): string {
 	if (kind === 'chat') return 'New chat';
 	if (kind === 'page') return 'Untitled page';
-	if (kind === 'project') return 'Untitled project';
+	if (kind === 'thread') return 'Untitled thread';
 	return 'Untitled';
 }
 
@@ -70,9 +71,9 @@ function storeIdentity(url: string): Identity | null {
 	} else if (owned?.kind === 'page') {
 		const p = pagesStore.pages.find((x) => x.id === owned.id);
 		if (p) return { kind: 'page', title: p.title?.trim() || untitled('page'), icon: p.icon, color: p.icon_color };
-	} else if (owned?.kind === 'project') {
+	} else if (owned?.kind === 'thread') {
 		const p = projectStore.projects.find((x) => x.id === owned.id);
-		if (p) return { kind: 'project', title: p.name?.trim() || untitled('project'), icon: p.icon, color: p.accent_color ?? null };
+		if (p) return { kind: 'thread', title: p.name?.trim() || untitled('thread'), icon: p.icon, color: p.accent_color ?? null };
 	}
 	return null;
 }
@@ -80,11 +81,12 @@ function storeIdentity(url: string): Identity | null {
 // ── the box's answer, for what the stores do not hold ──────────────────────
 
 /**
- * Kinds whose name the box holds as a record's own field. A day or a year is
+ * Kinds whose name the box holds as a record's own field, including any
+ * `/record/<ontology>/<id>` row with a title column. A day or a year is
  * named by its date, and a view titles it better ("Wednesday, 30 September")
  * than its id would; an app screen has no record at all.
  */
-const NAMED = new Set(['chat', 'page', 'project', 'person', 'place', 'org', 'file']);
+const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'thing', 'file', 'record']);
 
 /** Resolved identities by url, filled in batches as surfaces ask. */
 const resolved = new SvelteMap<string, RefIdentity>();
@@ -123,8 +125,9 @@ function request(url: string) {
 /**
  * What `url` is called and wears now. The live store row when this client
  * holds one; then the box's resolution; then `known`, the best the caller
- * has (a tab's last-known label). Icon and color fall back to `known` when
- * the thing has none of its own.
+ * has (a tab's last-known label). A chat, page or thread wears only its own
+ * icon and color, so its pin, its tab and its heading show one icon. Anything
+ * else falls back to `known` when it has none of its own.
  *
  * `ask: false` skips the box — for a caller whose `known` already came from
  * it (a pin).
@@ -141,17 +144,16 @@ export function identityOf(
 		return { kind: known.kind ?? parseRef(url)?.kind ?? 'route', title: known.title.trim(), icon: known.icon ?? null, color: known.color ?? null };
 	}
 	const live = storeIdentity(url);
-	if (live) {
-		return { ...live, icon: live.icon ?? known.icon ?? null, color: live.color ?? known.color ?? null };
-	}
+	if (live) return live;
 	const named = NAMED.has(parseRef(url)?.kind ?? '');
 	const answer = named ? resolved.get(url) : undefined;
 	if (answer && answer.state !== 'unknown' && answer.state !== 'gone') {
+		const own = ownedRef(url) !== null;
 		return {
 			kind: answer.kind,
 			title: answer.title,
-			icon: answer.icon ?? known.icon ?? null,
-			color: answer.color ?? known.color ?? null,
+			icon: answer.icon ?? (own ? null : known.icon ?? null),
+			color: answer.color ?? (own ? null : known.color ?? null),
 		};
 	}
 	if (ask && named && !answer) request(url);
@@ -189,9 +191,12 @@ export function relabelTabs(route: string, label: string) {
 
 /**
  * Rename what `url` points at. Stores and tabs take the name first, so every
- * surface moves together; a failed write puts the server's name back.
+ * surface moves together. A failed write puts the server's name back and
+ * says so in a toast, so a caller (the sidebar, a tab, the page bar) has
+ * nothing to handle. Resolves to whether your server saved the name.
  */
-export async function renameRef(url: string, title: string): Promise<void> {
+export async function renameRef(url: string, title: string): Promise<boolean> {
+	const original = identityOf(url, {}, { ask: false }).title;
 	const owned = ownedRef(url);
 	resolved.delete(url);
 	relabelTabs(url, title);
@@ -202,12 +207,17 @@ export async function renameRef(url: string, title: string): Promise<void> {
 		} else if (owned?.kind === 'page') {
 			pagesStore.updatePageLocally(owned.id, { title });
 			await updatePage(owned.id, { title });
-		} else if (owned?.kind === 'project') {
+		} else if (owned?.kind === 'thread') {
 			await projectStore.update(owned.id, { name: title });
 		} else {
 			const pin = pinsStore.getByUrl(url);
 			if (pin) await pinsStore.setLabel(pin.id, title);
 		}
+		return true;
+	} catch (e) {
+		console.error('[renameRef] rename failed:', e);
+		toast.error(`Your server couldn't rename "${original}"`, { description: 'It keeps its old name. Try again' });
+		return false;
 	} finally {
 		if (owned?.kind === 'chat') await chatSessions.refresh();
 		if (owned?.kind === 'page') await pagesStore.loadPages();
@@ -238,7 +248,7 @@ export async function setRefLook(
 			...('icon' in look ? { icon: look.icon ?? null } : {}),
 			...('color' in look ? { icon_color: look.color ?? null } : {}),
 		});
-	} else if (owned?.kind === 'project') {
+	} else if (owned?.kind === 'thread') {
 		await projectStore.update(owned.id, {
 			...('icon' in look ? { icon: look.icon ?? null } : {}),
 			...('color' in look ? { accent_color: look.color ?? null } : {}),

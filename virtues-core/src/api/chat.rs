@@ -213,10 +213,10 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// The Project (room) this chat lives in. Stored on the chat and inlined into
+    /// The thread this chat lives in. Stored on the chat and inlined into
     /// the system prompt as a salience lens (name + memo + member URLs).
-    #[serde(rename = "projectId", alias = "notebookId", default)]
-    pub project_id: Option<String>,
+    #[serde(rename = "threadId", default)]
+    pub thread_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
@@ -238,7 +238,7 @@ pub struct ChatRequest {
     pub agent_mode: String,
     /// Retrieval scope for project chats: "open" (default — whole graph,
     /// project items up-weighted) or "scoped" (grounded — items only).
-    /// Ignored without a project_id.
+    /// Ignored without a thread_id.
     #[serde(rename = "chatMode", default = "default_chat_mode")]
     pub chat_mode: String,
     /// A temporary ("ghost") chat: nothing about it is written to the box.
@@ -904,7 +904,7 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
     }
 }
 
-/// The rules block — `wiki_rules`, grouped by kind.
+/// The rules block: the subjects in `wiki_rules` never to bring up.
 ///
 /// THIS TABLE WAS WRITTEN AND NEVER READ. From 0101 until now, `wiki_rules` (and
 /// `wiki_standing_order` before it) was populated by the interview's last
@@ -913,9 +913,8 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// stops being context and becomes a rule." This function is what makes that
 /// sentence true.
 ///
-/// Grouped rather than listed flat because `avoid` and `defend` need opposite
-/// handling, and the prompt can only give them opposite handling if it can tell
-/// them apart.
+/// Only kind `avoid`. Rows of the retired `defend` kind ("help me hold to")
+/// stay stored and are not read.
 ///
 /// Empty string when there are no rules, so the caller can omit the section.
 /// Errors are swallowed to an empty string on purpose — a database blip must
@@ -923,8 +922,8 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// safe direction only because the alternative is worse; it does mean a failed
 /// read silently un-enforces, which is why it is logged.
 async fn build_rules(pool: &PgPool) -> String {
-    let rows = match sqlx::query_as::<_, (String, String)>(
-        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
+    let rows = match sqlx::query_scalar::<_, String>(
+        "SELECT rule FROM wiki_rules WHERE active AND kind = 'avoid' ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
@@ -936,37 +935,13 @@ async fn build_rules(pool: &PgPool) -> String {
         }
     };
 
-    let mut avoid: Vec<&str> = Vec::new();
-    let mut defend: Vec<&str> = Vec::new();
-    for (kind, rule) in &rows {
-        let rule = rule.trim();
-        if rule.is_empty() {
-            continue;
-        }
-        match kind.as_str() {
-            "defend" => defend.push(rule),
-            // Anything unrecognised is treated as `avoid`. The CHECK constraint
-            // makes that unreachable today, and if a third kind is ever added,
-            // the conservative reading is the one that cannot cause harm.
-            _ => avoid.push(rule),
-        }
+    let avoid: Vec<&str> = rows.iter().map(|r| r.trim()).filter(|r| !r.is_empty()).collect();
+    if avoid.is_empty() {
+        return String::new();
     }
-
-    let mut out = String::new();
-    if !avoid.is_empty() {
-        out.push_str("Never raise these unless they do:\n");
-        for r in avoid {
-            out.push_str(&format!("- {r}\n"));
-        }
-    }
-    if !defend.is_empty() {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str("Help them hold to these:\n");
-        for r in defend {
-            out.push_str(&format!("- {r}\n"));
-        }
+    let mut out = String::from("Never raise these unless they do:\n");
+    for r in avoid {
+        out.push_str(&format!("- {r}\n"));
     }
     out
 }
@@ -975,7 +950,7 @@ async fn build_rules(pool: &PgPool) -> String {
 ///
 /// Assembles the block registry in `build_system_prompt_blocks`: base
 /// (identity + character + style notes + narrative identity + tools + mode) → precedence →
-/// memory → circumstances → coverage → active_project → active_context →
+/// circumstances → coverage → active_project → active_context →
 /// rules; the cache split falls before the first per-turn block..
 /// Loads user name, assistant name, style notes, and narrative identity from profiles.
 async fn build_system_prompt(
@@ -984,13 +959,15 @@ async fn build_system_prompt(
     active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
-    project_id: Option<&str>,
+    thread_id: Option<&str>,
 ) -> SystemPrompt {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
-    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
+    let assistant_name = get_assistant_name(pool)
+        .await
+        .unwrap_or_else(|_| crate::api::assistant_profile::DEFAULT_ASSISTANT_NAME.to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
     // The narrative interview is a different room entirely: no tools, no
@@ -1036,7 +1013,7 @@ async fn build_system_prompt(
         active_page,
         timezone,
         mode,
-        project_id,
+        thread_id,
         &assistant_name,
         &user_name,
     )
@@ -1089,8 +1066,8 @@ async fn assemble_turn_request(
     history: &History,
 ) -> TurnRequest {
     let mut system =
-        build_system_prompt(pool, Some(chat_id), active_page, timezone, mode, history.project_id.as_deref()).await;
-    if scoped && history.project_id.is_some() {
+        build_system_prompt(pool, Some(chat_id), active_page, timezone, mode, history.thread_id.as_deref()).await;
+    if scoped && history.thread_id.is_some() {
         system.stable.push_str(SCOPED_CHAT_LINE);
         let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
         system.blocks.insert(
@@ -1225,8 +1202,11 @@ pub async fn next_turn_preview(
         let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
         sections.insert(at, part("compacted_conversation", Some(true), summary));
     }
-    let tools = mode
-        .tools()
+    let offered = crate::api::capabilities::without_off(pool, mode.tools()).await.map_err(|e| {
+        tracing::warn!(error = %e, "couldn't read what the assistant can do");
+        internal("Failed to read what the assistant can do")
+    })?;
+    let tools = offered
         .iter()
         .map(|tool| {
             let name = tool["function"]["name"].as_str().unwrap_or("?").to_string();
@@ -1293,7 +1273,7 @@ async fn build_system_prompt_blocks(
     active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
-    project_id: Option<&str>,
+    thread_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
 ) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
@@ -1320,13 +1300,23 @@ async fn build_system_prompt_blocks(
                     }
                 };
                 let narrative_identity = build_narrative_identity(pool).await;
-                Some(build_personalized_prompt(
+                // The owner's units (Settings · Profile). A failed read is
+                // logged and the head goes out without the sentence.
+                let units = match crate::api::profile::get_units(pool).await {
+                    Ok(units) => format!("\n\n{}", units.instruction()),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "units unavailable; prompt carries no units sentence");
+                        String::new()
+                    }
+                };
+                let head = build_personalized_prompt(
                     assistant_name,
                     user_name,
                     style_notes.as_deref(),
                     mode,
                     &narrative_identity,
-                ))
+                );
+                Some(format!("{head}{units}"))
             }),
         },
         // The precedence ladder, stated once. GPT-5-era guidance and our own
@@ -1337,43 +1327,6 @@ async fn build_system_prompt_blocks(
             meta: BlockMeta { tag: "precedence", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Static },
             body: Box::pin(async move {
                 Some(crate::agent::prompt_blocks::precedence_line().to_string())
-            }),
-        },
-        // The machine's memory: per-note rows the person can read and edit
-        // (Settings), rendered with ids so the update_memory ops can name
-        // them. Three lanes per agents/build/narrative-identity.md: facts of their
-        // world, their preferred manner, their practices.
-        Block {
-            meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
-            body: Box::pin(async move {
-                let memories = match crate::api::assistant_memories::list_memories(pool).await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!("[chat] memory omitted from the prompt: {e}");
-                        return None;
-                    }
-                };
-                if memories.is_empty() {
-                    return None;
-                }
-                let mut out = String::from(
-                    "\n\n<memory>\nWhat you have learned alongside {user}, in notes you keep (they can read and edit these in Settings; a note marked [theirs] is in their words — never revise or retire it). Use silently: reference when relevant, never recite unprompted.\n",
-                );
-                out = out.replace("{user}", user_name);
-                for lane in ["facts", "manner", "practices"] {
-                    let in_lane: Vec<_> = memories.iter().filter(|m| m.lane == lane).collect();
-                    if in_lane.is_empty() {
-                        continue;
-                    }
-                    out.push_str(&format!("<{lane}>\n"));
-                    for m in in_lane {
-                        let theirs = if m.author == "human" { " [theirs]" } else { "" };
-                        out.push_str(&format!("- (#{}){} {}\n", m.id, theirs, m.body));
-                    }
-                    out.push_str(&format!("</{lane}>\n"));
-                }
-                out.push_str("</memory>");
-                Some(out)
             }),
         },
         // The computed present — as-of time, place, today's spine, calendar,
@@ -1414,7 +1367,7 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "active_project", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
             body: Box::pin(async move {
-                match project_id {
+                match thread_id {
                     Some(id) => build_project_context(pool, id).await,
                     None => None,
                 }
@@ -1623,11 +1576,11 @@ const MAX_PROJECT_ITEMS_INLINED: usize = 100;
 
 /// Build a context block for the active Project (room) the chat lives in.
 /// Returns None if the Project can't be loaded.
-async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String> {
-    let detail = match crate::api::projects::get_project(pool, project_id).await {
+async fn build_project_context(pool: &PgPool, thread_id: &str) -> Option<String> {
+    let detail = match crate::api::threads::get_thread(pool, thread_id).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!("[chat] failed to load active project {}: {}", project_id, e);
+            tracing::warn!("[chat] failed to load active project {}: {}", thread_id, e);
             return None;
         }
     };
@@ -1635,10 +1588,10 @@ async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String
     let mut out = String::new();
     out.push_str(&format!(
         "\n\n<active_project name=\"{}\">",
-        escape_attr(&detail.project.name),
+        escape_attr(&detail.thread.name),
     ));
 
-    if let Some(instr) = detail.project.instructions.as_deref() {
+    if let Some(instr) = detail.thread.instructions.as_deref() {
         if !instr.is_empty() {
             out.push_str(&format!(
                 "\n  <instructions>{}</instructions>",
@@ -1914,7 +1867,7 @@ async fn chat_handler_inner(
         request,
         mode,
         model,
-        history.project_id,
+        history.thread_id,
         api_messages,
         msg_id,
         checkpoint_event,
@@ -2053,7 +2006,7 @@ fn chat_title(messages: &[UIMessage]) -> String {
 pub(crate) async fn store_user_turn(pool: &PgPool, request: &ChatRequest) {
     if !request.temporary && ensure_chat_row(pool, request).await {
         if let Err(e) =
-            crate::api::projects::set_chat_project(pool, &request.chat_id, request.project_id.as_deref()).await
+            crate::api::threads::set_chat_thread(pool, &request.chat_id, request.thread_id.as_deref()).await
         {
             tracing::warn!("Failed to set chat project: {}", e);
         }
@@ -2223,7 +2176,7 @@ async fn compact_if_critical(pool: &PgPool, chat_id: &str, model: &str) -> Optio
 struct History {
     conversation_summary: Option<String>,
     summary_up_to_index: i64,
-    project_id: Option<String>,
+    thread_id: Option<String>,
     messages: Vec<ChatMessage>,
 }
 
@@ -2236,7 +2189,7 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
         return Ok(History {
             conversation_summary: None,
             summary_up_to_index: 0,
-            project_id: request.project_id.clone(),
+            thread_id: request.thread_id.clone(),
             messages: ghost_history(&request.messages),
         });
     }
@@ -2246,19 +2199,19 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
 /// A saved chat's row and transcript. Err is the response to send.
 async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Response> {
     // The room is read from the persisted row (single source of truth) so the
-    // active-project context always matches the binding, even if a stale
-    // client sends a different per-message projectId; the create path has
-    // already bound a new chat from request.project_id, so the row is current.
+    // active-thread context always matches the binding, even if a stale
+    // client sends a different per-message threadId; the create path has
+    // already bound a new chat from request.thread_id, so the row is current.
     //
-    // `project_id` decodes as `Option<String>` on purpose: the column is
+    // `thread_id` decodes as `Option<String>` on purpose: the column is
     // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
     // legitimately reads NULL. A failed read is a 500, never a None: None
     // reads as "not in a project", so a swallowed error would silently unscope
     // a scoped chat — retrieval stops being hard-filtered and the answer
     // contract is dropped.
-    let (conversation_summary, summary_up_to_index, project_id) =
+    let (conversation_summary, summary_up_to_index, thread_id) =
         match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
-            "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
+            "SELECT conversation_summary, summary_up_to_index, thread_id FROM app_chats WHERE id = $1",
         )
         .bind(chat_id)
         .fetch_one(pool)
@@ -2279,7 +2232,7 @@ async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Res
         }
     };
 
-    Ok(History { conversation_summary, summary_up_to_index, project_id, messages })
+    Ok(History { conversation_summary, summary_up_to_index, thread_id, messages })
 }
 
 /// Drive the turn's stream in its own task, pushing each line to the live
@@ -2376,7 +2329,7 @@ fn create_agent_stream(
     model: String,
     // The chat's project as the handler resolved it — from the row, not the
     // request — so the tools search the same project the prompt describes.
-    project_id: Option<String>,
+    thread_id: Option<String>,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     // Emitted first when this turn compacted the chat before it started.
@@ -2427,7 +2380,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            project_id,
+            thread_id,
             scope_mode: if request.chat_mode == "scoped" {
                 crate::search::ScopeMode::Exclusive
             } else {
@@ -2450,7 +2403,16 @@ fn create_agent_stream(
             owner_confirmed: false,
         };
 
-        let tools = mode.tools();
+        // Less what the owner turned off in Settings (api::capabilities). If
+        // the switches can't be read, every tool is offered and the executor,
+        // which reads them again, refuses an off one.
+        let tools = match crate::api::capabilities::without_off(&pool, mode.tools()).await {
+            Ok(tools) => tools,
+            Err(e) => {
+                tracing::warn!(error = %e, "couldn't read what the assistant can do; offering every tool");
+                mode.tools()
+            }
+        };
 
         // The message opens, then its first step; the recorder opens and
         // closes the parts inside each step, and the steps after this one.
@@ -2767,7 +2729,7 @@ mod tests {
     /// because that failure is invisible from the outside: the prompt still
     /// builds, chat still answers, and nothing looks wrong.
     #[sqlx::test]
-    async fn rules_are_grouped_by_kind(pool: PgPool) {
+    async fn only_never_raise_rules_are_rendered(pool: PgPool) {
         sqlx::query(
             "INSERT INTO wiki_rules (id, rule, kind) VALUES
                 ('r1', 'my father', 'avoid'),
@@ -2780,18 +2742,12 @@ mod tests {
 
         let out = build_rules(&pool).await;
 
-        // Each kind under its own heading, or the prompt cannot give them the
-        // opposite handling they need.
-        let avoid_at = out.find("Never raise").expect("avoid heading");
-        let defend_at = out.find("Help them hold").expect("defend heading");
-        assert!(avoid_at < defend_at, "avoid group comes first:\n{out}");
+        assert!(out.starts_with("Never raise these unless they do:"), "{out}");
         assert!(out.contains("- my father"));
         assert!(out.contains("- drinking"));
-        assert!(out.contains("- the morning pages"));
-
-        // The defend rule must not be filed under avoid.
-        let defend_block = &out[defend_at..];
-        assert!(!defend_block.contains("my father"), "kinds bled:\n{out}");
+        // A retired hold-me-to rule stays stored and is not rendered.
+        assert!(!out.contains("the morning pages"), "{out}");
+        assert!(!out.contains("Help them hold"), "{out}");
     }
 
     /// No rules must render NOTHING, not an empty heading — a `<rules>` block
@@ -2978,7 +2934,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
@@ -3068,8 +3024,8 @@ mod live_project {
         let pool = PgPool::connect(&url).await.expect("dev database");
 
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT project_id FROM app_project_items
-             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
+            "SELECT thread_id FROM app_thread_items
+             GROUP BY thread_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
@@ -3111,8 +3067,8 @@ mod live_prompt_audit {
         let pool = PgPool::connect(&url).await.expect("dev database");
 
         let project: Option<String> = sqlx::query_scalar(
-            "SELECT project_id FROM app_project_items
-             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
+            "SELECT thread_id FROM app_thread_items
+             GROUP BY thread_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
@@ -3141,7 +3097,6 @@ mod live_prompt_audit {
             for tag in [
                 "<persona",
                 "<narrative_identity",
-                "<memory>",
                 "<datetime>",
                 "<user_context>",
                 "<identity>",
@@ -3637,7 +3592,7 @@ mod active_page_tests {
             pages::CreatePageRequest {
                 title: "Trip".into(),
                 content: markdown.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,

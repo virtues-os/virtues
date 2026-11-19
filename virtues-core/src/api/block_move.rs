@@ -530,7 +530,7 @@ fn js_word(c: char) -> bool {
 /// The route bases a ref names (`ROUTE_TO_TYPE` in `lib/utils/refRoutes.ts`):
 /// the editor's `![@Name](/person/id)` is a ref only to one of them.
 const ENTITY_ROUTES: &[&str] = &[
-    "/person", "/place", "/org", "/day", "/year", "/drive", "/page", "/chat", "/project", "/notebook", "/sources",
+    "/person", "/place", "/org", "/day", "/year", "/drive", "/page", "/chat", "/thread", "/sources",
     "/source", "/record",
 ];
 

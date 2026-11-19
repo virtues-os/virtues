@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { audioTag, buildInspector, fmtDistance, fmtDur, movementTitle, placeTitle, type DerivedWindow } from "./inspector";
+import { setPreferredUnits } from "$lib/utils/units";
+
+// These read metric; utils/units.test.ts covers US units.
+setPreferredUnits("metric");
 
 const at = (hhmm: string) => `2026-06-10T${hhmm}:00Z`;
 const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:00Z") };

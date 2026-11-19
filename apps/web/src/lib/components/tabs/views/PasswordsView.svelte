@@ -4,8 +4,8 @@
 	 *
 	 * The list carries site, label and username. A password and its notes are
 	 * fetched when you open a login, and nothing the assistant can call reads
-	 * them (`api/passwords.rs`). API keys for applets and the sources'
-	 * sign-ins are in Settings → Keys (`KeysView`).
+	 * them (`api/passwords.rs`). API keys for applets are in Settings → Keys
+	 * (`KeysView`).
 	 *
 	 * A login the server's key cannot open comes back `unreadable`, with its
 	 * site and label only. Opening one says what happened and offers Remove,
@@ -186,7 +186,7 @@
 <Page
 	title="Passwords"
 	description="Saved on your server. Your assistant can't see them."
-	maxWidth="wide"
+	maxWidth="full"
 >
 	{#if openError}
 		<p class="form-error">{openError}</p>
@@ -206,7 +206,7 @@
 		onRetry={load}
 	>
 		{#snippet toolbarActions()}
-			<Button variant="secondary" size="sm" onclick={startAdd}>Add a login</Button>
+			<Button variant="secondary" onclick={startAdd}>Add a login</Button>
 		{/snippet}
 
 		{#snippet tableRow(l: LoginItem)}
@@ -240,7 +240,7 @@
 			<dd class="row">
 				<span class="value">{opened.login.username || 'No username'}</span>
 				{#if opened.login.username}
-					<Button variant="ghost" size="sm" onclick={() => copy('username')}>
+					<Button variant="ghost" onclick={() => copy('username')}>
 						{copied === 'username' ? 'Copied' : 'Copy'}
 					</Button>
 				{/if}
@@ -252,10 +252,10 @@
 				<IconButton
 					icon={passwordShown ? 'mynaui:eye-off' : 'mynaui:eye'}
 					label={passwordShown ? 'Hide password' : 'Show password'}
-					size="sm"
+					size="nested"
 					onclick={() => (passwordShown = !passwordShown)}
 				/>
-				<Button variant="ghost" size="sm" onclick={() => copy('password')}>
+				<Button variant="ghost" onclick={() => copy('password')}>
 					{copied === 'password' ? 'Copied' : 'Copy'}
 				</Button>
 			</dd>

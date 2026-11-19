@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { fly } from "$lib/utils/transitions";
+	import { lateFlag } from "$lib/utils/lateFlag.svelte";
 	import { onMount, untrack } from "svelte";
 	import {
 		getPersonById,
@@ -40,6 +42,13 @@
 		| { kind: "thing"; page: ThingDetailApi };
 
 	interface Props {
+		/**
+		 * What kind of page this is, from the route's first segment: person,
+		 * place, org, thing, day or year. The route decides, not the id's
+		 * prefix, because ids don't all carry their kind (a seeded person can be
+		 * `demo_…`).
+		 */
+		kind: string | undefined;
 		/** The entity ID to display (e.g., person_abc123, day_2026-01-25) */
 		entityId?: string;
 		/** Whether this content is currently active/visible */
@@ -48,9 +57,11 @@
 		onLabelChange?: (label: string) => void;
 	}
 
-	let { entityId = "", active = true, onLabelChange }: Props = $props();
+	let { kind, entityId = "", active = true, onLabelChange }: Props = $props();
 
 	let loading = $state(true);
+	/** The spinner waits, so a page that loads quickly never flashes one. */
+	const slow = lateFlag(() => loading);
 	let error = $state<string | null>(null);
 	let wikiPage = $state<Loaded | undefined>(undefined);
 	/** Set when the route is a year; rendered on its own. */
@@ -67,11 +78,12 @@
 		onLabelChange?.(label);
 	}
 
-	// Extract the type and identifier from an entity ID
+	// The route's kind, and the id with that kind's prefix taken off (a day's
+	// date from `day_2026-01-25`).
 	function parseId(id: string): { type: string; identifier: string } | null {
-		const match = id.match(/^([a-z]+)_(.+)$/);
-		if (!match) return null;
-		return { type: match[1], identifier: match[2] };
+		if (!kind) return null;
+		const prefix = `${kind}_`;
+		return { type: kind, identifier: id.startsWith(prefix) ? id.slice(prefix.length) : id };
 	}
 
 	// Load wiki page data
@@ -222,9 +234,11 @@
 
 <div class="wiki-content">
 	{#if loading}
-		<div class="flex items-center justify-center h-full">
-			<Icon icon="mynaui:spinner" width="20" class="spin" />
-		</div>
+		{#if slow.current}
+			<div class="flex items-center justify-center h-full">
+				<Icon icon="mynaui:spinner" width="20" class="spin" />
+			</div>
+		{/if}
 	{:else if error}
 		<div class="error">
 			<Icon icon="mynaui:danger-circle" />
@@ -232,19 +246,24 @@
 			<p>{error}</p>
 		</div>
 	{:else if yearNumber !== null}
+		<!-- A year loads its own page, and rises when it has it (YearPage). -->
 		<YearPage year={yearNumber} />
 	{:else if wikiPage}
-		{#if wikiPage.kind === "day"}
-			<DayPage page={wikiPage.page} />
-		{:else if wikiPage.kind === "person"}
-			<PersonPage page={wikiPage.page} />
-		{:else if wikiPage.kind === "place"}
-			<PlacePage page={wikiPage.page} />
-		{:else if wikiPage.kind === "organization"}
-			<OrganizationPage page={wikiPage.page} />
-		{:else if wikiPage.kind === "thing"}
-			<ThingPage page={wikiPage.page} onRenamed={updateLabel} />
-		{/if}
+		<!-- A page rises into place as its data arrives; its late parts ease
+		     in where they land. -->
+		<div class="arrived" in:fly|global={{ y: 4, duration: 200 }}>
+			{#if wikiPage.kind === "day"}
+				<DayPage page={wikiPage.page} />
+			{:else if wikiPage.kind === "person"}
+				<PersonPage page={wikiPage.page} />
+			{:else if wikiPage.kind === "place"}
+				<PlacePage page={wikiPage.page} />
+			{:else if wikiPage.kind === "organization"}
+				<OrganizationPage page={wikiPage.page} />
+			{:else if wikiPage.kind === "thing"}
+				<ThingPage page={wikiPage.page} {active} onRenamed={updateLabel} />
+			{/if}
+		</div>
 	{:else}
 		<div class="error">
 			<Icon icon="mynaui:file" />
@@ -258,6 +277,10 @@
 	.wiki-content {
 		height: 100%;
 		overflow: hidden;
+	}
+
+	.arrived {
+		height: 100%;
 	}
 
 	.loading {
@@ -274,17 +297,8 @@
 		font-size: 32px;
 	}
 
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.animate-spin {
-		animation: spin 1s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.error {

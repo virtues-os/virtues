@@ -1,44 +1,224 @@
 <script lang="ts">
+	/**
+	 * The Applets door: the applets you made, each one row, the ones that need
+	 * you first.
+	 *
+	 * A row says what the applet is for, when it runs and when it last did, or
+	 * what went wrong and the word that fixes it. Clicking it opens the
+	 * applet's home. An applet with a conversation carries a chat button that
+	 * opens it beside the list, so the list stays in view.
+	 *
+	 * The table of every applet, with its days and runs, is Settings > Applets
+	 * (`ManageApplets.svelte`): checking applets is rarer than using them.
+	 * Built-in applets are listed there, and here only when one needs you.
+	 */
 	import type { Tab } from '$lib/tabs/types';
-	import AppletsPanel from '$lib/components/applets/AppletsPanel.svelte';
+	import { Button, Page } from '$lib';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import ListRow from '$lib/components/datagrid/ListRow.svelte';
+	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
+	import { runApplet, type Applet } from '$lib/api/client';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+	import { pinMenuItem } from '$lib/pins/pinAction';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { needsYou } from '$lib/applets/days';
+	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
-	// One flat list — the Actions/Templates/History sub-tabs are gone
-	// (applets overhaul). Old /actions/<sub> routes still resolve here.
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
-	void tab;
-	void active;
+
+	const NEEDS_YOU = 'Needs you';
+
+	let newSheetOpen = $state(false);
+	let retrying = $state<string | null>(null);
+	let err = $state<string | null>(null);
+
+	$effect(() => {
+		void appletsStore.load();
+	});
+
+	// Yours, the ones that need you first, then the ones that are on. A
+	// built-in applet that needs you marks Settings instead.
+	const applets = $derived(
+		[...appletsStore.mine].sort(
+			(a, b) =>
+				Number(needsYou(b)) - Number(needsYou(a)) ||
+				Number(!a.enabled) - Number(!b.enabled) ||
+				a.name.localeCompare(b.name)
+		)
+	);
+	const anyNeedsYou = $derived(applets.some((a) => needsYou(a)));
+
+	function chatOf(a: Applet): string | null {
+		const id = a.config?.chat_id;
+		return typeof id === 'string' && id ? id : null;
+	}
+
+	// The same grace the scheduler uses before a run counts as late.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+
+	/** What went wrong, in a sentence, or null when nothing did. */
+	function problem(a: Applet): string | null {
+		if (a.enabled && !a.archived_at && a.last_run?.status === 'error') {
+			// The reason when the run gave one ("Gmail is disconnected"), which
+			// says more than when it happened.
+			const reason = a.last_run.error ? errorHeadline(a.last_run.error, 120) : null;
+			return reason ?? `Last run failed ${relativeTime(a.last_run.started_at)}`;
+		}
+		if (a.enabled && a.next_due_at && Date.now() - new Date(a.next_due_at).getTime() > OVERDUE_GRACE_MS) {
+			// Says what happened, not that something is late.
+			const last = a.last_run?.started_at;
+			if (!last) return "Hasn't run yet";
+			const since = formatRelativeTimestamp(last);
+			return `Hasn't run since ${since === 'Yesterday' ? 'yesterday' : since}`;
+		}
+		return null;
+	}
+
+	/** The row's one date: when it last ran, or that it is off. */
+	function when(a: Applet): string {
+		if (!a.enabled) return 'Off';
+		const last = a.last_run?.started_at;
+		return last ? formatRelativeTimestamp(last) : 'Not run yet';
+	}
+
+	// "Run now" is refused unless the applet lists the manual trigger.
+	const canRetry = (a: Applet) => a.enabled && !a.archived_at && a.triggers.includes('manual');
+	const fixOf = (a: Applet) => (a.last_run?.status === 'error' ? runFix(a.last_run.error ?? null) : null);
+
+	const columns: Column<Applet>[] = [
+		{ key: 'name', label: 'Name' },
+		{ key: 'description', label: 'What it does', hidden: true },
+		{
+			key: 'enabled',
+			label: 'Status',
+			hidden: true,
+			groupable: true,
+			groupOrder: [NEEDS_YOU],
+			getValue: (a) => (needsYou(a) ? NEEDS_YOU : anyNeedsYou ? 'Everything else' : 'Your applets'),
+		},
+	];
+
+	function openHome(a: Applet) {
+		windowShellStore.openTabFromRoute(`/applet/${a.id}`, { label: a.name, focusExisting: true });
+	}
+
+	function openConversation(a: Applet) {
+		const chat = chatOf(a);
+		if (!chat) return;
+		windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' });
+	}
+
+	function openFix(a: Applet) {
+		const fix = fixOf(a);
+		if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+	}
+
+	function openManage() {
+		windowShellStore.openTabFromRoute('/virtues/applets', { label: 'Settings' });
+	}
+
+	async function retry(a: Applet) {
+		retrying = a.id;
+		err = null;
+		try {
+			await runApplet(a.id);
+			await appletsStore.load();
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			retrying = null;
+		}
+	}
+
+	function rowMenu(a: Applet, e: MouseEvent) {
+		e.preventDefault();
+		const items: ContextMenuItem[] = [
+			{ id: 'home', label: 'Open applet', icon: 'atlas:applets', action: () => openHome(a) },
+		];
+		if (chatOf(a)) {
+			items.push({ id: 'chat', label: 'Open conversation', icon: 'mynaui:message', action: () => openConversation(a) });
+		}
+		if (canRetry(a)) {
+			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
+		}
+		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+	}
 </script>
 
-<div class="actions-view">
-	<main class="content">
-		<div class="measure">
-			<AppletsPanel />
-		</div>
-	</main>
-</div>
+<Page title="Applets" maxWidth="reading">
+	{#snippet actions()}
+		<Button variant="secondary" onclick={openManage}>Manage applets</Button>
+		<Button variant="primary" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New applet</Button>
+	{/snippet}
+
+	{#if err}
+		<p class="error-msg">{err}</p>
+	{/if}
+
+	<UniversalDataGrid
+		items={applets}
+		{columns}
+		entityType="applets-list"
+		viewModes={['list']}
+		defaultViewMode="list"
+		defaultGroupBy="enabled"
+		showCounts={false}
+		pageSize={100000}
+		loading={!appletsStore.loaded && !appletsStore.error}
+		error={appletsStore.error && applets.length === 0 ? "Your server couldn't send your applets." : null}
+		emptyIcon="atlas:applets"
+		emptyMessage={'Nothing runs for you yet. Ask in chat - "write my examen each morning," "remind me on the 25th" - and it becomes an applet.'}
+		loadingMessage="Loading applets…"
+		searchPlaceholder="Search applets"
+		onItemClick={openHome}
+		onItemContextMenu={rowMenu}
+		onRetry={() => void appletsStore.load()}
+	>
+		{#snippet listRow(a: Applet)}
+			{@const trouble = problem(a)}
+			<ListRow
+				title={a.name}
+				line={trouble ?? a.description ?? describeTriggers(a)}
+				problem={!!trouble}
+				note={when(a)}
+			>
+				{#snippet lead()}<AtlasIcon name={appletGlyph(a)} size={16} bare />{/snippet}
+			</ListRow>
+		{/snippet}
+
+		{#snippet rowActions(a: Applet)}
+			<!-- The fix as a word: Reconnect when the sign-in lapsed, Retry when
+			     another try can work. -->
+			{#if problem(a) && fixOf(a)}
+				<TextAction onclick={() => openFix(a)}>{fixOf(a)?.label}</TextAction>
+			{:else if problem(a) && canRetry(a)}
+				<TextAction disabled={retrying === a.id} onclick={() => retry(a)}>
+					{retrying === a.id ? 'Retrying…' : 'Retry'}
+				</TextAction>
+			{/if}
+			{#if chatOf(a)}
+				<IconButton
+					icon="mynaui:message"
+					label={`Conversation with ${a.name}: ask it something or change it`}
+					onclick={() => openConversation(a)}
+				/>
+			{/if}
+		{/snippet}
+	</UniversalDataGrid>
+</Page>
+
+<NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
-	.actions-view {
-		display: flex;
-		flex-direction: column;
-		height: 100%;
-		min-height: 0;
-	}
-
-	/* Mirrors the Page shell's box model — padding on the outer scroller, the
-	   measure centred inside it — so this hand-rolled view lines up with the
-	   rooms built from Page. It is hand-rolled only because AppletsPanel owns
-	   its own header row. */
-	.content {
-		flex: 1;
-		overflow-y: auto;
-		padding: 3rem;
-	}
-
-	/* The page measure (design-grammar §2): two columns of applet rows. */
-	.measure {
-		max-width: 920px;
-		width: 100%;
-		margin: 0 auto;
+	.error-msg {
+		margin: 0 0 1rem;
+		font-size: 0.875rem;
+		color: var(--color-error);
 	}
 </style>

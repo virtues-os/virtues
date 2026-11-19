@@ -1,132 +1,186 @@
 <script lang="ts">
+	/**
+	 * Light, Dark or Match system (design.md, "Themes"). Each card is a
+	 * small window in its theme's colors; Match system shows Light on its
+	 * left half and Dark on its right.
+	 */
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
 		setTheme,
-		themeDefaultLabel,
 		themePreviewColors,
-		type Theme
+		type Theme,
+		type ThemeChoice
 	} from '$lib/utils/theme';
+
 	interface Props {
-		value: Theme;
-		onchange?: (theme: Theme) => void;
-		/** Compact mode shows smaller cards in a 2x2 grid */
-		compact?: boolean;
+		value: ThemeChoice;
+		onchange?: (choice: ThemeChoice) => void;
 	}
 
-	let { value, onchange, compact = false }: Props = $props();
+	let { value, onchange }: Props = $props();
 
-	const themes = getAvailableThemes();
+	const choices = getAvailableThemes();
 
-	async function selectTheme(theme: Theme) {
-		await setTheme(theme);
-		onchange?.(theme);
+	async function select(choice: ThemeChoice) {
+		await setTheme(choice);
+		onchange?.(choice);
 	}
 </script>
 
-<div class="grid {compact ? 'grid-cols-2 gap-3' : 'grid-cols-4 gap-5'}">
-	{#each themes as theme}
-		{@const colors = themePreviewColors[theme]}
-		{@const isSelected = value === theme}
+{#snippet preview(theme: Theme)}
+	{@const c = themePreviewColors[theme]}
+	<div class="window" style="background: {c.background}">
+		<div class="sheet" style="background: {c.surface}; border-color: {c.surfaceElevated}">
+			<div class="side" style="background: {c.surfaceElevated}">
+				<span class="dot" style="background: {c.primary}"></span>
+				<span class="dot faint" style="background: {c.foregroundMuted}"></span>
+			</div>
+			<div class="lines">
+				<span class="line" style="background: {c.foreground}; width: 75%"></span>
+				<span class="line faint" style="background: {c.foregroundMuted}"></span>
+				<span class="line" style="background: {c.primary}; width: 66%"></span>
+			</div>
+		</div>
+	</div>
+{/snippet}
 
+<div class="choices" role="radiogroup" aria-label="Theme">
+	{#each choices as choice (choice)}
 		<button
 			type="button"
-			onclick={() => selectTheme(theme)}
-			class="group flex flex-col items-center gap-3"
+			class="choice"
+			role="radio"
+			aria-checked={value === choice}
+			class:selected={value === choice}
+			onclick={() => select(choice)}
 		>
-			<!-- Preview card -->
-			<div
-				class="w-full rounded-xl overflow-hidden border-2 transition-all duration-200
-					{isSelected
-					? 'border-primary ring-2 ring-primary/30'
-					: 'border-border hover:border-primary/50'}"
-			>
-				<!-- Mini preview window - video aspect ratio -->
-				<div
-					class="aspect-video p-2"
-					style="background-color: {colors.background}"
-				>
-					<!-- Window chrome -->
-					<div
-						class="rounded-lg overflow-hidden h-full flex flex-col"
-						style="background-color: {colors.surface}; border: 1px solid {colors.surfaceElevated}"
-					>
-						<!-- Title bar -->
-						<div
-							class="flex items-center gap-1 px-2 py-1.5"
-							style="background-color: {colors.surfaceElevated}"
-						>
-							<div class="w-1.5 h-1.5 rounded-full bg-red-400"></div>
-							<div class="w-1.5 h-1.5 rounded-full bg-yellow-400"></div>
-							<div class="w-1.5 h-1.5 rounded-full bg-green-400"></div>
-						</div>
-
-						<!-- Content area -->
-						<div class="flex flex-1 min-h-0">
-							<!-- Sidebar -->
-							<div
-								class="w-5 flex flex-col gap-1 p-1.5"
-								style="background-color: {colors.surfaceElevated}"
-							>
-								<div
-									class="w-full aspect-square rounded-sm"
-									style="background-color: {colors.primary}"
-								></div>
-								<div
-									class="w-full aspect-square rounded-sm opacity-40"
-									style="background-color: {colors.foregroundMuted}"
-								></div>
-							</div>
-
-							<!-- Main content -->
-							<div class="flex-1 p-2 space-y-1.5">
-								<!-- Text lines -->
-								<div
-									class="h-1 w-3/4 rounded-full"
-									style="background-color: {colors.foreground}"
-								></div>
-								<div
-									class="h-1 w-full rounded-full opacity-60"
-									style="background-color: {colors.foregroundMuted}"
-								></div>
-								<div
-									class="h-1 w-2/3 rounded-full"
-									style="background-color: {colors.primary}"
-								></div>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<!--
-				Name, then its role if it has one. Two lines for every card, not
-				just the two that carry a role — a caption that appears on some
-				cards and not others shunts the whole row out of alignment, which
-				is a worse cost than a little empty space.
-			-->
-			<span class="theme-caption">
-				<span class="text-sm font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
-					{getThemeDisplayName(theme)}
-				</span>
-				<span class="theme-role">{themeDefaultLabel(theme) ?? ''}</span>
+			<span class="frame">
+				{#if choice === 'system'}
+					<span class="split">
+						{@render preview('oxford')}
+						<span class="right">{@render preview('asgard')}</span>
+					</span>
+				{:else}
+					{@render preview(choice)}
+				{/if}
 			</span>
+			<span class="name">{getThemeDisplayName(choice)}</span>
 		</button>
 	{/each}
 </div>
 
 <style>
-	.theme-caption {
+	.choices {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 16px;
+		max-width: 32rem;
+	}
+
+	.choice {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.125rem;
+		gap: 8px;
+		padding: 0;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-foreground);
 	}
-	.theme-role {
-		font-size: 0.6875rem;
-		line-height: 1rem;
-		/* Reserved even when empty, so all captions occupy the same height. */
-		min-height: 1rem;
-		color: var(--color-foreground-subtle, #9ca3af);
+
+	.frame {
+		display: block;
+		width: 100%;
+		border-radius: var(--radius-xl);
+		overflow: hidden;
+		/* The selection is the accent edge: the one color a pressable thing
+		   carries. Rest and hover are hairlines, drawn inside the frame. */
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
+		transition: outline-color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.choice:hover .frame {
+		outline-color: var(--color-foreground-subtle);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.choice.selected .frame {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	.window {
+		display: block;
+		aspect-ratio: 16 / 10;
+		padding: 8px;
+	}
+
+	.sheet {
+		display: flex;
+		height: 100%;
+		border: 1px solid;
+		border-radius: var(--radius-md);
+		overflow: hidden;
+	}
+
+	.side {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 20%;
+		padding: 4px;
+	}
+
+	.dot {
+		display: block;
+		aspect-ratio: 1;
+		border-radius: var(--radius-sm);
+	}
+
+	.lines {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px;
+	}
+
+	.line {
+		display: block;
+		height: 4px;
+		border-radius: var(--radius-full);
+	}
+
+	.faint {
+		opacity: 0.5;
+	}
+
+	.split {
+		position: relative;
+		display: block;
+	}
+
+	.right {
+		position: absolute;
+		inset: 0;
+		clip-path: inset(0 0 0 50%);
+	}
+
+	.name {
+		font-size: var(--text-label);
+		color: var(--color-foreground-muted);
+	}
+
+	.choice.selected .name {
+		color: var(--color-foreground);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.frame {
+			transition: none;
+		}
 	}
 </style>

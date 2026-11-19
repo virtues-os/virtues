@@ -1,12 +1,9 @@
 /**
  * Whether a step is the thing in front of the person.
  *
- * On the stage it always is. In the app (SetupView) it may not be: the app
- * keeps a tab that isn't showing mounted, and a split puts another pane
- * beside it. A step there must not take the keyboard from the other pane,
- * answer keys pressed in it (⌘Z in the chat's editor), or keep polling while
- * nobody can see it. SetupView provides the answer; the stage provides none,
- * which reads as always showing.
+ * On the stage it always is, and the stage provides no answer, which reads
+ * as always showing. A step mounted inside a pane would have to provide
+ * one, so it never takes the keyboard from the other pane.
  */
 import { getContext, setContext } from 'svelte';
 

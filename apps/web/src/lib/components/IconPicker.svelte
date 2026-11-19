@@ -53,7 +53,7 @@
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
 	import MenuItem from './MenuItem.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { PIN_COLORS, accentCss } from '$lib/sidebar/pin-colors';
 	import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { loadLucide } from '$lib/lucide';
@@ -83,11 +83,6 @@
 		label?: string;
 		/** The mark the thing wears with no icon chosen. Defaults to the dot. */
 		fallback?: string;
-		/**
-		 * The CSS color the thing wears with no color chosen, such as a pin's
-		 * automatic hue. Omit it and "no color" previews in the text color.
-		 */
-		autoColor?: string | null;
 	}
 
 	let {
@@ -99,7 +94,6 @@
 		onColorSelect,
 		label = 'Untitled',
 		fallback = 'shape:circle',
-		autoColor = null,
 	}: Props = $props();
 
 	let search = $state('');
@@ -120,7 +114,7 @@
 	const previewIcon = $derived(hoverIcon ?? value ?? fallback);
 	const previewColor = $derived(hoverColor !== undefined ? hoverColor : activeColor);
 	const previewTint = $derived.by(() => {
-		const css = previewColor ? accentCss(previewColor) : autoColor;
+		const css = previewColor ? accentCss(previewColor) : null;
 		return css ? `color: ${css}` : '';
 	});
 
@@ -218,9 +212,11 @@
 			.catch((e) => console.error('Failed to load icon set:', e));
 	});
 
-	// The emoji set loads when its tab opens, not with the picker.
+	// The emoji set loads when its tab opens, not with the picker. Untracked:
+	// loadEmojis reads its own loading state, and a failed load that set it
+	// back would otherwise run this again, and again.
 	$effect(() => {
-		if (activeTab === 'emoji') loadEmojis();
+		if (activeTab === 'emoji') untrack(() => loadEmojis());
 	});
 
 	function handleSelect(icon: string) {
@@ -361,7 +357,7 @@
 			{#if visibleIcons.length === 0}
 				<div class="empty">No icons found</div>
 			{:else if hasMoreIcons}
-				<Button variant="secondary" size="sm" class="w-full mt-2" onclick={() => iconsPage++}>
+				<Button variant="secondary" class="w-full mt-2" onclick={() => iconsPage++}>
 					Load more
 				</Button>
 			{/if}
@@ -385,7 +381,7 @@
 			{:else if visibleEmojis.length === 0}
 				<div class="empty">No emoji found</div>
 			{:else if hasMoreEmojis}
-				<Button variant="secondary" size="sm" class="w-full mt-2" onclick={() => emojiPage++}>
+				<Button variant="secondary" class="w-full mt-2" onclick={() => emojiPage++}>
 					Load more
 				</Button>
 			{/if}

@@ -372,7 +372,6 @@
 							{#each UNSPLASH_TOPICS as topic}
 								<Button
 									variant="secondary"
-									size="sm"
 									onclick={() => selectTopic(topic)}
 								>
 									{topic}
@@ -683,11 +682,7 @@
 
 	/* Spinner */
 	:global(.spin) {
-		animation: spin 1s linear;
+		animation: virtues-spin 1s linear;
 	}
 
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
 </style>

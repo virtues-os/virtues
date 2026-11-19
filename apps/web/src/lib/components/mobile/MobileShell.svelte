@@ -356,8 +356,6 @@
 		   sits beneath this plane, and a transparent viewport would show it
 		   through the chat at rest. */
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 	}
 
 	/* The moving plane casts on the one it exposes. Only while displaced — a

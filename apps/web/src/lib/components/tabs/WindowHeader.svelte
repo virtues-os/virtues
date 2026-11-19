@@ -3,10 +3,10 @@
 	 * The window header: one row across the whole window, over the painting.
 	 *
 	 * At the left is the ∴, a glass button that shows and hides the sidebar
-	 * (HeaderMark), standing directly over the rail. It moves only when the
-	 * Mac app's traffic lights come or go, on entering and leaving full
-	 * screen. At the right end are search and Settings (HeaderCorner). Over
-	 * the panes it holds each pane's tab strip, lined up with the pane below
+	 * (HeaderMark), standing directly over the rail. In the Mac app, where
+	 * the traffic lights take the row's start, it sits at the open sidebar's
+	 * right end and beside the lights when closed. At the right end are
+	 * search and Settings (HeaderCorner). Over the panes it holds each pane's tab strip, lined up with the pane below
 	 * it, so a tab always sits on top of its own content. Back and forward
 	 * are on each page's action toolbar (ActionToolbar), since they act on
 	 * that page's tab.
@@ -24,8 +24,6 @@
 	const LIGHTS_GAP_PX = 12;
 	/** How far a sidebar row stands in from the glass's edge, open or closed (UnifiedSidebar). */
 	const ROW_INSET_PX = 4;
-	/** The ∴ and Virtues beside the Mac app's window buttons. */
-	const BESIDE_LIGHTS_PX = 120;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
@@ -40,21 +38,25 @@
 	 * the sidebar's rows, standing where they stand.
 	 *
 	 * In the Mac app the title bar is an overlay and the traffic lights sit
-	 * in this row, on its centre line (src-tauri traffic_lights.rs). The ∴
-	 * follows them instead, and stands on its own glass, a square the size
-	 * of the corner buttons, while the sidebar is closed, since the rail
-	 * cannot hold the lights. In full screen macOS
-	 * hides the lights, and the ∴ goes back to the sidebar, as in a browser.
+	 * in this row, on its centre line (src-tauri traffic_lights.rs), inside
+	 * the open sidebar's glass. The ∴ then stands alone at the right end of
+	 * that row, as a square the size of the corner buttons, without the
+	 * name. Closed, the rail cannot hold the lights, so the ∴ follows them
+	 * on its own glass. In full screen macOS hides the lights, and the ∴
+	 * goes back to the sidebar's first row, as in a browser.
 	 */
 	const sidebarOpen = $derived(!sidebarState.collapsed);
+	const besideLights = $derived(trafficLights.shown);
 	const leadLeft = $derived(
-		trafficLights.shown
-			? trafficLights.end + LIGHTS_GAP_PX
+		besideLights
+			? sidebarOpen
+				? SIDEBAR_INSET + sidebarState.width - ROW_INSET_PX - CHROME_TAB_PX
+				: trafficLights.end + LIGHTS_GAP_PX
 			: SIDEBAR_INSET + ROW_INSET_PX
 	);
 	const markWidth = $derived(
-		trafficLights.shown
-			? sidebarOpen ? BESIDE_LIGHTS_PX : CHROME_TAB_PX
+		besideLights
+			? CHROME_TAB_PX
 			: (sidebarOpen ? sidebarState.width : RAIL_GLASS_PX) - 2 * ROW_INSET_PX
 	);
 
@@ -78,7 +80,7 @@
 		style:left="{leadLeft}px"
 		bind:clientWidth={leadWidth}
 	>
-		<HeaderMark width={markWidth} standalone={trafficLights.shown && !sidebarOpen} />
+		<HeaderMark width={markWidth} standalone={besideLights && !sidebarOpen} named={!besideLights} />
 	</div>
 
 	<div class="strips" data-tauri-drag-region>
@@ -150,10 +152,12 @@
 	}
 
 	/* The strips end where the panes do, the window's air in from the
-	   edge. The last one's tabs stop short of the corner: its two buttons,
-	   the gap between them, and the gap before them. */
+	   edge. The last one's tabs stop short of the corner (HeaderCorner): its
+	   three buttons, the two 8px gaps between them, and the 8px gap before
+	   them. The tab bar paints above the corner, so a button it overlaps
+	   cannot be clicked; change this when the corner gains or loses one. */
 	.strip:last-child {
-		padding-right: calc(2 * var(--chrome-tab-h) + 16px);
+		padding-right: calc(3 * var(--chrome-tab-h) + 24px);
 	}
 
 	.corner {

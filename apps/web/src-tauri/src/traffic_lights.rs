@@ -8,7 +8,7 @@
 //!
 //! AppKit lays the title bar out again on every resize, a zoom included, and
 //! puts the buttons back at its own spot each time: 14pt down, above the row's
-//! 20pt centre line. So main.rs calls `place` after every resize, not once.
+//! 27pt centre line. So main.rs calls `place` after every resize, not once.
 //! tao's `traffic_light_position` re-applies only when its own view redraws,
 //! and the webview covers that view, so it lost them after the first resize.
 //!
@@ -25,11 +25,12 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-/// The header row's centre line: 20pt down its 40pt (`--chrome-row-h`).
-const CENTRE_Y: f64 = 20.0;
-/// The close button's centre: as far in from the window's left edge as the
-/// row's centre line is down from its top.
-const CLOSE_CENTRE_X: f64 = 20.0;
+/// The header row's centre line: 27pt down its 54pt (`--chrome-row-h`).
+const CENTRE_Y: f64 = 27.0;
+/// The close button's centre: over the sidebar's icon column, which is the
+/// window's 10pt of air plus half the 44pt rail (`--rail-w`), so the lights
+/// stand above the icons, open or closed.
+const CLOSE_CENTRE_X: f64 = 32.0;
 
 fn buttons(window: &NSWindow) -> Option<[Retained<NSButton>; 3]> {
     Some([

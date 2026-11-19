@@ -9,6 +9,7 @@
  */
 
 import { cardMode } from '$lib/components/RecordCard.svelte';
+import { reducedMotion } from '$lib/stores/motion.svelte';
 
 /** The event a `Ref` to a record sends up when clicked, for the text it is in to open its card. */
 export const RECORD_CITE = 'recordcite';
@@ -100,7 +101,7 @@ export function recordCards(getRoot: () => HTMLElement | null, { mark: marks = t
 			const next = list[list.indexOf(open.route) + by];
 			const anchor = next ? anchors().find((a) => a.dataset.citeRoute === next) : undefined;
 			if (!next || !anchor) return;
-			const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+			const still = reducedMotion();
 			anchor.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
 			place(next, anchor, !!document.activeElement?.closest('.record-card'));
 		},

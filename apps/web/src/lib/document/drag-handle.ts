@@ -60,6 +60,7 @@
  */
 
 import { Extension } from '@tiptap/core';
+import { reducedMotion } from '$lib/stores/motion.svelte';
 import type { Node as PmNode, NodeType, Slice } from '@tiptap/pm/model';
 import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { dropPoint } from '@tiptap/pm/transform';
@@ -250,10 +251,6 @@ function dropTarget(view: EditorView, at: At, held: Held, moved: boolean): numbe
 /** Whether a drop copies, as ProseMirror reads it: the copy modifier held (⌥ on a Mac, Ctrl elsewhere). */
 function copies(event: { altKey: boolean; ctrlKey: boolean }): boolean {
 	return /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? event.altKey : event.ctrlKey;
-}
-
-function reducedMotion(): boolean {
-	return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
 /** Where the blocks near the screen are now, by id, and how far the page has scrolled. */

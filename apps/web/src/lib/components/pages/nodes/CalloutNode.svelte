@@ -35,7 +35,7 @@
 <!-- The page keeps its focus, so the tone's menu acts on this block. -->
 <span class="doc-callout-tone" role="presentation" onmousedown={(e) => e.preventDefault()}>
 	{#if view.editable}
-		<IconButton icon={current.icon} label={`${current.label}: change the kind`} size="sm" haspopup="menu" onclick={pick} />
+		<IconButton icon={current.icon} label={`${current.label}: change the kind`} size="nested" haspopup="menu" onclick={pick} />
 	{:else}
 		<Icon icon={current.icon} width="16" aria-label={current.label} />
 	{/if}

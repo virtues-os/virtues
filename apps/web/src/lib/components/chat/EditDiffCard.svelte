@@ -4,7 +4,7 @@
 	 *
 	 * Displays edit_page tool results with an expandable diff view (read-only).
 	 */
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 
@@ -105,7 +105,7 @@
 				<IconButton
 					icon="mynaui:external-link"
 					label="Open page"
-					size="sm"
+					size="nested"
 					onclick={handleViewPage}
 				/>
 			{/if}
@@ -153,12 +153,12 @@
 		background: var(--color-surface);
 		border: none;
 		cursor: pointer;
-		color: var(--color-text);
+		color: var(--color-foreground);
 		transition: background 0.15s ease;
 	}
 
 	.card-header:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.header-left {
@@ -200,15 +200,15 @@
 	}
 
 	.diff-line.deletion {
-		background: rgba(var(--color-error-rgb, 239, 68, 68), 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 		border-left-color: var(--color-error);
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	.diff-line.addition {
-		background: rgba(var(--color-success-rgb, 34, 197, 94), 0.08);
+		background: color-mix(in srgb, var(--color-success) 8%, transparent);
 		border-left-color: var(--color-success);
-		color: var(--color-text);
+		color: var(--color-foreground);
 	}
 
 	.diff-line.context {

@@ -224,9 +224,9 @@ important restore.
 - **Nothing escrows your recovery key.** It is printed once in a banner, and
   keeping copies is up to you.
 - **Nothing verifies archives on a schedule.** `--verify` is manual.
-- **The Settings panel is read-only.** It shows whether backups are current,
-  stale or failing, but has no buttons. Backup and restore are terminal
-  commands.
+- **Settings → Backup is read-only.** It shows whether backups are current,
+  stale or failing, and each drive, but has no buttons. Backup and restore
+  are terminal commands, and the page lists them.
 
 If you're moving to new hardware rather than recovering the same server, ask
 us first. The archive carries the old server's identity, and we haven't yet

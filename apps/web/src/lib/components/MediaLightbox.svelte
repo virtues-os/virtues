@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { portal } from "$lib/actions/portal";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
@@ -18,8 +19,7 @@
 	let closing = false;
 
 	const reduceMotion =
-		typeof window !== "undefined" &&
-		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 

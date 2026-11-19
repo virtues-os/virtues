@@ -24,7 +24,10 @@ model provider.
 | The nightly day write-up | the day's evidence — message and transcript text, transactions with merchant and amount, calendar entries with attendee names, app and browser titles |
 | Transcription | **the audio itself**, not a transcript |
 | Image generation | the prompt, and any image supplied to edit |
+| A web search | the query the assistant wrote and, when it gives one, the objective behind it; the gateway's search vendor receives the query |
 | An applet with an `agent` prompt | whatever that applet was written to read |
+| Settings: a drafted change (Return in the search field) | what the owner typed, and the current values of the settings it may change: names, work, employer, time zone, the assistant's name and style notes, the two spending limits |
+| Settings: a sample reply ("How {name} talks to you") | the owner's display name, the assistant's name, and the style notes in the field, saved or not; the week it answers about is invented, so no record goes out |
 
 Hosted path: box → `api.virtues.com` → the AI gateway → the model's provider.
 Two parties besides the provider handle the request in the clear. The provider
@@ -49,7 +52,15 @@ code a provider list in copy.
   or completion log exists on our side.
 - **BYO AI moves the boundary to the owner's vendor.** Calls go to their
   endpoint under their terms; ZDR enforcement is ours only on the hosted path.
+  Web search is the exception: their endpoint cannot run it, so with a key
+  set it still takes the hosted path, as the settings page says.
   Never claim BYO is more private (see [`byo-ai-plan.md`](../plan/byo-ai-plan.md)).
+- **Every kind of record can reach a model.** The assistant reads the whole
+  record, cycle and symptoms included, through the SQL tool, search, the day
+  write-up, suggestions, the chat's circumstances and entity articles. There
+  are no per-kind switches.
+- **Export writes on the box.** `virtues export` writes plain files to a
+  folder on the server; nothing is uploaded.
 - **A local model keeps only its own slot's calls on the box.** A slot pointed at a local
   endpoint keeps that slot's inference on the box; titles, summaries and
   transcription still go wherever their own slots point.
@@ -62,7 +73,8 @@ code a provider list in copy.
   still depends on the provider keeping its promise.
 - **"Coordinates never leave."** The day write-up reduces GPS to distance and
   pace on the box, but chat's `sql_query` can read `data_location_point`, so a
-  question about where you were sends coordinates.
+  question about where you were sends coordinates, unless the owner has
+  turned off Places you've been.
 - **"Blind relay" or "no records"** as unqualified properties. The relay sees
   which device keys talk, from which addresses, and how much passes when;
   "keeps no records" is an operational description, not an attested property.

@@ -14,7 +14,6 @@
 
 	import Icon from '$lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
-	import { fade } from 'svelte/transition';
 	import { menuKey, type MenuCommand } from '$lib/components/menuCommand';
 	import { FloatingContent, useClickOutside } from '$lib/floating';
 	import { focusOwner, pointFocusAt } from '$lib/components/contextMenu/activeDescendant';
@@ -116,7 +115,7 @@
 	options={{ placement: 'bottom-start', offset: 4, flip: true, shift: true, padding: 8 }}
 	class="slash-menu-container"
 >
-	<div bind:this={menuEl} class="slash-menu" transition:fade={{ duration: 100 }}>
+	<div bind:this={menuEl} class="slash-menu">
 		<div class="commands" id={LIST_ID} role="listbox" aria-label="Commands">
 			{#if flatCommands.length === 0}
 				<div class="empty" role="presentation">No matching commands</div>
@@ -195,7 +194,7 @@
 			background-color 0.12s ease;
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"). */
 	@media (pointer: coarse) {
 		.command-item {
 			min-height: 44px;

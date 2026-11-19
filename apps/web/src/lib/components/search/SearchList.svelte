@@ -17,15 +17,24 @@
 	import { visits } from "$lib/stores/visits.svelte";
 	import { loadRecentSources } from "$lib/sidebar/recents.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
+	import { entities } from "$lib/search/entities.svelte";
+	import { handOff } from "$lib/search/handoff";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
 	import { canBrowserPane } from "$lib/tauri/bridge";
+	import { getAssistantProfile } from "$lib/api/client";
+	import { motion } from "$lib/stores/motion.svelte";
+	import { settingPlace, titleOf } from "$lib/settings";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { openSettingInTab } from "$lib/settings/focus";
 	import {
 		commandsFromMenu,
 		contentGlyph,
 		contentTarget,
 		parseQuery,
 		previewOf,
+		rowNoun,
+		rowRoute,
 		searchGroups,
 		type Command,
 		type SearchRow,
@@ -33,12 +42,11 @@
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
-		getTheme,
+		getThemeChoice,
 		applyTheme,
 		setTheme,
-		themeDefaultLabel,
 		themeMetadata,
-		type Theme,
+		type ThemeChoice,
 	} from "$lib/utils/theme";
 
 	interface Props {
@@ -48,10 +56,12 @@
 		here: string | null;
 		/** "theme" while choosing a theme, so the host can say so in its field. */
 		mode?: "search" | "theme";
+		/** The row the keys or the pointer are on, for the host's preview and footer. */
+		selected?: SearchRow | null;
 		onClose: () => void;
 	}
 
-	let { query = $bindable(), here, mode = $bindable("search"), onClose }: Props = $props();
+	let { query = $bindable(), here, mode = $bindable("search"), selected = $bindable(null), onClose }: Props = $props();
 
 	let listEl: HTMLDivElement | null = $state(null);
 	let selectedIndex = $state(0);
@@ -61,9 +71,17 @@
 		if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) chatSessions.load();
 		if (projectStore.projects.length === 0 && !projectStore.loading) projectStore.load();
 		loadRecentSources();
+		void entities.load().catch(() => {
+			// People and places are left out of this search; the rest still works.
+		});
 		// The frecency prior, refreshed at most once a minute.
 		visits.refresh();
 		void canBrowserPane().then((ok) => (browserAvailable = ok));
+		void getAssistantProfile<{ assistant_name?: string | null }>()
+			.then((p) => (assistantName = p.assistant_name?.trim() || null))
+			.catch(() => {
+				// Settings' titles say "your assistant" instead.
+			});
 		// Leaving mid-preview puts back the theme you had.
 		return () => {
 			if (originalTheme) applyTheme(originalTheme);
@@ -72,7 +90,7 @@
 
 	// ── Themes ──────────────────────────────────────────────────────────────
 	const themes = getAvailableThemes();
-	let originalTheme: Theme | null = null;
+	let originalTheme: ThemeChoice | null = null;
 	const shownThemes = $derived(
 		mode === "theme" && query.trim()
 			? themes.filter((t) => getThemeDisplayName(t).toLowerCase().includes(query.trim().toLowerCase()))
@@ -80,7 +98,7 @@
 	);
 
 	function enterThemeMode() {
-		originalTheme = getTheme();
+		originalTheme = getThemeChoice();
 		query = "";
 		mode = "theme";
 		selectedIndex = Math.max(0, themes.indexOf(originalTheme));
@@ -95,7 +113,7 @@
 		mode = "search";
 	}
 
-	function saveTheme(theme: Theme | undefined) {
+	function saveTheme(theme: ThemeChoice | undefined) {
 		if (!theme) return;
 		setTheme(theme);
 		originalTheme = null;
@@ -115,7 +133,9 @@
 	const commands = $derived<Command[]>([
 		...commandsFromMenu(newTabMenuItems(undefined, { browser: browserAvailable })),
 		{ id: "go-sources", label: "Go to Sources", icon: "atlas:sources", run: () => void windowShellStore.openTabFromRoute("/sources") },
-		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", run: () => void windowShellStore.openTabFromRoute("/virtues/you") },
+		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", shortcut: shortcuts.format("mod+,"), run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }) },
+		// The terminal left Settings' list; this is its door.
+		{ id: "open-terminal", label: "Open a terminal on your server", icon: "atlas:terminal", run: () => void windowShellStore.openTabFromRoute("/virtues/developer/terminal", { label: "Terminal" }) },
 		{ id: "change-theme", label: "Change theme", icon: "mynaui:swatches", run: enterThemeMode, keepOpen: true },
 	]);
 
@@ -156,7 +176,10 @@
 		};
 	});
 
-	const groups = $derived(searchGroups({ query, here, commands, content: contentHits }));
+	// The assistant's name, for settings' titles ("What Ari can do").
+	let assistantName = $state<string | null>(null);
+
+	const groups = $derived(searchGroups({ query, here, commands, content: contentHits, assistantName }));
 	/** Every row in drawing order, which is what the keys move through. */
 	const rows = $derived(groups.flatMap((g) => g.rows));
 	/** Each group's first row's index in `rows`. */
@@ -168,6 +191,10 @@
 	$effect(() => {
 		void query;
 		if (mode === "search") selectedIndex = 0;
+	});
+
+	$effect(() => {
+		selected = mode === "search" ? (rows[selectedIndex] ?? null) : null;
 	});
 
 	// Keep the selected row in view as the keys move it.
@@ -187,16 +214,36 @@
 				void row.command.run();
 				if (row.command.keepOpen) return;
 				break;
+			// A row with a preview opens with the hand-off, which closes search itself.
 			case "record":
-				windowShellStore.openTabFromRoute(row.record.url, { label: row.record.title, focusExisting: true });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(row.record.url, { label: row.record.title, focusExisting: true }));
+			case "day":
+				return handOff(() => windowShellStore.openTabFromRoute(rowRoute(row)!, { label: row.day.title, focusExisting: true }));
+			case "entity":
+				return handOff(() => windowShellStore.openTabFromRoute(row.entity.url, { label: row.entity.name, focusExisting: true }));
 			case "content": {
 				const target = contentTarget(row.hit);
-				windowShellStore.openTabFromRoute(target.route, { label: target.label });
-				break;
+				return handOff(() => windowShellStore.openTabFromRoute(target.route, { label: target.label }));
 			}
+			case "setting":
+				// Two settings work right here; the rest open on their page.
+				if (row.setting.id === "theme") return enterThemeMode();
+				if (row.setting.id === "reduce-motion") {
+					// The device already keeps the app still; there is nothing to switch.
+					if (!motion.device) motion.set(motion.setting === "reduce" ? "device" : "reduce");
+					return;
+				}
+				openSettingInTab(row.setting.id, assistantName ?? "");
+				break;
 		}
 		onClose();
+	}
+
+	/** What Return does to a setting row that works in place. */
+	function settingNote(id: string): string | null {
+		if (id === "theme") return "Choose";
+		if (id === "reduce-motion") return motion.device ? "On by your device" : motion.reduced ? "On" : "Off";
+		return null;
 	}
 
 	/** The host's field passes its keys here. */
@@ -219,23 +266,13 @@
 			e.preventDefault();
 			if (mode === "theme") saveTheme(shownThemes[selectedIndex]);
 			else if (rows[selectedIndex]) run(rows[selectedIndex]);
-		} else if (e.key === "Tab" && mode === "search") {
-			// Tab asks from anywhere in the list, so asking never depends on
-			// which row is selected. Its default would move focus out of the
-			// field and strand search.
+		} else if (e.key === "Tab") {
+			// Its default would move focus out of the field and strand search.
 			e.preventDefault();
-			if (!parsed.text || parsed.scope) return;
-			askVirtues(parsed.text);
-			onClose();
 		}
 	}
 
 	const RECORD_GLYPH = { chat: "atlas:chats", page: "atlas:pages", project: "atlas:projects", applet: "atlas:applets" };
-
-	/** `content_bookmark` → "bookmark": the kind, without the table's prefix. */
-	function kindOf(ontology: string): string {
-		return ontology.replace(/^[a-z]+_/, "").replaceAll("_", " ");
-	}
 </script>
 
 {#snippet row(item: SearchRow, index: number)}
@@ -255,31 +292,35 @@
 		{:else if item.kind === "ask"}
 			<Icon icon="atlas:new-chat" width="16" class="row-icon" />
 			<span class="row-label">Ask <span class="muted">{item.query}</span></span>
-			<!-- The answer is written by a model provider, so the row says so. -->
-			<span class="row-note" title="The answer is written by a model provider, off your server.">
-				<Icon icon="mynaui:cloud" width="14" />
-				Off your server
-			</span>
-			<kbd>Tab</kbd>
 		{:else if item.kind === "command"}
 			<Icon icon={item.command.icon} width="16" class="row-icon" />
 			<span class="row-label">{item.command.label}</span>
 			{#if item.command.shortcut}<kbd>{item.command.shortcut}</kbd>{/if}
 		{:else if item.kind === "record"}
-			{#if item.record.kind === "project"}
+			{#if item.record.kind === "thread"}
 				<span class="glyph-slot"><ProjectGlyph project={item.record.project} size={16} /></span>
 			{:else}
 				<Icon icon={RECORD_GLYPH[item.record.kind]} width="16" class="row-icon" />
 			{/if}
 			<span class="row-label" class:muted={item.record.untitled}>{item.record.title}</span>
+		{:else if item.kind === "day"}
+			<Icon icon="atlas:calendar" width="16" class="row-icon" />
+			<span class="row-label">{item.day.title}{#if item.day.hint}<span class="muted">&ensp;{item.day.hint}</span>{/if}</span>
+		{:else if item.kind === "setting"}
+			<Icon icon="atlas:settings" width="16" class="row-icon" />
+			<span class="row-label">{titleOf(item.setting.title, assistantName)}<span class="muted">&ensp;{settingPlace(item.setting, assistantName)}</span></span>
+			{#if settingNote(item.setting.id)}<span class="row-note">{settingNote(item.setting.id)}</span>{/if}
+		{:else if item.kind === "entity"}
+			<Icon icon={item.entity.kind === "person" ? "mynaui:user" : "mynaui:map-pin"} width="16" class="row-icon" />
+			<span class="row-label">{item.entity.name}</span>
 		{:else}
 			<Icon icon={contentGlyph(item.hit)} width="16" class="row-icon" />
 			<span class="row-text">
 				<span class="row-label">{item.hit.title || "Untitled"}</span>
 				{#if previewOf(item.hit)}<span class="row-preview">{previewOf(item.hit)}</span>{/if}
 			</span>
-			<span class="row-note">{kindOf(item.hit.ontology)}</span>
 		{/if}
+		{#if rowNoun(item)}<span class="row-kind">{rowNoun(item)}</span>{/if}
 	</button>
 {/snippet}
 
@@ -297,12 +338,7 @@
 				}}
 			>
 				<Icon icon={themeMetadata[theme].icon} width="16" class="row-icon" />
-				<span class="row-label">
-					{getThemeDisplayName(theme)}
-					<!-- The role follows the name: the theme is called Asgard, and
-					     "Virtues Dark" is what it is for. -->
-					{#if themeDefaultLabel(theme)}<span class="muted">({themeDefaultLabel(theme)})</span>{/if}
-				</span>
+				<span class="row-label">{getThemeDisplayName(theme)}</span>
 				<span class="row-note">{themeMetadata[theme].description}</span>
 			</button>
 		{/each}
@@ -411,6 +447,20 @@
 		overflow: hidden;
 	}
 
+	/* What the row is, at the right edge so the nouns line up down the list. */
+	.row-kind {
+		flex: none;
+		margin-left: auto;
+		padding-left: 8px;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+
+	.two-line .row-kind {
+		align-self: center;
+	}
+
 	.row-note {
 		display: flex;
 		flex: none;
@@ -421,10 +471,6 @@
 		white-space: nowrap;
 	}
 
-	.two-line .row-note {
-		align-self: center;
-	}
-
 	.row kbd {
 		flex: none;
 		font-family: var(--font-sans);
@@ -432,7 +478,7 @@
 		line-height: 1;
 		padding: 3px 5px;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		color: var(--color-foreground-subtle);
 	}
 

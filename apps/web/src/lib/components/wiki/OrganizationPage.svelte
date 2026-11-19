@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import { subjectHref } from "$lib/wiki/links";
 	import type { WikiOrganizationApi } from "$lib/wiki/api";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
@@ -24,6 +25,8 @@
 	}
 
 	let { page }: Props = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	function formatDate(date: Date): string {
 		return date.toLocaleDateString("en-US", {
@@ -75,8 +78,8 @@
 
 <div class="page-layout">
 	<article class="wiki-article">
-		<div class="page-content">
-			<WikiCrumbs bar parent={{ label: "Organizations", href: "/wiki/orgs" }} current={page.name} />
+		<div style:max-width={width.css} class="page-content">
+			<WikiCrumbs bar path={[{ label: "Organizations", route: "/wiki/orgs" }, { label: page.name }]} />
 			<!-- Header -->
 			<header class="page-header">
 				<!-- `cover_image` has a PUT that accepts it and no client that
@@ -192,7 +195,6 @@
 	}
 
 	.page-content {
-		max-width: 48rem;
 		margin: 0 auto;
 		/* The crumb row above the header takes the top space. */
 		padding-top: 0.25rem;

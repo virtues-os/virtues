@@ -1124,14 +1124,11 @@ fn parse_watch(entry: &str) -> Result<Watch, String> {
     let Some(o) = data_table(table) else {
         let known: Vec<&str> = virtues_registry::registered_ontologies()
             .iter()
-            .filter(|o| o.table_name.starts_with("data_") && o.is_model_visible())
+            .filter(|o| o.table_name.starts_with("data_"))
             .map(|o| o.table_name)
             .collect();
         return Err(unknown_key(table, "a data table", &known));
     };
-    if !o.is_model_visible() {
-        return Err(format!("`{table}` can be read only once you turn on its access, so an applet cannot start on it."));
-    }
     if kind == WatchKind::AfterEnd && o.end_timestamp_column.is_none() {
         return Err(format!("`{table}` rows have no end. Use `new {table}` or `30 minutes before {table}`."));
     }
@@ -1617,7 +1614,6 @@ mod tests {
             ("0 minutes before data_calendar_event", "between 1 minute and 24 hours"),
             ("30 minutes before data_calendar_event, new data_health_workout", "more than one data trigger"),
             ("15 minutes after data_health_heart_rate ends", "rows have no end"),
-            ("new data_health_cycle_log", "only once you turn on its access"),
         ] {
             let e = refused(&format!("{BASE}\nmetadata:\n  trigger: {trigger}"), "Do it.");
             assert!(e.contains(expect), "{trigger}: {e}");

@@ -22,8 +22,15 @@ export function getThemeFromCSS(): BundledTheme {
 }
 
 export function ensureHighlighter(): Promise<Highlighter> {
-	highlighter ??= import('shiki')
-		.then(({ createHighlighter }) => createHighlighter({ themes: [getThemeFromCSS()], langs: [] }))
+	// The JavaScript regex engine, not Shiki's default Oniguruma: that one is
+	// a 622 KB WebAssembly chunk whose instance held 24 MB of memory from the
+	// first code block on, for the life of the page.
+	highlighter ??= Promise.all([import('shiki'), import('shiki/engine/javascript')])
+		.then(([{ createHighlighter }, { createJavaScriptRegexEngine }]) =>
+			// `forgiving`: a pattern this browser's RegExp cannot express is
+			// skipped, so one rule degrades instead of the whole block.
+			createHighlighter({ themes: [getThemeFromCSS()], langs: [], engine: createJavaScriptRegexEngine({ forgiving: true }) })
+		)
 		.catch((err) => {
 			// Let the next code block try again instead of every caller waiting forever.
 			highlighter = null;

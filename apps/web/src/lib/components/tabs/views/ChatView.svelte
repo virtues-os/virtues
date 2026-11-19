@@ -89,7 +89,9 @@
 	import { saveScroll, savedScroll } from "$lib/tabs/scrollMemory";
 	import { SvelteSet } from "svelte/reactivity";
 	import { goto } from "$app/navigation";
-	import { fade, fly } from "svelte/transition";
+	import { fade, fly } from "$lib/utils/transitions";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import { lightUp } from "$lib/utils/lit";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
@@ -123,6 +125,7 @@
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
+	import DeletionCard from "$lib/components/chat/DeletionCard.svelte";
 	import TaskCard from "$lib/components/chat/TaskCard.svelte";
 	import ConnectionReceiptCard from "$lib/components/chat/ConnectionReceiptCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
@@ -140,7 +143,7 @@
 		type SuggestedQuestion,
 	} from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
-	import { projectCrumb } from "$lib/tabs/crumbs";
+	import { threadCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -297,7 +300,7 @@
 		if (!chatProject || isGhost || mobileLayout.isMobile || inRoom) return;
 		return paneActions.setCrumbs(tab.id, {
 			glyph: "projects",
-			crumbs: [projectCrumb(chatProject.id, chatProject.name || untitled("project"))],
+			crumbs: [threadCrumb(chatProject.id, chatProject.name || untitled("thread"))],
 			withoutPage: true,
 		});
 	});
@@ -386,7 +389,7 @@
 	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
 		const data = await getChat<{
 			messages?: any[];
-			conversation?: { project_id?: string | null };
+			conversation?: { thread_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
 		// A reply still arriving on this instance is newer than the stored
@@ -397,12 +400,19 @@
 		if (chat.status === "submitted" || chat.status === "streaming") return true;
 		// An older chat is not in the session list; its own detail says where
 		// it is filed. A box older than the field leaves it undefined.
-		if (data.conversation && data.conversation.project_id !== undefined) {
-			chatSessions.noteProject(id, data.conversation.project_id ?? null);
+		if (data.conversation && data.conversation.thread_id !== undefined) {
+			chatSessions.noteProject(id, data.conversation.thread_id ?? null);
 		}
+		// A reload of the chat on screen keeps what the reader had drawn.
+		const drawnBefore = undrawnFor === id ? uniqueMessages.length - undrawn : 0;
 		chat.messages = deduplicateMessages(data.messages || []).map(
 			toUiMessage,
 		) as unknown as typeof chat.messages;
+		// Rooms and the interview open at their start, so they are drawn whole.
+		const whole = inRoom || id === INTERVIEW_CHAT_ID;
+		undrawnCount = whole ? 0 : Math.max(0, chat.messages.length - Math.max(DRAWN_AT_FIRST, drawnBefore));
+		undrawnFor = id;
+		drawnAt = performance.now();
 		return true;
 	}
 
@@ -737,7 +747,7 @@
 				// Scroll to bottom after loading existing chat — but the
 				// getting-started room opens on its cover.
 				setTimeout(() => {
-					if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
+					if (!restoreScroll() && !openAtStart()) openAtNewest();
 				}, 10);
 			}
 		}
@@ -876,7 +886,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
+				if (!restoreScroll() && !openAtStart()) openAtNewest();
 				enableTransitions = true;
 			}, 50);
 
@@ -893,6 +903,19 @@
 		};
 	});
 
+	// An ask that reuses this new chat's tab after it mounted (asking from
+	// Home or ⌘K while an empty new chat is on screen) is claimed here. The
+	// mount above claims it first when the ask opened this view.
+	$effect(() => {
+		void pendingPrompt.asks;
+		if (!active || isLoading || !isNewChat(tab.route)) return;
+		const text = untrack(() => pendingPrompt.take());
+		if (!text) return;
+		const seeded = untrack(() => pendingPrompt.takeProject());
+		if (seeded) untrack(() => projectStore.setDraft(conversationId, seeded));
+		untrack(() => handleChatSubmit(text));
+	});
+
 	// Release chat instance on destroy
 	onDestroy(() => {
 		if (currentChatConversationId) {
@@ -902,6 +925,105 @@
 
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
+
+	/**
+	 * Each user message's place among the user messages (its `exchange-N`
+	 * anchor), and the last message's id, worked out once per render. Each row
+	 * used to count the user messages before it, which is quadratic in the
+	 * chat's length, on every streamed token.
+	 */
+	const exchangeIndexById = $derived.by(() => {
+		const index = new Map<string, number>();
+		let n = 0;
+		for (const m of uniqueMessages) if (m.role === "user") index.set(m.id, n++);
+		return index;
+	});
+	const lastMessageId = $derived(uniqueMessages[uniqueMessages.length - 1]?.id);
+
+	/**
+	 * A long chat draws only its latest messages, and earlier ones as you
+	 * scroll up to them. Each drawn reply holds about seventy of Svelte's
+	 * block records, nearly all from rendering its markdown, so a 300-message
+	 * chat held tens of megabytes for messages nobody was looking at. Every
+	 * message is still loaded; this is how many of the oldest are not drawn.
+	 * Set when a transcript loads; a message that arrives later is always
+	 * drawn, so nothing above the reader moves when a turn ends.
+	 */
+	const DRAWN_AT_FIRST = 60;
+	const DRAWN_MORE = 60;
+	let undrawnCount = $state(0);
+	/** The chat `undrawnCount` was set for: a view reused for another chat draws all of that one. */
+	let undrawnFor: string | null = $state(null);
+	/** When the transcript was put on screen: the top edge waits out the first scroll to the bottom. */
+	let drawnAt = 0;
+	const undrawn = $derived(undrawnFor !== null && undrawnFor === conversationId ? undrawnCount : 0);
+	const drawnMessages = $derived(undrawn > 0 ? uniqueMessages.slice(undrawn) : uniqueMessages);
+	/** The drawn messages' ids. The rail numbers turns across the whole chat, as the rows' `exchange-N` ids do, and lists the drawn ones. */
+	const drawnIds = $derived(new Set(drawnMessages.map((m) => m.id)));
+	/** Until when the top edge holds off: a reveal scrolls past it, and drawing then would fight that scroll. */
+	let edgeQuietUntil = 0;
+	/** The top of the transcript, which draws earlier messages when it comes into view. */
+	let earlierEdge: HTMLElement | null = $state(null);
+	let drawingEarlier = false;
+
+	/**
+	 * Draw up to `count` more of the earlier messages, holding the reader where
+	 * they are: the first message drawn before stays at the same place on
+	 * screen. Corrected for a few frames where the browser does not anchor
+	 * scrolling itself (WebKit before `overflow-anchor`), since rows drawn
+	 * above would otherwise push the reader down.
+	 */
+	async function drawEarlier(count = DRAWN_MORE, until?: string) {
+		// A reveal waits for a draw already under way; the top edge just
+		// skips, since the draw under way moves it out of view anyway.
+		for (let i = 0; until && drawingEarlier && i < 30; i++) await new Promise((r) => requestAnimationFrame(r));
+		if (undrawn === 0 || drawingEarlier) return;
+		const scroller = scrollContainer;
+		const firstId = drawnMessages[0]?.id;
+		const first = firstId ? scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(firstId)}"]`) : null;
+		// Where the first drawn row sits in the content, which a scroll does
+		// not change: holding it there corrects only for what is drawn above
+		// it, and never undoes the reader's own scrolling. Only where the
+		// browser does not anchor scrolling itself (WebKit): Chromium and
+		// Firefox already keep the row in place, and correcting there too
+		// moved the reader by everything drawn.
+		const anchorsItself = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+		const inContent = (el: HTMLElement) =>
+			el.getBoundingClientRect().top - scroller!.getBoundingClientRect().top + scroller!.scrollTop;
+		let at = first && scroller ? inContent(first) : undefined;
+		drawingEarlier = true;
+		const target = until ? uniqueMessages.findIndex((m) => m.id === until) : -1;
+		undrawnCount = target >= 0 ? Math.max(0, Math.min(undrawn - count, target - 4)) : Math.max(0, undrawn - count);
+		await tick();
+		if (scroller && first && at !== undefined && !until && !anchorsItself) {
+			for (let i = 0; i < 4; i++) {
+				const now = inContent(first);
+				if (Math.abs(now - at) >= 1) scroller.scrollTop += now - at;
+				at = now;
+				await new Promise((r) => requestAnimationFrame(r));
+			}
+		}
+		drawingEarlier = false;
+	}
+
+	// The top of a long transcript draws the messages before it as it comes
+	// into view, a little early, so scrolling up does not stop at an edge.
+	$effect(() => {
+		const edge = earlierEdge;
+		const scroller = scrollContainer;
+		if (!edge || !scroller || undrawn === 0) return;
+		const seen = new IntersectionObserver(
+			(entries) => {
+				// Not while the chat is first scrolled to its newest message: the
+				// view starts at the top, so the edge is in view for a moment.
+				if (performance.now() - drawnAt < 1000 || performance.now() < edgeQuietUntil) return;
+				if (entries.some((e) => e.isIntersecting)) void drawEarlier();
+			},
+			{ root: scroller, rootMargin: "800px 0px 0px 0px" },
+		);
+		seen.observe(edge);
+		return () => seen.disconnect();
+	});
 
 	/** How long each stored reply's turn worked, from the span the box
 	 *  records with the row (`startedAt`/`endedAt`), for the thinking line of
@@ -932,7 +1054,7 @@
 			inRoom ||
 			currentChatConversationId === INTERVIEW_CHAT_ID
 			? []
-			: railTurns(uniqueMessages),
+			: railTurns(uniqueMessages).filter((turn) => drawnIds.has(turn.id)),
 	);
 
 	/** The one line per step that carries its number — keyed by message id. */
@@ -1284,15 +1406,29 @@
 
 	/** Scroll a message into view and tint it briefly. False when it is not on screen. */
 	function revealMessage(messageId: string): boolean {
-		const el = scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+		const find = () => scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+		// Loaded but not drawn yet: draw back to it, then show it once. If it
+		// is still not there, nothing more is tried.
+		if (undrawn > 0 && uniqueMessages.slice(0, undrawn).some((m) => m.id === messageId)) {
+			edgeQuietUntil = performance.now() + 1500;
+			void drawEarlier(0, messageId).then(() => {
+				const drawn = find();
+				if (drawn) showRevealed(drawn);
+			});
+			return true;
+		}
+		const el = find();
 		if (!el) return false;
-		const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
-		el.animate(
-			[{ backgroundColor: "var(--color-highlight)" }, { backgroundColor: "transparent" }],
-			{ duration: reduce ? 0 : 1600, easing: "ease-out" },
-		);
+		edgeQuietUntil = performance.now() + 1500;
+		showRevealed(el);
 		return true;
+	}
+
+	function showRevealed(el: HTMLElement) {
+		// Under reduced motion the jump is instant; the wash stays, since it
+		// says which message you came for.
+		el.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+		lightUp(el);
 	}
 
 	function openChatMenu(e?: MouseEvent) {
@@ -1443,8 +1579,16 @@
 	/** Back or Forward to a place seen before: open where you were. */
 	function restoreScroll(): boolean {
 		const top = savedScroll(tab.id, tab.historyIndex, tab.route);
-		if (top === undefined || !scrollContainer) return false;
-		scrollContainer.scrollTo({ top, behavior: "instant" });
+		const scroller = scrollContainer;
+		if (top === undefined || !scroller) return false;
+		// The place was saved against the chat as it was drawn then; draw it
+		// whole so the same offset lands on the same words.
+		if (undrawn > 0) {
+			undrawnCount = 0;
+			void tick().then(() => scroller.scrollTo({ top, behavior: "instant" }));
+			return true;
+		}
+		scroller.scrollTo({ top, behavior: "instant" });
 		return true;
 	}
 
@@ -1481,11 +1625,38 @@
 		};
 	});
 
+	/**
+	 * Open on the newest message and stay there while the first rows draw.
+	 * Rows can grow just after the first frame (highlighted code, images,
+	 * fonts), and WebKit does not hold the bottom when they do, so the end
+	 * can slide below the fold. For about a third of a second, or until the
+	 * reader scrolls, wheels, touches or types, it is put back at the bottom.
+	 */
+	function openAtNewest() {
+		const scroller = scrollContainer;
+		if (!scroller) return;
+		scrollToBottom("instant");
+		let moved = false;
+		const stop = () => (moved = true);
+		const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+		for (const e of events) scroller.addEventListener(e, stop, { passive: true, once: true });
+		let frames = 0;
+		const hold = () => {
+			if (moved || ++frames > 20) {
+				for (const e of events) scroller.removeEventListener(e, stop);
+				return;
+			}
+			if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 2) scroller.scrollTop = scroller.scrollHeight;
+			requestAnimationFrame(hold);
+		};
+		requestAnimationFrame(hold);
+	}
+
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
 			scrollContainer.scrollTo({
 				top: scrollContainer.scrollHeight,
-				behavior,
+				behavior: reducedMotion() ? "auto" : behavior
 			});
 		}
 	}
@@ -1776,7 +1947,7 @@
 		previousTabRoute = route;
 		windowShellStore.updateTab(tab.id, {
 			route,
-			icon: isGhost ? "mynaui:incognito" : "mynaui:chat",
+			icon: isGhost ? "mynaui:incognito" : "atlas:chats",
 			...(PLACEHOLDER_LABELS.has(tab.label) && {
 				label: isGhost ? "Temporary chat" : untitled("chat"),
 			}),
@@ -1889,14 +2060,16 @@
 								     stacked. -->
 								<RoomCover />
 							{/if}
-							{#each uniqueMessages as message, messageIndex (message.id)}
+							{#if undrawn > 0}
+								<div class="earlier-edge" bind:this={earlierEdge}>
+									<button type="button" class="earlier-button" onclick={() => void drawEarlier()}>
+										Show earlier messages
+									</button>
+								</div>
+							{/if}
+							{#each drawnMessages as message (message.id)}
 								{@const isUserMessage = message.role === "user"}
-								{@const exchangeIndex = isUserMessage
-									? uniqueMessages
-											.slice(0, messageIndex)
-											.filter((m) => m.role === "user")
-											.length
-									: -1}
+								{@const exchangeIndex = isUserMessage ? (exchangeIndexById.get(message.id) ?? -1) : -1}
 								<div
 									class="flex {isUserMessage
 										? 'justify-end'
@@ -1934,11 +2107,7 @@
 												buildCitationContextFromParts(
 													message.parts,
 												)}
-											{@const isLastMessage =
-												message.id ===
-												uniqueMessages[
-													uniqueMessages.length - 1
-												]?.id}
+											{@const isLastMessage = message.id === lastMessageId}
 											{@const isStreaming = turnPhase.working && isLastMessage}
 											<!-- Narration, tool calls and reasoning go to the thinking
 											     block; the reply starts at bodyFromIndex (see splitTurn). -->
@@ -2146,6 +2315,12 @@
 													text={out?.text ?? sent.input?.text ?? ""}
 													onOpenPerson={(id) => windowShellStore.openRouteInSplitOrActive(`/person/${id}`)}
 												/>
+											{:else if part.type === "tool-delete_data" && (part as any).state === "output-available" && (part as any).output?.awaiting_owner && (part as any).output?.deletion_id}
+												{@const out = (part as any).output}
+												<!-- A deletion the assistant proposed: what it covers, and
+												     the Delete that only you can press. A later call that
+												     only checks on one leaves nothing here. -->
+												<DeletionCard deletionId={out.deletion_id} summary={out.summary ?? ""} />
 											{:else if (part.type === "tool-create_task" || part.type === "tool-update_task") && (part as any).state === "output-available"}
 												{@const out = (part as any).output}
 												<!-- The tasks themselves, with working checkboxes. A failed
@@ -2398,7 +2573,13 @@
 						     page, so home draws it here. It yields to staged
 						     attachments, whose chips grow upward from the composer. -->
 						{#if mobileLayout.isMobile}
-							<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" transition:fade={{ duration: 500 }} />
+							<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+							     macOS (174 KB), the JPEG last (508 KB). -->
+							<picture>
+								<source srcset="/scenes/lake.avif" type="image/avif" />
+								<source srcset="/scenes/lake.webp" type="image/webp" />
+								<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" transition:fade={{ duration: 500 }} />
+							</picture>
 						{/if}
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />
@@ -2866,8 +3047,6 @@
 		   phone override below sets its own. */
 		padding-bottom: 1.5rem;
 		background-color: var(--color-page);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
 		/* Docked resting state. The empty state centers itself relative to this same
@@ -2950,11 +3129,6 @@
 		color: var(--color-foreground);
 		border-color: var(--color-border-strong);
 		translate: 0 1px;
-	}
-
-	.jump-to-end:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	/* Track E1 — in-message media */
@@ -3057,6 +3231,31 @@
 		/* Isolate each message's layout/paint so a re-render of one (e.g. the
 		   streaming tail) can't reflow siblings. */
 		contain: layout paint;
+	}
+
+	/* No `content-visibility: auto` on rows. WebKit does not hold the reading
+	   position when a skipped row takes its real height, so scrolling up a long
+	   chat in the apps jumped by a few hundred pixels at every row. The drawn
+	   window (DRAWN_AT_FIRST) keeps the rows few instead. */
+
+	/* The top of a long transcript, while earlier messages are not drawn. */
+	.earlier-edge {
+		display: flex;
+		justify-content: center;
+		padding: 0.75rem 0 1.25rem;
+	}
+
+	.earlier-button {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+		padding: 0.25rem 0.75rem;
+		border-radius: var(--radius-md);
+		transition: color 150ms ease, background-color 150ms ease;
+	}
+
+	.earlier-button:hover {
+		color: var(--color-foreground);
+		background-color: var(--color-surface-overlay);
 	}
 
 	.message-wrapper.bleeds {

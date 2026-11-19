@@ -20,7 +20,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { inComposition } from '$lib/utils/ime';
@@ -333,13 +333,12 @@
 		<div class="footer">
 			{#if mode === 'multi' && selectedItems.length > 0}
 				<span class="selection-count">{selectedItems.length} selected</span>
-				<Button variant="primary" size="sm" onclick={handleConfirm}>
+				<Button variant="primary" onclick={handleConfirm}>
 					Add selected
 				</Button>
 			{:else if footerAction}
 				<Button
 					variant={footerAction.variant === 'destructive' ? 'danger' : 'ghost'}
-					size="sm"
 					class="ml-auto"
 					icon={footerAction.icon}
 					onclick={footerAction.action}
@@ -361,7 +360,6 @@
 		<div
 			bind:this={pickerEl}
 			class="entity-picker floating"
-			transition:fade={{ duration: 100 }}
 		>
 			{@render pickerContent()}
 		</div>
@@ -371,7 +369,8 @@
 	<div
 		bind:this={pickerEl}
 		class="entity-picker"
-		transition:fade={{ duration: 100 }}
+		in:fade
+		out:fade
 	>
 		{@render pickerContent()}
 	</div>
@@ -472,7 +471,7 @@
 		transition: background-color 0.1s;
 	}
 
-	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	/* A thumb's 44pt, inside the row (design.md, "Primitives"). */
 	@media (pointer: coarse) {
 		.result-item {
 			min-height: 44px;
@@ -508,7 +507,7 @@
 	.checkbox.checked {
 		background: var(--color-primary);
 		border-color: var(--color-primary);
-		color: white;
+		color: var(--color-surface);
 	}
 
 	.item-name {

@@ -13,11 +13,22 @@ import { windowShellStore } from './window-shell.svelte';
 let pending: string | null = null;
 // Optional project to bind the next new chat to (e.g. "Ask this project").
 let pendingProject: string | null = null;
+/** Counts asks, so a new chat already on screen sees one arrive. */
+let asks = $state(0);
 
 export const pendingPrompt = {
 	/** Stage a prompt for the next new chat to consume. */
 	set(text: string) {
 		pending = text;
+		asks++;
+	},
+	/**
+	 * Read in an effect to run when an ask arrives. A freshly opened chat
+	 * claims its prompt on mount; one already on screen (asking from Home,
+	 * whose tab the ask reuses) has mounted already, and claims it here.
+	 */
+	get asks(): number {
+		return asks;
 	},
 	/** Claim the staged prompt (once). Returns null if none is pending. */
 	take(): string | null {

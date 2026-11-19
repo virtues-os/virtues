@@ -60,22 +60,17 @@ fn text_state(extraction_status: &str) -> &'static str {
 /// Split `/type/id` into its parts. Returns None for anything that isn't a
 /// two-segment app ref (external URLs are handled separately).
 ///
-/// This is THE parser for the ref-URL grammar — project scope resolution
+/// This is THE parser for the ref-URL grammar — thread scope resolution
 /// (`search/query.rs`) and the prompt's member resolver both consume it.
 /// When it was three hand-rolled copies, they disagreed about which kinds
 /// even existed.
 pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix('/')?;
     let (kind, id) = rest.split_once('/')?;
-    // `/notebook/{id}` is the pre-rename spelling of `/project/{id}` (migration
-    // 0029). Old chat messages, citations and wiki refs still carry it, and
-    // rewriting stored JSON on live boxes is not worth a word — so the grammar
-    // accepts both and every consumer sees one kind.
-    let kind = if kind == "notebook" { "project" } else { kind };
     // Viewer params and fragments (`?page=3`, `#hl`) ride on stored routes —
-    // the file viewer writes them into project members and citations — but
+    // the file viewer writes them into thread members and citations — but
     // they are never part of an id. Stripping here, at the grammar, is what
-    // keeps every consumer agreeing; when only the project-scope resolver
+    // keeps every consumer agreeing; when only the thread-scope resolver
     // stripped them, the prompt resolver showed those members as bare URLs
     // and read_asset refused files that exist.
     let id = id.split(['?', '#']).next().unwrap_or(id);
@@ -193,6 +188,29 @@ async fn fetch_names(
     kind: &str,
     ids: &[String],
 ) -> Vec<(String, String, Option<String>, Option<String>)> {
+    // A record's id is `<ontology>/<id>`, and each ontology is its own
+    // table with its own title column (`api::record_refs`).
+    if kind == "record" {
+        let keyed: Vec<((String, String), &String)> = ids
+            .iter()
+            .filter_map(|id| crate::api::record_refs::record_table(id).map(|key| (key, id)))
+            .collect();
+        let keys: Vec<(String, String)> = keyed.iter().map(|(key, _)| key.clone()).collect();
+        return match crate::api::record_refs::record_facts(pool, &keys).await {
+            Ok(facts) => keyed
+                .into_iter()
+                .filter_map(|(key, id)| {
+                    let title = facts.get(&key)?.title.clone().filter(|t| !t.trim().is_empty())?;
+                    Some((id.clone(), title, None, None))
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("[refs] record lookup failed: {}", e);
+                Vec::new()
+            }
+        };
+    }
+
     // Drive files carry two extra columns, so they get their own query rather
     // than a lowest-common-denominator shape shared with the entity tables.
     if kind == "drive" {
@@ -246,14 +264,14 @@ async fn fetch_names(
         }
         // Chats and projects are ordinary members — a project routinely
         // collects the conversations that happened inside it, and pins point
-        // at sibling projects. Both were reaching the prompt as bare ids.
+        // at sibling threads. Both were reaching the prompt as bare ids.
         "chat" => {
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled chat') \
              FROM app_chats WHERE id = ANY($1)"
         }
-        "project" => {
-            "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project') \
-             FROM app_projects WHERE id = ANY($1)"
+        "thread" => {
+            "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled thread') \
+             FROM app_threads WHERE id = ANY($1)"
         }
         _ => return Vec::new(),
     };
@@ -292,11 +310,11 @@ pub struct RefIdentity {
 
 /// The kinds whose name, icon and color live on their own app table, and
 /// that can be trashed.
-const OWNED: [&str; 3] = ["chat", "page", "project"];
+const OWNED: [&str; 3] = ["chat", "page", "thread"];
 /// Kinds `fetch_names` can look up, so a miss means the record is gone.
 const LOOKED_UP: [&str; 5] = ["person", "place", "org", "thing", "drive"];
 
-/// Resolve many URLs to identities. Chats, pages and projects are read here,
+/// Resolve many URLs to identities. Chats, pages and threads are read here,
 /// with icon, color and trash state, and a database error is returned; every
 /// other kind goes through [`resolve_refs`], whose misses are cosmetic.
 pub async fn resolve_identities(
@@ -328,7 +346,7 @@ pub async fn resolve_identities(
             }
             _ => {
                 "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project'), icon, accent_color, deleted_at IS NOT NULL \
-                 FROM app_projects WHERE id = ANY($1)"
+                 FROM app_threads WHERE id = ANY($1)"
             }
         };
         let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, bool)>(sql)
@@ -444,10 +462,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_notebook_url_parses_as_project() {
-        assert_eq!(split_ref("/project/nb_abc"), Some(("project", "nb_abc")));
-        assert_eq!(split_ref("/notebook/nb_abc"), Some(("project", "nb_abc")));
-        assert_eq!(split_ref("/notebook/nb_abc?page=2"), Some(("project", "nb_abc")));
+    fn thread_url_parses_without_its_viewer_params() {
+        assert_eq!(split_ref("/thread/nb_abc"), Some(("thread", "nb_abc")));
+        assert_eq!(split_ref("/thread/nb_abc?page=2"), Some(("thread", "nb_abc")));
     }
 
     #[test]
@@ -505,7 +522,7 @@ mod live {
     async fn resolves_every_kind_a_real_project_actually_contains() {
         let pool = pool().await;
 
-        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_project_items")
+        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_thread_items")
             .fetch_all(&pool)
             .await
             .expect("project items");

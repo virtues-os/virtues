@@ -17,14 +17,15 @@ const KNOWN_TYPES: TabType[] = [
 	'chat-history',
 	'narrative-identity',
 	// Then regular types
-	'setup',
 	'chat',
 	'page',
 	'person',
 	'place',
 	'org',
 	'thing',
-	'project',
+	'thread',
+	'task',
+	'insight',
 	'bookmarks',
 	'passwords',
 	'day',
@@ -44,14 +45,13 @@ const KNOWN_TYPES: TabType[] = [
 
 /**
  * Spellings that restore as another type. A serialized tab string is what an
- * old bookmark or a shared URL carries, so a list form (`projects`) and the
- * pre-rename spelling (projects were notebooks until 2026-09) both have to keep
- * restoring the same view.
+ * old bookmark or a shared URL carries, so the list form (`projects`) has to
+ * keep restoring the same view.
  */
 const TYPE_ALIASES: Record<string, TabType> = {
-	projects: 'project',
-	notebook: 'project',
-	notebooks: 'project',
+	threads: 'thread',
+	// The Tasks page joined the Threads door; a saved Tasks tab restores there.
+	tasks: 'thread',
 };
 
 /**

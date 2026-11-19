@@ -112,7 +112,19 @@ pub fn mdns_host() -> String {
                 .filter(|s| !s.is_empty())
         })
         .unwrap_or_else(|| "virtues".to_string());
-    format!("{host}.local")
+    mdns_name(&host)
+}
+
+/// `<host>.local` from a hostname. A Mac's `hostname` already ends in
+/// `.local`, so it is not added twice.
+fn mdns_name(host: &str) -> String {
+    let len = host.len();
+    let bare = if len > 6 && host.is_char_boundary(len - 6) && host[len - 6..].eq_ignore_ascii_case(".local") {
+        &host[..len - 6]
+    } else {
+        host
+    };
+    format!("{bare}.local")
 }
 
 /// Addresses of this box, for someone to type into the app.
@@ -478,6 +490,13 @@ pub async fn wait_for_new_device(pool: &sqlx::PgPool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mdns_name_adds_local_once() {
+        assert_eq!(mdns_name("virtues"), "virtues.local");
+        assert_eq!(mdns_name("Nicks-MacBook-Pro.local"), "Nicks-MacBook-Pro.local");
+        assert_eq!(mdns_name("box.LOCAL"), "box.local");
+    }
 
     // ── parse_ppid ──────────────────────────────────────────────────────────
 

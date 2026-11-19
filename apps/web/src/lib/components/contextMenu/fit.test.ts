@@ -46,7 +46,7 @@ describe('a menu opened at a point', () => {
 
 	it('is fitted again by its real size once drawn, and never runs under the keys', () => {
 		const provider = fs.readFileSync(path.join(HERE, 'ContextMenuProvider.svelte'), 'utf8');
-		expect(provider).toMatch(/if \(contextMenu\.anchor\) return;\s+\/\/[^\n]*\n\s+const size = \{ width: menuRef\.offsetWidth, height: menuRef\.offsetHeight \};\s+const fitted = fitMenu\(contextMenu\.position, size\);/);
+		expect(provider).toMatch(/if \(contextMenu\.anchor\) \{[^}]*return;\s+\}\s+\/\/[^\n]*\n\s+const size = \{ width: menuRef\.offsetWidth, height: menuRef\.offsetHeight \};\s+const fitted = fitMenu\(contextMenu\.position, size\);/);
 		expect(provider).toMatch(/100dvh - var\(--keyboard-inset, 0px\)/);
 	});
 });

@@ -10,7 +10,8 @@
 	 * keeps pointing at its guide until the owner dismisses it.
 	 */
 	import { onMount } from 'svelte';
-	import { Button, Page } from '$lib';
+	import { Button } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import { getSearchStatus, type SearchStatus } from '$lib/api/client';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
@@ -99,7 +100,7 @@
 	});
 </script>
 
-<Page title="Search" description="Where search runs, and how much of your record it covers." maxWidth="wide">
+<SettingsPage title="Search" lede="Where search runs, and how much of your record it covers.">
 	{#if error}
 		<p class="error">
 			Couldn't load search status: {error}.
@@ -114,7 +115,7 @@
 				<p>
 					Search runs on this server's CPU. On the {status.accelerator}, every search and your
 					first index are much faster. Set it up with the guide - about ten minutes - then point
-					search at it by running this on the server:
+					search at it by running this on your server:
 				</p>
 				<pre><code>virtues configure-inference --embed-url http://127.0.0.1:8080</code></pre>
 				<div class="actions">
@@ -148,7 +149,7 @@
 				{#if status.model_change}
 					<span class="note">
 						Moving to {status.model_change.model}: {changePercent}% of the index is rebuilt. Search
-						keeps using the current model until the rebuild finishes.
+						switches to it when the rebuild finishes.
 					</span>
 				{/if}
 			</dd>
@@ -184,15 +185,25 @@
 
 		{#if status.mode !== 'manual' && status.mode !== 'dragon'}
 			<section class="own">
-				<h3>Run search on your own server</h3>
+				<h3>Run search on a GPU or another machine</h3>
 				<p>
-					Start an embedding server on a GPU, an NPU, or another machine, then run this on the
-					server. The command keeps your index when the new server runs the same model.
+					Search is faster on a GPU or an NPU. Start an embedding server there, then run this on
+					your server. Your index stays if the new server runs the same model.
 				</p>
 				<pre><code>virtues configure-inference --embed-url http://127.0.0.1:8080</code></pre>
 				<button type="button" class="link" onclick={() => openExternal(GUIDE)}>
 					Read the guide for GPUs and NPUs
 				</button>
+			</section>
+		{:else if status.mode === 'dragon' && !status.model_change}
+			<section class="own">
+				<h3>Move search to this server's CPU</h3>
+				<p>
+					Virtues no longer maintains search on the Dragon's NPU. Run this on the server to move
+					search to its CPU. On a Dragon the new index takes a few days to build, and search
+					switches to it when it's done.
+				</p>
+				<pre><code>sudo virtues configure-inference --recommended</code></pre>
 			</section>
 		{:else if status.mode === 'manual'}
 			<section class="own">
@@ -206,7 +217,7 @@
 			</section>
 		{/if}
 	{/if}
-</Page>
+</SettingsPage>
 
 <style>
 	.accelerator {

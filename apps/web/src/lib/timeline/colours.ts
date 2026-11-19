@@ -1,7 +1,7 @@
 /**
  * colours.ts - the Timeline's paint.
  *
- * The pane's grammar (agents/build/design-grammar.md §5) gives a page one
+ * The pane's grammar (agents/build/design.md, "Color") gives a page one
  * accent. The Timeline keeps that accent for *now* and *pressable* (the
  * playhead, the lit stretch of path, the pin, a pick, a link) and departs from
  * it for the streams: each stream has its own hue, the same in the scrubber,

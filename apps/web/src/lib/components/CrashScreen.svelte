@@ -171,11 +171,6 @@
 		color: var(--foreground);
 		text-decoration: underline;
 	}
-	.link:focus-visible {
-		outline: 2px solid var(--border-focus);
-		outline-offset: 3px;
-		border-radius: var(--radius-xs);
-	}
 	.details {
 		position: relative;
 		margin-top: 1.25rem;

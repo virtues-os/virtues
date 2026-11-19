@@ -45,7 +45,7 @@
 		{ id: "page", label: "Pages", kinds: ["page"] },
 		{ id: "person", label: "People", kinds: ["person"] },
 		{ id: "place", label: "Places", kinds: ["place"] },
-		{ id: "project", label: "Projects", kinds: ["project"] },
+		{ id: "thread", label: "Threads", kinds: ["thread"] },
 		{ id: "chat", label: "Chats", kinds: ["chat"] },
 	];
 

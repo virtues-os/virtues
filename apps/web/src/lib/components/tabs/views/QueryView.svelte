@@ -7,6 +7,7 @@
 	so it opens from a link anywhere and after a reload.
 -->
 <script lang="ts">
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import type { Tab } from "$lib/tabs/types";
 	import type { QueryResult } from "$lib/types/Citation";
 	import Icon from "$lib/components/Icon.svelte";
@@ -21,6 +22,8 @@
 	import { parseToolRef } from "$lib/utils/refRoutes";
 
 	let { tab }: { tab: Tab } = $props();
+
+	const width = usePageWidth(() => "reading");
 
 	interface Loaded {
 		result: QueryResult;
@@ -54,7 +57,10 @@
 			.then((data) => {
 				const turns = deduplicateMessages(data.messages ?? []).map((m) => toUiMessage(m, new Map())) as StoredTurn[];
 				const call = findToolCall(turns, route);
-				const result = call ? queryResult(call.output, call.input) : null;
+				const whole = call ? queryResult(call.output, call.input) : null;
+				// `#n` opens the rows behind the call's nth figure.
+				const figureColumn = ref.figure ? whole?.columns[ref.figure - 1] : undefined;
+				const result = (figureColumn && whole?.series?.[figureColumn]) || whole;
 				if (!call || !result) {
 					error = "The chat this link points to doesn't have this query any more. Ask the question again to run it.";
 					return;
@@ -118,7 +124,7 @@
 {#snippet pieces(list: Piece[])}{#each list as piece, p (p)}{#if piece.marked}<mark>{piece.text}</mark>{:else}{piece.text}{/if}{/each}{/snippet}
 
 <div class="query-view">
-	<div class="inner">
+	<div style:max-width={width.css} class="inner">
 		{#if loading}
 			<div class="state">Loading the query…</div>
 		{:else if error}
@@ -171,7 +177,6 @@
 		overflow-y: auto;
 	}
 	.inner {
-		max-width: 720px;
 		margin: 0 auto;
 		padding: 3.5rem 2rem 6rem;
 	}
@@ -245,10 +250,6 @@
 	.link:hover {
 		text-decoration: underline;
 		text-underline-offset: 2px;
-	}
-	.link:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 
 	.section + .section {

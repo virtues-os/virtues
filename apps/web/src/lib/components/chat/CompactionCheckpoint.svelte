@@ -107,7 +107,7 @@
 	}
 
 	.checkpoint-header:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.header-left {

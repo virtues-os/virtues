@@ -1,13 +1,17 @@
 <script lang="ts">
 	/**
-	 * The right corner of the window header: search and Settings, two glass
-	 * buttons level with the ∴ at the other end.
+	 * The right corner of the window header: Search, Sources and Settings,
+	 * three glass buttons level with the ∴ at the other end.
 	 *
 	 * Search opens the search palette (SearchModal), as ⌘K does. It searches
 	 * everything, so it lives in the window's corner rather than on a page's
-	 * toolbar, where it would read as a search of that page. Settings opens
-	 * the Settings page, which carries its own section list (SectionNav). It
-	 * is something you open now and then, so it sits in the corner rather
+	 * toolbar, where it would read as a search of that page. Sources opens
+	 * where your data comes from: its overview, catalog, activity, streams and
+	 * Query. It carries no dot or badge, even when a source stops: a stopped
+	 * source shows on the Sources page and under Needs you in Settings.
+	 * Settings opens
+	 * the Settings page, every setting on one scroll. It is something you
+	 * open now and then, so it sits in the corner rather
 	 * than in the sidebar's list, and lights while the focused pane shows a
 	 * Settings page.
 	 */
@@ -15,16 +19,20 @@
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { SETTINGS_MODE, rowForRoute } from '$lib/sidebar/modes';
 
-	const inSettings = $derived.by(() => {
+	const activePath = $derived.by(() => {
 		const pane = windowShellStore.activePane;
-		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
-		return !!rowForRoute(SETTINGS_MODE, route);
+		return pane?.tabs.find((t) => t.id === pane.activeTabId)?.route?.split('?')[0];
 	});
+	const inSources = $derived(activePath === '/sources' || !!activePath?.startsWith('/sources/'));
+	const inSettings = $derived(activePath === '/virtues' || !!activePath?.startsWith('/virtues/'));
+
+	function openSources() {
+		windowShellStore.openTabFromRoute('/sources', { label: 'Sources', focusExisting: true });
+	}
 
 	function openSettings() {
-		windowShellStore.openTabFromRoute('/virtues/you', { label: 'Settings', focusExisting: true });
+		windowShellStore.openTabFromRoute('/virtues', { label: 'Settings', focusExisting: true });
 	}
 </script>
 
@@ -35,11 +43,23 @@
 	<button
 		type="button"
 		class="corner-button lq"
-		class:lq-selected={inSettings}
+		class:selected={inSources}
+		onclick={openSources}
+		aria-label="Sources"
+		aria-current={inSources ? 'page' : undefined}
+		data-tip="Sources"
+	>
+		<AtlasIcon name="sources" size={SHELL_GLYPH_PX} bare />
+	</button>
+	<button
+		type="button"
+		class="corner-button lq"
+		class:selected={inSettings}
 		onclick={openSettings}
 		aria-label="Settings"
 		aria-current={inSettings ? 'page' : undefined}
 		data-tip="Settings"
+		data-tip-key="mod+,"
 	>
 		<AtlasIcon name="settings" size={SHELL_GLYPH_PX} bare />
 	</button>
@@ -71,7 +91,7 @@
 	}
 
 	.corner-button:hover,
-	.corner-button.lq-selected {
+	.corner-button.selected {
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
@@ -80,11 +100,6 @@
 	.corner-button:active {
 		transform: scale(0.92);
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
-	}
-
-	.corner-button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

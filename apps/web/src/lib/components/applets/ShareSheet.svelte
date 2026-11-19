@@ -15,6 +15,7 @@
 	 */
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import {
 		previewPublication,
@@ -360,18 +361,18 @@
 							</div>
 							<div class="link-actions">
 								{#if l.link}
-									<Button size="sm" variant="secondary" icon="mynaui:copy" onclick={() => copy(l.link!)}>
+									<Button variant="secondary" icon="mynaui:copy" onclick={() => copy(l.link!)}>
 										{copied === l.link ? 'Copied' : 'Copy link'}
 									</Button>
 								{/if}
-								<Button size="sm" variant="ghost" disabled={busy} onclick={() => update(l.id)}>Update to this version</Button>
+								<Button variant="ghost" disabled={busy} onclick={() => update(l.id)}>Update to this version</Button>
 								{#if confirmRevoke === l.id}
-									<Button size="sm" variant="danger" disabled={busy} onclick={() => revoke(l.id)}>
+									<Button variant="danger" disabled={busy} onclick={() => revoke(l.id)}>
 										Turn off this link for everyone
 									</Button>
-									<Button size="sm" variant="ghost" onclick={() => (confirmRevoke = null)}>Keep it</Button>
+									<Button variant="ghost" onclick={() => (confirmRevoke = null)}>Keep it</Button>
 								{:else}
-									<Button size="sm" variant="ghost" onclick={() => (confirmRevoke = l.id)}>Revoke</Button>
+									<Button variant="ghost" onclick={() => (confirmRevoke = l.id)}>Revoke</Button>
 								{/if}
 							</div>
 						</div>
@@ -380,14 +381,10 @@
 			{/if}
 
 			<section class="create">
-				<label class="expiry">
-					<span class="label">Link works for</span>
-					<select id="share-expiry" bind:value={expiry}>
-						{#each EXPIRY_CHOICES as c (c.value)}
-							<option value={c.value}>{c.label}</option>
-						{/each}
-					</select>
-				</label>
+				<div class="expiry">
+					<label class="label" for="share-expiry">Link works for</label>
+					<Select id="share-expiry" value={expiry} options={EXPIRY_CHOICES} onchange={(v) => (expiry = v)} />
+				</div>
 				<Button variant="primary" icon="mynaui:link" disabled={busy} onclick={create}>
 					{links.length ? 'Create another link' : 'Create link'}
 				</Button>
@@ -545,15 +542,6 @@
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 	}
-	select {
-		font: inherit;
-		font-size: 0.875rem;
-		padding: 0.4rem 0.5rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-surface);
-		color: var(--color-foreground);
-	}
 	.hint {
 		margin: 0;
 		font-size: 0.75rem;
@@ -564,7 +552,7 @@
 		font-size: 0.8125rem;
 		color: var(--color-error);
 		padding: 0.5rem 0.625rem;
-		background: var(--color-error-bg);
+		background: var(--color-error-subtle);
 		border-radius: var(--radius-md);
 	}
 </style>

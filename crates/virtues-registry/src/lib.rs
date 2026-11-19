@@ -20,6 +20,7 @@
 //! - **Built-in tools** (this registry): web_search, query_ontology, semantic_search
 
 pub mod assistant;
+pub mod chart_marks;
 pub mod models;
 pub mod ontologies;
 pub mod sql_catalog;

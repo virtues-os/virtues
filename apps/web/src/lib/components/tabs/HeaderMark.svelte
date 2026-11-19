@@ -7,8 +7,10 @@
 	 * (UnifiedSidebar). Closed, it is the top of the rail. Open, it widens
 	 * into the sidebar's first row: the ∴ on the column the rows' icons
 	 * stand on, and Virtues where their labels start. The window header
-	 * places it and gives it its width. Where nothing is behind it (the Mac
-	 * app's window buttons beside a closed rail) it is its own glass.
+	 * places it and gives it its width. In the Mac app, where the window's
+	 * buttons take the start of that row, it is a square with no name: at
+	 * the row's end when open, on its own glass beside the buttons when
+	 * closed.
 	 *
 	 * Pointing at it turns the mark into its own sidebar glyph: the three
 	 * dots line up as a column, the list, and a hairline draws down beside
@@ -21,28 +23,38 @@
 	 */
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
 
-	let { width, standalone = false }: { width: number; standalone?: boolean } = $props();
+	let {
+		width,
+		standalone = false,
+		named = true,
+	}: { width: number; standalone?: boolean; named?: boolean } = $props();
 
 	const open = $derived(!sidebarState.collapsed);
+	/** Laid out as a row (∴ then the name) only when it shows the name. */
+	const asRow = $derived(open && named);
 </script>
 
 <button
 	type="button"
 	class="header-mark"
-	class:lq={standalone}
-	class:sidebar-shown={open}
+	class:standalone
+	class:sidebar-shown={asRow}
 	class:resizing={sidebarState.resizing}
 	style:width="{width}px"
 	onclick={() => sidebarState.toggle()}
 	aria-label={open ? 'Hide the sidebar' : 'Show the sidebar'}
 	aria-expanded={open}
-	data-tip={open ? undefined : 'Show the sidebar'}
-	data-tip-key={open ? undefined : 'mod+b'}
-	style:padding-left="{open ? 10 : (width - 16) / 2}px"
+	data-tip={asRow ? undefined : open ? 'Hide the sidebar' : 'Show the sidebar'}
+	data-tip-key={asRow ? undefined : 'mod+b'}
+	style:padding-left="{asRow ? 10 : (width - 16) / 2}px"
 >
 	<!-- The dots are drawn, not typed: the app icon's geometry (equilateral,
 	     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts), so
 	     the header, the chat and the Dock show one mark. -->
+	<!-- Its own glass, beside the Mac app's window buttons. It is a layer
+	     rather than a class on the button so it can fade while the
+	     sidebar's glass rises around the ∴ or draws away from it. -->
+	<span class="mark-glass lq" aria-hidden="true"></span>
 	<span class="mark-slot">
 	<svg class="mark" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
 		<path class="edge" d="M16 3.5V20.5" pathLength="1" />
@@ -51,11 +63,13 @@
 		<g class="move right"><circle class="mark-dot right" cx="19.5" cy="18" r="3" /></g>
 	</svg>
 	</span>
-	<span class="mark-label" aria-hidden="true">Virtues</span>
+	{#if named}
+		<span class="mark-label" aria-hidden="true">Virtues</span>
+	{/if}
 </button>
 
 <style>
-	/* As tall as a tab and a sidebar row. Laid out like a row: the ∴, as large as a
+	/* As tall as a tab. Laid out like a sidebar row: the ∴, as large as a
 	   row's icon, then the name where a row's label starts. Closed it is as
 	   wide as a rail row, with the ∴ in the middle (the inset is set inline
 	   from the width). Its width and the inset ease on the sidebar's clock,
@@ -82,11 +96,57 @@
 			transform var(--motion-release) var(--ease-glass);
 	}
 
-	/* On the sidebar's glass it has no surface of its own. Standing alone
-	   it takes the glass's (`.lq`). */
-	.header-mark:not(.lq) {
+	.header-mark {
+		position: relative;
 		background: transparent;
+	}
+
+	/* On the sidebar's glass it has no surface of its own. */
+	.header-mark:not(.standalone) {
 		border-radius: var(--sidebar-interactive-radius);
+	}
+
+	/* Standing alone it has its own glass (`.lq`). Opening, the glass goes
+	   quickly as the sidebar's glass comes up around the ∴. Closing, it
+	   comes back once the sidebar's glass has drawn away. */
+	.mark-glass {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 120ms var(--ease-premium);
+	}
+
+	.standalone .mark-glass {
+		opacity: 1;
+		transition: opacity 200ms var(--ease-premium) 160ms;
+	}
+
+	.standalone:hover .mark-glass {
+		box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
+	}
+
+	/* The glint where the pointer is, as on glass buttons (app.css). The
+	   root layout keeps --lq-x and --lq-y on this button. */
+	.mark-glass::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit; /* design-ok: takes its element's radius */
+		background: radial-gradient(circle at var(--lq-x, 50%) var(--lq-y, 0%), var(--lq-glint), transparent 65%);
+		opacity: 0;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.standalone:hover .mark-glass::after {
+		opacity: 1;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.mark-slot,
+	.mark-label {
+		position: relative;
 	}
 
 	.header-mark.resizing {
@@ -94,8 +154,8 @@
 	}
 
 	/* On the sidebar's glass it lights as a row does, by the glass's own
-	   light under the pointer (UnifiedSidebar). Its own glass brightens
-	   instead (`.lq`, app.css). */
+	   light under the pointer (UnifiedSidebar). Standing alone, its own
+	   glass brightens instead (`.mark-glass`). */
 
 	/* The square sinks under a press and springs back. The open row does
 	   not: a full-width row that shrank would read as a wobble. */
@@ -133,12 +193,6 @@
 		transition:
 			opacity 240ms var(--ease-premium) 130ms,
 			transform 280ms var(--ease-premium) 130ms;
-	}
-
-	/* Inside the button's own shape, as on a sidebar row. */
-	.header-mark:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
 	}
 
 	.mark {
@@ -204,6 +258,7 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.header-mark,
+		.mark-glass,
 		.mark-label,
 		.move,
 		.edge {

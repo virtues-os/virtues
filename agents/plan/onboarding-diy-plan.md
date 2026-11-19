@@ -58,7 +58,7 @@ Server and CLI only. Useful to Linux installs today.
 Partly built (wave, 2026-11-15): the new order, chapters and the interview out
 of setup, and the device step's counts removed. The sign-in is already on the
 subscription step. A phone paired to a set-up server now opens its device
-step (`connect.html` hands off to `/setup/connections`); a computer gets the
+step (`connect.html` hands off to `/onboarding/connections`); a computer gets the
 same with slice 3. Left: the hardware-only parts (decision 1). The server's `STEP_IDS` stay as they are
 so older apps still read every step they know.
 
@@ -81,13 +81,12 @@ so older apps still read every step they know.
 Built on wave (2026-11-15), checked in the dev fake, not yet paired on a real
 Mac. `StepServer` pairs by address and code (`prePair.pairByAddress`,
 `pairing.ts`), then Setup opens this device's step; `handOff` and the
-connect-page hand-offs are deleted. Left: `takeCarried` and the `?intro` rule
-in `inApp.ts` (dated TODO), and `connect.html` for Windows and Linux.
+connect-page hand-offs are deleted. Left: `takeCarried`, and `connect.html` for Windows and Linux.
 
 - The manual address and code form moves into `StepServer.svelte`, with the
   pasted-line split and the error mapping from `connect.html`.
 - After pairing the Mac stays in its own copy of the app (drop the
-  `localhost:7117` fallback in `connect.html`) and opens `/setup/connections`,
+  `localhost:7117` fallback in `connect.html`) and opens `/onboarding/connections`,
   as the phone does, so a computer added to a set-up server gets its device
   step.
 - `connect.html` stays for Windows and Linux with a dated TODO.

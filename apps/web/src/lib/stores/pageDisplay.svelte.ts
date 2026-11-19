@@ -2,9 +2,9 @@
  * Page display settings — the "Aa" popover model.
  *
  * One persisted, app-wide set of reading/writing preferences for the page
- * editor: font mode, text size, page width, heading style, and
- * focus/typewriter mode.
- * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
+ * editor: font mode, text size, heading style, and focus/typewriter mode.
+ * The page's width is the same setting every page has
+ * (stores/pageWidth.svelte.ts).
  * Font + size are surfaced to the editor via the `--prose-family`,
  * `--prose-size`, `--prose-lh` and `--prose-scale` custom properties (see
  * lib/styles/prose.css), set on an ancestor of the editor so they cascade in.
@@ -12,7 +12,6 @@
 
 export type FontMode = "sans" | "serif" | "mono";
 export type TextSize = "s" | "m" | "l";
-export type WidthMode = "small" | "medium" | "full" | "page";
 /** `flat` draws every heading at the body's size, its level marked by `#`s in the margin. */
 export type HeadingMode = "sized" | "flat";
 
@@ -65,7 +64,6 @@ const SERIF_SCALE: Record<TextSize, number> = { s: 16 / 17, m: 1, l: 19 / 17 };
 interface Persisted {
 	fontMode: FontMode;
 	textSize: TextSize;
-	widthMode: WidthMode;
 	headingMode: HeadingMode;
 	focusMode: boolean;
 	spellcheck: boolean;
@@ -74,7 +72,6 @@ interface Persisted {
 const DEFAULTS: Persisted = {
 	fontMode: "sans",
 	textSize: "m",
-	widthMode: "medium",
 	headingMode: "sized",
 	focusMode: false,
 	spellcheck: true,
@@ -93,7 +90,6 @@ function load(): Persisted {
 class PageDisplay {
 	fontMode = $state<FontMode>(DEFAULTS.fontMode);
 	textSize = $state<TextSize>(DEFAULTS.textSize);
-	widthMode = $state<WidthMode>(DEFAULTS.widthMode);
 	headingMode = $state<HeadingMode>(DEFAULTS.headingMode);
 	focusMode = $state(DEFAULTS.focusMode);
 	spellcheck = $state(DEFAULTS.spellcheck);
@@ -102,7 +98,6 @@ class PageDisplay {
 		const p = load();
 		this.fontMode = p.fontMode;
 		this.textSize = p.textSize;
-		this.widthMode = p.widthMode;
 		this.headingMode = p.headingMode;
 		this.focusMode = p.focusMode;
 		this.spellcheck = p.spellcheck;
@@ -140,7 +135,6 @@ class PageDisplay {
 				JSON.stringify({
 					fontMode: this.fontMode,
 					textSize: this.textSize,
-					widthMode: this.widthMode,
 					headingMode: this.headingMode,
 					focusMode: this.focusMode,
 					spellcheck: this.spellcheck,
@@ -161,19 +155,8 @@ class PageDisplay {
 		this.persist();
 	}
 
-	setWidth(mode: WidthMode) {
-		this.widthMode = mode;
-		this.persist();
-	}
-
 	setHeadingMode(mode: HeadingMode) {
 		this.headingMode = mode;
-		this.persist();
-	}
-
-	cycleWidth() {
-		const modes: WidthMode[] = ["small", "medium", "full", "page"];
-		this.widthMode = modes[(modes.indexOf(this.widthMode) + 1) % modes.length];
 		this.persist();
 	}
 

@@ -203,7 +203,7 @@
 					     shared project menu where this row was. -->
 					<MenuItem
 						icon="mynaui:folder-plus"
-						label="Add to project…"
+						label="Add to thread…"
 						onclick={(e: MouseEvent) => {
 							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 							close();
@@ -221,14 +221,12 @@
 							<div class="delete-confirm-actions">
 								<Button
 									variant="secondary"
-									size="sm"
 									onclick={() => (showDeleteConfirm = false)}
 								>
 									Cancel
 								</Button>
 								<Button
 									variant="danger"
-									size="sm"
 									onclick={() => {
 										onDelete();
 										close();
@@ -322,11 +320,6 @@
 	.toolbar-action:hover {
 		color: var(--color-foreground);
 		background: var(--hover-bg);
-	}
-
-	.toolbar-action:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 2px;
 	}
 
 	/* Open, as IconButton draws a button whose popover is open: a ground,

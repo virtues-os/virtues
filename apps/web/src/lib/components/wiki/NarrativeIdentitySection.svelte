@@ -19,7 +19,6 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -47,12 +46,6 @@
 
 	function editDocument() {
 		if (pageId) windowShellStore.openRouteBeside(`/page/${pageId}`);
-	}
-
-	/** The interview runs in Setup now; the old getting-started room this
-	 *  opened is retired. */
-	function openInterview() {
-		void goto('/setup/interview');
 	}
 
 	const updatedLabel = $derived(
@@ -93,12 +86,6 @@
 	{:else}
 		<div class="empty">
 			<p class="empty-lead">Nothing written yet.</p>
-			<p class="empty-body">
-				Your document is written from the interview, a conversation with your
-				assistant. When you close the interview, the document appears here and on its own page,
-				in your words and in the first person.
-			</p>
-			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>
 	{/if}
 
@@ -215,7 +202,7 @@
 	}
 
 	/* 400: the serif ships one cut, so the 500 this carried resolved back to the
-	   regular and said nothing (agents/build/typography.md). Size and full ink
+	   regular and said nothing (agents/build/design.md, "Type"). Size and full ink
 	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
@@ -280,21 +267,12 @@
 	}
 
 	.btn:hover:not(:disabled) {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.btn:disabled {
 		opacity: 0.6;
 		cursor: default;
-	}
-
-	.btn.primary {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		/* --color-background, not a hardcoded white: on dark themes the
-		   primary is light and white-on-light would vanish. (There is no
-		   --color-primary-foreground token; it silently fell back.) */
-		color: var(--color-background);
 	}
 
 	.empty {
@@ -308,10 +286,4 @@
 		margin: 0 0 0.5rem;
 	}
 
-	.empty-body {
-		font-size: 0.9375rem;
-		line-height: 1.55;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1.25rem;
-	}
 </style>

@@ -101,7 +101,7 @@ implementation inverted them: the list leads with Origin and Lifecycle badges,
 and the detail page leads with a form.
 
 A second pattern: **`owner` keeps leaking into places that want `origin`.** The
-list page learned this and documents it well ([`AppletsPanel.svelte:36–42`](../../apps/web/src/lib/components/applets/AppletsPanel.svelte));
+list page learned this and documented it well (`AppletsPanel.svelte:36–42`, a file removed in 493522329 when the Applets door moved to the data grid);
 the detail page (T3) and `is_system` in the API response were never updated to match.
 `origin` should be the only provenance field any UI touches.
 

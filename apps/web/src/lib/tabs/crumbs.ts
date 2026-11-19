@@ -9,7 +9,7 @@
  * `paneActions.setCrumbs`.
  */
 
-import { SETTINGS_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
+import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 
 export interface Crumb {
 	label: string;
@@ -23,19 +23,19 @@ export interface Crumb {
 }
 
 export type CrumbMenu =
-	| { kind: 'projects' }
-	| { kind: 'project'; id: string }
+	| { kind: 'threads' }
+	| { kind: 'thread'; id: string }
 	| { kind: 'pages' }
 	| { kind: 'applets' }
 	/** A sidebar mode's rows: all of them by heading, or one heading's. */
-	| { kind: 'mode'; mode: 'settings' | 'wiki'; group?: string };
+	| { kind: 'mode'; mode: 'settings' | 'wiki' | 'storage'; group?: string };
 
-export const projectsCrumb = (): Crumb => ({ label: 'Projects', route: '/projects', menu: { kind: 'projects' } });
+export const threadsCrumb = (): Crumb => ({ label: 'Threads', route: '/threads', menu: { kind: 'threads' } });
 
-export const projectCrumb = (id: string, name: string): Crumb => ({
+export const threadCrumb = (id: string, name: string): Crumb => ({
 	label: name,
-	route: `/project/${id}`,
-	menu: { kind: 'project', id },
+	route: `/thread/${id}`,
+	menu: { kind: 'thread', id },
 });
 
 export const wikiCrumb = (): Crumb => ({ label: 'Wiki', route: '/wiki', menu: { kind: 'mode', mode: 'wiki' } });
@@ -53,8 +53,7 @@ export interface CrumbPath {
 /** A door in the sidebar and the routes that sit under it. */
 const DOORS: { prefixes: string[]; root: Crumb; glyph: string }[] = [
 	{ prefixes: ['/page'], root: { label: 'Pages', route: '/page', menu: { kind: 'pages' } }, glyph: 'pages' },
-	{ prefixes: ['/tasks'], root: { label: 'Tasks', route: '/tasks' }, glyph: 'tasks' },
-	{ prefixes: ['/projects', '/project', '/notebook'], root: projectsCrumb(), glyph: 'projects' },
+	{ prefixes: ['/threads', '/thread', '/task', '/insight'], root: threadsCrumb(), glyph: 'projects' },
 	{ prefixes: ['/applets', '/applet'], root: { label: 'Applets', route: '/applets', menu: { kind: 'applets' } }, glyph: 'applets' },
 ];
 
@@ -91,26 +90,42 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		if (!door.prefixes.some((p) => under(path, p))) continue;
 		const crumbs: Crumb[] = [door.root];
 		if (path !== door.root.route && title && title !== door.root.label) crumbs.push({ label: title });
-		else crumbs[0] = { label: door.root.label };
+		// On the door itself the segment is the page, except where its menu
+		// lists the door's own views (Threads): that menu stays.
+		else crumbs[0] = door.root.menu?.kind === 'threads' ? door.root : { label: door.root.label };
 		return { glyph: door.glyph, crumbs };
 	}
 
+	// Settings' landing page, where every Settings page is linked.
+	if (path === '/virtues') return { glyph: 'settings', crumbs: [{ label: 'Settings' }] };
 	const settingsRow = rowForRoute(SETTINGS_MODE, path);
 	if (settingsRow) {
-		const root: Crumb = { label: 'Settings', route: SETTINGS_MODE.rows[0].href, menu: { kind: 'mode', mode: 'settings' } };
-		const crumbs = inRow(root, settingsRow, path, title);
-		// The section heading sits between Settings and the row (Sources /
-		// Catalog), linked to the heading's first row.
+		const root: Crumb = { label: 'Settings', route: '/virtues', menu: { kind: 'mode', mode: 'settings' } };
+		// A Settings tab is labelled "Settings · Billing", or just "Settings"
+		// when opened from its address; only the part after the dot names the
+		// page, and a page a row opens (Billing / What AI has cost) has no
+		// crumb of its own without it.
+		const page = title.replace(/^Settings(?: · )?/, '');
+		const crumbs = inRow(root, settingsRow, path, page);
+		// The landing page's heading sits between Settings and the page
+		// (Settings / Your server / Devices), linked to the landing page,
+		// where that heading's links are.
 		const group = settingsRow.group;
-		const first = SETTINGS_MODE.rows.find((r) => r.group === group);
-		if (group && first && group !== settingsRow.label) {
+		if (group && group !== settingsRow.label) {
 			crumbs.splice(1, 0, {
 				label: group,
-				route: first.href === path ? undefined : first.href,
+				route: '/virtues',
 				menu: { kind: 'mode', mode: 'settings', group },
 			});
 		}
 		return { glyph: 'settings', crumbs };
+	}
+
+	if (path === '/storage') return { glyph: 'drive', crumbs: [{ label: 'Storage' }] };
+	const storageRow = rowForRoute(STORAGE_MODE, path);
+	if (storageRow) {
+		const root: Crumb = { label: 'Storage', route: '/storage', menu: { kind: 'mode', mode: 'storage' } };
+		return { glyph: 'drive', crumbs: inRow(root, storageRow, path, title) };
 	}
 
 	const entity = path.match(/^\/(\w+)\//)?.[1];
@@ -118,13 +133,6 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		rowForRoute(WIKI_MODE, path) ??
 		(entity && WIKI_ENTITY_ROWS[entity] ? rowForRoute(WIKI_MODE, WIKI_ENTITY_ROWS[entity]) : null);
 	if (wikiRow) {
-		if (wikiRow.group === 'Drive') {
-			const root: Crumb = { label: 'Drive', route: '/storage', menu: { kind: 'mode', mode: 'wiki', group: 'Drive' } };
-			if (wikiRow.href === '/storage') {
-				return { glyph: 'drive', crumbs: path === '/storage' ? [{ label: 'Drive' }] : [root, { label: title }] };
-			}
-			return { glyph: 'drive', crumbs: inRow(root, wikiRow, path, title) };
-		}
 		return { glyph: 'wiki', crumbs: inRow(wikiCrumb(), wikiRow, path, title) };
 	}
 	if (under(path, '/wiki')) return { glyph: 'wiki', crumbs: [{ label: path === '/wiki' ? 'Wiki' : title }] };

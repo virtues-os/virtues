@@ -255,7 +255,7 @@
 	cursor: default;
 }
 
-/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
+/* A thumb's 44pt: the box stays 14px, its hit area grows (design.md, "Primitives"),
    up, down and to the left only. It ends at the box's right edge: the
    item's text starts 8px past it, and a tap there places the caret. */
 @media (pointer: coarse) {
@@ -286,7 +286,7 @@
 	top: 0;
 	width: 4px;
 	height: 8px;
-	border: solid var(--color-primary-foreground, var(--color-background));
+	border: solid var(--color-surface);
 	border-width: 0 2px 2px 0;
 	transform: rotate(45deg);
 }
@@ -351,8 +351,7 @@
 	font-family: var(--prose-family, var(--md-body-family));
 	font-size: var(--md-th-size);
 	/* The regular: the header is told apart by its size and ground, and a
-	   heavier weight is one the serif, in an article, does not have.
-	   TODO(2026-10-21): set --md-th-weight to 400 in themes.css and read it here. */
+	   heavier weight is one the serif, in an article, does not have. */
 	font-weight: 400;
 	background: var(--color-surface-elevated);
 }
@@ -393,7 +392,7 @@
 	--md-body-family: var(--md-article-family);
 	--md-body-size: var(--md-article-size);
 	--md-body-lh: var(--md-article-lh);
-	/* The serif has one weight (agents/build/typography.md), so the lower
+	/* The serif has one weight (agents/build/design.md, "Type"), so the lower
 	   headings step by size and color, not by the sans's 500 and 600. h4 is
 	   a step over the 17px body and h3 a step over h4; h5 is the body's size
 	   in the muted ink; h6 is smaller, also muted, as in the sans. */
@@ -464,7 +463,7 @@
 .prose--flat-headings .prose h5::before { content: "#####"; content: "#####" / ""; }
 .prose--flat-headings .prose h6::before { content: "######"; content: "######" / ""; }
 
-/* The serif has one weight (agents/build/typography.md), so in Serif mode
+/* The serif has one weight (agents/build/design.md, "Type"), so in Serif mode
    the levels step by ink alone. */
 .prose--article.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6) {
 	font-weight: 400;

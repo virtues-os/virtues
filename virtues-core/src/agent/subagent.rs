@@ -142,7 +142,7 @@ pub async fn dispatch(
         // `Default` before, which meant no project and `Weighted`: inside a
         // grounded chat the orchestrator was told "answer ONLY from these
         // materials" while every worker it sent out searched the whole record.
-        let scope = (context.project_id.clone(), context.scope_mode);
+        let scope = (context.thread_id.clone(), context.scope_mode);
         handles.push(tokio::spawn(async move {
             run_one_worker(
                 pool,
@@ -249,11 +249,11 @@ async fn run_one_worker(
     let tools = crate::tools::get_tools_for_subagent();
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None, None);
 
-    let (project_id, scope_mode) = scope;
+    let (thread_id, scope_mode) = scope;
     let context = ToolContext {
         user_id: Some("subagent".to_string()),
         // A worker searches where the turn that sent it is allowed to search.
-        project_id,
+        thread_id,
         scope_mode,
         // Workers don't re-emit panel updates or spawn sub-workers.
         ..Default::default()

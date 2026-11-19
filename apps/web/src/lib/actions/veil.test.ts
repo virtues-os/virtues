@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseDayArticle, veilMarks } from "$lib/wiki/dayArticle";
 import { plainText } from "$lib/wiki/inlineMarkdown";
 import { veiled } from "./veil";
+
+// The motion store is a rune module, which this Node project can't compile.
+// The veil only asks it whether to skip the fade.
+vi.mock("$lib/stores/motion.svelte", () => ({ reducedMotion: () => false }));
 
 /** The veiled spans the action makes over a paragraph drawn as the day page draws it. */
 async function hiddenIn(markdown: string): Promise<string[]> {

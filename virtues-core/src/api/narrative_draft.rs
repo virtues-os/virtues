@@ -1143,12 +1143,9 @@ pub struct Rule {
     pub active: bool,
 }
 
-/// One confirmed rule.
-///
-/// `kind` arrives from the client because only the person knows which it is:
-/// "never mention my father" and "help me hold my fast" are both rules and they
-/// are opposites. It defaults to `avoid` — the reading that cannot cause harm if
-/// a client omits it.
+/// One confirmed rule: a subject never to bring up. Older clients send a
+/// `kind`; every rule is saved as `avoid` whatever it says, since the
+/// hold-me-to kind is retired.
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub enum RuleInput {
@@ -1166,10 +1163,10 @@ fn default_kind() -> String {
 }
 
 impl RuleInput {
-    fn parts(&self) -> (&str, &str) {
+    fn rule(&self) -> &str {
         match self {
-            RuleInput::Bare(r) => (r.as_str(), "avoid"),
-            RuleInput::Kinded { rule, kind } => (rule.as_str(), kind.as_str()),
+            RuleInput::Bare(r) => r.as_str(),
+            RuleInput::Kinded { rule, .. } => rule.as_str(),
         }
     }
 }
@@ -1224,7 +1221,7 @@ async fn list_proposed_rules(pool: &PgPool) -> Result<Vec<Rule>> {
 
 pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
     sqlx::query_as::<_, Rule>(
-        "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at, id",
+        "SELECT id, rule, kind, active FROM wiki_rules WHERE active AND kind = 'avoid' ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
@@ -1270,29 +1267,28 @@ pub async fn save_rules(pool: &PgPool, req: &SaveRules) -> Result<()> {
         .await
         .map_err(|e| Error::Database(format!("save rules: {e}")))?;
 
+    // Retired hold-me-to rows ('defend') are never read and never touched.
     let clear = if req.keep_proposed {
-        "DELETE FROM wiki_rules WHERE NOT (id LIKE 'proposed_%' AND NOT active)"
+        "DELETE FROM wiki_rules WHERE kind = 'avoid' AND NOT (id LIKE 'proposed_%' AND NOT active)"
     } else {
-        "DELETE FROM wiki_rules"
+        "DELETE FROM wiki_rules WHERE kind = 'avoid'"
     };
     sqlx::query(clear)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("clear rules: {e}")))?;
 
+    // The save's stamp keeps a new id clear of a retired row's (`rule_001`),
+    // which stays; the index keeps the person's order within the save.
+    let stamp = chrono::Utc::now().timestamp_millis();
     for (i, input) in req.rules.iter().enumerate() {
-        let (rule, kind) = input.parts();
-        let rule = rule.trim();
+        let rule = input.rule().trim();
         if rule.is_empty() {
             continue;
         }
-        // The column has a CHECK; sending anything else would fail the whole
-        // transaction and lose the rules that were fine.
-        let kind = if kind == "defend" { "defend" } else { "avoid" };
-        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, $3)")
-            .bind(format!("rule_{i:03}"))
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, 'avoid')")
+            .bind(format!("rule_{stamp}_{i:03}"))
             .bind(rule)
-            .bind(kind)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(format!("insert rule: {e}")))?;
@@ -1359,6 +1355,7 @@ mod proposed_rules_tests {
         let save = |keep_proposed| SaveRules {
             rules: vec![RuleInput::Kinded {
                 rule: "no work email on Sundays".into(),
+                // An older client's kind is ignored: every rule is a subject never to raise.
                 kind: "defend".into(),
             }],
             keep_proposed,
@@ -1374,13 +1371,33 @@ mod proposed_rules_tests {
                 list_proposed_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
             (active, proposed)
         };
-        let in_force = vec![("defend".to_string(), "no work email on Sundays".to_string())];
+        let in_force = vec![("avoid".to_string(), "no work email on Sundays".to_string())];
 
         save_rules(&pool, &save(true)).await.unwrap();
         assert_eq!(state(pool.clone()).await, (in_force.clone(), vec!["my ex".to_string()]));
 
         save_rules(&pool, &save(false)).await.unwrap();
         assert_eq!(state(pool.clone()).await, (in_force, Vec::<String>::new()));
+    }
+
+    /// A retired hold-me-to rule stays stored, untouched by a save, and is
+    /// never listed; a new rule's id cannot collide with it.
+    #[sqlx::test]
+    async fn a_retired_hold_me_to_rule_is_left_alone(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ('rule_000', 'the morning pages', 'defend')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let req = SaveRules { rules: vec![RuleInput::Bare("my ex".into())], keep_proposed: false };
+        save_rules(&pool, &req).await.expect("a save beside a retired row succeeds");
+
+        let listed: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
+        assert_eq!(listed, vec!["my ex"]);
+        let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_rules WHERE kind = 'defend'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 1, "the retired row is not deleted");
     }
 
     /// A request from a client that predates the flag still drops proposals.

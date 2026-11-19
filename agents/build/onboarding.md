@@ -11,7 +11,7 @@
 >    `virtues-core/src/api/box_status.rs`,
 >    `virtues-core/src/api/getting_started.rs`,
 >    `virtues-core/src/api/identity.rs`,
->    `apps/web/src/routes/(onboarding)/setup/`,
+>    `apps/web/src/routes/(onboarding)/onboarding/`,
 >    `apps/web/src/lib/components/setup/`,
 >    `apps/web/src/lib/components/recovery/reconnect.svelte.ts`,
 >    `apps/web/src-tauri/ui/connect.html`.
@@ -143,15 +143,15 @@ Who opens it:
 
 | Device | Unpaired | Paired |
 |---|---|---|
-| Mac | `/setup` from its own baked copy (`src-tauri/src/main.rs`) | its own copy; `/reconnect` when the server refuses or does not answer |
-| iPhone | `/setup` from its own baked copy; `connect.html#existing` only for the QR scanner | `connect.html`, which sends it on to its server |
+| Mac | `/onboarding` from its own baked copy (`src-tauri/src/main.rs`) | its own copy; `/reconnect` when the server refuses or does not answer |
+| iPhone | `/onboarding` from its own baked copy; `connect.html#existing` only for the QR scanner | `connect.html`, which sends it on to its server |
 | Windows, Linux | `connect.html`: network search, address and code, pairing | the server's copy of the app through the loopback, or `connect.html#reset` / `#unreachable` |
 | Android | `connect.html` | `connect.html` |
 
 The scanner (`#existing`, `acceptScanned`) accepts two things: the server's
 QR line, which it splits with `Router.splitPasted` and pairs by address, and
 a paired computer's handoff QR (`plugin:reach|pair_handoff_accept`). After a
-phone pairs it opens `/setup/connections`.
+phone pairs it opens `/onboarding/connections`.
 
 `connect.html` keeps its own copy of the pasted-line split and the error
 wording in `setup/pairing.ts`, because it loads nothing. Both go when Windows
@@ -171,7 +171,8 @@ missing or unreadable key is fixed only on the device.
 
 ## Setup
 
-**Setup is one linear flow** at `/setup/[[step]]`. The order is `ORDER` in
+**Setup is one linear flow** at `/onboarding/[[step]]`, and it is the only place
+any of its steps runs. The app has no Setup tab, rail tile or drawer row. The order is `ORDER` in
 `apps/web/src/lib/components/setup/setup.svelte.ts`:
 
 ```
@@ -180,8 +181,7 @@ Welcome → Server → Names → Connections → Subscription → Arrival → ap
 
 The founder's letter is not a step: the pair code lasts 20 minutes at most,
 so nothing stands between the person and it. Arrival offers it as "A note
-from us"; Setup in the app keeps it to reread (`IN_APP`), and
-`/founders-letter` shows it on its own.
+from us", and `/founders-letter` shows it on its own.
 
 Every step after Welcome is a sheet on the desk, with the Tuscany print
 faded along the bottom in the theme's ink. The ∴ at the top is the
@@ -199,7 +199,7 @@ person opens the app or the letter themselves.
   the reach plugin's `pair`; `pairing.ts` turns failures into sentences.
 - **Server runs only on a device that has no server yet** and carries the
   app itself: the iPhone and the Mac. Anywhere else it is already done. In
-  dev, `/setup?radio=fake` walks it in a browser against a scripted server
+  dev, `/onboarding?radio=fake` walks it in a browser against a scripted server
   (`&nearby=diy` puts one on the fake network, `&nearby=none` finds nothing).
 - **Connections** is this device's permissions. A device that has just paired
   lands here even when the server is already set up (the
@@ -214,22 +214,21 @@ person opens the app or the letter themselves.
   so the assistant has a name before any step uses it.
 - Chapters and the interview are not part of setup.
 
-**Resume position is derived, never stored.** Each in-app step reads its
+**Resume position is derived, never stored.** Each step reads its
 status from `GET /api/getting-started`, whose steps are `STEP_IDS` in
 `virtues-core/src/api/getting_started.rs`. Setup reads `connect_ai`
 (Subscription), `introductions` (Names) and `connect_world` (Connections).
 `STEP_IDS` still lists `timeline` and `interview` so older apps find every
-step they know. `/setup` alone lands on the first step still to do. After the
-app opens, an unfinished step keeps a Setup tile on the rail.
+step they know. `/onboarding` alone lands on the first step still to do. A
+step skipped there (Connections) is done later from the device's own page
+in Settings, under Devices.
 
-The app gate (`apps/web/src/routes/(app)/+layout.ts`) redirects to `/setup` on
+The app gate (`apps/web/src/routes/(app)/+layout.ts`) redirects to `/onboarding` on
 `onboarding_status` only: when it is `onboarding`, or when it is not `active`
 and `onboarding_complete` is false. Setup's close sets `active`.
 
-`/onboarding/[[view]]` is a 308 redirect to `/setup`. Old step URLs are in
-browser histories, and SPA delivery is OTA, so a bundle baked before the
-rename can meet a newer server. `/founders-letter` stays as a read-only copy
-of the letter.
+There is no `/setup` route. `/founders-letter` stays as a read-only copy of
+the letter.
 
 ### `/api/setup/state` (`api/box_status.rs::compute_setup_state`, public)
 

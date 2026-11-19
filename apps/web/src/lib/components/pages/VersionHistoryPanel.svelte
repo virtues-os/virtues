@@ -153,7 +153,6 @@
 		<span>Versions</span>
 		<Button
 			variant="secondary"
-			size="sm"
 			icon="mynaui:plus"
 			loading={saving}
 			onclick={handleSave}
@@ -213,7 +212,6 @@
 					{#if tree}
 						<Button
 							variant="ghost"
-							size="sm"
 							loading={restoringId === version.id}
 							disabled={restoringId !== null}
 							onclick={() => handleRestore(version)}
@@ -379,14 +377,5 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		color: var(--color-foreground);
-	}
-
-	:global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
 	}
 </style>

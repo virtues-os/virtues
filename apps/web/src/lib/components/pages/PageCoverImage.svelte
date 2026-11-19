@@ -1,16 +1,17 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
-	import type { WidthMode } from "$lib/stores/pageDisplay.svelte";
+	import { PAGE_WIDTH_CSS, type PageWidthChoice } from "$lib/stores/pageWidth.svelte";
 
 	interface Props {
 		coverUrl: string;
-		widthMode: WidthMode;
+		/** The page's width, so the cover is as wide as the text under it. */
+		width: PageWidthChoice;
 		onChangeCover: () => void;
 		onRemoveCover: () => void;
 	}
 
-	let { coverUrl, widthMode, onChangeCover, onRemoveCover }: Props = $props();
+	let { coverUrl, width, onChangeCover, onRemoveCover }: Props = $props();
 
 	let coverHover = $state(false);
 </script>
@@ -18,10 +19,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	class="cover-image-wrapper"
-	class:width-small={widthMode === "small"}
-	class:width-medium={widthMode === "medium"}
-	class:width-full={widthMode === "full"}
-	class:width-page={widthMode === "page"}
+	class:width-sheet={width === "sheet"}
+	style:max-width={width === "sheet" ? undefined : PAGE_WIDTH_CSS[width]}
 	onmouseenter={() => (coverHover = true)}
 	onmouseleave={() => (coverHover = false)}
 >
@@ -63,20 +62,8 @@
 		transition: max-width 0.2s ease-out;
 	}
 
-	.cover-image-wrapper.width-small {
-		max-width: 32rem;
-	}
-
-	.cover-image-wrapper.width-medium {
-		max-width: var(--reading-measure);
-	}
-
-	.cover-image-wrapper.width-full {
-		max-width: 100%;
-	}
-
-	/* As wide as the A4 sheet below it (`.page-inner.width-page`). */
-	.cover-image-wrapper.width-page {
+	/* As wide as the A4 sheet below it (`.page-inner.width-sheet`). */
+	.cover-image-wrapper.width-sheet {
 		max-width: 210mm;
 	}
 

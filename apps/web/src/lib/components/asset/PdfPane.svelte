@@ -9,6 +9,7 @@
 	// IntersectionObserver; the download route's Range support (Phase 2) lets
 	// pdf.js fetch large documents piecewise instead of whole.
 	import Icon from "$lib/components/Icon.svelte";
+	import { lightUp } from "$lib/utils/lit";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
@@ -565,8 +566,7 @@
 	}
 
 	function pulse(el: HTMLElement) {
-		el.classList.add("pdf-flash");
-		setTimeout(() => el.classList.remove("pdf-flash"), 2400);
+		lightUp(el);
 	}
 
 	// Initial jump (deep link / remembered page). Deferred until the pane has
@@ -753,7 +753,6 @@
 		<IconButton
 			icon="mynaui:chevron-up"
 			label="Previous page"
-			size="sm"
 			onclick={() => scrollToPage(currentPage - 1)}
 		/>
 		<input
@@ -766,14 +765,13 @@
 		<IconButton
 			icon="mynaui:chevron-down"
 			label="Next page"
-			size="sm"
 			onclick={() => scrollToPage(currentPage + 1)}
 		/>
 		<div class="pdf-toolbar-spacer"></div>
-		<IconButton icon="mynaui:search-minus" label="Zoom out" size="sm" onclick={() => zoomBy(-1)} />
+		<IconButton icon="mynaui:search-minus" label="Zoom out" onclick={() => zoomBy(-1)} />
 		<span class="pdf-zoom-label">{Math.round(zoom * 100)}%</span>
-		<IconButton icon="mynaui:search-plus" label="Zoom in" size="sm" onclick={() => zoomBy(1)} />
-		<IconButton icon="mynaui:search" label="Find in document (⌘F)" size="sm" onclick={openFind} />
+		<IconButton icon="mynaui:search-plus" label="Zoom in" onclick={() => zoomBy(1)} />
+		<IconButton icon="mynaui:search" label="Find in document (⌘F)" onclick={openFind} />
 		<button
 			class="pdf-btn"
 			class:active={railOpen}
@@ -805,18 +803,16 @@
 			<IconButton
 				icon="mynaui:chevron-up"
 				label="Previous match (⇧⏎)"
-				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex - 1)}
 			/>
 			<IconButton
 				icon="mynaui:chevron-down"
 				label="Next match (⏎)"
-				size="sm"
 				disabled={!findMatches.length}
 				onclick={() => gotoMatch(findIndex + 1)}
 			/>
-			<IconButton icon="mynaui:x" label="Close find (Esc)" size="sm" onclick={closeFind} />
+			<IconButton icon="mynaui:x" label="Close find (Esc)" onclick={closeFind} />
 		</div>
 	{/if}
 
@@ -877,7 +873,7 @@
 					<IconButton
 						icon="mynaui:download"
 						label="Export highlights as markdown"
-						size="xs"
+						size="nested"
 						onclick={exportHighlights}
 					/>
 				{/if}
@@ -957,7 +953,7 @@
 			<IconButton
 				icon="mynaui:trash"
 				label="Delete highlight"
-				size="xs"
+				size="nested"
 				variant="danger"
 				onclick={removeAnno}
 			/>
@@ -1106,7 +1102,7 @@
 		font-weight: 600;
 		border-radius: var(--radius-lg);
 		background: var(--color-primary);
-		color: var(--color-on-primary, #fff);
+		color: var(--color-surface);
 	}
 
 	/* Annotation rail — fixed-width index of every highlight in the file. */
@@ -1287,25 +1283,6 @@
 		filter: brightness(0.92);
 	}
 
-	/* Citation-landing flash — a brief pulse on the cited passage/highlight.
-	   Applied to text-layer spans (transparent text → outline) and highlight
-	   boxes alike. */
-	:global(.pdf-flash) {
-		animation: pdf-flash-pulse 2.4s ease-out;
-		border-radius: var(--radius-xs);
-	}
-	@keyframes pdf-flash-pulse {
-		0%,
-		30% {
-			background: rgba(80, 160, 255, 0.55);
-			box-shadow: 0 0 0 3px rgba(80, 160, 255, 0.4);
-		}
-		100% {
-			background: transparent;
-			box-shadow: 0 0 0 0 rgba(80, 160, 255, 0);
-		}
-	}
-
 	/* Selection color toolbar + note popover */
 	.pdf-sel-toolbar {
 		position: fixed;
@@ -1424,14 +1401,6 @@
 		font-size: 0.8125rem;
 	}
 	.pdf-status.error {
-		color: var(--color-danger, #e5484d);
-	}
-	.pdf-status :global(.spin) {
-		animation: pdf-pane-spin 0.8s linear infinite;
-	}
-	@keyframes pdf-pane-spin {
-		to {
-			transform: rotate(360deg);
-		}
+		color: var(--color-error);
 	}
 </style>

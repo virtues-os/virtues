@@ -1698,7 +1698,7 @@ async fn day_message_bursts(
         // the tiebreak so a row WITH a resolved name wins over one without.
         let rows = sqlx::query(
             "SELECT DISTINCT ON (m.id) \
-                m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
+                m.id, m.conversation_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
                 pe.name AS resolved_name \
          FROM data_communication_message m \
@@ -1739,7 +1739,7 @@ async fn day_message_bursts(
                 // Threadless channels exist; fall back to the handle so a
                 // conversation still groups, and only then to the message itself.
                 let thread = r
-                    .try_get::<Option<String>, _>("thread_id")
+                    .try_get::<Option<String>, _>("conversation_id")
                     .ok()
                     .flatten()
                     .filter(|s| !s.trim().is_empty())
@@ -3164,7 +3164,7 @@ mod dossier_tests {
         for (id, hhmmss, from_me, body) in msgs {
             sqlx::query(
                 "INSERT INTO data_communication_message \
-                 (id,message_id,thread_id,channel,body,from_identifier,from_name, \
+                 (id,message_id,conversation_id,channel,body,from_identifier,from_name, \
                   occurred_at,source_stream_id,source_table,source_provider,metadata) \
                  VALUES ($1,$1,'th_demo','imessage',$2,$3,$4, \
                          $5::timestamptz,$1,'mac_imessage','mac',$6::jsonb)",

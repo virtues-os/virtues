@@ -336,9 +336,9 @@ pub async fn merge_places(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
         "DELETE FROM app_pins WHERE url = '/place/' || $2 \
            AND EXISTS (SELECT 1 FROM app_pins WHERE url = '/place/' || $1)",
         "UPDATE app_pins SET url = '/place/' || $1 WHERE url = '/place/' || $2",
-        "DELETE FROM app_project_items a USING app_project_items k \
-         WHERE a.url = '/place/' || $2 AND k.url = '/place/' || $1 AND a.project_id = k.project_id",
-        "UPDATE app_project_items SET url = '/place/' || $1 WHERE url = '/place/' || $2",
+        "DELETE FROM app_thread_items a USING app_thread_items k \
+         WHERE a.url = '/place/' || $2 AND k.url = '/place/' || $1 AND a.thread_id = k.thread_id",
+        "UPDATE app_thread_items SET url = '/place/' || $1 WHERE url = '/place/' || $2",
         "UPDATE app_user_profile SET home_place_id = $1 WHERE home_place_id = $2",
         "UPDATE wiki_places k SET \
            name = CASE WHEN a.is_named AND NOT k.is_named THEN a.name ELSE k.name END, \
@@ -446,9 +446,9 @@ pub async fn merge_people(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
         "DELETE FROM app_pins WHERE url = '/person/' || $2 \
            AND EXISTS (SELECT 1 FROM app_pins WHERE url = '/person/' || $1)",
         "UPDATE app_pins SET url = '/person/' || $1 WHERE url = '/person/' || $2",
-        "DELETE FROM app_project_items a USING app_project_items k \
-         WHERE a.url = '/person/' || $2 AND k.url = '/person/' || $1 AND a.project_id = k.project_id",
-        "UPDATE app_project_items SET url = '/person/' || $1 WHERE url = '/person/' || $2",
+        "DELETE FROM app_thread_items a USING app_thread_items k \
+         WHERE a.url = '/person/' || $2 AND k.url = '/person/' || $1 AND a.thread_id = k.thread_id",
+        "UPDATE app_thread_items SET url = '/person/' || $1 WHERE url = '/person/' || $2",
         // `keep` holds `absorb` only where it has nothing of its own: a field
         // either of them set is never lost, and `keep`'s wins a conflict.
         "UPDATE wiki_people k SET \
@@ -705,7 +705,7 @@ pub async fn set_home_place(pool: &PgPool, place_id: String) -> Result<()> {
 ///
 /// Everything moves in one transaction: the entity refs (which carry the whole
 /// interaction history), the aliases a human authored, and the routes stored as
-/// free text in `app_pins` / `app_project_items` — the trap 0071 documented
+/// free text in `app_pins` / `app_thread_items` — the trap 0071 documented
 /// when it dropped `wiki_things` and had to sweep `/thing/` urls in the same
 /// migration. Columns orgs do not have (emails, phones, socials) are preserved
 /// into `metadata` rather than dropped: reclassifying is a filing correction,
@@ -782,7 +782,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     // that looks openable and is not.
     let old_url = format!("/person/{}", person_id);
     let new_url = format!("/org/{}", org_id);
-    for table in ["app_pins", "app_project_items"] {
+    for table in ["app_pins", "app_thread_items"] {
         sqlx::query(&format!("UPDATE {table} SET url = $1 WHERE url = $2"))
             .bind(&new_url)
             .bind(&old_url)
@@ -910,7 +910,7 @@ async fn purge_subject(
     // Routes stored as free text — the trap 0071 documented when it dropped
     // wiki_things and had to sweep `/thing/` urls in the same migration.
     let url = format!("/{route_prefix}/{id}");
-    for table in ["app_pins", "app_project_items"] {
+    for table in ["app_pins", "app_thread_items"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE url = $1"))
             .bind(&url)
             .execute(pool)

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { cubicOut } from "svelte/easing";
 	import { untrack } from "svelte";
 	import ThinkingMark, { LAND_MS } from "./ThinkingMark.svelte";
@@ -241,7 +242,7 @@
 	});
 
 	const reduceMotion =
-		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	// Check if we have content
 	const hasContent = $derived(
@@ -620,15 +621,13 @@
 		margin-right: 8px;
 	}
 
-	/* Content area. Filled with the same wash the header takes on hover, so
-	   the open block is one card: the pill above it used to hover in
-	   --hover-bg while this sat in --color-surface-elevated, and on any theme
-	   whose paper is tinted (Oxford: warm stone) the two were visibly
-	   different colors stacked in the same column. */
+	/* Content area. The resting fill, the same one a sent message sits in,
+	   so the open block and the turn above it are one color. The header pill
+	   hovers one step darker in the same pigment. */
 	.block-content {
 		margin-top: 8px;
 		padding: 12px 16px;
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		border-radius: var(--radius-lg);
 		max-height: 500px;
 		overflow-y: auto;
@@ -671,11 +670,6 @@
 		box-shadow:
 			0 0 0 1px color-mix(in srgb, var(--color-foreground) 6%, transparent),
 			0 1px 2px rgb(0 0 0 / 0.08);
-	}
-
-	.detail-switch button:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
 	}
 
 	.brief {

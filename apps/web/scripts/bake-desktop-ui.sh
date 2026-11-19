@@ -47,7 +47,7 @@ pnpm build
 rm -rf "$out"
 cp -R build "$out"
 # Precompressed siblings are for the server's static files, not this copy.
-find "$out" -name '*.gz' -delete
+find "$out" \( -name '*.gz' -o -name '*.br' \) -delete
 # The airlock, for the Mac's VIRTUES_FORCE_CONNECT dev pin only: main.rs opens
 # it as `WebviewUrl::App`, which reads frontendDist rather than `serve_ui`.
 # Every other load gets these from the copies compiled into the shell

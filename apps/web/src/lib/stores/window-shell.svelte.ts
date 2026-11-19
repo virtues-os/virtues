@@ -74,7 +74,7 @@ const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
  * The gap between the two panes in split view, where the painting shows
- * between two cards (themes.css, --pane-gap). SplitContainer lays the panes
+ * between two cards. SplitContainer lays the panes
  * out with it and the window header lines their tab strips up with it.
  */
 export const SPLIT_GUTTER_PX = 10;
@@ -483,7 +483,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'mynaui:chat' });
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'atlas:chats' });
 	}
 
 	/**
@@ -620,8 +620,6 @@ class WindowShellStore {
 
 		if (options?.focusExisting) {
 			const parsed = parseRoute(route);
-			// One Setup tab: its step routes read as entity routes below.
-			if (parsed.type === 'setup') return this.openSetup(route, { paneId: options.paneId, replace: this._skipUrlSync });
 			const effectiveRoute = parsed.normalizedRoute || route;
 
 			let result: { tab: Tab; paneId: string } | undefined;
@@ -760,43 +758,6 @@ class WindowShellStore {
 		this.persistTabState();
 		this.syncActiveToUrl(true);
 		return activeTab.id;
-	}
-
-	/**
-	 * Setup's one tab. A step opens in the Setup tab already open, in
-	 * whichever pane, and joins its history; otherwise the active tab goes
-	 * there. `/setup/<step>` reads as an entity route to the generic lookup,
-	 * so `openTabFromRoute`'s focus-existing would open a second one.
-	 */
-	openSetup(route: string, options?: { paneId?: 'left' | 'right'; replace?: boolean }): string {
-		// `replace`: the address is already this route's own history entry (a
-		// deep link, or the browser's Back landing on one), so the tab takes
-		// it over rather than pushing a copy that Back would land on again.
-		const skip = this._skipUrlSync;
-		if (options?.replace) this._skipUrlSync = true;
-		let id: string;
-		try {
-			let found = this.findTab((t) => t.type === 'setup');
-			// Asked for in a particular pane (a `?right=` link): the one tab
-			// moves there rather than lighting up in the other pane.
-			if (found && options?.paneId && found.paneId !== options.paneId) {
-				this.closeTab(found.tab.id);
-				found = undefined;
-			}
-			if (!found) {
-				id = this.openHere(route, { label: 'Setup', paneId: options?.paneId });
-			} else {
-				this.setActiveTab(found.tab.id);
-				id =
-					found.tab.route === route
-						? found.tab.id
-						: this.navigate(route, { label: 'Setup', paneId: found.paneId as 'left' | 'right' });
-			}
-		} finally {
-			this._skipUrlSync = skip;
-		}
-		if (options?.replace) this.syncActiveToUrl(false);
-		return id;
 	}
 
 	/** Move the active tab of a pane back one step in its history. */
@@ -1186,6 +1147,18 @@ class WindowShellStore {
 		if (routeChanged) {
 			this.syncActiveToUrl(false);
 		}
+	}
+
+	/**
+	 * Point one tab at another route in place, re-resolving what kind of tab
+	 * it is: the redirect for a route that moved to a different view (an old
+	 * Settings route that is now Sources). It replaces the tab's current
+	 * history slot, so Back skips the old route, and it acts on that tab
+	 * whichever pane has focus.
+	 */
+	retarget(tabId: string, route: string, label?: string): void {
+		const { effectiveRoute, fields } = this.identityFromRoute(route, label);
+		this.updateTab(tabId, { ...fields, route: effectiveRoute });
 	}
 
 	togglePin(tabId: string): void {

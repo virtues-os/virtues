@@ -11,7 +11,6 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { getChapters, updateChapter, deleteChapter, type ChapterApi } from '$lib/wiki/api';
@@ -87,12 +86,6 @@
 		missingTimer = setTimeout(() => (missingNote = null), 2600);
 	}
 
-	/** Chapters are drawn in Setup now; the old getting-started room this
-	 *  opened is retired. */
-	function drawChapters() {
-		void goto('/setup/timeline');
-	}
-
 	function yearOf(date: string): string {
 		return date.slice(0, 4);
 	}
@@ -166,12 +159,6 @@
 	{:else}
 		<div class="empty">
 			<p class="empty-lead">No chapters yet.</p>
-			<p class="empty-body">
-				Name the big stretches of your life, with rough years. The interview
-				then fills in what each one was, and each becomes a page you can keep
-				writing in.
-			</p>
-			<button class="btn primary" onclick={drawChapters}>Write your chapters</button>
 		</div>
 	{/if}
 </div>
@@ -197,7 +184,7 @@
 
 	.failed {
 		font-size: 0.75rem;
-		color: var(--color-danger, #b00);
+		color: var(--color-error);
 	}
 
 	.chapters-room {
@@ -211,7 +198,7 @@
 	}
 
 	/* 400: the serif ships one cut, so the 500 this carried resolved back to the
-	   regular and said nothing (agents/build/typography.md). Size and full ink
+	   regular and said nothing (agents/build/design.md, "Type"). Size and full ink
 	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
@@ -266,7 +253,7 @@
 	}
 
 	.chapter:hover {
-		background: var(--color-surface-hover);
+		background: var(--hover-bg);
 	}
 
 	.chapter-line {
@@ -313,33 +300,6 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		padding: 0.375rem 0.875rem;
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-border);
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-
-	.btn:hover {
-		background: var(--color-surface-hover);
-	}
-
-	.btn.primary {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		/* --color-background, not a hardcoded white: on dark themes the
-		   primary is light and white-on-light would vanish. (There is no
-		   --color-primary-foreground token; it silently fell back.) */
-		color: var(--color-background);
-	}
-
 	.empty {
 		max-width: 34rem;
 	}
@@ -351,10 +311,4 @@
 		margin: 0 0 0.5rem;
 	}
 
-	.empty-body {
-		font-size: 0.9375rem;
-		line-height: 1.55;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1.25rem;
-	}
 </style>

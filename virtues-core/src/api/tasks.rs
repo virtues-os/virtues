@@ -8,11 +8,15 @@
 //! A task assigned to the assistant is a request. Whenever a write leaves a
 //! request open, `queue_time` decides when the worker may run it.
 //!
-//! A task is one step. It sits under a project, under a thing
-//! (`crate::api::things`) or under nothing, with one parent at most. The
+//! A task is one step. It has one home at most: the thread it moves forward,
+//! or else the person, place, organization or thing it concerns. It can also
+//! be about other threads and subjects (`app_task_links`), and it shows on
+//! each of them. A task saved with no home waits for one. The
 //! owner's own task can recur: finishing it opens the next occurrence, due
 //! `recur_every` `recur_unit`s after the day it was finished, so one
 //! occurrence is open at a time and a missed one never piles up.
+
+use std::collections::HashMap;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -23,10 +27,64 @@ use crate::error::{Error, Result};
 use crate::ids::{generate_id, TASK_PREFIX};
 use crate::types::Timestamp;
 
-const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, project_id, \
-     thing_id, recur_every, recur_unit, recurred_from_id, \
+const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, thread_id, \
+     thing_id, person_id, place_id, org_id, recur_every, recur_unit, recurred_from_id, \
      origin, source_url, sort_order, closed_at, created_at, updated_at, result, result_url, \
      chat_id, next_run_at, attempts";
+
+/// What a task can have as its home, or be also about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Subject {
+    Thread,
+    Person,
+    Place,
+    Org,
+    Thing,
+}
+
+impl Subject {
+    pub const ALL: [Subject; 5] =
+        [Subject::Thread, Subject::Person, Subject::Place, Subject::Org, Subject::Thing];
+
+    /// Its column on `app_tasks` and `app_task_links`.
+    fn column(self) -> &'static str {
+        match self {
+            Subject::Thread => "thread_id",
+            Subject::Person => "person_id",
+            Subject::Place => "place_id",
+            Subject::Org => "org_id",
+            Subject::Thing => "thing_id",
+        }
+    }
+
+    fn exists_sql(self) -> &'static str {
+        match self {
+            Subject::Thread => "SELECT id FROM app_threads WHERE id = $1 AND deleted_at IS NULL",
+            Subject::Person => "SELECT id FROM wiki_people WHERE id = $1",
+            Subject::Place => "SELECT id FROM wiki_places WHERE id = $1",
+            Subject::Org => "SELECT id FROM wiki_orgs WHERE id = $1",
+            Subject::Thing => "SELECT id FROM wiki_things WHERE id = $1",
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Subject::Thread => "thread",
+            Subject::Person => "person",
+            Subject::Place => "place",
+            Subject::Org => "organization",
+            Subject::Thing => "thing",
+        }
+    }
+}
+
+/// Something a task is also about, besides its home.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TaskLink {
+    pub kind: Subject,
+    pub id: String,
+}
 
 /// The units a task can recur in.
 const RECUR_UNITS: [&str; 4] = ["day", "week", "month", "year"];
@@ -119,10 +177,13 @@ pub struct Task {
     pub status: String,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    pub project_id: Option<String>,
-    /// The thing it sits under. A task has one parent at most: a project or a
-    /// thing.
+    /// Its home: at most one of `thread_id`, `thing_id`, `person_id`,
+    /// `place_id` and `org_id` is set.
+    pub thread_id: Option<String>,
     pub thing_id: Option<String>,
+    pub person_id: Option<String>,
+    pub place_id: Option<String>,
+    pub org_id: Option<String>,
     /// It recurs every `recur_every` `recur_unit`s (`day`, `week`, `month` or
     /// `year`), counted from the day the owner finishes it. Both null: once.
     pub recur_every: Option<i32>,
@@ -155,11 +216,38 @@ pub struct Task {
     /// report no cost, so they are not in it.
     #[sqlx(default)]
     pub spent_micros: Option<i64>,
+    /// What else it is about, besides its home. Filled after the row is read.
+    #[sqlx(skip)]
+    pub also_about: Vec<TaskLink>,
 }
 
 impl Task {
     fn is_queued(&self) -> bool {
         self.assignee == "assistant" && self.status == "open"
+    }
+
+    pub fn home(&self, kind: Subject) -> Option<&str> {
+        match kind {
+            Subject::Thread => self.thread_id.as_deref(),
+            Subject::Person => self.person_id.as_deref(),
+            Subject::Place => self.place_id.as_deref(),
+            Subject::Org => self.org_id.as_deref(),
+            Subject::Thing => self.thing_id.as_deref(),
+        }
+    }
+
+    fn home_slot(&mut self, kind: Subject) -> &mut Option<String> {
+        match kind {
+            Subject::Thread => &mut self.thread_id,
+            Subject::Person => &mut self.person_id,
+            Subject::Place => &mut self.place_id,
+            Subject::Org => &mut self.org_id,
+            Subject::Thing => &mut self.thing_id,
+        }
+    }
+
+    fn home_count(&self) -> usize {
+        Subject::ALL.iter().filter(|k| self.home(**k).is_some()).count()
     }
 }
 
@@ -198,8 +286,11 @@ pub struct ListFilter {
     /// dismissed) or `all`.
     pub status: Option<String>,
     pub assignee: Option<Actor>,
-    pub project_id: Option<String>,
+    pub thread_id: Option<String>,
     pub thing_id: Option<String>,
+    pub person_id: Option<String>,
+    pub place_id: Option<String>,
+    pub org_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -209,8 +300,14 @@ pub struct NewTask {
     pub assignee: Option<Actor>,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    pub project_id: Option<String>,
+    /// Its home, one at most.
+    pub thread_id: Option<String>,
     pub thing_id: Option<String>,
+    pub person_id: Option<String>,
+    pub place_id: Option<String>,
+    pub org_id: Option<String>,
+    #[serde(default)]
+    pub also_about: Vec<TaskLink>,
     /// Recurrence, as a pair: both or neither.
     pub recur_every: Option<i32>,
     pub recur_unit: Option<String>,
@@ -229,12 +326,19 @@ pub struct TaskPatch {
     pub due_on: Option<Option<NaiveDate>>,
     #[serde(default, deserialize_with = "double_option")]
     pub due_at: Option<Option<Timestamp>>,
+    /// Its home. Giving it one new home takes it out of the old one.
     #[serde(default, deserialize_with = "double_option")]
-    pub project_id: Option<Option<String>>,
-    /// Moving a task under a thing takes it out of its project, and moving
-    /// it into a project takes it out from under its thing.
+    pub thread_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub thing_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub person_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub place_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub org_id: Option<Option<String>>,
+    /// The whole set of what else it is about, replacing the old set.
+    pub also_about: Option<Vec<TaskLink>>,
     /// Recurrence, set or cleared as a pair.
     #[serde(default, deserialize_with = "double_option")]
     pub recur_every: Option<Option<i32>>,
@@ -273,28 +377,143 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
         "SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks
          WHERE status = ANY($1)
            AND ($2::text IS NULL OR assignee = $2)
-           AND ($3::text IS NULL OR project_id = $3)
+           AND ($3::text IS NULL OR thread_id = $3)
            AND ($4::text IS NULL OR thing_id = $4)
+           AND ($5::text IS NULL OR person_id = $5)
+           AND ($6::text IS NULL OR place_id = $6)
+           AND ($7::text IS NULL OR org_id = $7)
          ORDER BY closed_at DESC NULLS FIRST, due_on ASC NULLS LAST,
                   due_at ASC NULLS LAST, sort_order ASC, created_at DESC
          LIMIT 1000"
     );
-    Ok(sqlx::query_as::<_, Task>(&sql)
+    let mut tasks = sqlx::query_as::<_, Task>(&sql)
         .bind(&statuses)
         .bind(filter.assignee.map(Actor::as_str))
-        .bind(&filter.project_id)
+        .bind(&filter.thread_id)
         .bind(&filter.thing_id)
+        .bind(&filter.person_id)
+        .bind(&filter.place_id)
+        .bind(&filter.org_id)
         .fetch_all(pool)
-        .await?)
+        .await?;
+    attach_links(pool, &mut tasks).await?;
+    Ok(tasks)
 }
 
 pub async fn get_task(pool: &PgPool, id: &str) -> Result<Task> {
     let sql = format!("SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks WHERE id = $1");
-    sqlx::query_as::<_, Task>(&sql)
+    let task = sqlx::query_as::<_, Task>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("task not found: {id}")))
+        .ok_or_else(|| Error::NotFound(format!("task not found: {id}")))?;
+    let mut tasks = vec![task];
+    attach_links(pool, &mut tasks).await?;
+    Ok(tasks.remove(0))
+}
+
+/// The open tasks on a subject's page: the ones whose home it is, and the
+/// ones homed elsewhere that are also about it.
+pub async fn open_tasks_about(pool: &PgPool, kind: Subject, id: &str) -> Result<(Vec<Task>, Vec<Task>)> {
+    let column = kind.column();
+    let order = "ORDER BY due_on ASC NULLS LAST, due_at ASC NULLS LAST, sort_order ASC, created_at DESC";
+    let open = "status IN ('open', 'active', 'ready')";
+    let mut home = sqlx::query_as::<_, Task>(&format!(
+        "SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks WHERE {column} = $1 AND {open} {order}"
+    ))
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    let mut also = sqlx::query_as::<_, Task>(&format!(
+        "SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks
+         WHERE id IN (SELECT task_id FROM app_task_links WHERE {column} = $1) AND {open} {order}"
+    ))
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    attach_links(pool, &mut home).await?;
+    attach_links(pool, &mut also).await?;
+    Ok((home, also))
+}
+
+/// Fill each task's `also_about` from `app_task_links`.
+async fn attach_links<'e, E>(executor: E, tasks: &mut [Task]) -> Result<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT task_id, thread_id, person_id, place_id, org_id, thing_id
+             FROM app_task_links WHERE task_id = ANY($1) ORDER BY id",
+        )
+        .bind(&ids)
+        .fetch_all(executor)
+        .await?;
+    let mut by_task: HashMap<String, Vec<TaskLink>> = HashMap::new();
+    for (task_id, thread, person, place, org, thing) in rows {
+        let target = [
+            (Subject::Thread, thread),
+            (Subject::Person, person),
+            (Subject::Place, place),
+            (Subject::Org, org),
+            (Subject::Thing, thing),
+        ]
+        .into_iter()
+        .find_map(|(kind, id)| id.map(|id| TaskLink { kind, id }));
+        if let Some(link) = target {
+            by_task.entry(task_id).or_default().push(link);
+        }
+    }
+    for task in tasks {
+        task.also_about = by_task.remove(&task.id).unwrap_or_default();
+    }
+    Ok(())
+}
+
+/// Check a set of links and drop repeats and the one naming the task's home.
+async fn clean_links(
+    tx: &mut Transaction<'_, Postgres>,
+    task: &Task,
+    links: Vec<TaskLink>,
+    known: &[TaskLink],
+) -> Result<Vec<TaskLink>> {
+    let mut out: Vec<TaskLink> = Vec::with_capacity(links.len());
+    for link in links {
+        let id = link.id.trim().to_string();
+        if id.is_empty() || task.home(link.kind) == Some(id.as_str()) {
+            continue;
+        }
+        let link = TaskLink { kind: link.kind, id };
+        if out.contains(&link) {
+            continue;
+        }
+        if !known.contains(&link) {
+            require_subject(tx, link.kind, &link.id).await?;
+        }
+        out.push(link);
+    }
+    Ok(out)
+}
+
+/// Replace a task's links with `links`.
+async fn write_links(tx: &mut Transaction<'_, Postgres>, task_id: &str, links: &[TaskLink]) -> Result<()> {
+    sqlx::query("DELETE FROM app_task_links WHERE task_id = $1")
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await?;
+    for link in links {
+        let column = link.kind.column();
+        sqlx::query(&format!("INSERT INTO app_task_links (task_id, {column}) VALUES ($1, $2)"))
+            .bind(task_id)
+            .bind(&link.id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Create one or more tasks in one transaction: all of them or none.
@@ -326,13 +545,25 @@ pub async fn create_tasks(
             ));
         }
         let next_run_at = (assignee == Actor::Assistant).then(|| queue_time(new.due_at));
-        let project_id = clean_text(new.project_id);
+        let thread_id = clean_text(new.thread_id);
         let thing_id = clean_text(new.thing_id);
-        if project_id.is_some() && thing_id.is_some() {
-            return Err(one_parent());
+        let person_id = clean_text(new.person_id);
+        let place_id = clean_text(new.place_id);
+        let org_id = clean_text(new.org_id);
+        let homes = [
+            (Subject::Thread, &thread_id),
+            (Subject::Thing, &thing_id),
+            (Subject::Person, &person_id),
+            (Subject::Place, &place_id),
+            (Subject::Org, &org_id),
+        ];
+        if homes.iter().filter(|(_, id)| id.is_some()).count() > 1 {
+            return Err(one_home());
         }
-        if let Some(thing_id) = &thing_id {
-            require_thing(&mut tx, thing_id).await?;
+        for (kind, id) in homes {
+            if let Some(id) = id {
+                require_subject(&mut tx, kind, id).await?;
+            }
         }
         let (recur_every, recur_unit) = clean_recurrence(new.recur_every, new.recur_unit)?;
         if recur_every.is_some() && assignee == Actor::Assistant {
@@ -341,20 +572,21 @@ pub async fn create_tasks(
         // Keep the order they were given: the first ends up on top.
         let sort_order = top - (count - i) as f64;
         let sql = format!(
-            "INSERT INTO app_tasks (id, title, notes, assignee, due_on, due_at, project_id,
+            "INSERT INTO app_tasks (id, title, notes, assignee, due_on, due_at, thread_id,
                                     origin, source_url, sort_order, next_run_at,
-                                    thing_id, recur_every, recur_unit)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                                    thing_id, recur_every, recur_unit,
+                                    person_id, place_id, org_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              RETURNING {TASK_COLUMNS}"
         );
-        let task = sqlx::query_as::<_, Task>(&sql)
+        let mut task = sqlx::query_as::<_, Task>(&sql)
             .bind(&id)
             .bind(&title)
             .bind(clean_text(new.notes))
             .bind(assignee.as_str())
             .bind(due_on)
             .bind(new.due_at)
-            .bind(&project_id)
+            .bind(&thread_id)
             .bind(origin.as_str())
             .bind(clean_text(new.source_url))
             .bind(sort_order)
@@ -362,8 +594,13 @@ pub async fn create_tasks(
             .bind(&thing_id)
             .bind(recur_every)
             .bind(&recur_unit)
+            .bind(&person_id)
+            .bind(&place_id)
+            .bind(&org_id)
             .fetch_one(&mut *tx)
             .await?;
+        task.also_about = clean_links(&mut tx, &task, new.also_about, &[]).await?;
+        write_links(&mut tx, &task.id, &task.also_about).await?;
         append_event(&mut tx, &task.id, writer, "created", json!({ "title": title })).await?;
         out.push(task);
     }
@@ -384,6 +621,11 @@ pub async fn update_task(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| Error::NotFound(format!("task not found: {id}")))?;
+    let before = {
+        let mut one = vec![before];
+        attach_links(&mut *tx, &mut one).await?;
+        one.remove(0)
+    };
 
     // Handing over a request that is open but not queued (one from before
     // requests ran on their own) is how the owner starts it.
@@ -414,24 +656,42 @@ pub async fn update_task(
         }
     }
     next.due_on = due_day(next.due_on, next.due_at);
-    let to_project = matches!(patch.project_id, Some(Some(_)));
-    let to_thing = matches!(patch.thing_id, Some(Some(_)));
-    if let Some(project_id) = patch.project_id {
-        next.project_id = clean_text(project_id);
-    }
-    if let Some(thing_id) = patch.thing_id {
-        next.thing_id = clean_text(thing_id);
-    }
-    if next.project_id.is_some() && next.thing_id.is_some() {
-        match (to_project, to_thing) {
-            (true, false) => next.thing_id = None,
-            (false, true) => next.project_id = None,
-            _ => return Err(one_parent()),
+    let home_patches = [
+        (Subject::Thread, patch.thread_id),
+        (Subject::Thing, patch.thing_id),
+        (Subject::Person, patch.person_id),
+        (Subject::Place, patch.place_id),
+        (Subject::Org, patch.org_id),
+    ];
+    let mut moved_to = Vec::new();
+    for (kind, value) in home_patches {
+        if let Some(value) = value {
+            let value = clean_text(value);
+            if value.is_some() {
+                moved_to.push(kind);
+            }
+            *next.home_slot(kind) = value;
         }
     }
-    if let Some(thing_id) = next.thing_id.as_ref().filter(|t| before.thing_id.as_ref() != Some(*t)) {
-        require_thing(&mut tx, thing_id).await?;
+    // One new home replaces the old one. Two at once is a mistake.
+    if next.home_count() > 1 {
+        match moved_to.as_slice() {
+            [only] => {
+                for kind in Subject::ALL.into_iter().filter(|k| k != only) {
+                    *next.home_slot(kind) = None;
+                }
+            }
+            _ => return Err(one_home()),
+        }
     }
+    for kind in Subject::ALL {
+        if let Some(home) = next.home(kind).filter(|h| before.home(kind) != Some(*h)) {
+            let home = home.to_string();
+            require_subject(&mut tx, kind, &home).await?;
+        }
+    }
+    let links = patch.also_about.unwrap_or_else(|| before.also_about.clone());
+    next.also_about = clean_links(&mut tx, &next, links, &before.also_about).await?;
     if patch.recur_every.is_some() || patch.recur_unit.is_some() {
         let every = patch.recur_every.unwrap_or(before.recur_every);
         let unit = patch.recur_unit.clone().unwrap_or_else(|| before.recur_unit.clone());
@@ -483,13 +743,14 @@ pub async fn update_task(
     let sql = format!(
         "UPDATE app_tasks
          SET title = $2, notes = $3, assignee = $4, status = $5, due_on = $6, due_at = $7,
-             project_id = $8, sort_order = $9, closed_at = $10, result = $11,
+             thread_id = $8, sort_order = $9, closed_at = $10, result = $11,
              result_url = $12, next_run_at = $13, attempts = $14,
-             thing_id = $15, recur_every = $16, recur_unit = $17, updated_at = now()
+             thing_id = $15, recur_every = $16, recur_unit = $17,
+             person_id = $18, place_id = $19, org_id = $20, updated_at = now()
          WHERE id = $1
          RETURNING {TASK_COLUMNS}"
     );
-    let task = sqlx::query_as::<_, Task>(&sql)
+    let mut task = sqlx::query_as::<_, Task>(&sql)
         .bind(id)
         .bind(&next.title)
         .bind(&next.notes)
@@ -497,7 +758,7 @@ pub async fn update_task(
         .bind(&next.status)
         .bind(next.due_on)
         .bind(next.due_at)
-        .bind(&next.project_id)
+        .bind(&next.thread_id)
         .bind(next.sort_order)
         .bind(next.closed_at)
         .bind(&next.result)
@@ -507,8 +768,15 @@ pub async fn update_task(
         .bind(&next.thing_id)
         .bind(next.recur_every)
         .bind(&next.recur_unit)
+        .bind(&next.person_id)
+        .bind(&next.place_id)
+        .bind(&next.org_id)
         .fetch_one(&mut *tx)
         .await?;
+    if next.also_about != before.also_about {
+        write_links(&mut tx, id, &next.also_about).await?;
+    }
+    task.also_about = next.also_about.clone();
 
     // Finishing a recurring task opens the next occurrence. Dismissing one
     // ends the recurrence. Reopening a finished one takes back the occurrence
@@ -562,8 +830,10 @@ fn check_status(status: Status, before: &Task, result: Option<&str>, writer: &Wr
     }
 }
 
-fn one_parent() -> Error {
-    Error::InvalidInput("a task sits under a project or under a thing. Pick one.".into())
+fn one_home() -> Error {
+    Error::InvalidInput(
+        "a task has one home: a thread, person, place, organization or thing. Pick one.".into(),
+    )
 }
 
 fn requests_run_once() -> Error {
@@ -573,12 +843,12 @@ fn requests_run_once() -> Error {
     )
 }
 
-async fn require_thing(tx: &mut Transaction<'_, Postgres>, thing_id: &str) -> Result<()> {
-    let found: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_things WHERE id = $1")
-        .bind(thing_id)
+async fn require_subject(tx: &mut Transaction<'_, Postgres>, kind: Subject, id: &str) -> Result<()> {
+    let found: Option<String> = sqlx::query_scalar(kind.exists_sql())
+        .bind(id)
         .fetch_optional(&mut **tx)
         .await?;
-    found.map(|_| ()).ok_or_else(|| Error::NotFound(format!("No thing: {thing_id}")))
+    found.map(|_| ()).ok_or_else(|| Error::NotFound(format!("No {}: {id}", kind.noun())))
 }
 
 /// A recurrence as a checked pair, or none.
@@ -651,22 +921,35 @@ async fn open_next_occurrence(
         .ok_or_else(|| Error::InvalidInput("that recurrence runs past the calendar".into()))?;
     let id = generate_id(TASK_PREFIX, &[&uuid::Uuid::new_v4().to_string()]);
     sqlx::query(
-        "INSERT INTO app_tasks (id, title, notes, assignee, due_on, project_id, thing_id,
-                                recur_every, recur_unit, recurred_from_id, origin, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        "INSERT INTO app_tasks (id, title, notes, assignee, due_on, thread_id, thing_id,
+                                recur_every, recur_unit, recurred_from_id, origin, sort_order,
+                                person_id, place_id, org_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
     )
     .bind(&id)
     .bind(&done.title)
     .bind(&done.notes)
     .bind(&done.assignee)
     .bind(due_on)
-    .bind(&done.project_id)
+    .bind(&done.thread_id)
     .bind(&done.thing_id)
     .bind(every)
     .bind(unit)
     .bind(&done.id)
     .bind(&done.origin)
     .bind(done.sort_order)
+    .bind(&done.person_id)
+    .bind(&done.place_id)
+    .bind(&done.org_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO app_task_links (task_id, thread_id, person_id, place_id, org_id, thing_id)
+         SELECT $1, thread_id, person_id, place_id, org_id, thing_id
+         FROM app_task_links WHERE task_id = $2 ORDER BY id",
+    )
+    .bind(&id)
+    .bind(&done.id)
     .execute(&mut **tx)
     .await?;
     append_event(
@@ -887,8 +1170,12 @@ fn edited_fields(before: &Task, after: &Task) -> Map<String, Value> {
     put("assignee", json!(before.assignee), json!(after.assignee));
     put("due_on", json!(before.due_on), json!(after.due_on));
     put("due_at", json!(before.due_at), json!(after.due_at));
-    put("project_id", json!(before.project_id), json!(after.project_id));
+    put("thread_id", json!(before.thread_id), json!(after.thread_id));
     put("thing_id", json!(before.thing_id), json!(after.thing_id));
+    put("person_id", json!(before.person_id), json!(after.person_id));
+    put("place_id", json!(before.place_id), json!(after.place_id));
+    put("org_id", json!(before.org_id), json!(after.org_id));
+    put("also_about", json!(before.also_about), json!(after.also_about));
     put("recur_every", json!(before.recur_every), json!(after.recur_every));
     put("recur_unit", json!(before.recur_unit), json!(after.recur_unit));
     put("result_url", json!(before.result_url), json!(after.result_url));
@@ -1168,18 +1455,18 @@ mod tests {
             .unwrap()
     }
 
-    /// A task has one parent at most. Moving it under a thing takes it out of
-    /// its project, and moving it into a project takes it out from under the
+    /// A task has one home at most. Moving it under a thing takes it out of
+    /// its thread, and moving it into a thread takes it out from under the
     /// thing.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_task_sits_under_a_project_or_a_thing(pool: PgPool) {
         let house = thing(&pool, "The house").await;
-        sqlx::query("INSERT INTO app_projects (id, name) VALUES ('nb_p', 'Repaint the hallway')")
+        sqlx::query("INSERT INTO app_threads (id, name) VALUES ('nb_p', 'Repaint the hallway')")
             .execute(&pool)
             .await
             .unwrap();
 
-        let both = NewTask { project_id: Some("nb_p".into()), thing_id: Some(house.clone()), ..new("Buy paint") };
+        let both = NewTask { thread_id: Some("nb_p".into()), thing_id: Some(house.clone()), ..new("Buy paint") };
         assert!(create_tasks(&pool, vec![both], Origin::Owner, &Writer::owner()).await.is_err());
         let missing = NewTask { thing_id: Some("thing_missing".into()), ..new("Buy paint") };
         assert!(create_tasks(&pool, vec![missing], Origin::Owner, &Writer::owner()).await.is_err());
@@ -1190,21 +1477,84 @@ mod tests {
         let filter = ListFilter { thing_id: Some(house.clone()), ..Default::default() };
         assert_eq!(list_tasks(&pool, &filter).await.unwrap().len(), 1);
 
-        let into_project = TaskPatch { project_id: Some(Some("nb_p".into())), ..Default::default() };
+        let into_project = TaskPatch { thread_id: Some(Some("nb_p".into())), ..Default::default() };
         let moved = update_task(&pool, &task.id, into_project, &Writer::owner()).await.unwrap();
-        assert_eq!((moved.project_id.as_deref(), moved.thing_id.as_deref()), (Some("nb_p"), None));
+        assert_eq!((moved.thread_id.as_deref(), moved.thing_id.as_deref()), (Some("nb_p"), None));
         assert!(list_tasks(&pool, &filter).await.unwrap().is_empty());
 
         let under_thing = TaskPatch { thing_id: Some(Some(house.clone())), ..Default::default() };
         let back = update_task(&pool, &task.id, under_thing, &Writer::owner()).await.unwrap();
-        assert_eq!((back.project_id.as_deref(), back.thing_id.as_deref()), (None, Some(house.as_str())));
+        assert_eq!((back.thread_id.as_deref(), back.thing_id.as_deref()), (None, Some(house.as_str())));
 
         let both = TaskPatch {
-            project_id: Some(Some("nb_p".into())),
+            thread_id: Some(Some("nb_p".into())),
             thing_id: Some(Some(house.clone())),
             ..Default::default()
         };
         assert!(update_task(&pool, &task.id, both, &Writer::owner()).await.is_err());
+    }
+
+    /// A task can be homed on a person, and be about a thread and a thing as
+    /// well. It shows on the thread's page beside the thread's own tasks, a
+    /// link naming its home is dropped, and its next occurrence keeps both.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_task_has_one_home_and_can_be_about_more(pool: PgPool) {
+        let house = thing(&pool, "The house").await;
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_nick', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO app_threads (id, name) VALUES ('nb_p', 'Repaint the hallway')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let link = |kind, id: &str| TaskLink { kind, id: id.into() };
+
+        let own = create_tasks(&pool, vec![NewTask { thread_id: Some("nb_p".into()), ..new("Buy paint") }], Origin::Owner, &Writer::owner())
+            .await
+            .unwrap()
+            .remove(0);
+        let ask = NewTask {
+            person_id: Some("person_nick".into()),
+            also_about: vec![
+                link(Subject::Thread, "nb_p"),
+                link(Subject::Thing, &house),
+                link(Subject::Person, "person_nick"),
+                link(Subject::Thread, "nb_p"),
+            ],
+            recur_every: Some(1),
+            recur_unit: Some("week".into()),
+            ..new("Ask Nick about the ladder")
+        };
+        let task = create_tasks(&pool, vec![ask], Origin::Owner, &Writer::owner()).await.unwrap().remove(0);
+        assert_eq!(task.person_id.as_deref(), Some("person_nick"));
+        assert_eq!(task.also_about, [link(Subject::Thread, "nb_p"), link(Subject::Thing, &house)]);
+        assert_eq!(get_task(&pool, &task.id).await.unwrap().also_about, task.also_about);
+
+        let missing = NewTask { also_about: vec![link(Subject::Org, "org_missing")], ..new("Call the bank") };
+        assert!(create_tasks(&pool, vec![missing], Origin::Owner, &Writer::owner()).await.is_err());
+
+        let (home, also) = open_tasks_about(&pool, Subject::Thread, "nb_p").await.unwrap();
+        assert_eq!(home.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), [own.id.as_str()]);
+        assert_eq!(also.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), [task.id.as_str()]);
+        let filter = ListFilter { person_id: Some("person_nick".into()), ..Default::default() };
+        assert_eq!(list_tasks(&pool, &filter).await.unwrap().len(), 1);
+
+        // Moving it into the thread it was also about drops that link.
+        let into_thread = TaskPatch { thread_id: Some(Some("nb_p".into())), ..Default::default() };
+        let moved = update_task(&pool, &task.id, into_thread, &Writer::owner()).await.unwrap();
+        assert_eq!((moved.thread_id.as_deref(), moved.person_id.as_deref()), (Some("nb_p"), None));
+        assert_eq!(moved.also_about, [link(Subject::Thing, &house)]);
+
+        set_status(&pool, &task.id, Status::Done).await;
+        let next = list_tasks(&pool, &ListFilter::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.recurred_from_id.as_deref() == Some(task.id.as_str()))
+            .unwrap();
+        assert_eq!(next.thread_id.as_deref(), Some("nb_p"));
+        assert_eq!(next.also_about, [link(Subject::Thing, &house)]);
     }
 
     /// Finishing a recurring task opens the next one, due that long after the

@@ -330,7 +330,6 @@
 					<IconButton
 						icon="mynaui:dots-vertical"
 						label="More"
-						size="md"
 						variant="secondary"
 						expanded={moreMenuOpen}
 						haspopup="menu"
@@ -473,7 +472,7 @@
 
 	{#if finished.length > 0}
 		<div class="finished-row">
-			<Button variant="secondary" size="sm" onclick={() => (showFinished = !showFinished)}>
+			<Button variant="secondary" onclick={() => (showFinished = !showFinished)}>
 				{showFinished ? 'Hide finished' : `Show finished (${finished.length})`}
 			</Button>
 		</div>
@@ -495,7 +494,7 @@
 		flex-wrap: wrap;
 	}
 	/* Matches PageHeading's level-1 title and its description, so a hand-rolled
-	   header still reads as a page title (agents/build/design-grammar.md §4). */
+	   header still reads as a page title (agents/build/design.md, "Type"). */
 	.section-header h2 {
 		margin: 0;
 		font-family: var(--font-serif, ui-serif, Georgia, serif);
@@ -526,7 +525,7 @@
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
-	/* A row, so sans: serif is for titles (agents/build/design-grammar.md §4). */
+	/* A row, so sans: serif is for titles (agents/build/design.md, "Type"). */
 	.name {
 		font-size: 1rem;
 		color: var(--color-foreground);
@@ -643,10 +642,6 @@
 	.week:hover {
 		border-color: var(--color-border-strong);
 		background: var(--color-surface);
-	}
-	.week:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: -2px;
 	}
 	.week-go {
 		margin-left: auto;

@@ -4040,7 +4040,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: content.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -4144,7 +4144,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: content.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -5995,7 +5995,7 @@ mod tests {
         pages::CreatePageRequest {
             title: "Trip".into(),
             content: content.into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,

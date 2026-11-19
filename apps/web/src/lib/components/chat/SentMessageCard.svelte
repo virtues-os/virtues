@@ -4,7 +4,7 @@
 	 *
 	 * A message the assistant sent as the owner (`send_imessage`), in the reply
 	 * where it was sent. Framed, because these are the owner's words: a card is
-	 * you answering (agents/build/design-grammar.md §2). The words are set in
+	 * you answering (agents/build/design.md, "Framed and unframed blocks"). The words are set in
 	 * the serif at the size of what you kept; the line above says where the
 	 * message stands, read live from the box's outbox (`outbox.rs`):
 	 *

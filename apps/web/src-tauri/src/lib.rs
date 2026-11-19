@@ -403,8 +403,7 @@ pub fn serve_ui<R: tauri::Runtime>(
     baked(p).filter(|a| p.ends_with(".html") || !a.mime_type.starts_with("text/html"))
   };
   let exists = |p: &str| {
-    dir.as_deref().is_some_and(|d| web_bundle::read_from_overlay(d, p).is_some())
-      || baked_exact(p).is_some()
+    dir.as_deref().is_some_and(|d| web_bundle::overlay_has(d, p)) || baked_exact(p).is_some()
   };
 
   // A navigation to a route whose last segment has a dot in it (a file name
@@ -438,24 +437,39 @@ pub fn serve_ui<R: tauri::Runtime>(
     eprintln!("[ui] {path} is not an app file; answered with 200.html (accept: {accept:?})");
   }
 
-  // Overlay first, baked second, typed by extension either way.
-  let overlay = dir.as_deref().and_then(|d| web_bundle::read_from_overlay(d, &resolved));
-  match (overlay, baked_exact(&resolved)) {
-    (Some(bytes), _) => tauri::http::Response::builder()
+  // Overlay first, baked second, typed by extension either way. The baked
+  // copy is looked up only on an overlay miss: the resolver decompresses it on
+  // every call, and an overlay hit threw that work away.
+  if let Some(bytes) = dir.as_deref().and_then(|d| web_bundle::read_from_overlay(d, &resolved)) {
+    return tauri::http::Response::builder()
       .status(200)
       .header("Content-Type", web_bundle::content_type(&resolved))
       .body(bytes)
-      .unwrap(),
-    (None, Some(asset)) => tauri::http::Response::builder()
+      .unwrap();
+  }
+  match baked_exact(&resolved) {
+    Some(asset) => tauri::http::Response::builder()
       .status(200)
       .header("Content-Type", asset.mime_type)
       .body(asset.bytes)
       .unwrap(),
-    (None, None) => tauri::http::Response::builder()
+    None => tauri::http::Response::builder()
       .status(404)
       .body(Vec::new())
       .unwrap(),
   }
+}
+
+/// `serve_ui` as an asynchronous scheme handler, for both shells. WebKit calls
+/// a synchronous handler on the main thread, so every UI file the page loaded
+/// (file reads, and decompressing the built-in copy) waited behind and
+/// blocked the UI. This answers from a blocking task instead.
+pub fn serve_ui_async<R: tauri::Runtime>(
+  app: tauri::AppHandle<R>,
+  request: tauri::http::Request<Vec<u8>>,
+  responder: tauri::UriSchemeResponder,
+) {
+  tauri::async_runtime::spawn_blocking(move || responder.respond(serve_ui(&app, &request)));
 }
 
 /// Reload a page that serves a pending bundle and has not confirmed within
@@ -495,7 +509,9 @@ pub fn run() {
   // OTA asset protocol: every request for the UI comes through `serve_ui`.
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_reach::init())
-    .register_uri_scheme_protocol("virtues", |ctx, request| serve_ui(ctx.app_handle(), &request));
+    .register_asynchronous_uri_scheme_protocol("virtues", |ctx, request, responder| {
+      serve_ui_async(ctx.app_handle().clone(), request, responder)
+    });
 
   // The six collectors are iOS-only: Rust shims over Swift halves, with no
   // Android counterpart yet (see Cargo.toml). Android boots reach + the webview
@@ -637,7 +653,7 @@ pub fn run() {
       let start = if paired || cfg!(not(target_os = "ios")) {
         "virtues://localhost/connect.html"
       } else {
-        "virtues://localhost/setup"
+        "virtues://localhost/onboarding"
       }
       .parse()
       .expect("static url");

@@ -5,20 +5,19 @@
 	import { loadView, peekView, reloadForStaleChunk, type View, type ViewLoader } from "$lib/tabs/lazy";
 	import { reloadApp } from "$lib/reload";
 	import Button from "$lib/components/Button.svelte";
-	import SectionNav from "$lib/components/settings/SectionNav.svelte";
 	import ActionToolbar from "./ActionToolbar.svelte";
 	import { provideTabId } from "$lib/stores/paneActions.svelte";
-	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
+	import { providePageKind, kindOf } from "$lib/stores/pageWidth.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	provideTabId(() => tab.id);
+	providePageKind({ tabId: () => tab.id, kind: () => kindOf(tab, isOne) });
 
-	// A Settings page (Sources and Streams among them) carries Settings'
-	// section list down its left, since the sidebar does not change for
-	// Settings. The phone has its own way through Settings.
-	const settingsNav = $derived(!mobileLayout.isMobile && !!rowForRoute(SETTINGS_MODE, tab.route));
+	// A tab shows one thing ('/person/person_abc') or a list ('/wiki').
+	// "/" is a new chat, which counts as one.
+	const isOne = $derived(tab.route === '/' || !!routeToEntityId(tab.route));
 
 	// Which view this tab wants, as a loader (see $lib/tabs/lazy.ts). Handles
 	// detail variants for entity namespaces.
@@ -35,10 +34,7 @@
 		}
 
 		// For all other types, use getComponent which handles list vs detail view
-		// Derive hasEntityId from route (e.g., '/person/person_abc' has entity, '/wiki' does not)
-		// Special case: "/" is a new chat (entityId: 'new' in registry), treat as having entity
-		const hasEntityId = tab.route === '/' || !!routeToEntityId(tab.route);
-		return getComponent(tab.type, hasEntityId);
+		return getComponent(tab.type, isOne);
 	});
 
 	// The resolved view. Eager views (chat, home) and any chunk that has
@@ -85,26 +81,17 @@
 	{#if !mobileLayout.isMobile}
 		<ActionToolbar {tab} />
 	{/if}
-	<div class="tab-body" class:with-nav={settingsNav}>
-		{#if settingsNav}
-			<SectionNav mode={SETTINGS_MODE} route={tab.route} />
-		{/if}
+	<div class="tab-body">
 		{#if ViewComponent}
-			{#if settingsNav}
-				<div class="section-body">
-					<ViewComponent {tab} {active} />
-				</div>
-			{:else}
-				<ViewComponent {tab} {active} />
-			{/if}
+			<ViewComponent {tab} {active} />
 		{:else if loadFailed}
 			<div class="placeholder" role="alert">
 				<Icon icon="mynaui:refresh" />
 				<span class="title">This view didn't load</span>
 				<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
 				<div class="actions">
-					<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
-					<Button size="sm" onclick={() => reloadApp()}>Reload the app</Button>
+					<Button variant="secondary" onclick={() => (attempt += 1)}>Try again</Button>
+					<Button onclick={() => reloadApp()}>Reload the app</Button>
 				</div>
 			</div>
 		{:else if !tabRegistry[tab.type]}
@@ -132,20 +119,6 @@
 		position: relative;
 		flex: 1;
 		min-height: 0;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-
-	/* The section list, then the page. */
-	.tab-body.with-nav {
-		flex-direction: row;
-	}
-
-	.section-body {
-		position: relative;
-		flex: 1;
-		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;

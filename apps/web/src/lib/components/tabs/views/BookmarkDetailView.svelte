@@ -128,7 +128,7 @@
 	}
 </script>
 
-<Page title={heading} description={origin} maxWidth="prose">
+<Page title={heading} description={origin} maxWidth="reading">
 	{#if loading}
 		<p class="state">Opening…</p>
 	{:else if error}
@@ -168,7 +168,7 @@
 					<span>Saved</span>
 				{/if}
 				{#if dirty && !savingNote}
-					<Button variant="secondary" size="sm" onclick={saveNote}
+					<Button variant="secondary" onclick={saveNote}
 						>Save note</Button
 					>
 				{/if}
@@ -304,7 +304,6 @@
 		resize: vertical;
 	}
 	.note-input:focus {
-		outline: none;
 		border-color: var(--color-foreground-muted);
 	}
 	.note-input::placeholder {

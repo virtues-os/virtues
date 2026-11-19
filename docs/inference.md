@@ -35,8 +35,8 @@ This page covers only the search model. A separate model writes your day
 pages and answers your questions. It runs in the cloud, through our gateway,
 which asks every model provider for zero data retention, except for models
 marked as not zero retention. If you bring your own AI key, your provider's
-own terms apply. Settings → Assistant → All models shows each model's
-retention.
+own terms apply. In Settings, open your assistant's page and choose Compare
+all models to see each model's retention.
 
 ## Step 1: Choose a model
 

@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
-	 * The rules in force (`wiki_rules`, active): what chat never raises
-	 * (`avoid`) and what it holds the person to (`defend`), also read by the
-	 * wiki editor. The interview proposes rules; this is where the ones in
-	 * force are listed, added, edited and removed.
+	 * Never bring up, on How it talks: the subjects chat never raises
+	 * (`wiki_rules`, active), listed, added, edited and removed here. The
+	 * interview proposes rules too.
 	 *
 	 * Every save replaces the whole set, so it always sends `keepProposed`:
 	 * proposals waiting for the interview's close are not this page's to drop.
@@ -26,24 +26,15 @@
 		removing: boolean;
 	}
 
-	const KIND_LABEL: Record<Kind, string> = {
-		avoid: 'Never bring up',
-		defend: 'Hold me to',
-	};
-	const PLACEHOLDER: Record<Kind, string> = {
-		avoid: 'my ex',
-		defend: 'no work email on Sundays',
-	};
 	const UNDO_MS = 6000;
 
-	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
+	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
 
 	let rows = $state<Row[]>([]);
 	let phase = $state<'loading' | 'ready' | 'error'>('loading');
 	let saveFailed = $state(false);
 	let editingKey = $state<number | null>(null);
 	let editDraft = $state('');
-	let addKind = $state<Kind>('avoid');
 	let addText = $state('');
 	let listEl = $state<HTMLElement>();
 	let addEl = $state<HTMLElement>();
@@ -65,7 +56,7 @@
 		return rules.map((r) => ({
 			key: nextKey++,
 			rule: r.rule,
-			kind: r.kind === 'defend' ? 'defend' : 'avoid',
+			kind: 'avoid',
 			removing: false,
 		}));
 	}
@@ -214,15 +205,11 @@
 	function add() {
 		const text = addText.trim();
 		if (!text || !ready) return;
-		const kind = addKind;
-		rows.push({ key: nextKey++, rule: text, kind, removing: false });
+		rows.push({ key: nextKey++, rule: text, kind: 'avoid', removing: false });
 		addText = '';
 		save(() => {
 			// Give the words back, unless something new has been typed since.
-			if (!addText) {
-				addText = text;
-				addKind = kind;
-			}
+			if (!addText) addText = text;
 		});
 	}
 
@@ -237,18 +224,17 @@
 <svelte:window onpagehide={commitPending} />
 
 <section class="rules">
-	<h2 class="settings-label">Rules</h2>
+	<h2 class="settings-label">Never bring up</h2>
 	<!-- What a rule does in chat (RULES_PROMPT in agent/prompt.rs): never
 	     opens the subject, still engages when the owner does. -->
 	<p class="sec-hint">
-		{assistantName} follows these in chat.
-		It never raises a subject you've ruled out, but talks about it if you do.
+		{assistantName} never raises these. If you bring one up, it talks about it.
 	</p>
 
 	{#if phase === 'error'}
 		<p class="field-error">Your server couldn't load the rules.</p>
 		<div>
-			<Button variant="secondary" size="sm" onclick={load}>Try again</Button>
+			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else}
 		{#if rows.length}
@@ -258,10 +244,9 @@
 						{#if row.removing}
 							<span class="removed" role="status">Removed.</span>
 							<span class="actions">
-								<Button variant="ghost" size="sm" onclick={() => undo(row)}>Undo</Button>
+								<Button variant="ghost" onclick={() => undo(row)}>Undo</Button>
 							</span>
 						{:else}
-							<span class="kind">{KIND_LABEL[row.kind]}</span>
 							{#if editingKey === row.key}
 								<label class="edit">
 									<span class="sr-only">Rule</span>
@@ -278,13 +263,13 @@
 									<IconButton
 										icon="mynaui:edit"
 										label="Edit rule"
-										size="sm"
+										size="nested"
 										onclick={() => startEdit(row)}
 									/>
 									<IconButton
 										icon="mynaui:x"
 										label="Remove rule"
-										size="sm"
+										size="nested"
 										onclick={() => remove(row)}
 									/>
 								</span>
@@ -302,22 +287,18 @@
 		{/if}
 
 		<div class="add" bind:this={addEl}>
-			<select bind:value={addKind} aria-label="Kind of rule" disabled={!ready}>
-				<option value="avoid">{KIND_LABEL.avoid}</option>
-				<option value="defend">{KIND_LABEL.defend}</option>
-			</select>
 			<label class="add-text">
 				<span class="sr-only">Rule</span>
 				<Input
 					bind:value={addText}
-					placeholder={PLACEHOLDER[addKind]}
+					placeholder="A subject {assistantName} should leave alone"
 					autocomplete="off"
 					disabled={!ready}
 					onkeydown={addKeydown}
 				/>
 			</label>
-			<Button variant="secondary" size="sm" disabled={!ready || !addText.trim()} onclick={add}>
-				Add rule
+			<Button variant="secondary" disabled={!ready || !addText.trim()} onclick={add}>
+				Add
 			</Button>
 		</div>
 	{/if}
@@ -351,7 +332,6 @@
 		min-height: 32px;
 	}
 
-	.kind,
 	.removed {
 		font-size: 13px;
 		color: var(--color-foreground-muted);
@@ -390,7 +370,6 @@
 			grid-template-columns: minmax(0, 1fr) auto;
 		}
 
-		.kind,
 		.edit {
 			grid-column: 1 / -1;
 		}
@@ -405,23 +384,6 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px;
-	}
-
-	.add select {
-		height: 40px;
-		padding: 0 12px;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-	}
-
-	@media (pointer: coarse) {
-		.add select {
-			height: 44px;
-		}
 	}
 
 	.add-text {

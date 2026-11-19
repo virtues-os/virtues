@@ -67,7 +67,7 @@
 <div class="prose-code">
 	<div class="prose-code-head">
 		<span class="prose-code-lang">{languageLabel(lang) || 'Plain text'}</span>
-		<IconButton icon={copied ? 'mynaui:check' : 'mynaui:copy'} label="Copy code" size="sm" onclick={copy} />
+		<IconButton icon={copied ? 'mynaui:check' : 'mynaui:copy'} label="Copy code" size="nested" onclick={copy} />
 	</div>
 
 	{#if tokens}

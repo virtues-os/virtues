@@ -7,11 +7,14 @@
 	import { listenForMenuKeys } from './keys';
 	import { swallowLift } from './lift';
 	import { fitMenu } from './fit';
+	import { floatOut, originFor, release } from '$lib/utils/transitions';
 	import { focusOwner, pointFocusAt, type PointedAt } from './activeDescendant';
 	import type { Placement } from '@floating-ui/dom';
 
 	let menuRef = $state<HTMLElement | null>(null);
 	let menuRect = $state<DOMRect | null>(null);
+	/** Where the menu grows from: the pointer, or the side facing its anchor. */
+	let origin = $state('top left');
 	let itemRects = $state<Map<string, DOMRect>>(new Map());
 
 	// Use the new floating hook for smart positioning
@@ -33,14 +36,21 @@
 	// inside the window and above the software keyboard.
 	$effect(() => {
 		if (contextMenu.visible && menuRef) {
+			origin = 'top left';
 			// Use requestAnimationFrame to wait for render
 			requestAnimationFrame(() => {
 				if (!menuRef) return;
 				menuRect = menuRef.getBoundingClientRect();
-				if (contextMenu.anchor) return;
+				if (contextMenu.anchor) {
+					origin = originFor(floating.state.placement);
+					return;
+				}
 				// Its layout size: the opening animation scales the drawn one.
 				const size = { width: menuRef.offsetWidth, height: menuRef.offsetHeight };
 				const fitted = fitMenu(contextMenu.position, size);
+				// Fitting can move the menu off the pointer (near an edge); it
+				// still grows from the pointer.
+				origin = `${contextMenu.position.x - fitted.x}px ${contextMenu.position.y - fitted.y}px`;
 				if (fitted.x !== contextMenu.position.x || fitted.y !== contextMenu.position.y) {
 					contextMenu.position = fitted;
 				}
@@ -193,6 +203,7 @@
 		class="context-menu-backdrop"
 		onclick={handleBackdropClick}
 		oncontextmenu={handleBackdropContextMenu}
+		out:release
 	>
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
@@ -200,6 +211,8 @@
 			class="context-menu"
 			id={MENU_ID}
 			style="top: {menuPosition.y}px; left: {menuPosition.x}px"
+			style:transform-origin={origin}
+			out:floatOut
 			role="menu"
 			aria-label="Context menu"
 			tabindex="-1"
@@ -279,19 +292,13 @@
 				max(16px, env(safe-area-inset-bottom))
 		);
 		overflow-y: auto;
-		animation: menu-fade-in 100ms ease-out;
-	}
-
-	/* Opened from a button, the menu holds the focus (`activeDescendant.ts`);
-	   the row reached is what is drawn as focused. */
-	.context-menu:focus {
-		outline: none;
+		animation: menu-fade-in var(--motion-enter) var(--ease-premium);
 	}
 
 	@keyframes menu-fade-in {
 		from {
 			opacity: 0;
-			transform: scale(0.95);
+			transform: scale(0.97);
 		}
 		to {
 			opacity: 1;

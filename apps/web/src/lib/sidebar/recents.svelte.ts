@@ -21,7 +21,7 @@ import { visits } from '$lib/stores/visits.svelte';
 import { isUntitled, untitled } from '$lib/refs/identity.svelte';
 import type { Applet, PageSummary, ProjectSummary } from '$lib/api/client';
 
-export type RecentKind = 'chat' | 'page' | 'project' | 'applet';
+export type RecentKind = 'chat' | 'page' | 'thread' | 'applet';
 
 interface RecentBase {
 	/** The thing's route, which is also its key. */
@@ -35,14 +35,14 @@ interface RecentBase {
 export type RecentRow =
 	| (RecentBase & { kind: 'chat'; session: ChatSession })
 	| (RecentBase & { kind: 'page'; page: PageSummary })
-	| (RecentBase & { kind: 'project'; project: ProjectSummary })
+	| (RecentBase & { kind: 'thread'; project: ProjectSummary })
 	| (RecentBase & { kind: 'applet'; applet: Applet });
 
 /** The noun for each kind, for the filter and the row's tooltip. */
 export const RECENT_KIND_LABEL: Record<RecentKind, string> = {
 	chat: 'Chat',
 	page: 'Page',
-	project: 'Project',
+	thread: 'Thread',
 	applet: 'Applet',
 };
 
@@ -101,10 +101,10 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 	for (const project of projectStore.projects) {
 		if (project.archived_at) continue;
 		rows.push({
-			kind: 'project',
-			url: `/project/${project.id}`,
-			...named(project.name, 'project'),
-			ts: Math.max(stamp(project.updated_at), visits.lastVisit('project', project.id)),
+			kind: 'thread',
+			url: `/thread/${project.id}`,
+			...named(project.name, 'thread'),
+			ts: Math.max(stamp(project.updated_at), visits.lastVisit('thread', project.id)),
 			project,
 		});
 	}

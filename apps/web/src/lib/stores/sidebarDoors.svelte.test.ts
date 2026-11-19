@@ -15,12 +15,15 @@ const ids = (doors: { id: string }[]) => doors.map((d) => d.id);
 
 describe('arranging the doors', () => {
 	it('keeps the saved order, skips ids this build does not know, and puts a missing door at its shipped place', () => {
-		expect(ids(arrange(['wiki', 'gone', 'new-chat', 'pages', 'wiki']))).toEqual([
+		// 'tasks' was a door until Tasks joined Projects; a profile saved then still says it.
+		// Storage is missing from that save, so it lands after Wiki, the door
+		// before it in the shipped order.
+		expect(ids(arrange(['wiki', 'tasks', 'new-chat', 'pages', 'wiki']))).toEqual([
 			'wiki',
+			'storage',
 			'new-chat',
+			'threads',
 			'pages',
-			'tasks',
-			'projects',
 			'applets',
 		]);
 	});
@@ -31,15 +34,15 @@ describe('arranging the doors', () => {
 
 	it('moves among the shown doors and leaves a hidden door where it was', async () => {
 		await sidebarDoors.reset();
-		await sidebarDoors.setHidden('tasks', true);
-		// Shown: new-chat, pages, projects, applets, wiki. Wiki to the top.
-		await sidebarDoors.move(4, 0);
-		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'pages', 'projects', 'applets']);
-		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'new-chat', 'tasks', 'pages', 'projects', 'applets']);
-		await sidebarDoors.setHidden('tasks', false);
-		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'tasks', 'pages', 'projects', 'applets']);
+		await sidebarDoors.setHidden('threads', true);
+		// Shown: new-chat, pages, applets, wiki, storage. Wiki to the top.
+		await sidebarDoors.move(3, 0);
+		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'pages', 'applets', 'storage']);
+		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage']);
+		await sidebarDoors.setHidden('threads', false);
+		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage']);
 		expect(saved.at(-1)).toEqual({
-			sidebar_doors: { order: ['wiki', 'new-chat', 'tasks', 'pages', 'projects', 'applets'], hidden: [] },
+			sidebar_doors: { order: ['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage'], hidden: [] },
 		});
 	});
 });

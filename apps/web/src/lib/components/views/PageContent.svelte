@@ -16,7 +16,8 @@
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import { identityOf } from "$lib/refs/identity.svelte";
-	import { clothFor } from "$lib/sidebar/pin-colors";
+	import { kindIcon } from "$lib/utils/iconHelpers";
+	import { accentCss } from "$lib/sidebar/pin-colors";
 	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
 	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -43,6 +44,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { isUntitled, untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import { usePageWidth } from "$lib/stores/pageWidth.svelte";
 	import type { TreeDocument } from "$lib/yjs";
 	import { cutServerVersion } from "$lib/yjs/versions";
 	import { canPrint, printAlone, printThis } from "$lib/document/print";
@@ -84,6 +86,11 @@
 	// when it docks there) is the end of the tab's action toolbar. The phone
 	// has no toolbar, so there it stays above the page.
 	const toolbar = usePageActions(() => (pageData ? topbar : null));
+
+	// A page opens in the reading column chat's messages use, so a page and a
+	// chat start their text at one edge when you switch tabs. The page bar
+	// changes it, and offers the A4 sheet the page prints on.
+	const width = usePageWidth(() => "reading", { sheet: true });
 
 	// A block page's state, as the action toolbar's status mark. The phone
 	// has no toolbar, and there PageStatusNote says it in the page's corner.
@@ -501,6 +508,13 @@
 			icon = data.icon;
 			iconColor = data.icon_color ?? null;
 			coverUrl = data.cover_url;
+			// The page as just read is newer than the page list, which may have
+			// loaded before an icon was changed in another window. Without this
+			// the heading would follow the list's stale icon below.
+			pagesStore.updatePageLocally(data.id, {
+				icon: data.icon,
+				icon_color: data.icon_color ?? null,
+			});
 
 			// Update label
 			onLabelChange?.(data.title);
@@ -631,6 +645,23 @@
 		});
 	});
 
+	// An icon or color picked elsewhere (a tab, a pin, the sidebar) reaches
+	// the heading, so the page, its tab and its pin show one icon. Without
+	// this the heading kept the icon it loaded with, and the next title save
+	// sent that old icon back over the new one.
+	$effect(() => {
+		const id = pageData?.id;
+		if (!id) return;
+		const stored = pagesStore.pages.find((p) => p.id === id);
+		if (!stored) return;
+		const storedIcon = stored.icon ?? null;
+		const storedColor = stored.icon_color ?? null;
+		untrack(() => {
+			if (icon !== storedIcon) icon = storedIcon;
+			if (iconColor !== storedColor) iconColor = storedColor;
+		});
+	});
+
 	async function save() {
 		if (!pageData || saving) return;
 
@@ -645,9 +676,10 @@
 			// Use store method - handles API call, cache invalidation, and sidebar refresh
 			// NOTE: Content is NOT sent here - it's synced via Yjs WebSocket
 			// The Yjs server handles debounced content persistence
+			// The icon is not sent here: it is saved on its own when picked, so a
+			// title save can't overwrite an icon changed in another window.
 			await pagesStore.savePage(pageData.id, {
 				title,
-				icon,
 				cover_url: coverUrl,
 			});
 
@@ -727,21 +759,29 @@
 		value={icon}
 		onSelect={(value) => {
 			icon = value;
-			if (pageData) pagesStore.updatePageLocally(pageData.id, { icon: value });
 			onIconChange?.(value);
-			save();
+			if (pageData) {
+				pagesStore.updatePageLocally(pageData.id, { icon: value });
+				void pagesStore.savePage(pageData.id, { icon: value }).catch((err) => {
+					console.error("Failed to save page icon:", err);
+					saveError = true;
+				});
+			}
 		}}
 		{close}
 		color={iconColor}
 		onColorSelect={(value) => {
 			// Saved on its own rather than through `save()`: that path sends
-			// title, icon and cover together, and picking a color shouldn't drag
+			// the title and cover together, and picking a color shouldn't drag
 			// a half-typed title to the server with it.
 			iconColor = value;
-			if (pageData) void pagesStore.savePage(pageData.id, { icon_color: value });
+			if (pageData) {
+				pagesStore.updatePageLocally(pageData.id, { icon_color: value });
+				void pagesStore.savePage(pageData.id, { icon_color: value });
+			}
 		}}
 		label={identityOf(`/page/${pageId}`).title}
-		autoColor={clothFor({ url: `/page/${pageId}` })}
+		fallback={kindIcon(`/page/${pageId}`)}
 	/>
 {/snippet}
 
@@ -782,7 +822,7 @@
 			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
-		<div class="max-w-2xl mx-auto p-4">
+		<div class="mx-auto p-4" style:max-width={width.css}>
 			<div
 				class="p-4 bg-error-subtle border border-error rounded-lg text-error"
 			>
@@ -818,25 +858,20 @@
 				{#if coverUrl}
 					<PageCoverImage
 						{coverUrl}
-						widthMode={pageDisplay.widthMode}
+						width={width.width}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;
 							save();
 						}}
 					/>
-				{:else}
-					<!-- No cover: the home painting comes back as an ink print. -->
-					<div class="page-ink" aria-hidden="true"></div>
 				{/if}
 
 				<div
 					class="page-inner"
 					bind:clientWidth={columnWidth}
-					class:width-small={pageDisplay.widthMode === "small"}
-					class:width-medium={pageDisplay.widthMode === "medium"}
-					class:width-full={pageDisplay.widthMode === "full"}
-					class:width-page={pageDisplay.widthMode === "page"}
+					class:width-sheet={width.width === "sheet"}
+					style:max-width={width.width === "sheet" ? undefined : width.css}
 					class:prose--marks-inline={marksInline}
 				>
 					<!-- Header -->
@@ -900,7 +935,11 @@
 										title="Change icon"
 									>
 										{#if icon && icon.includes(":")}
-											<Icon {icon} width="28" />
+											<Icon
+												{icon}
+												width="28"
+												style={iconColor ? `color: ${accentCss(iconColor)}` : undefined}
+											/>
 										{:else if icon}
 											<span class="page-icon-emoji"
 												>{icon}</span
@@ -951,6 +990,7 @@
 									pageTitle={title}
 									article={pageData?.kind === "article"}
 									editable={!treeDoc.readOnly && !refusedReason}
+									sheet={width.width === "sheet"}
 									ai={treeAiDriver}
 									findHost={topbarEl}
 									onFindOpen={(open) => (finding = open)}
@@ -1095,24 +1135,10 @@
 		transition: max-width 0.2s ease-out;
 	}
 
-	.page-inner.width-small {
-		max-width: 32rem; /* ~512px */
-	}
-
-	/* The reading column chat's messages use, so a page and a chat start
-	   their text at one edge when you switch tabs (themes.css). */
-	.page-inner.width-medium {
-		max-width: var(--reading-measure);
-	}
-
-	.page-inner.width-full {
-		max-width: 100%;
-	}
-
 	/* The A4 sheet, title and all: 210 mm wide with 20 mm margins, as it
 	   prints. The block editor's own sheet (`.doc-page-view`) folds into it,
 	   so the title is not left outside the page it heads. */
-	.page-inner.width-page {
+	.page-inner.width-sheet {
 		box-sizing: border-box;
 		max-width: 210mm;
 		min-height: 297mm;
@@ -1121,7 +1147,7 @@
 		background: var(--color-background);
 	}
 
-	.page-inner.width-page :global(.doc-page-view) {
+	.page-inner.width-sheet :global(.doc-page-view) {
 		width: auto;
 		min-height: 0;
 		padding: 0;
@@ -1129,7 +1155,7 @@
 	}
 
 	@media (max-width: 230mm) {
-		.page-inner.width-page {
+		.page-inner.width-sheet {
 			padding: 16px;
 			border: none;
 			min-height: 0;
@@ -1211,11 +1237,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.page-adder:focus-visible {
-		outline: 2px solid var(--color-border-focus);
-		outline-offset: 1px;
-	}
-
 	/* The page has a cover: the button stays only as the anchor its picker
 	   opens from when the cover asks for a change. */
 	.page-adder.hidden-adder {
@@ -1226,8 +1247,8 @@
 	   in api/publish_page.rs) or the same page reads differently to its author
 	   and its reader.
 	   The 500 was never drawn either way: the serif ships one cut and the request
-	   resolves back to the regular in silence (agents/build/typography.md). At
-	   36px, the page title's size on the type scale (agents/build/design-grammar.md),
+	   resolves back to the regular in silence (agents/build/design.md, "Type"). At
+	   36px, the page title's size on the type scale (agents/build/design.md),
 	   in full ink above the body the title leads the document. */
 	.page-title-input {
 		flex: 1;
@@ -1336,41 +1357,11 @@
 		}
 
 		/* Paper has its own margins (`@page`, document.css). */
-		.page-inner.width-page {
+		.page-inner.width-sheet {
 			max-width: none;
 			min-height: 0;
 			padding: 0;
 			border: none;
 		}
-	}
-
-	/* Spinning animation */
-	:global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-
-	.page-ink {
-		height: 150px;
-		margin-bottom: -40px;
-		background: url("/scenes/lake-ink.jpg") 60% 64% / cover no-repeat;
-		opacity: 0.75;
-		pointer-events: none;
-		-webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
-		mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
-	}
-
-	:global(:is([data-theme="lothlorien"], [data-theme="baker-street"], [data-theme="narnia"], [data-theme="canterbury"], [data-theme="borghese"], [data-theme="lyceum"], [data-theme="asgard"], [data-theme="agora"], [data-theme="shire"])) .page-ink {
-		filter: invert(1) brightness(0.85);
-		opacity: 0.45;
 	}
 </style>

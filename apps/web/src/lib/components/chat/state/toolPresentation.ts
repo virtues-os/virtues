@@ -143,6 +143,19 @@ const TOOLS: Record<string, Presentation> = {
 		depth: 4,
 		say: ["Writing to your records", "Wrote to your records"],
 	},
+	// Drawn in the reply as the deletion itself (DeletionCard); this is its
+	// line in the thinking block. The call only proposes, so it never says
+	// "deleted".
+	delete_data: {
+		noun: "your data",
+		depth: 4,
+		say: (input, live) => {
+			if (typeof input.deletion_id === "string" && input.deletion_id.trim()) {
+				return live ? "Checking on a deletion" : "Checked on a deletion";
+			}
+			return live ? "Working out what to delete" : "Asked you before deleting";
+		},
+	},
 	sudo: {
 		noun: "your server",
 		depth: 4,
@@ -257,13 +270,8 @@ const TOOLS: Record<string, Presentation> = {
 	generate_image: { noun: "an image", depth: 4, say: ["Making an image", "Made an image"] },
 	// Drawn in the reply; listed here only when a call failed.
 	show: { noun: "a figure", depth: 4, say: ["Drawing a figure", "Drew a figure"] },
-	update_memory: {
-		noun: "memory",
-		depth: 4,
-		say: ["Noting something to remember", "Noted something to remember"],
-	},
 	get_project_item: {
-		noun: "a project",
+		noun: "a thread",
 		depth: 4,
 		say: ["Opening something you're working on", "Opened something you're working on"],
 	},

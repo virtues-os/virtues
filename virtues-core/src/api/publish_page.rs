@@ -966,7 +966,7 @@ mod tests {
         let req = crate::api::pages::CreatePageRequest {
             title: title.into(),
             content: content.into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,
@@ -1056,7 +1056,7 @@ mod tests {
             content: "Ask [@Nick](/person/person_1) about [⟦David Okafor⟧](/person/person_2).\n\n\
                       - [x] Book seats\n- [ ] Pack\n\n![photo.png](/drive/df_photo)\n\n![voice.m4a](/drive/df_3)\n"
                 .into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,

@@ -33,7 +33,7 @@ repo_ref = "apps/mac-source"
 id = "google"
 display_name = "Google"
 icon = "ri:google-fill"
-description = "Calendar, Mail, and Drive — read-only sync of your Google account."
+description = "Read-only sync of your Google Calendar and Mail."
 auth = { kind = "via_proxy", start_path = "/google/start" }
 
 [[source]]

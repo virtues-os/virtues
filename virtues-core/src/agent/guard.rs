@@ -112,9 +112,16 @@ impl RepeatGuard {
         let ledger = self.tools.get(&call.name);
         if let Some(l) = ledger {
             if l.consecutive_failures >= MAX_CONSECUTIVE {
+                // A model refused a figure has drawn it with shell instead;
+                // the figure is the person's chart, so a closed show means words.
+                let instead = if call.name == "show" {
+                    " Say in words what the figure would have shown; don't draw it another way, such as with shell."
+                } else {
+                    ""
+                };
                 return Some(format!(
                     "{} has failed {} times in a row this turn and is closed for the rest of it. \
-                     Answer with what you already have, and tell the person what you could not get.",
+                     Answer with what you already have, and tell the person what you could not get.{instead}",
                     call.name, l.consecutive_failures
                 ));
             }

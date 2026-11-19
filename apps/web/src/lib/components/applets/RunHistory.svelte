@@ -206,7 +206,7 @@
 				{#if why}
 					<p class="run-text"><Icon icon="mynaui:lock" width="12" /> {why.title}. {why.remedy}</p>
 					{#if canFix && why.open}
-						<Button variant="secondary" size="sm" onclick={() => why.open?.()}>
+						<Button variant="secondary" onclick={() => why.open?.()}>
 							Open {why.label} on this computer
 						</Button>
 					{/if}

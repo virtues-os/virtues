@@ -41,7 +41,8 @@
 -->
 <script lang="ts">
 	import { onDestroy, onMount, tick } from "svelte";
-	import { fade, fly } from "svelte/transition";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import { fade, fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
@@ -190,7 +191,7 @@
 		}
 	}
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	const chat = chatInstances.getOrCreate({
 		conversationId: GETTING_STARTED_CHAT_ID,
@@ -589,7 +590,7 @@
 
 	/* THE QUESTION IS THE PAGE, on the center line like every step: the
 	   assistant's question set large in the serif, as Names asks "And what
-	   should Ari call you?", and the answer written on the paper under it,
+	   should Virtues call you?", and the answer written on the paper under it,
 	   not typed into a form (2026-09-28: it was the one left-aligned step,
 	   a small question over a bordered box). */
 	.sheet {

@@ -30,7 +30,7 @@
 				<span class="references-count">{backlinks.length}</span>
 			{/if}
 		</span>
-		<IconButton icon="mynaui:x" label="Close references" size="sm" onclick={onClose} />
+		<IconButton icon="mynaui:x" label="Close references" onclick={onClose} />
 	</header>
 
 	<div class="references-body">

@@ -56,7 +56,7 @@ describe('linkTarget', () => {
 	it('reads record and other entity routes as entities', () => {
 		expect(linkTarget('/record/health_sleep/rec_1')).toEqual({ kind: 'entity' });
 		expect(linkTarget('/person/david-okafor')).toEqual({ kind: 'entity' });
-		expect(linkTarget('/notebook/nb_1')).toEqual({ kind: 'entity' });
+		expect(linkTarget('/thread/nb_1')).toEqual({ kind: 'entity' });
 	});
 
 	it('reads the web as external', () => {
@@ -69,5 +69,13 @@ describe('linkTarget', () => {
 		expect(linkTarget('mailto:nick@example.com')).toEqual({ kind: 'other' });
 		expect(linkTarget('')).toEqual({ kind: 'none' });
 		expect(linkTarget(undefined)).toEqual({ kind: 'none' });
+	});
+});
+
+describe('a query ref with a figure', () => {
+	it('names the figure after #', () => {
+		expect(parseToolRef('/chat/chat_1/tool/call_9#2')).toEqual({ chatId: 'chat_1', callId: 'call_9', figure: 2 });
+		expect(linkTarget('/chat/chat_1/tool/call_9#2')).toEqual({ kind: 'query', callId: 'call_9', figure: 2 });
+		expect(linkTarget('/chat/chat_1/tool/call_9')).toEqual({ kind: 'query', callId: 'call_9' });
 	});
 });
