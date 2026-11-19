@@ -202,7 +202,7 @@ fn embed_model_from_env() -> String {
 
 /// The embedding server a re-run box's owner chose, as `(url, model)`, when its
 /// env file says `VIRTUES_INFERENCE=manual` and names one.
-fn own_server(box_env: &std::path::Path) -> Option<(String, String)> {
+pub(crate) fn own_server(box_env: &std::path::Path) -> Option<(String, String)> {
     let text = std::fs::read_to_string(box_env).ok()?;
     let get = |key: &str| {
         text.lines().rev().find_map(|l| {

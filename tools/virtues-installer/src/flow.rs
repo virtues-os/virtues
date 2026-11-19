@@ -84,9 +84,27 @@ pub async fn run(cli: Config) -> Result<()> {
         // Bundled provisions our own local sidecar — nothing to validate (we
         // control the endpoint).
         InferenceMode::Bundled => None,
-        InferenceMode::Manual { embed_url, embed_model } => Some(
-            mode::validate_manual(embed_url, embed_model).await?,
-        ),
+        InferenceMode::Manual { embed_url, embed_model } => {
+            match mode::validate_manual(embed_url, embed_model).await {
+                Ok(report) => Some(report),
+                // A re-run that keeps the owner's own server: its settings are
+                // already in the env file, and the merge leaves them as they
+                // are. The server being down is often why the installer is
+                // being re-run, so it must not stop the install.
+                Err(e)
+                    if std::env::var("VIRTUES_INFERENCE").is_err()
+                        && mode::own_server(&cfg.env_file_path()).is_some() =>
+                {
+                    ui::warn(&format!(
+                        "Your embedding server isn't answering ({e:#}). The install goes on and keeps it, \
+                         and search by meaning works again once it answers. To use this machine's CPU \
+                         instead, run `virtues configure-inference --recommended` afterwards."
+                    ));
+                    None
+                }
+                Err(e) => return Err(e),
+            }
+        }
     };
 
     // ─── System packages ────────────────────────────────────────────────
