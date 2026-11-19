@@ -1467,7 +1467,7 @@
 							{:else if removal.kind === "removed"}
 								<p class="empty-state-text" role="status">
 									You removed this day's page on {removedOn}.
-									{#if removal.pageId}<TextAction inline loading={removalBusy} onclick={putDayPageBack}>Put it back</TextAction>{" "}{/if}<TextAction inline disabled={removalBusy} onclick={writeDayPageAgain}>Write it again</TextAction>
+									{#if removal.pageId}<TextAction inline loading={removalBusy} onclick={putDayPageBack}>Put it back</TextAction> or <TextAction inline disabled={removalBusy} onclick={writeDayPageAgain}>write it again</TextAction>.{:else}<TextAction inline disabled={removalBusy} onclick={writeDayPageAgain}>Write it again</TextAction>{/if}
 								</p>
 								{#if removal.failed === "put_back"}
 									<p class="empty-state-text">Your server couldn't put the page back. Try again, or restore it from Recently deleted.</p>
