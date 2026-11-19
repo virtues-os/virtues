@@ -34,10 +34,11 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 /// password manager, a 2FA code and a slow SMS.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Safari's own user agent. A bare WKWebView omits `Version/… Safari/…`, and
-/// some sites treat that as an embedded browser and degrade the login page.
-#[cfg(not(target_os = "macos"))]
-const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+/// Safari's own user agent, sent by every browser the app signs in with: the
+/// Mac's Browser pane and the other desktops' login window. A bare WKWebView
+/// omits `Version/… Safari/…`, and some sites treat that as an embedded
+/// browser and degrade the login page.
+pub(crate) const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
                          (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
 /// The cookies a request to `page` carries, from every cookie in a webview's
@@ -112,6 +113,14 @@ impl From<&tauri::webview::Cookie<'static>> for JarCookie {
             same_site: c.same_site().map(|s| s.to_string()),
         }
     }
+}
+
+/// The user agent a [`browser_login`] session was made with. The connect form
+/// sends it to the server beside the cookies, so a sync that replays the
+/// session identifies itself as the browser the site already saw.
+#[tauri::command]
+pub fn browser_login_user_agent() -> &'static str {
+    SAFARI_UA
 }
 
 /// Open `url` in a login window and resolve with the site's cookies once every

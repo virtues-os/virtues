@@ -71,9 +71,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 const LABEL: &str = "browser";
 const INJECTED: &str = include_str!("../vendor/playwright/injected.js");
-/// Safari's own user agent; a bare WKWebView omits `Version/… Safari/…`.
-const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
-                         (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+use crate::browser::SAFARI_UA;
 /// An outline longer than this is cut, with a note saying how to read the
 /// rest. About 10k tokens; Hacker News's front page alone is 44k characters.
 const MAX_OUTLINE_CHARS: usize = 40_000;

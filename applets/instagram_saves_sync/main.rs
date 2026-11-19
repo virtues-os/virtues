@@ -95,11 +95,7 @@ async fn main() -> Result<()> {
             .header("x-requested-with", "XMLHttpRequest")
             .header("cookie", &cookies)
             .header("referer", "https://www.instagram.com/")
-            .header(
-                "user-agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-                 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
-            );
+            .header("user-agent", virtues_applets::session_user_agent(&input));
         if let Some(claim) = &www_claim {
             req = req.header("x-ig-www-claim", claim);
         }

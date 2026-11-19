@@ -48,9 +48,6 @@ const RESPONSES_PER_CALL: usize = 100;
 /// Pause between requests, so a first sync does not hit grok.com in a burst.
 const PAUSE: Duration = Duration::from_millis(300);
 
-const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
-
 #[tokio::main]
 async fn main() -> Result<()> {
     virtues_applets::init_tracing();
@@ -60,6 +57,7 @@ async fn main() -> Result<()> {
     let grok = Grok {
         client: virtues_applets::http_client(),
         cookies: session_cookies(&input)?,
+        user_agent: virtues_applets::session_user_agent(&input).to_string(),
     };
 
     let prior = read_synced(&input)?;
@@ -210,6 +208,7 @@ impl std::error::Error for SessionEnded {}
 struct Grok {
     client: reqwest::Client,
     cookies: String,
+    user_agent: String,
 }
 
 impl Grok {
@@ -234,7 +233,7 @@ impl Grok {
             .header("cookie", &self.cookies)
             .header("accept", "application/json")
             .header("referer", "https://grok.com/")
-            .header("user-agent", USER_AGENT)
+            .header("user-agent", &self.user_agent)
             .send()
             .await
             .context("grok request failed")?;

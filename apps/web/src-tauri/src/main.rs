@@ -16,7 +16,7 @@ mod messages_send;
 mod permission_tile;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
-use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
+use browser::{browser_login, browser_login_user_agent, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -1938,6 +1938,7 @@ fn main() {
             start_dictation,
             set_summon_shortcut,
             browser_login,
+            browser_login_user_agent,
             browser_pane_open,
             browser_pane_bounds,
             browser_pane_go,

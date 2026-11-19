@@ -36,6 +36,7 @@
     "allow-start-dictation",
     "allow-set-summon-shortcut",
     "allow-browser-login",
+    "allow-browser-login-user-agent",
     "allow-browser-pane-open",
     "allow-browser-pane-bounds",
     "allow-browser-pane-go",
