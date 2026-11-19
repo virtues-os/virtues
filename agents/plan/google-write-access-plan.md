@@ -1,6 +1,6 @@
 # Google write access and Google's security assessment
 
-**Written 2026-10-30. Slices 2 and 4 built 2026-11-19, not deployed.** Let the assistant act on the owner's
+**Written 2026-10-30. Slices 2 and 4 built 2026-11-19; the new scopes are live on the proxy.** Let the assistant act on the owner's
 Gmail and Google Calendar: archive and label mail, write drafts, and create or
 change events. To do that, our Google app asks for broader scopes and passes
 Google's yearly security assessment (CASA) itself.
@@ -189,8 +189,8 @@ Two choices differ from the table:
 The tools also refuse the `TRASH` and `SPAM` labels, and `email_draft` replaces
 only drafts it wrote (it marks them with an `X-Virtues-Draft` header). A grant
 without the new scopes gets a message telling the owner to reconnect Google in
-Sources. Slice 2's scope change in `oauth.rs` takes effect when `virtues-api`
-is deployed. Until then every reconnect still grants the old scopes.
+Sources. Slice 2's scope change in `oauth.rs` went live on 2026-11-19, so a
+new sign-in or a reconnect grants `gmail.modify` and `calendar.events`.
 
 ### 5. The triage applet
 
