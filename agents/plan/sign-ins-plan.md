@@ -1,9 +1,10 @@
 # Sign-ins: keeping a site session alive
 
 **Status:** Proposed 2026-11-19. Nothing here is decided by the owner except
-the three earlier decisions listed under "Already decided". One part of slice 1
-is written and uncommitted as of 2026-11-19: the Instagram sync no longer
-follows redirects.
+the three earlier decisions listed under "Already decided". Two parts of
+slice 1 are built on wave and in no release as of 2026-11-19: the Instagram
+sync reports a dead session as one, and a dead sign-in is one attention item.
+Neither has run against a live site or on a server.
 
 Some syncs have no API to use, so they act as the owner's browser. The owner
 signs in once in the Mac app, the app hands the session's cookies to the
@@ -37,23 +38,13 @@ in again with as little work for the owner as possible.
 
 ## What goes wrong
 
-1. **A dead session can look like a different failure.** A site that answers a
-   dead session with a redirect to its login page gives a client that follows
-   redirects a 200 and an HTML page. The sync reports a parse error, never
-   marks the sign-in for reconnect, and the owner is never asked to sign in.
-2. **One dead sign-in shows as two items.** Once a sync marks its sign-in for
-   reconnect, the runner refuses to load it, so every later run fails with the
-   runner's "credential not found or not active" error. The owner sees
-   "Instagram needs you to sign in again" and, beside it, a failed-applet item
-   carrying that internal error. Each is one notification: the applet item is
-   keyed by applet (`api/attention.rs`).
-3. **The session is replayed as a different browser.** The session is made in
+1. **The session is replayed as a different browser.** The session is made in
    a browser that identifies as Safari, and the Instagram sync sends a Chrome
    user agent. Not shown to have ended a session; it is a known reason sites
    end one.
-4. **Cookies a site sends back during a sync are dropped.** Sites reissue some
+2. **Cookies a site sends back during a sync are dropped.** Sites reissue some
    cookies on each visit. The server keeps using the copy from connect time.
-5. **Nothing renews a session.** When it ends, the only path is the owner
+3. **Nothing renews a session.** When it ends, the only path is the owner
    noticing and signing in again by hand.
 
 ## The change
@@ -62,20 +53,30 @@ A sign-in belongs to a browser that keeps it alive. The Mac app's Browser pane
 is the first such browser. A browser on the server is the second. The syncs do
 not change with where the cookies came from.
 
-### Slice 1: report a dead sign-in correctly
+### Slice 1: replay the session as the browser that made it
 
-- Every session sync separates three outcomes: signed out, the site changed
-  its response, and a network failure. Signed out marks the sign-in for
-  reconnect. Session syncs use `virtues_applets::http_client_no_redirects()`
-  where the site signals a dead session by redirect.
-- A sign-in that needs the owner raises one attention item. A sync whose
-  sign-in is marked for reconnect is skipped, or its failed-applet item is
-  left out, so the sign-in item is the only one.
-- The sync sends the user agent of the browser that made the session. The
-  hand-over carries it.
-- The sync writes cookies the site reissues back into the stored sign-in.
+Built already: a session sync that meets a login redirect marks its sign-in
+for reconnect (`virtues_applets::http_client_no_redirects()`, used by the
+Instagram sync), and a sync whose sign-in needs the owner is left out of the
+failed-applet items, so the sign-in's own item is the only one.
+
+Left, and each is larger than a change to one applet:
+
+- **The sync sends the user agent of the browser that made the session.** The
+  shell's `browser_login` returns only the cookies, so the user agent has to
+  come through a new shell command and the connect form. That is a change to
+  the shell's command surface and its permissions as well as the web app. A
+  sign-in the owner pasted from their own browser has no known user agent.
+- **The sync keeps cookies the site reissues.** A sync applet is not given the
+  server's encryption key, so it cannot write the stored sign-in. The applet
+  would return the reissued cookies in its output and the runner would merge
+  them, guarding against the owner signing in again during the run. Which
+  cookies each site reissues is not measured; measure that on a live session
+  before building this.
 - Sign-ins with no expiry recorded get one the next time the Mac app re-sends
   the cookies (slice 2).
+- Check X and Grok for a login redirect the way Instagram was checked. Both
+  handle a 401 or 403 today.
 
 ### Slice 2: the Mac app re-sends cookies
 
