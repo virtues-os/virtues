@@ -11,21 +11,22 @@
 //!
 //! ## The BYO fork
 //!
-//! When the user has set a BYO provider key, **every `/v1/ai/*` call** leaves
+//! When the user has set a BYO provider key, **every chat completion** leaves
 //! by the user's endpoint instead of ours — streaming via [`Self::stream`],
 //! non-streaming via [`Self::post_json`]. Both consult
 //! [`crate::api::settings_byo::load_byo_credential`] and divert before any
 //! bearer is read, so virtues-api (wallet, markup, caps, auto-top-up) is out
 //! of the inference path entirely. That is the whole point of BYO.
 //!
-//! The fork is keyed on [`is_ai_path`] — the same predicate that decides cost
-//! capture — rather than on a separate `post_ai()` method, specifically so a
-//! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
+//! The fork is keyed on the route ([`diverts_to_byo`]) rather than on a
+//! separate `post_ai()` method, specifically so a new AI caller cannot forget
+//! to opt in. That mattered: until 2026-08-05
 //! only `stream()` honored the key, and compaction, day summaries, image
 //! generation and transcription quietly billed the wallet while the UI said
-//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/unsplash/*`)
-//! are per-user vendor bills that BYO says nothing about, so they keep going
-//! through the wallet. Plan of record: `agents/plan/byo-ai-plan.md`.
+//! "BYO active". Web search (`/v1/ai/search`) is a body the user's endpoint
+//! cannot answer, and the non-AI routes (`/v1/places/*`, `/v1/unsplash/*`)
+//! are per-user vendor bills that BYO says nothing about, so all of these
+//! keep going through the wallet. Plan of record: `agents/plan/byo-ai-plan.md`.
 //!
 //! ## Purpose tagging (vestige — no-op)
 //!
@@ -44,12 +45,25 @@ use super::renew;
 /// Is this one of the metered *inference* routes, as opposed to the fixed-cost
 /// vendor proxies (`/v1/places/*`, `/v1/unsplash/*`)?
 ///
-/// Two things key on this and must not drift apart: whether a call may divert
-/// to the user's BYO endpoint, and whether its `usage` block is captured into
-/// `app_ai_calls`. A route that is one but not the other would either bill a
-/// BYO call to the wallet or record a wallet call as free.
+/// Decides the completion timeout and whether a response's `usage` block is
+/// captured into `app_ai_calls`.
 fn is_ai_path(path: &str) -> bool {
     path.starts_with("/v1/ai/")
+}
+
+/// May this call leave by the owner's BYO endpoint?
+///
+/// A BYO credential is one chat-completions URL, and the fork posts the body
+/// there whatever path the caller named. So the chat-completions route is the
+/// only one that diverts. Web search (`/v1/ai/search`) speaks the gateway's
+/// own protocol, which an owner's endpoint cannot answer, and it stays on the
+/// subscription as the settings page says.
+///
+/// Every caller of a chat model uses this one path, so a new caller diverts
+/// without opting in. A route that diverts must also satisfy [`is_ai_path`],
+/// or a BYO call would go unrecorded in `app_ai_calls`.
+fn diverts_to_byo(path: &str) -> bool {
+    path == "/v1/ai/chat/completions"
 }
 
 /// How many times a chat completion may come back empty before we give up.
@@ -531,8 +545,7 @@ pub struct BearerClient {
     /// finishes the whole generation, so these get the completion timeout
     /// rather than the 60s request timeout — the nightly day-summary
     /// segmentation died at exactly 60s for three days straight (2026-08-09..11)
-    /// before this split existed. Keyed on [`is_ai_path`], like the BYO fork
-    /// and cost capture.
+    /// before this split existed. Keyed on [`is_ai_path`], like cost capture.
     completion_http: reqwest::Client,
     stream_http: reqwest::Client,
     pool: PgPool,
@@ -589,11 +602,11 @@ impl BearerClient {
     /// non-streaming AI feature (compaction, day summaries, transcription, …)
     /// is accounted for without per-caller bookkeeping.
     ///
-    /// **BYO fork.** For `/v1/ai/*` a configured BYO key diverts the call to
-    /// the user's own endpoint before any bearer is read — see the module
-    /// docs. Non-AI routes never divert.
+    /// **BYO fork.** A configured BYO key diverts a chat completion to the
+    /// user's own endpoint before any bearer is read — see the module docs.
+    /// Web search and the non-AI routes never divert.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
-        if is_ai_path(path) {
+        if diverts_to_byo(path) {
             if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
                 return self.post_direct_upstream(path, body, &byo).await;
             }
@@ -639,8 +652,8 @@ impl BearerClient {
         byo: &crate::api::settings_byo::ByoCredential,
     ) -> Result<ApiResponse> {
         let body = apply_byo_model(body, byo);
-        // Always an AI completion (only `is_ai_path` routes divert here), so
-        // it gets the completion timeout like the wallet path in `send`.
+        // Always a chat completion (only `diverts_to_byo` routes reach here),
+        // so it gets the completion timeout like the wallet path in `send`.
         let resp = self
             .completion_http
             .post(&byo.endpoint_url)
@@ -861,9 +874,8 @@ impl BearerClient {
         session_affinity: Option<&str>,
     ) -> Result<StreamOutcome> {
         // BYO fork — the streaming twin of the one in `post_json`. Gated on
-        // the same `is_ai_path` predicate so the two cannot drift, even though
-        // every caller of `stream()` today is already an AI route.
-        if is_ai_path(path) {
+        // the same `diverts_to_byo` predicate so the two cannot drift.
+        if diverts_to_byo(path) {
             if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
                 return self.stream_direct_upstream(body, &byo).await;
             }
@@ -1036,13 +1048,92 @@ mod byo_fork_tests {
     use super::*;
 
     #[test]
-    fn only_inference_routes_fork_to_byo() {
+    fn only_chat_completions_fork_to_byo() {
+        assert!(diverts_to_byo("/v1/ai/chat/completions"));
+        // A BYO call is recorded only if its route is also a metered one.
         assert!(is_ai_path("/v1/ai/chat/completions"));
+        // Web search is metered inference in the gateway's own protocol. An
+        // owner's chat endpoint cannot answer it.
+        assert!(is_ai_path("/v1/ai/search"));
+        assert!(!diverts_to_byo("/v1/ai/search"), "web search must not divert to BYO");
         // Fixed-cost vendor proxies are per-user bills a provider key cannot
         // pay; they must keep going through the wallet.
-        for path in ["/v1/places/autocomplete", "/v1/parallel/search", "/v1/unsplash/search", "/v1/usage"] {
-            assert!(!is_ai_path(path), "{path} must not divert to BYO");
+        for path in ["/v1/places/autocomplete", "/v1/unsplash/search", "/v1/usage"] {
+            assert!(!is_ai_path(path), "{path} is not a metered inference route");
+            assert!(!diverts_to_byo(path), "{path} must not divert to BYO");
         }
+    }
+
+    /// A local server that answers any request with its own name, the path it
+    /// was asked for and the bearer it was sent.
+    async fn answering_as(name: &'static str) -> String {
+        use axum::http::{HeaderMap, Uri};
+        let app = axum::Router::new().fallback(move |uri: Uri, headers: HeaderMap| async move {
+            let bearer = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            axum::Json(json!({
+                "served_by": name,
+                "path": uri.path(),
+                "bearer": bearer,
+                "choices": [{ "message": { "content": "ok" } }],
+            }))
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    /// Runs the fork itself against two local servers, one standing in for
+    /// the owner's endpoint and one for virtues-api.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn web_search_stays_on_the_subscription_when_a_byo_key_is_set(pool: PgPool) {
+        crate::credentials::ensure_test_key();
+        let owner = answering_as("owner").await;
+        let ours = answering_as("virtues-api").await;
+
+        let sealed = crate::crypto::TokenEncryptor::from_env()
+            .unwrap()
+            .encrypt(r#"{"api_key":"sk-example"}"#)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, metadata) \
+             VALUES ('cred_byo', $1, 'BYO example', 'active', $2, $3)",
+        )
+        .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+        .bind(&sealed)
+        .bind(json!({ "endpoint_url": format!("{owner}/v1/chat/completions") }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        renew::store_api_key(&pool, "vk-example").await.unwrap();
+
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client = BearerClient {
+            http: http.clone(),
+            completion_http: http.clone(),
+            stream_http: http,
+            pool,
+            api_url: ours,
+            atlas_url: String::new(),
+            purpose: Purpose::User,
+            feature: None,
+        };
+
+        let chat = client
+            .post_json("/v1/ai/chat/completions", &json!({ "model": "m", "messages": [] }))
+            .await
+            .unwrap();
+        assert_eq!(chat.body["served_by"], "owner");
+        assert_eq!(chat.body["bearer"], "Bearer sk-example");
+
+        let search = client.post_json("/v1/ai/search", &json!({ "model": "m" })).await.unwrap();
+        assert_eq!(search.body["served_by"], "virtues-api", "the search went to the owner's endpoint");
+        assert_eq!(search.body["path"], "/v1/ai/search");
+        assert_ne!(search.body["bearer"], "Bearer sk-example", "the owner's key went to virtues-api");
     }
 
     fn completion(status: u16, body: Value) -> ApiResponse {

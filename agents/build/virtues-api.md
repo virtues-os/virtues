@@ -82,12 +82,15 @@ history, the health records, the files, the day pages — is collected, indexed,
 and queried entirely on your box. It never transits our infrastructure at all.
 
 **If you don't want AI requests to pass through us, bring your own key.** With
-your own provider key, every AI call goes box → provider directly: `BearerClient`
-(`virtues_api/client.rs`) diverts every `/v1/ai/*` request, streaming and
-buffered, before any bearer is read, so chat, compaction, day summaries, image
-generation and transcription all leave by your endpoint. The calls that still
-go through us are not inference: Places, Unsplash and map downloads still go
-through virtues-api. Say "your AI", with the transcription caveat below.
+your own provider key, every chat completion goes box → provider directly:
+`BearerClient` (`virtues_api/client.rs`) diverts every
+`/v1/ai/chat/completions` request, streaming and buffered, before any bearer
+is read, so chat, compaction, day summaries, image generation and
+transcription all leave by your endpoint. Web search is the one model call
+that still goes through us, because your endpoint cannot run it. It carries
+the search query and the objective behind it. Places, Unsplash and map
+downloads also still go through virtues-api. Say "your AI", with the web
+search caveat here and the transcription caveat below.
 
 ---
 

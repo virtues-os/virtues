@@ -1,12 +1,13 @@
 //! `POST /api/settings/byo-key` + `DELETE /api/settings/byo-key`.
 //!
 //! BYO ("bring your own") provider key is the user's escape hatch from the
-//! Virtues wallet: with one set, every `/v1/ai/*` call leaves by their
-//! endpoint and virtues-api is out of the inference path.
+//! Virtues wallet: with one set, every chat completion leaves by their
+//! endpoint and virtues-api is out of the inference path. Web search stays on
+//! the subscription, because their endpoint cannot answer it.
 //!
 //! **This module is storage; the routing lives in one place —
 //! `virtues_api/client.rs`.** Both `stream()` and `post_json()` call
-//! `load_byo_credential` below and divert, gated on the same `is_ai_path`
+//! `load_byo_credential` below and divert, gated on the same `diverts_to_byo`
 //! predicate, so all seven AI callers are covered without opting in:
 //! `agent/stream.rs`, `api/compaction.rs`, `api/day_summary.rs`,
 //! `api/image_gen.rs`, `api/entity_article_gen.rs`,
