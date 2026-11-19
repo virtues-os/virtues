@@ -39,7 +39,17 @@ async fn main() -> Result<()> {
     // adds a timeout a bare client lacks entirely).
     let client = virtues_applets::http_client();
 
-    let user_email = fetch_user_email(&client, &access_token).await?;
+    // One applet runs per credential, and a credential is one Google account,
+    // so the address never changes. Keep it with the cursor instead of asking
+    // Google for the profile on every run.
+    let user_email = match input.config.get("user_email").and_then(|v| v.as_str()) {
+        Some(e) if !e.is_empty() => e.to_string(),
+        _ => {
+            let e = fetch_user_email(&client, &access_token).await?;
+            input.config["user_email"] = Value::from(e.clone());
+            e
+        }
+    };
 
     // Cursor: Unix-seconds. First run: pull last 30 days.
     let after = input

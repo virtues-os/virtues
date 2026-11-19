@@ -1884,6 +1884,33 @@ mod tests {
         assert_eq!(state["cursor"], 2, "{state}");
     }
 
+    /// A cursor left in `config` is laid over `state` on every run, so the
+    /// sync restarts from it each time. Migration 0092 moves such keys into
+    /// `state`, keeps the newer `state` value, and leaves manifest keys alone.
+    #[sqlx::test]
+    async fn migration_0092_moves_a_stale_cursor_out_of_config(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, command, config, state) VALUES \
+             ('applet_sync_cred_x', 'Sync', 'system', '[\"x\"]', \
+              '{\"limits\": {\"timeout_s\": 60}, \"last_sync_unix\": 1, \"newest_id\": \"a\"}', \
+              '{\"last_sync_unix\": 2}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/0092_move_applet_cursors_to_state.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (config, state): (serde_json::Value, serde_json::Value) =
+            sqlx::query_as("SELECT config, state FROM app_applets WHERE id = 'applet_sync_cred_x'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(config, serde_json::json!({ "limits": { "timeout_s": 60 } }));
+        assert_eq!(state, serde_json::json!({ "last_sync_unix": 2, "newest_id": "a" }));
+    }
+
     /// `message` still has to be granted like any other trigger.
     #[sqlx::test]
     async fn an_applet_that_does_not_take_messages_refuses_one(pool: sqlx::PgPool) {
