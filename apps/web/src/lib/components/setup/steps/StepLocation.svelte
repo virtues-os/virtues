@@ -32,7 +32,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { updateProfile } from "$lib/api/client";
 	import { setup } from "../setup.svelte";
-	import { CITIES, cityForZone, type City } from "../cities";
+	import { CITIES, cityForZone, zoneLeaf, zoneName, type City } from "../cities";
 	import { Globe } from "../globe";
 	import StepFrame from "../StepFrame.svelte";
 	import Select from "$lib/components/Select.svelte";
@@ -69,7 +69,6 @@
 			.filter((z): z is { zone: string; offset: number } => z.offset !== null);
 	})();
 
-	const leafOf = (zone: string) => zone.split("/").pop()!.replace(/_/g, " ");
 	/** A zone is a place when it names one: "America/Chicago", not "UTC" or "Etc/GMT+5". */
 	const isPlaceZone = (zone: string) => zone.includes("/") && !zone.startsWith("Etc/");
 
@@ -89,19 +88,6 @@
 		const jan = offsetOf(zone, new Date(Date.UTC(y, 0, 1)));
 		const jul = offsetOf(zone, new Date(Date.UTC(y, 6, 1)));
 		return Math.min(jan ?? jul ?? 0, jul ?? jan ?? 0);
-	}
-
-	/** "Central Time", "Japan Time"; the zone's leaf when the engine has no name. */
-	function zoneName(zone: string): string {
-		try {
-			const n = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longGeneric" })
-				.formatToParts(new Date())
-				.find((p) => p.type === "timeZoneName")?.value;
-			if (n && !n.startsWith("GMT")) return n;
-		} catch {
-			/* fall through */
-		}
-		return leafOf(zone);
 	}
 
 	/**
@@ -133,7 +119,7 @@
 		: null;
 	const zoneCity = cityForZone(initialZone);
 	const anchor = listed ?? zoneCity ?? standInFor(initialZone);
-	const initialCity = savedCity ?? zoneCity?.name ?? (isPlaceZone(initialZone) ? leafOf(initialZone) : "");
+	const initialCity = savedCity ?? zoneCity?.name ?? (isPlaceZone(initialZone) ? zoneLeaf(initialZone) : "");
 	/** Nothing saved, and the zone is the computer's own: the step is offering a guess. */
 	const guessed = !savedCity && initialZone === browserZone && !!initialCity;
 
@@ -147,12 +133,12 @@
 	const offset = $derived(offsetOf(zone) ?? 0);
 	const unchanged = $derived(city.trim() === initialCity && zone === initialZone);
 	const inBand = $derived(
-		ZONES.filter((z) => z.offset === offset).sort((a, b) => leafOf(a.zone).localeCompare(leafOf(b.zone))),
+		ZONES.filter((z) => z.offset === offset).sort((a, b) => zoneLeaf(a.zone).localeCompare(zoneLeaf(b.zone))),
 	);
 	/** The zones at this offset, and the chosen one if it is not among them. */
 	const zoneOptions = $derived([
-		...inBand.map((z) => ({ value: z.zone, label: `${leafOf(z.zone)} · ${formatOffset(z.offset)}` })),
-		...(inBand.some((z) => z.zone === zone) ? [] : [{ value: zone, label: leafOf(zone) }]),
+		...inBand.map((z) => ({ value: z.zone, label: `${zoneLeaf(z.zone)} · ${formatOffset(z.offset)}` })),
+		...(inBand.some((z) => z.zone === zone) ? [] : [{ value: zone, label: zoneLeaf(zone) }]),
 	]);
 
 	// The clock there, so the choice can be checked against a watch.

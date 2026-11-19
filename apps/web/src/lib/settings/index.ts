@@ -59,13 +59,13 @@ export interface Setting {
 }
 
 export const SECTIONS: readonly Section[] = [
-	{ id: 'you', title: 'Profile', lede: 'What {name} knows about you to start with. Your pages and day summaries use it too.', route: '/virtues/profile' },
+	{ id: 'you', title: 'Profile', lede: 'Who you are, to start with. {name} and your pages use it.', route: '/virtues/profile' },
 	{ id: 'assistant', title: 'How {name} talks to you', lede: 'Its name and how it speaks to you.', route: '/virtues/assistant' },
 	{ id: 'tools', title: 'What {name} can do', lede: "Turn off anything you don't want it to do.", route: '/virtues/assistant/tools' },
 	{ id: 'spending', title: 'Models and spending', lede: 'Which models it uses and how much it may spend.', route: '/virtues/assistant/spending' },
 	{ id: 'data', title: 'Your data', lede: 'How long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
-	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
-	{ id: 'billing', title: 'Billing', lede: 'Your subscription, your balance, and your own AI key.', route: '/virtues/billing' },
+	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks and how your pages read.', route: '/virtues/appearance' },
+	{ id: 'billing', title: 'Billing', lede: "Your subscription, your balance, and what you've paid.", route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
 ];
 
@@ -76,7 +76,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'birthday', title: 'Birthday', section: 'you', kind: 'control', words: ['birth date', 'age', 'born'], route: '/virtues/profile' },
 	{ id: 'occupation', title: 'Work', section: 'you', kind: 'control', words: ['occupation', 'job', 'role'], route: '/virtues/profile' },
 	{ id: 'employer', title: 'Where you work', section: 'you', kind: 'control', words: ['employer', 'company', 'job'], route: '/virtues/profile' },
-	{ id: 'home', title: 'Where you live', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'location'], route: '/virtues/profile' },
+	{ id: 'home', title: 'Location', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'where you live'], route: '/virtues/profile' },
 	{ id: 'units', title: 'Units', section: 'you', kind: 'control', words: ['miles', 'kilometres', 'kilometers', 'km', 'fahrenheit', 'celsius', 'metric', 'imperial', 'pounds', 'temperature', 'distance'], route: '/virtues/profile' },
 
 	// The assistant
@@ -94,6 +94,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'limit-day', title: 'Most tasks can spend in a day', section: 'spending', kind: 'control', words: ['spending limit', 'daily limit', 'cap', 'budget', 'spend', 'request'], route: '/virtues/assistant/spending' },
 	{ id: 'limit-run', title: 'Most one task can spend', section: 'spending', kind: 'control', words: ['spending limit', 'per run', 'cap', 'budget', 'spend', 'request'], route: '/virtues/assistant/spending' },
 	{ id: 'ai-cost', title: 'What AI has cost', section: 'spending', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/assistant/spending/cost' },
+	{ id: 'byo-ai', title: 'Your own AI provider', section: 'spending', kind: 'page', words: ['own key', 'bring your own', 'provider', 'endpoint', 'openai', 'openrouter', 'ollama', 'byo'], route: '/virtues/assistant/spending/provider' },
 
 	// Your data
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
@@ -114,7 +115,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'subscription', title: 'Subscription', section: 'billing', kind: 'action', words: ['plan', 'stripe', 'payment', 'card', 'cancel', 'renew'], route: '/virtues/billing' },
 	{ id: 'balance', title: 'Balance', section: 'billing', kind: 'value', words: ['wallet', 'credit', 'money', 'left'], route: '/virtues/billing' },
 	{ id: 'auto-top-up', title: 'Auto top-up', section: 'billing', kind: 'control', words: ['top up', 'refill', 'add money', 'limit'], route: '/virtues/billing' },
-	{ id: 'byo-ai', title: 'Bring your own AI', section: 'billing', kind: 'page', words: ['own key', 'provider', 'endpoint', 'openai', 'byo'], route: '/virtues/billing/byo' },
+	{ id: 'invoices', title: 'Payments', section: 'billing', kind: 'action', words: ['invoice', 'invoices', 'receipt', 'receipts', 'charges', 'paid'], route: '/virtues/billing' },
 
 	// Server and devices
 	{ id: 'updates', title: 'Check for updates', section: 'server', kind: 'action', words: ['update', 'version', 'upgrade', 'release'], route: '/virtues/server' },

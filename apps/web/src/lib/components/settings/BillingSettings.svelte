@@ -1,19 +1,25 @@
 <script lang="ts">
 	/**
-	 * Settings → Billing, the rows: where your subscription stands, the
-	 * balance, and auto top-up. What AI has cost and bringing your own AI are
-	 * pages of their own (BillingView, ByoPage); the spending limits follow
-	 * these rows on the page.
+	 * Settings · Billing: the balance at the top with what it's for and when
+	 * it renews, then the subscription, auto top-up and invoices. What AI has
+	 * cost is a page of its own under Models and spending; the balance links
+	 * to it.
 	 *
-	 * The subscription row has four states. Subscribed: the plan and Stripe.
+	 * The subscription has four states. Subscribed: the plan and Stripe.
 	 * Linked with no subscription: Subscribe, never Connect, because
 	 * connecting again would make a second account. Standing unknown (the
 	 * billing service unreachable, nothing cached): say so rather than offer a
 	 * subscription to someone who may have one. Not linked: the connect flow.
+	 *
+	 * Payments are Stripe's invoices, opened from here. The ledger this server
+	 * can read is the last few dozen rows, mostly per-call charges, and a
+	 * renewal row records the change in balance, so a list drawn from it would
+	 * miss payments and show the wrong amounts.
 	 */
 	import { Button } from '$lib';
 	import Switch from './Switch.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
@@ -269,142 +275,230 @@
 	const renewsLabel = $derived(
 		usage?.expires_at ? formatDate(usage.expires_at, { month: 'long', day: 'numeric' }) : null,
 	);
-	const subscribedHelp = $derived(
-		['Virtues, $20 a month.', renewsLabel ? `Renews ${renewsLabel}.` : '', subscriptionStore.email ? `On ${subscriptionStore.email}.` : '']
+	const monthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+	// A renewal sets the balance to the month's credit; it does not add to
+	// what is left.
+	const balanceContext = $derived(
+		usage
+			? [
+					renewsLabel ? `Your monthly credit renews ${renewsLabel}.` : '',
+					`${formatMicrosPrecise(usage.month_to_date_micros)} spent so far in ${monthName}.`,
+				]
+					.filter(Boolean)
+					.join(' ')
+			: '',
+	);
+	const planHelp = $derived(
+		[
+			renewsLabel ? `Renews ${renewsLabel}.` : '',
+			'Covers hosted AI, web search, places and bank data.',
+			subscriptionStore.email ? `Billed to ${subscriptionStore.email}.` : '',
+		]
 			.filter(Boolean)
 			.join(' '),
 	);
+
+	function openCost() {
+		windowShellStore.navigate('/virtues/assistant/spending/cost', { label: 'Settings · What AI has cost' });
+	}
 </script>
 
-{#if isSubscribed}
-	<SettingRow id="subscription" label="Subscription" help={subscribedHelp}>
-		<button class="btn-quiet" onclick={openBillingPortal} disabled={portalLoading}>
-			{portalLoading ? 'Opening…' : 'Manage in Stripe'}
-		</button>
-	</SettingRow>
-	{#if portalError}
-		<p class="note note-error">
-			{portalError}
-			{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
-		</p>
-	{/if}
-{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
-	<SettingRow
-		id="subscription"
-		label="Subscription"
-		help="None yet. One subscription covers hosted AI, web search, places and bank data for $20 a month. Your own AI key covers the first on its own."
-	>
-		{#if subscribeWaiting}
-			<span class="waiting">Waiting for checkout…</span>
-		{:else}
-			<button class="btn-quiet" onclick={openSubscribe} disabled={subscribeLoading}>
-				{subscribeLoading ? 'Opening…' : 'Subscribe · $20/mo'}
-			</button>
-		{/if}
-	</SettingRow>
-	{#if subscribeError}
-		<p class="note note-error">
-			{subscribeError}
-			{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
-		</p>
-	{/if}
-{:else if standingUnknown}
-	<SettingRow
-		id="subscription"
-		label="Subscription"
-		help="Your server couldn't reach the Virtues billing service, so it can't say where your subscription stands. It keeps working either way. Check your connection and reload."
-	>
-		<span></span>
-	</SettingRow>
-{:else}
-	<SettingRow
-		id="subscription"
-		label="Connect your Virtues account"
-		help="Sign in if you have an account. Creating one takes you through Stripe for the subscription. Your server never sees a payment key."
-		block
-	>
-		{#if linkError}
-			<p class="note note-error">{linkError}</p>
-		{/if}
-		{#if linkDone}
-			<p class="note note-success">Linked. Finishing setup…</p>
-		{:else if linkInfo}
-			<!-- What opens, where, and the pairing code, shown before any tab
-			     opens. Continue is an explicit click. -->
-			<div class="panel">
-				<p class="panel-lede">
-					Continue opens a new tab at
-					<strong>{checkoutHost || 'the Virtues billing page'}</strong>
-					to finish checkout on Stripe. It sends you back here when you're done.
-				</p>
-				<div class="code-block">
-					<div class="code-caption">Your pairing code</div>
-					<div class="code-figure mono">{linkInfo.user_code}</div>
-					<div class="code-caption">It should match the code on the checkout page. It expires in about 15 minutes.</div>
-				</div>
-				<div><Button variant="primary" onclick={proceedToCheckout}>Continue to checkout →</Button></div>
-				<p class="panel-foot">
-					Prefer to do it by hand? Go to <span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
-				</p>
-				{#if linkPolling}<p class="panel-foot">Waiting for checkout to finish…</p>{/if}
-			</div>
-		{:else}
-			<div>
-				<Button variant="primary" onclick={connectSubscription} disabled={linkLoading}>
-					{linkLoading ? 'Starting…' : 'Connect subscription'}
-				</Button>
-			</div>
-		{/if}
-	</SettingRow>
-{/if}
-
 {#if usage}
-	<SettingRow
-		id="balance"
-		label="Balance"
-		help="What's left for AI. {formatMicrosPrecise(usage.month_to_date_micros)} spent so far this month."
-	>
-		<span class="value mono">{formatMicrosPrecise(usage.balance_micros)}</span>
-	</SettingRow>
+	<div class="balance" id="setting-balance" data-setting="balance">
+		<p class="figure"><span class="amount">{formatMicrosPrecise(usage.balance_micros)}</span> <span class="unit">left for AI</span></p>
+		<p class="context">
+			{balanceContext}
+			<button type="button" class="link" onclick={openCost}>What AI has cost</button>
+		</p>
+	</div>
 {:else if usageError && (isSubscribed || standingUnknown)}
-	<SettingRow id="balance" label="Balance" help="Your server couldn't read the balance. {usageError}">
-		<button class="btn-quiet" onclick={() => void loadUsage()}>Check again</button>
-	</SettingRow>
+	<div class="balance" id="setting-balance" data-setting="balance">
+		<p class="context">Your server couldn't read your balance. {usageError}</p>
+		<div><Button variant="secondary" onclick={() => void loadUsage()}>Check again</Button></div>
+	</div>
 {/if}
 
-{#if autoTopup}
-	<SettingRow
-		id="auto-top-up"
-		label="Auto top-up"
-		help={autoTopup.enabled ? 'Adds $10 when your balance reaches $0.' : 'Off. AI stops when your balance reaches $0.'}
-	>
-		<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />
-	</SettingRow>
-	{#if !autoTopup.enabled && autoTopup.disabled_at}
-		<p class="note note-error">
-			Auto top-up turned itself off after charges failed three times in a day. Update your payment
-			method in Stripe, then turn it back on.
-		</p>
-	{:else if autoTopup.failures_24h > 0}
-		<p class="note note-warning">
-			A top-up charge failed in the last day. After three failures it turns itself off.
-		</p>
+<section class="group">
+	<h2 class="settings-label">Subscription</h2>
+	{#if isSubscribed}
+		<SettingRow id="subscription" label="Plan" help={planHelp}>
+			<div class="plan">
+				<span class="plan-name">Virtues, $20 a month</span>
+				<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>Manage in Stripe</Button>
+			</div>
+		</SettingRow>
+		{#if portalError}
+			<p class="note note-error">
+				{portalError}
+				{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
+			</p>
+		{/if}
+	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
+		<SettingRow
+			id="subscription"
+			label="Plan"
+			help="None yet. One subscription covers hosted AI, web search, places and bank data for $20 a month. Your own AI provider covers the first on its own."
+		>
+			{#if subscribeWaiting}
+				<span class="waiting">Waiting for checkout…</span>
+			{:else}
+				<Button variant="secondary" onclick={openSubscribe} loading={subscribeLoading}>Subscribe, $20 a month</Button>
+			{/if}
+		</SettingRow>
+		{#if subscribeError}
+			<p class="note note-error">
+				{subscribeError}
+				{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
+			</p>
+		{/if}
+	{:else if standingUnknown}
+		<SettingRow id="subscription" label="Plan">
+			<p class="standing">
+				Your server couldn't reach the Virtues billing service, so it can't say where your subscription stands. It keeps
+				working either way. Check your connection and reload.
+			</p>
+		</SettingRow>
+	{:else}
+		<SettingRow
+			id="subscription"
+			label="Connect your Virtues account"
+			help="Sign in if you have an account. Creating one takes you through Stripe for the subscription. Your server never sees a payment key."
+			block
+		>
+			{#if linkError}
+				<p class="note note-error">{linkError}</p>
+			{/if}
+			{#if linkDone}
+				<p class="note note-success">Linked. Finishing setup…</p>
+			{:else if linkInfo}
+				<!-- What opens, where, and the pairing code, shown before any tab
+				     opens. Continue is an explicit click. -->
+				<div class="panel">
+					<p class="panel-lede">
+						Continue opens a new tab at
+						<strong>{checkoutHost || 'the Virtues billing page'}</strong>
+						to finish checkout on Stripe. It sends you back here when you're done.
+					</p>
+					<div class="code-block">
+						<div class="code-caption">Your pairing code</div>
+						<div class="code-figure mono">{linkInfo.user_code}</div>
+						<div class="code-caption">It should match the code on the checkout page. It expires in about 15 minutes.</div>
+					</div>
+					<div><Button variant="primary" onclick={proceedToCheckout}>Continue to checkout →</Button></div>
+					<p class="panel-foot">
+						Prefer to do it by hand? Go to <span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
+					</p>
+					{#if linkPolling}<p class="panel-foot">Waiting for checkout to finish…</p>{/if}
+				</div>
+			{:else}
+				<div>
+					<Button variant="primary" onclick={connectSubscription} loading={linkLoading}>Connect subscription</Button>
+				</div>
+			{/if}
+		</SettingRow>
 	{/if}
-{:else if localError}
-	<SettingRow id="auto-top-up" label="Auto top-up" help="Your server couldn't read this setting.">
-		<button class="btn-quiet" onclick={() => void loadLocal()}>Check again</button>
-	</SettingRow>
-	<p class="note note-error"><span class="error-code">{localError}</span></p>
-{/if}
+
+	{#if autoTopup}
+		<SettingRow
+			id="auto-top-up"
+			label="Auto top-up"
+			help={autoTopup.enabled
+				? 'Adds $10 when your balance runs out, charged to the card on your subscription.'
+				: 'Off. AI stops when your balance runs out, until your monthly credit renews.'}
+		>
+			<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />
+		</SettingRow>
+		{#if !autoTopup.enabled && autoTopup.disabled_at}
+			<p class="note note-error">
+				Auto top-up turned itself off after charges failed three times in a day. Update your payment
+				method in Stripe, then turn it back on.
+			</p>
+		{:else if autoTopup.failures_24h > 0}
+			<p class="note note-warning">
+				A top-up charge failed in the last day. After three failures it turns itself off.
+			</p>
+		{/if}
+	{:else if localError}
+		<SettingRow id="auto-top-up" label="Auto top-up" help="Your server couldn't read this setting. {localError}">
+			<Button variant="secondary" onclick={() => void loadLocal()}>Check again</Button>
+		</SettingRow>
+	{/if}
+
+	{#if isSubscribed}
+		<SettingRow id="invoices" label="Payments" help="Your monthly charges and top-ups, each with its receipt.">
+			<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>Every invoice, in Stripe</Button>
+		</SettingRow>
+	{/if}
+</section>
 
 <style>
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-variant-numeric: tabular-nums;
 	}
-	.value {
-		font-size: 15px;
+
+	/* The balance: the figure first, then what it is for and when it renews. */
+	.balance {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 16px 0 8px;
+	}
+	.figure {
+		margin: 0;
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+	}
+	.amount {
+		font-family: var(--font-serif);
+		font-size: var(--text-title);
+		line-height: 1.1;
+		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground);
+	}
+	.unit {
+		font-size: var(--text-label);
+		color: var(--color-foreground-muted);
+	}
+	.context {
+		margin: 0;
+		font-size: var(--text-small);
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.link {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+	.link:hover {
+		text-decoration: underline;
+	}
+
+	.group {
+		padding: 24px 0 8px;
+	}
+
+	.plan {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		width: 100%;
+	}
+	.plan-name {
+		font-size: var(--text-label);
+		color: var(--color-foreground);
+	}
+	.standing {
+		margin: 6px 0 0;
+		font-size: var(--text-small);
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
 	}
 	.waiting {
 		font-size: 13px;
@@ -441,28 +535,6 @@
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.85em;
 		opacity: 0.72;
-	}
-
-	/* Opens something (a portal, a checkout); lighter than a button that
-	   spends money. */
-	.btn-quiet {
-		flex-shrink: 0;
-		padding: 4px 12px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background 150ms ease;
-	}
-	.btn-quiet:hover {
-		background: var(--color-background-hover);
-	}
-	.btn-quiet:disabled {
-		opacity: 0.5;
-		cursor: default;
 	}
 
 	/* The connect hand-off: a place you act. */

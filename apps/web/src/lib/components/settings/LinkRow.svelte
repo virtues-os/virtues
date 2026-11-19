@@ -3,6 +3,9 @@
 	 * A setting that opens its own page: a list, a chart, a table or a form
 	 * too large for one row (`kind: 'page'` in `lib/settings`). The whole row
 	 * is the button; the page opens in this tab, so Back returns here.
+	 *
+	 * `value` says where the setting stands ("Not set", a host) in place of
+	 * "Open".
 	 */
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -11,11 +14,13 @@
 		label,
 		help,
 		href,
+		value,
 	}: {
 		id: string;
 		label: string;
 		help?: string;
 		href: string;
+		value?: string;
 	} = $props();
 </script>
 
@@ -31,7 +36,7 @@
 		{#if help}<span class="help">{help}</span>{/if}
 	</span>
 	<span class="open">
-		Open
+		{value ?? 'Open'}
 		<svg viewBox="0 0 24 24" aria-hidden="true" width="15" height="15">
 			<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" />
 		</svg>

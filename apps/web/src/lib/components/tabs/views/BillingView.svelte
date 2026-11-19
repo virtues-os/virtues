@@ -299,7 +299,7 @@
 
 	.track {
 		height: 6px;
-		border-radius: 3px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated);
 	}
 
@@ -307,7 +307,7 @@
 		display: block;
 		height: 6px;
 		min-width: 2px;
-		border-radius: 3px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
 	}
 

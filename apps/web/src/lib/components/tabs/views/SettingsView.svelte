@@ -14,9 +14,9 @@
 	  Spending     /virtues/assistant/spending — models, and what tasks may spend
 	               /virtues/assistant/spending/models — the model list (?role= picks one)
 	               /virtues/assistant/spending/cost   — what AI has cost, and every call
+	               /virtues/assistant/spending/provider — your own AI provider
 	  Appearance   /virtues/appearance     — theme, reading font, motion
 	  Billing      /virtues/billing        — subscription, balance, auto top-up
-	  Your own AI  /virtues/billing/byo    — bringing your own AI
 	  Your data    /virtues/data           — keep recordings, export everything
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
 	  Server       /virtues/server         — updates, and reaching it from away
@@ -82,7 +82,9 @@
 		// bookmarks, not just historical paths.
 		'/virtues/usage': '/virtues/assistant/spending/cost',
 		'/virtues/account/billing': '/virtues/billing',
-		'/virtues/byo-key': '/virtues/billing/byo',
+		// Your own AI provider is where it runs, so it sits under Models and spending.
+		'/virtues/byo-key': '/virtues/assistant/spending/provider',
+		'/virtues/billing/byo': '/virtues/assistant/spending/provider',
 		'/virtues/billing/plan': '/virtues/billing',
 		'/virtues/account/usage': '/virtues/assistant/spending/cost',
 		'/virtues/billing/usage': '/virtues/assistant/spending/cost',
@@ -244,17 +246,15 @@
 				<ModelCatalogView {role} />
 			{:else if sub === 'spending' && subPage === 'cost'}
 				<BillingView />
+			{:else if sub === 'spending' && subPage === 'provider'}
+				<ByoPage />
 			{:else if sub === 'spending'}
 				<SettingsSection section="spending" />
 			{:else}
 				<SettingsSection section="assistant" />
 			{/if}
 		{:else if section === 'billing'}
-			{#if sub === 'byo'}
-				<ByoPage />
-			{:else}
-				<SettingsSection section="billing" />
-			{/if}
+			<SettingsSection section="billing" />
 		{:else if section === 'keys'}
 			<KeysView />
 		{:else if section === 'system'}

@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
-	 * Settings → Billing → Bring your own AI, a page of its own (the form is
-	 * longer than a row).
+	 * Settings · Models and spending · Your own AI provider, a page of its own
+	 * (the form is longer than a row). It sits under Models and spending
+	 * because it decides where every AI call runs.
 	 *
 	 * The escape hatch from the Virtues wallet: `BearerClient` diverts every
 	 * `/v1/ai/*` call, streaming and not, so chat, compaction, day summaries,
@@ -22,9 +23,9 @@
 	 * `deleteByoKey`); the app signs it, so neither has an extra step.
 	 */
 	import { onMount } from 'svelte';
-	import { Button, Input, Badge } from '$lib';
+	import { Button, Input } from '$lib';
 	import SettingsPage from './SettingsPage.svelte';
-	import Icon from '$lib/components/Icon.svelte';
+	import SettingRow from './SettingRow.svelte';
 	import { getByoKey, setByoKey, deleteByoKey } from '$lib/api/client';
 	import { toast } from 'svelte-sonner';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
@@ -52,26 +53,21 @@
 	}
 
 	/**
-	 * The slot map form. Keys match the server's slot names exactly. `note`
-	 * is where judgment about which model suits a role lives: model
-	 * landscapes shift faster than servers update, so guidance belongs where
-	 * a copy edit can fix it.
+	 * The slot map form. Keys are the server's slot names (`ModelSlot::as_str`
+	 * in the registry, which is also how the server hands the map back),
+	 * labelled as Models and spending labels them. `note` is where judgment
+	 * about which model suits a role lives: model landscapes shift faster
+	 * than servers update, so guidance belongs where a copy edit can fix it.
 	 */
 	const SLOT_FIELDS = [
-		{ key: 'chat', label: 'Chat', placeholder: 'provider/model', note: '' },
-		{ key: 'coding', label: 'Coding', placeholder: 'provider/model', note: '' },
-		{
-			key: 'lite',
-			label: 'Background work',
-			placeholder: 'provider/model',
-			note: 'Titles, summaries and applets. These run often, so pick something cheap and quick.',
-		},
-		{ key: 'image', label: 'Image', placeholder: 'provider/model', note: '' },
+		{ key: 'standard', label: 'Chat', note: '' },
+		{ key: 'deep', label: 'Deep research', note: '' },
+		{ key: 'lite', label: 'Background work', note: 'Titles, summaries and applets. These run often, so pick something cheap and quick.' },
+		{ key: 'image', label: 'Pictures', note: '' },
 		{
 			key: 'omni',
 			label: 'Audio',
-			placeholder: 'provider/model',
-			note: 'Transcription, usually the largest cost. The model has to make sense of muffled, in-pocket audio, which speech-to-text models and most chat models cannot do.',
+			note: 'Transcription, usually the largest cost. The model has to understand muffled, in-pocket audio, which speech-to-text models and most chat models cannot do.',
 		},
 	] as const;
 
@@ -105,6 +101,7 @@
 			// over a blank map so an omitted slot stays bound to ''.
 			models = { ...blankSlots(), ...(status?.models ?? {}) };
 			contextWindow = status?.context_window ? String(status.context_window) : '';
+			endpointUrl = status?.endpoint_url ?? '';
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : "Your server couldn't read your provider settings.";
 		} finally {
@@ -156,9 +153,9 @@
 
 	async function remove() {
 		const ok = await confirmAction({
-			title: 'Remove your AI key?',
-			body: 'AI calls go back to the Virtues subscription. You can add a key again at any time.',
-			confirmLabel: 'Remove',
+			title: 'Stop using your own provider?',
+			body: 'Your server deletes the key, and AI calls go back through your Virtues subscription. You can add one again at any time.',
+			confirmLabel: 'Stop using it',
 			danger: true,
 		});
 		if (!ok) return;
@@ -187,144 +184,136 @@
 </script>
 
 <SettingsPage
-	title="Bring your own AI"
+	title="Your own AI provider"
 	lede={status?.configured && status.endpoint_url
-		? `Every AI call goes to ${byoHost(status.endpoint_url)}${status.default_model ? `, using ${status.default_model} by default` : ''}.`
-		: 'Send every AI call to an endpoint of your own instead of the subscription.'}
-	back={{ route: '/virtues/billing', label: 'Billing' }}
+		? `Every AI call goes to ${byoHost(status.endpoint_url)}.`
+		: "Send your server's AI calls to a provider and key of your own, instead of through Virtues."}
+	back={{ route: '/virtues/assistant/spending', label: 'Models and spending' }}
 >
-	<p class="prose-note">
-		Any endpoint that speaks OpenAI-style chat completions with a bearer token works: a gateway
-		such as OpenRouter or LiteLLM, a provider's own API, or a local server such as Ollama. Your key
-		is stored encrypted on your server, and changing it takes the Virtues app on one of your paired
-		devices. Maps, web search, photos and bank connections are not AI calls and stay on the
+	<p class="intro">
+		Any endpoint that speaks the OpenAI-style chat API works, such as OpenRouter, a provider's own API, or a model on
+		your network. Your key is stored encrypted on your server. Web search, places and bank data still go through your
 		subscription.
 	</p>
-	<p class="prose-note warn">
-		A key from your employer sends your personal life through systems they can read. Your own key
-		lets you pick the vendor and pay it directly, but whoever runs the endpoint still sees every
-		call.
+	<p class="intro">
+		Whoever runs the endpoint sees every call. A key from your employer sends your life through systems they can read.
 	</p>
 
 	{#if loading}
-		<p class="lede">Checking for a key…</p>
+		<p class="intro">Checking for a provider…</p>
 	{:else if loadError}
 		<p class="note note-error">
 			Your server couldn't read your provider settings.
 			<span class="error-code">{loadError}</span>
 		</p>
-	{:else if status?.configured}
-		<div class="panel">
-			<div class="panel-head">
-				<div class="panel-mark"><Icon icon="mynaui:key" /></div>
-				<div class="panel-body">
-					<div class="panel-title">AI calls go to your endpoint</div>
-					<div class="panel-facts">
-						{#if status.endpoint_url}
-							<span>Sending to <Badge>{byoHost(status.endpoint_url)}</Badge></span>
-							<span class="mono">{status.endpoint_url}</span>
-						{/if}
-						{#if status.default_model}
-							<span>Default model <code>{status.default_model}</code></span>
-						{/if}
-					</div>
-					<p class="panel-foot">
-						Every AI call goes straight from your server to your provider. The subscription isn't in
-						the path, and we don't charge it.
-					</p>
-				</div>
-				<Button variant="ghost" disabled={busy} onclick={remove}>
-					<Icon icon="mynaui:x-circle" />
-					Remove
-				</Button>
-			</div>
-		</div>
-		<div class="panel">
-			<div class="panel-title">Replace the key</div>
-			{@render keyForm()}
-			<div class="panel-actions">
-				<Button variant="primary" loading={busy} onclick={save}>Save new key</Button>
-			</div>
-		</div>
 	{:else}
-		<div class="panel">
-			<div class="panel-title">No key set</div>
-			<p class="panel-lede">
-				Everything runs on the Virtues subscription right now. Set an endpoint to send AI calls there
-				instead.
+		{#if status?.configured}
+			<section class="group">
+				<h2 class="settings-label">In use now</h2>
+				<SettingRow id="byo-now" label="Sending to">
+					<div class="now">
+						<span class="mono">{status.endpoint_url ?? 'Your endpoint'}</span>
+						<Button variant="danger" disabled={busy} onclick={remove}>Stop using it</Button>
+					</div>
+				</SettingRow>
+				{#if status.default_model}
+					<SettingRow id="byo-default-model" label="Chat model">
+						<span class="mono">{status.default_model}</span>
+					</SettingRow>
+				{/if}
+			</section>
+		{/if}
+
+		<section class="group">
+			<h2 class="settings-label">{status?.configured ? 'Change it' : 'Your provider'}</h2>
+			<SettingRow id="byo-url" label="Endpoint" forId="byo-url-input">
+				<Input id="byo-url-input" bind:value={endpointUrl} placeholder="https://openrouter.ai/api/v1/chat/completions" />
+			</SettingRow>
+			<SettingRow
+				id="byo-key"
+				label="Key"
+				forId="byo-key-input"
+				help={status?.configured ? 'Enter the key again to change anything on this page.' : undefined}
+			>
+				<Input id="byo-key-input" type="password" bind:value={apiKey} placeholder="sk-…" />
+			</SettingRow>
+			<SettingRow
+				id="byo-context-window"
+				label="Context window"
+				forId="byo-context-window-input"
+				help="Optional, in tokens. Set it for a small or local model, so long chats are summarized before they fill it."
+			>
+				<div class="short"><Input id="byo-context-window-input" bind:value={contextWindow} placeholder="32000" /></div>
+			</SettingRow>
+		</section>
+
+		<section class="group">
+			<h2 class="settings-label">Model names</h2>
+			<p class="intro">Only if your provider names models differently. A blank one uses the name Virtues does.</p>
+			{#each SLOT_FIELDS as slot (slot.key)}
+				<SettingRow id="byo-model-{slot.key}" label={slot.label} forId="byo-model-{slot.key}-input" help={slot.note || undefined}>
+					<Input id="byo-model-{slot.key}-input" bind:value={models[slot.key]} placeholder="provider/model" />
+				</SettingRow>
+			{/each}
+		</section>
+
+		<div class="actions">
+			<div><Button variant="primary" loading={busy} onclick={save}>Check and use it</Button></div>
+			<p class="intro">
+				Your server sends one short call to check the key before it switches. Changing it takes the Virtues app on one
+				of your paired devices.
 			</p>
-			{@render keyForm()}
-			<div class="panel-actions">
-				<Button variant="primary" loading={busy} onclick={save}>Save key</Button>
-			</div>
 		</div>
 	{/if}
 </SettingsPage>
 
-{#snippet keyForm()}
-	<div class="space-y-3">
-		<div>
-			<label class="block text-xs text-foreground-muted mb-1" for="byo-url">Endpoint URL</label>
-			<Input id="byo-url" bind:value={endpointUrl} placeholder="https://openrouter.ai/api/v1/chat/completions" />
-		</div>
-		<div>
-			<label class="block text-xs text-foreground-muted mb-1" for="byo-context-window">Context window (tokens)</label>
-			<Input id="byo-context-window" bind:value={contextWindow} placeholder="Optional, e.g. 32000" />
-			<p class="text-xs text-foreground-muted mt-1.5">
-				Set this for a local or small model, so long chats are summarized before they overflow it.
-				Left blank, your server reads it from the model id, or assumes 200,000.
-			</p>
-		</div>
-		<div>
-			<label class="block text-xs text-foreground-muted mb-1" for="byo-key">API key</label>
-			<Input id="byo-key" type="password" bind:value={apiKey} placeholder="sk-…" />
-		</div>
-		<div class="pt-1">
-			<div class="text-xs font-medium mb-1">What your endpoint calls each model</div>
-			<p class="text-xs text-foreground-muted mb-3">
-				Optional. If your endpoint names models differently, say what it calls each of these. A blank
-				row uses the same id Virtues does.
-			</p>
-			<div class="space-y-2">
-				{#each SLOT_FIELDS as slot (slot.key)}
-					<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-						<label class="text-xs text-foreground-muted sm:w-28 sm:shrink-0 sm:text-right" for="byo-model-{slot.key}">{slot.label}</label>
-						<div class="flex-1">
-							<Input id="byo-model-{slot.key}" bind:value={models[slot.key]} placeholder={slot.placeholder} />
-						</div>
-					</div>
-					{#if slot.note}
-						<p class="text-xs text-foreground-muted sm:ml-[7.75rem] -mt-1">{slot.note}</p>
-					{/if}
-				{/each}
-			</div>
-		</div>
-	</div>
-{/snippet}
-
 <style>
-	.lede {
-		font-size: 13px;
-		line-height: 1.5;
+	.intro {
+		margin: 0 0 12px;
+		max-width: 68ch;
+		font-size: var(--text-small);
+		line-height: 1.55;
 		color: var(--color-foreground-muted);
-		margin: 0;
 	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-variant-numeric: tabular-nums;
+		font-size: var(--text-small);
+		overflow-wrap: anywhere;
+		color: var(--color-foreground);
 	}
-	.prose-note {
-		font-size: 12px;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
-		margin: 0 0 12px;
-		max-width: 68ch;
+	.group {
+		padding: 24px 0 8px;
 	}
-	.prose-note.warn {
-		color: var(--color-warning);
+	/* A section heading, as on every Settings page: the app's serif h2. */
+	.settings-label {
+		font-family: var(--font-serif);
+		font-size: var(--text-heading);
+		font-weight: 400;
+		line-height: 1.3;
+		margin: 0 0 8px;
+	}
+	/* A field fills the row's answer column. */
+	.group :global(.input-container) {
+		width: 100%;
+	}
+	.now {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		width: 100%;
+	}
+	.short {
+		width: 160px;
+	}
+	.actions {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 24px 0 8px;
 	}
 	.note {
-		font-size: 12px;
+		font-size: var(--text-caption);
 		line-height: 1.5;
 		margin: 8px 0 0;
 		padding: 8px 12px;
@@ -341,68 +330,5 @@
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.85em;
 		opacity: 0.72;
-	}
-	/* Places you act. */
-	.panel {
-		margin-top: 12px;
-		padding: 16px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-xl);
-		background: var(--color-surface);
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.panel-head {
-		display: flex;
-		align-items: flex-start;
-		gap: 12px;
-	}
-	.panel-mark {
-		flex-shrink: 0;
-		width: 38px;
-		height: 38px;
-		border-radius: var(--radius-lg);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: color-mix(in srgb, var(--color-success) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
-		color: var(--color-success);
-	}
-	.panel-body {
-		flex: 1;
-		min-width: 0;
-	}
-	.panel-title {
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-	.panel-lede,
-	.panel-foot {
-		font-size: 12px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
-	.panel-facts {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-		margin-top: 4px;
-	}
-	.panel-actions {
-		display: flex;
-		justify-content: flex-end;
-	}
-	code {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.92em;
-		background: var(--color-surface-elevated);
-		padding: 0 4px;
-		border-radius: var(--radius-sm);
 	}
 </style>

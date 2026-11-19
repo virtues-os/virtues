@@ -33,7 +33,7 @@
 	import AppearanceSettings from './AppearanceSettings.svelte';
 	import CapabilitiesSettings from './CapabilitiesSettings.svelte';
 	import DataSettings from './DataSettings.svelte';
-	import { getAssistantProfile } from '$lib/api/client';
+	import { getAssistantProfile, getByoKey } from '$lib/api/client';
 	import { getAccent, getThemeChoice, setTheme, type Accent, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
 	import { openSettingsPage, takePendingSetting } from '$lib/settings/focus';
@@ -59,6 +59,26 @@
 			assistant = 'error';
 		}
 	}
+
+	// Where AI runs, on Models and spending's provider row: the host of your
+	// own provider, or "Not set". Left out when the read fails, so the row
+	// says "Open" and claims nothing.
+	let provider = $state<string | undefined>(undefined);
+	$effect(() => {
+		if (id !== 'spending') return;
+		getByoKey<{ configured: boolean; endpoint_url: string | null }>()
+			.then((b) => {
+				if (!b.configured) provider = 'Not set';
+				else {
+					try {
+						provider = b.endpoint_url ? new URL(b.endpoint_url).host : 'On';
+					} catch {
+						provider = 'On';
+					}
+				}
+			})
+			.catch(() => (provider = undefined));
+	});
 
 	// Copy names the assistant mid-sentence and at the start of one, so it
 	// takes a capital whatever case the owner typed it in.
@@ -138,12 +158,22 @@
 			<div class="block" id="setting-models"><ModelRows assistantName={spoken} /></div>
 			<div class="block" id="setting-limit-run"><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
 			<LinkRow id="ai-cost" label={title('ai-cost')} help="This month day by day, what it went to, and every call." href="/virtues/assistant/spending/cost" />
+			<div class="block">
+				<h2 class="settings-label">Where it runs</h2>
+				<LinkRow
+					id="byo-ai"
+					label={title('byo-ai')}
+					help="Send AI calls to a provider and key of your own."
+					href="/virtues/assistant/spending/provider"
+					value={provider}
+				/>
+			</div>
 			<p class="aside">
-				Your subscription, balance and your own AI key are on
+				Your subscription and balance are on
 				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', spoken)}>Billing</button>.
 			</p>
 		{:else if id === 'appearance'}
-			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device." block>
+			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device. It follows you to every device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
 			</SettingRow>
 			<SettingRow id="accent" label={title('accent')} help="The color of links, selections and the main button on each page." block>
@@ -152,9 +182,10 @@
 			<AppearanceSettings assistantName={spoken} />
 		{:else if id === 'billing'}
 			<BillingSettings />
-			<LinkRow id="byo-ai" label={title('byo-ai')} help="Send AI calls to your own provider and key instead of paying through Virtues." href="/virtues/billing/byo" />
-			<!-- The cost page lives under Models and spending; Billing links to it too, beside the balance it draws down. -->
-			<LinkRow id="ai-cost-billing" label={title('ai-cost')} help="This month day by day, what it went to, and every call." href="/virtues/assistant/spending/cost" />
+			<p class="aside">
+				Your own AI provider is on
+				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/assistant/spending', spoken)}>Models and spending</button>.
+			</p>
 		{:else if id === 'data'}
 			<DataSettings />
 		{:else if id === 'server'}
