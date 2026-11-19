@@ -110,7 +110,7 @@
 		height: 1.375rem;
 		padding: 0 0.375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		vertical-align: 0.0625rem;
 		white-space: nowrap;

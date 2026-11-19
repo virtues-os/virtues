@@ -441,7 +441,7 @@
 		margin-top: 14px;
 		padding: 9px 12px;
 		border-radius: var(--radius-md);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 13px;
 		line-height: 1.45;
 	}
@@ -552,7 +552,7 @@
 		line-height: 1;
 		padding: 3px 5px;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		color: var(--color-foreground-subtle);
 	}
 </style>

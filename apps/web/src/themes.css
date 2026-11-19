@@ -31,13 +31,9 @@
 	   `--surface` stays for what lifts off it: cards, popovers, menus. */
 	--color-page: var(--page);
 
-	/* Interaction surfaces. These two were referenced across the app (datagrid,
-	   filter chips, pinned sidebar rows) but never bridged, so they resolved to
-	   nothing: toolbar buttons rendered unfilled with no hover response, and the
-	   two call sites carrying a hardcoded grey fallback painted a near-white
-	   hover in every dark theme. Every theme defines --surface-elevated. */
+	/* An interaction surface the datagrid, its filter chips and a few front
+	   pages name. It maps to --surface-elevated, which every theme defines. */
 	--color-background-hover: var(--surface-elevated);
-	--color-background-secondary: var(--surface-elevated);
 
 	/* Content Colors */
 	--color-foreground: var(--foreground);
@@ -301,7 +297,6 @@
 	--md-table-border-color: var(--color-border-subtle);
 	--md-cell-pad: 0.375rem 0.75rem;
 	--md-th-size: 0.8125rem;
-	--md-th-weight: 600;
 }
 
 /* Closing the sidebar: shorter, easing in and out, so it leaves without a
@@ -361,36 +356,50 @@
 	   step off whatever ground it lands on, not a match against another
 	   surface.
 
-	   The wash is mixed from --wash-ink, a NEUTRAL pigment — black on paper,
-	   white on a dark ground (set in the dark-theme block below) — and not
-	   from the text colour. It used to be the text colour, and on any theme
-	   whose ink carries a hue that shows: Oxford's navy at 7% over cream came
-	   out a cool gray, sitting beside the warm stone of --surface-elevated as
-	   if it belonged to a different kit (the thinking card's header and body,
-	   for one). A neutral pigment darkens the paper without turning it; the
-	   strength is what makes a hover read, never the ink's hue. Components
-	   that need a wash of their own strength mix it from --wash-ink too. */
-	--wash-ink: #000000;
-	--hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
-	--active-bg: color-mix(in srgb, var(--wash-ink) 12%, transparent);
-	--press-bg: color-mix(in srgb, var(--wash-ink) 16%, transparent);
+	   Every wash is mixed from --wash-ink, the theme's one gray pigment. On
+	   Light it is the stone of --surface-elevated (#F4F3F0) taken as dark as
+	   that hue goes, so a wash over the white sheet comes out as a darker
+	   stone and sits in one family with the sidebar and a sent message. Black
+	   would come out a flat gray beside them. On Dark it is white (set in the
+	   dark-theme block below). It is never the text color: Light's ink is
+	   navy, and navy over cream is a cool gray. Components that need a wash
+	   of their own strength mix it from --wash-ink too.
+
+	   --fill-bg is the resting fill, for a tinted block that is not a state:
+	   a sent message, an open card, a chip, a key cap. 6% of the pigment over
+	   #FFFFFF is exactly #F4F3F0, so on the sheet it equals
+	   --surface-elevated. It is a wash, so it also shows on a stone ground,
+	   where --surface-elevated would vanish (a chip inside a sent message, a
+	   chip on the sidebar). --surface-elevated is for a pane's own ground.
+
+	   Hover, selected and press are states and are each stronger than the
+	   fill. The pigment is lighter than black, so their strengths are set to
+	   darken the sheet by 7%, 12% and 16%.
+
+	   TODO(2026-11-18): migrate the tinted blocks that still use
+	   --color-surface-elevated as a resting fill to --fill-bg. They match on
+	   the sheet today and differ on any other ground. */
+	--wash-ink: #483705;
+	--fill-bg: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+	--hover-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
+	--active-bg: color-mix(in srgb, var(--wash-ink) 15%, transparent);
+	--press-bg: color-mix(in srgb, var(--wash-ink) 20%, transparent);
 
 	/* The scrollbar's thumb, on the same ramp and for the same reason: a
 	   translucent step off the ground, so it reads in both themes
-	   instead of landing on whichever surface token looked close. 22% is a shade above
-	   --active-bg (12%) — a scrollbar has to be findable against content, not
+	   instead of landing on whichever surface token looked close. 28% is a shade above
+	   --active-bg (15%) — a scrollbar has to be findable against content, not
 	   just against a ground. The track is always transparent; a painted track
 	   is a chrome object standing on the page permanently, and design.md's
 	   rule is that nothing on the desk may out-shout the page. */
-	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
+	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 28%, transparent);
 
-	--sidebar-item-gap: 4px;
-
-	/* The ramp has four steps and no others: rest, hover (7%), selected
-	   (--active-bg, 12%) and press (16%). The active tab in the focused pane
-	   is not on it: it takes the page's own color (--color-page), so it reads
-	   as the top of the sheet below it, the way a browser joins a tab to its
-	   page. */
+	/* The interaction ramp has four steps and no others: rest, hover
+	   (--hover-bg), selected (--active-bg) and press (--press-bg). --fill-bg
+	   is not a step on it: it marks a block, never a state. The active tab in
+	   the focused pane is not on the ramp either: it takes the page's own
+	   color (--color-page), so it reads as the top of the sheet below it, the
+	   way a browser joins a tab to its page. */
 
 	/* One height for both chrome rows — the sidebar masthead and the pane
 	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
@@ -419,12 +428,11 @@
 	--rail-w: 44px;
 	/* Where the header's controls start: the air above a control. */
 	--chrome-control-top: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2);
-	/* Air between the window's edge and what floats on it, and between two
-	   floating things (the sidebar and a pane, two panes). Mirrored in
-	   sidebarState (DESK_GAP_PX, PANE_GAP_PX) and window-shell
-	   (SPLIT_GUTTER_PX). */
+	/* Air between the window's edge and what floats on it. Mirrored in
+	   sidebarState (DESK_GAP_PX). The gap between two floating things (the
+	   sidebar and a pane, two panes) is set in script: PANE_GAP_PX in
+	   sidebarState and SPLIT_GUTTER_PX in window-shell. */
 	--window-air: 12px;
-	--pane-gap: 10px;
 }
 
 /* ===================================
@@ -663,11 +671,15 @@
 	--illustration-filter: invert(1);
 	/* The interaction ramp's pigment (see :root): light on a dark ground.
 	   The steps are quieter than Light's: white at 7% on near-black reads
-	   as a lit slab, so a hover is 5%, selected 9% and press 12%. */
+	   as a lit slab, so a hover is 5%, selected 9% and press 12%. The
+	   resting fill is 3%, which over --surface (#151517) is #1C1C1E, one
+	   step of 255 from --surface-elevated. */
 	--wash-ink: #ffffff;
+	--fill-bg: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	--hover-bg: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 	--active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
 	--press-bg: color-mix(in srgb, var(--wash-ink) 12%, transparent);
+	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
 
 	/* Glass on a dark ground: the surface thinned less, frosted without
 	   brightening, and a rim of faint light instead of white. */
@@ -723,7 +735,6 @@
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
 	--cat-purple: #8e68a5;
-	--cat-purple-light: #a47dbb;
 	--cat-indigo: #547bb5;
 	--cat-violet: #7471b3;
 	--cat-pink: #a1628d;
@@ -731,14 +742,11 @@
 	--cat-orange: #aa6743;
 	--cat-yellow: #8d792a;
 	--cat-cyan: #1b87a4;
-	--cat-cyan-light: #399dba;
 	--cat-emerald: #3a8c67;
-	--cat-emerald-light: #51a27b;
 }
 
 [data-theme="asgard"] {
 	--cat-purple: #cba7e1;
-	--cat-purple-light: #dcbcf1;
 	--cat-indigo: #94b9f1;
 	--cat-violet: #b1b0ef;
 	--cat-pink: #dfa1ca;
@@ -746,9 +754,7 @@
 	--cat-orange: #e7a685;
 	--cat-yellow: #c9b773;
 	--cat-cyan: #71c5e0;
-	--cat-cyan-light: #8ed7ef;
 	--cat-emerald: #82caa5;
-	--cat-emerald-light: #9cdbba;
 
 	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
 	   Set here, beside the palette it belongs to, so adding a theme stays one
@@ -764,14 +770,12 @@
  * the 9999/10000/10001 "stacking war". Ordered low → high.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--z-raised: 10;          /* local raised content inside a component      */
 	--z-sticky: 20;          /* sticky headers / breadcrumbs / outlines      */
 	--z-dropdown: 50;        /* dropdowns, menus                             */
 	--z-popover: 60;         /* ref preview, selection popover               */
 	--z-overlay: 100;        /* split panes, side panels, tab bar            */
 	--z-modal: 1000;         /* modal dialogs, search, provisioning overlay  */
 	--z-lightbox: 1100;      /* fullscreen media lightbox                    */
-	--z-toast: 1200;         /* toasts / sonner                              */
 	--z-context-menu: 1300;  /* right-click context menu                     */
 	--z-context-submenu: 1301; /* its submenu, one above the menu            */
 	--z-tooltip: 1400;       /* tooltips — always on top                     */

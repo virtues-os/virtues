@@ -29,7 +29,7 @@
 	.box {
 		width: 72px;
 		height: 48px;
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
 	}

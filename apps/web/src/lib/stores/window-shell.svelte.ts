@@ -74,7 +74,7 @@ const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
  * The gap between the two panes in split view, where the painting shows
- * between two cards (themes.css, --pane-gap). SplitContainer lays the panes
+ * between two cards. SplitContainer lays the panes
  * out with it and the window header lines their tab strips up with it.
  */
 export const SPLIT_GUTTER_PX = 10;

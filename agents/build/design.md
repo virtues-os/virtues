@@ -167,16 +167,25 @@ as the fallback.
 
 ### Grays
 
-The interaction ramp mixes a neutral pigment (`--wash-ink`: black on Light,
-white on Dark) into whatever is behind it, so it reads on any ground. Four
-steps, no others:
+Every gray wash mixes one pigment, `--wash-ink`, into whatever is behind it,
+so it reads on any ground. On Light the pigment is the stone of
+`--surface-elevated` taken as dark as that hue goes, so a wash over the white
+sheet is a darker stone and belongs with the sidebar. On Dark it is white.
+
+**A tinted block at rest uses `--fill-bg`** (6% on Light, 3% on Dark): a sent
+message, an open card, a chip, a key cap. On the sheet it is the same color
+as `--surface-elevated`. It is a wash, so it also shows on a stone ground,
+where the surface token would vanish. `--surface-elevated` is for a pane's
+own ground.
+
+The interaction ramp sits above the fill. Four steps, no others:
 
 | Step | Token | Mix, Light / Dark | Means |
 |---|---|---|---|
 | Rest | | 0% | nothing |
-| Hover | `--hover-bg` | 7% / 5% | the pointer is here |
-| Selected | `--active-bg` | 12% / 9% | where you are |
-| Press | `--press-bg` | 16% / 12% | held down, only while pressed |
+| Hover | `--hover-bg` | 9% / 5% | the pointer is here |
+| Selected | `--active-bg` | 15% / 9% | where you are |
+| Press | `--press-bg` | 20% / 12% | held down, only while pressed |
 
 ```specimen Ramp
 ```
@@ -184,7 +193,10 @@ steps, no others:
 **Never use a surface token for an interaction state.** `--surface-elevated`
 is a step of about 4% from the page, which is too small to see. That bug
 shipped twice: dead hovers across 39 rules, and an active tab drawn white on
-white. The scrollbar's thumb is on the same ramp at 22%, with no track.
+white. **Never use an interaction step for a block at rest** either: a block
+filled with `--hover-bg` sits next to one filled with the stone as a second
+gray. The scrollbar's thumb is on the same ramp at 28% on Light and 22% on
+Dark, with no track.
 
 ### Type
 

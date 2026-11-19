@@ -58,7 +58,7 @@
 		height: 34px;
 		border: none;
 		border-radius: var(--radius-md);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		color: var(--color-foreground);
 		font: inherit;
 		cursor: pointer;

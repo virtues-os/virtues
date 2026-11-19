@@ -840,7 +840,7 @@
 		height: 1.375rem;
 		padding: 0 0.125rem 0 0.375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		color: var(--color-foreground);
 		white-space: nowrap;
@@ -918,7 +918,7 @@
 		margin-left: 0.375rem;
 		padding: 0 0.4375rem;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-size: 0.8125rem;
 		line-height: 1.375rem;
 		color: var(--color-foreground);

@@ -370,7 +370,7 @@
 		height: 18px;
 		padding: 0 5px;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-family: inherit;
 		font-size: 11px;
 		line-height: 1;

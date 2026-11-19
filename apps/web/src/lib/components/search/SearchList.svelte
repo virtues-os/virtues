@@ -478,7 +478,7 @@
 		line-height: 1;
 		padding: 3px 5px;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		color: var(--color-foreground-subtle);
 	}
 

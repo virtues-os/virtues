@@ -1,7 +1,8 @@
 <script lang="ts">
-	/** The four interaction steps, on paper and on the desk. Point at and press the last row to feel the timing. */
+	/** The resting fill and the four interaction steps, on paper and on the desk. Point at and press the last row to feel the timing. */
 	const STEPS = [
 		{ name: 'Rest', token: '' },
+		{ name: 'Fill', token: '--fill-bg' },
 		{ name: 'Hover', token: '--hover-bg' },
 		{ name: 'Selected', token: '--active-bg' },
 		{ name: 'Press', token: '--press-bg' }

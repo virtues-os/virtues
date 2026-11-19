@@ -351,8 +351,7 @@
 	font-family: var(--prose-family, var(--md-body-family));
 	font-size: var(--md-th-size);
 	/* The regular: the header is told apart by its size and ground, and a
-	   heavier weight is one the serif, in an article, does not have.
-	   TODO(2026-10-21): set --md-th-weight to 400 in themes.css and read it here. */
+	   heavier weight is one the serif, in an article, does not have. */
 	font-weight: 400;
 	background: var(--color-surface-elevated);
 }

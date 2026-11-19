@@ -124,7 +124,7 @@
 		margin-left: 4px;
 		padding: 0 4px;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font-family: var(--font-sans);
 		font-size: var(--text-caption);
 		color: var(--color-foreground-muted);

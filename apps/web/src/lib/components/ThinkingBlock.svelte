@@ -621,15 +621,13 @@
 		margin-right: 8px;
 	}
 
-	/* Content area. Filled with the same wash the header takes on hover, so
-	   the open block is one card: the pill above it used to hover in
-	   --hover-bg while this sat in --color-surface-elevated, and on any theme
-	   whose paper is tinted (Oxford: warm stone) the two were visibly
-	   different colors stacked in the same column. */
+	/* Content area. The resting fill, the same one a sent message sits in,
+	   so the open block and the turn above it are one color. The header pill
+	   hovers one step darker in the same pigment. */
 	.block-content {
 		margin-top: 8px;
 		padding: 12px 16px;
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		border-radius: var(--radius-lg);
 		max-height: 500px;
 		overflow-y: auto;

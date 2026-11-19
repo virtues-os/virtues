@@ -263,7 +263,7 @@
 		padding: 0 8px;
 		margin-left: 0;
 		border-radius: var(--card-radius);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 	}
 
 	/* Docked: the row is a field in the page toolbar's place, the toolbar's
@@ -284,7 +284,7 @@
 	.docked .find-row {
 		height: 28px;
 		border-radius: var(--card-radius);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 	}
 
 	.docked .find-input {

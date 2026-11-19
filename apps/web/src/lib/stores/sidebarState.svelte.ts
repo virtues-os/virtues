@@ -34,7 +34,7 @@ export const SIDEBAR_COLLAPSE_AT = SIDEBAR_MIN_WIDTH - 32;
  */
 export const DESK_GAP_PX = 12;
 export const SIDEBAR_INSET = DESK_GAP_PX;
-/** Air between the sidebar and the pane beside it (themes.css, --pane-gap). */
+/** Air between the sidebar and the pane beside it. */
 export const PANE_GAP_PX = 10;
 
 /**
