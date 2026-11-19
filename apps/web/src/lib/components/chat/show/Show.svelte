@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
 	import { isKitMark, isShowOutput, type ShowOutput } from "./show";
+	import Drawing from "./Drawing.svelte";
 	import ShowChart from "./ShowChart.svelte";
 	import ShowMark from "./ShowMark.svelte";
 	import ShowNumbers from "./ShowNumbers.svelte";
@@ -69,7 +70,7 @@
 		{/if}
 
 		{#if !out}
-			<div class="drawing" class:short={kind === "numbers"}></div>
+			<Drawing short={kind === "numbers"} />
 		{:else if isKitMark(out.mark)}
 			<ShowMark out={{ ...out, mark: out.mark }} {onOpenRows} />
 		{:else if out.kind === "chart"}
@@ -112,34 +113,6 @@
 		line-height: 1.35;
 		color: var(--color-foreground);
 		margin-bottom: 0.5rem;
-	}
-	.drawing {
-		height: 200px;
-		border-radius: var(--radius-xl);
-		background: linear-gradient(
-			90deg,
-			var(--color-surface) 0%,
-			var(--color-surface-elevated) 50%,
-			var(--color-surface) 100%
-		);
-		background-size: 200% 100%;
-		animation: drawing 1.4s ease-in-out infinite;
-	}
-	.drawing.short {
-		height: 64px;
-	}
-	@keyframes drawing {
-		from {
-			background-position: 100% 0;
-		}
-		to {
-			background-position: -100% 0;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.drawing {
-			animation: none;
-		}
 	}
 	.source {
 		display: flex;
