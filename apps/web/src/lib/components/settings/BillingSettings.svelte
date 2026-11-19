@@ -448,7 +448,7 @@
 		margin: 0;
 		display: flex;
 		align-items: baseline;
-		gap: 10px;
+		gap: 12px;
 	}
 	.amount {
 		font-family: var(--font-serif);

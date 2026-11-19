@@ -1159,7 +1159,7 @@ describe('on a phone', () => {
 			['../components/MenuItem.svelte', '.v-menuitem'],
 			['../components/SlashMenu.svelte', '.command-item'],
 			['../components/RefPicker.svelte', '.result-item'],
-			['../components/pages/nodes/CodeBlockNode.svelte', 'select.doc-code-language'],
+			['../components/pages/nodes/CodeBlockNode.svelte', 'span.doc-code-language :global(.v-select)'],
 		]) {
 			const coarse = read(file).match(/@media \(pointer: coarse\) \{([\s\S]*?)\n\t\}/g) ?? [];
 			expect(coarse.some((block) => block.includes(`${selector} {`) && /min-height: 44px;/.test(block)), file).toBe(true);
@@ -1910,8 +1910,8 @@ describe('keys a markdown page has', () => {
 		expect(typedLanguage(OTHER_LANGUAGE)).not.toBe(OTHER_LANGUAGE);
 		expect(LANGUAGE_CHOICES.map(([value]) => value)).not.toContain(OTHER_LANGUAGE);
 		const source = read('../components/pages/nodes/CodeBlockNode.svelte');
-		expect(source).toMatch(/<option value=\{OTHER_LANGUAGE\}>Other…<\/option>/);
-		expect(source).toMatch(/if \(select\.value === OTHER_LANGUAGE\) \{/);
+		expect(source).toMatch(/\{ value: OTHER_LANGUAGE, label: "Other…" \}/);
+		expect(source).toMatch(/if \(next === OTHER_LANGUAGE\) \{/);
 		expect(source).toMatch(/const lang = typedLanguage\(typed\);\s+if \(lang !== language\) view\.setAttrs\(\{ language: lang \|\| null \}\);/);
 		expect(source).toMatch(/<input\s+class="doc-code-language"[\s\S]*?onkeydown=\{onTypedKey\}\s+onblur=\{commit\}\s+aria-label="Language"/);
 	});
@@ -1921,7 +1921,7 @@ describe('keys a markdown page has', () => {
 	// of the app away from the code.
 	it('closing the language field from the keyboard gives the keyboard back to the picker', () => {
 		const source = read('../components/pages/nodes/CodeBlockNode.svelte');
-		expect(source).toMatch(/<select bind:this=\{picker\} class="doc-code-language"/);
+		expect(source).toMatch(/<span class="doc-code-language">\s+<Select bind:this=\{picker\}[^>]*label="Language"/);
 		expect(source).toMatch(/async function backToPicker\(\) \{\s+await tick\(\);\s+picker\?\.focus\(\);\s+\}/);
 		expect(source).toMatch(/if \(e\.key === "Enter"\) \{\s+e\.preventDefault\(\);\s+commit\(\);\s+void backToPicker\(\);/);
 		expect(source).toMatch(/\} else if \(e\.key === "Escape"\) \{\s+e\.preventDefault\(\);\s+typing = false;\s+void backToPicker\(\);/);

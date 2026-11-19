@@ -64,7 +64,7 @@
 		grid-template-columns: 180px minmax(0, 1fr);
 		align-items: start;
 		gap: 16px;
-		padding: 10px 0;
+		padding: 12px 0;
 		box-sizing: border-box;
 	}
 

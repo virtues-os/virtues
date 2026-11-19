@@ -208,7 +208,7 @@
 		align-items: baseline;
 		justify-content: space-between;
 		gap: 12px;
-		padding: 7px 10px;
+		padding: 8px 12px;
 		border-radius: var(--radius-sm);
 		font-size: 14px;
 		color: var(--color-foreground);

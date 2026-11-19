@@ -309,7 +309,7 @@
 	.actions {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: 12px;
 		padding: 24px 0 8px;
 	}
 	.note {

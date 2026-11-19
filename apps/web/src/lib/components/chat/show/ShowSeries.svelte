@@ -9,11 +9,11 @@
 	Markdown.svelte renders as `[data-vk-figure]` spans; without them, the
 	module finds each figure in the next paragraph by its value. When it finds
 	none, `onUnplaced` asks Show to draw the plain row of figures instead.
+
+	The two modules load the first time a reply uses one, so the chart kit
+	stays off the first paint of every launch (see ShowMark.svelte).
 -->
 <script lang="ts">
-	import "./marks/kit.css";
-	import * as number from "./marks/number.js";
-	import * as spark from "./marks/spark.js";
 	import { parseToolRef } from "$lib/utils/refRoutes";
 	import type { ShowOutput } from "./show";
 
@@ -47,28 +47,41 @@
 			onUnplaced();
 			return;
 		}
-		const el = document.createElement("div");
-		reply.after(el);
+		const output = out;
 		const options = { reply, figures: marked.length ? marked : undefined, onOpenRows };
-		let handle: { destroy(): void };
-		let placed: number;
-		if (out.mark === "spark") {
-			const sparks = spark.mount(el, out, options);
-			handle = sparks;
-			placed = sparks.sparks.length;
-		} else {
-			handle = number.mount(el, out, options);
-			placed = root.querySelectorAll(".vk-figure").length;
-		}
-		if (!placed) {
-			handle.destroy();
-			el.remove();
-			onUnplaced();
-			return;
-		}
+		let el: HTMLDivElement | undefined;
+		let handle: { destroy(): void } | undefined;
+		let gone = false;
+		const loading = output.mark === "spark" ? import("./marks/spark.js") : import("./marks/number.js");
+		Promise.all([loading, import("./marks/kit.css")])
+			.then(([mod]) => {
+				if (gone) return;
+				el = document.createElement("div");
+				reply.after(el);
+				let placed: number;
+				if (output.mark === "spark") {
+					const sparks = (mod as typeof import("./marks/spark.js")).mount(el, output, options);
+					handle = sparks;
+					placed = sparks.sparks.length;
+				} else {
+					handle = (mod as typeof import("./marks/number.js")).mount(el, output, options);
+					placed = root.querySelectorAll(".vk-figure").length;
+				}
+				if (!placed) {
+					handle.destroy();
+					handle = undefined;
+					el.remove();
+					onUnplaced();
+				}
+			})
+			.catch((e) => {
+				console.error("The figures' module could not load:", e);
+				if (!gone) onUnplaced();
+			});
 		return () => {
-			handle.destroy();
-			el.remove();
+			gone = true;
+			handle?.destroy();
+			el?.remove();
 		};
 	});
 </script>

@@ -57,7 +57,7 @@
 <style>
 	.segmented {
 		display: inline-flex;
-		padding: 2px;
+		padding: 2px; /* design-ok: 30px segments make a 34px control */
 		border-radius: calc(var(--radius-md) + 2px);
 		background: var(--color-surface-elevated);
 	}
