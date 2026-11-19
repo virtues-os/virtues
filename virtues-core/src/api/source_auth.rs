@@ -543,7 +543,7 @@ mod account_lookup {
     }
 
     /// Google's lookups, in order, one under each scope the grant asks for:
-    /// Gmail's profile under `gmail.readonly`, and the primary calendar, whose
+    /// Gmail's profile under `gmail.modify`, and the primary calendar, whose
     /// id is the account's address, under `calendar.readonly`. The owner can
     /// untick either on the consent screen, and whichever scope they keep
     /// names the account.

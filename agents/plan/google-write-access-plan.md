@@ -1,6 +1,6 @@
 # Google write access and Google's security assessment
 
-**Written 2026-10-30. Nothing built.** Let the assistant act on the owner's
+**Written 2026-10-30. Slices 2 and 4 built 2026-11-19, not deployed.** Let the assistant act on the owner's
 Gmail and Google Calendar: archive and label mail, write drafts, and create or
 change events. To do that, our Google app asks for broader scopes and passes
 Google's yearly security assessment (CASA) itself.
@@ -177,8 +177,20 @@ There is no send tool. The owner sends from Gmail. That keeps a
 prompt-injected email from getting the box to send mail as the owner. Google's
 own Gmail MCP server makes the same choice.
 
-Names are not settled. Check `crates/virtues-registry/src/tools.rs` for the
-naming that is there before adding these.
+Built 2026-11-19 in `virtues-core/src/tools/google.rs`, with these names.
+Two choices differ from the table:
+
+- Unarchiving is `email_archive` with `undo: true`, not a second tool.
+- `calendar_event` has no undo window. A create or change is undone with the
+  same tool, and a delete asks the owner first through the chat's permission
+  prompt (`ToolExecutor::PERMISSION_REQUIRED`). Events it creates carry the
+  private property `created_by: virtues`, and it sends no invitations.
+
+The tools also refuse the `TRASH` and `SPAM` labels, and `email_draft` replaces
+only drafts it wrote (it marks them with an `X-Virtues-Draft` header). A grant
+without the new scopes gets a message telling the owner to reconnect Google in
+Sources. Slice 2's scope change in `oauth.rs` takes effect when `virtues-api`
+is deployed. Until then every reconnect still grants the old scopes.
 
 ### 5. The triage applet
 

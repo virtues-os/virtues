@@ -29,6 +29,7 @@ pub(crate) mod send_imessage;
 pub(crate) mod connection;
 pub(crate) mod connection_registry;
 pub(crate) mod delete_data;
+pub(crate) mod google;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 pub(crate) mod tasks;
