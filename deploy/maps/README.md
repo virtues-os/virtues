@@ -37,6 +37,23 @@ in `/etc/virtues/maps-writer.env`. Production reads the bucket, so run it
 after each cut: until then boxes keep getting the previous build, and
 `virtues-health` reports that the bucket is behind.
 
+## The run on a temporary server
+
+The cut needs about 310 GB of disk for an hour, which is more than any server
+we keep for the services. `run.sh` is the whole job for a server that exists
+only for the run: it installs the tools at pinned versions, runs `cut.py`,
+uploads with `upload.sh`, removes all but the newest two builds from the
+bucket with `prune.sh`, and reports each step to whoever started the server.
+
+The operator's intranet starts it: on a schedule it creates the server with a
+first-boot script that downloads this directory at one pinned commit, a
+storage key made for the run, and a token for reporting back. It deletes the
+server and the key on the final report, or after five hours without one.
+`run.sh` cannot delete its own server.
+
+A run given `PREFIX` uploads under `<bucket>/<PREFIX>/`. virtues-api reads
+only the top of the bucket, so that is a rehearsal no box sees.
+
 ## What a run does
 
 1. Picks the newest Protomaps daily build and downloads it once (~140 GB).

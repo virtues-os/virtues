@@ -1,7 +1,7 @@
 # Moving the cloud services off the dedicated server
 
-**Written 2026-11-19. Slice 1 is done; nothing else is built, and no server
-is ordered.** atlas, virtues-api and
+**Written 2026-11-19. Slice 1 is done and slice 2 is built but has not run;
+no server is ordered.** atlas, virtues-api and
 their Postgres run on one dedicated server since 2026-09-28
 ([record](../record/cloud-consolidation.md),
 [how it runs](../build/deployment.md#cloud-sidecar-atlas--virtues-api-on-one-server)).
@@ -95,22 +95,31 @@ the dedicated server reads the bucket; `/srv/maps` is still there.
 
 ### 2. The map cut runs on a temporary instance
 
-- A script creates an instance with room for the planet and one build (about
-  310 GB), installs `cut.py` and `pmtiles`, runs the cut, uploads the build,
-  writes `latest.json` last, deletes all but the newest two builds from the
-  bucket, and deletes the instance.
-- Uploading `latest.json` last keeps today's guarantee that the API never
-  serves half a build.
-- The instance gets a key that can write only to the map bucket. The API's key
-  can only read it.
-- The script deletes the instance when the cut fails too, and says so. A
-  forgotten instance costs money every hour. A failed run starts again from
-  the planet download, which costs about an hour; the resume from
-  `<build>.partial/` does not survive a deleted disk.
-- `virtues-health` gains one check: the newest build in the bucket is younger
-  than the schedule allows.
-- Run it once by hand before the cutover. Who starts it after that is
-  decision 2.
+Built on 2026-11-19, not yet run for real:
+
+- `deploy/maps/run.sh` is the whole job on the temporary server: tools at
+  pinned versions, `cut.py`, `upload.sh`, `prune.sh` (keeps the newest two
+  builds in the bucket), and a report of each step.
+- The intranet starts it (decision 2). It creates a server with room for the
+  planet and one build, hands it a storage key made for that run and a
+  one-run token for reporting back, and deletes the server and the key on the
+  final report or after five hours without one. Any server with the cut's
+  name that no running cut owns is deleted too. Results go to Slack and the
+  intranet's Servers page.
+- Uploading `latest.json` last keeps the guarantee that the API never serves
+  half a build. A failed run starts again from the planet download, which
+  costs about an hour; the resume from `<build>.partial/` does not survive a
+  deleted disk.
+- A run with a prefix uploads beside the real builds, where no box reads.
+
+Left:
+
+- One rehearsal with a prefix, checked against the build the dedicated server
+  cut, then the monthly schedule switched on.
+- Stop the timer on the dedicated server once a scheduled run has published.
+- `virtues-health` compares the bucket with the cut on the dedicated server
+  today. When that cut stops, it needs the other check: the newest build in
+  the bucket is younger than the schedule allows.
 
 ### 3. The new VPS and a rehearsal
 
@@ -179,11 +188,12 @@ until it is cancelled (decision 3).
    API fetches the file from storage and passes it on. A short-lived link
    straight to storage was turned down because it shows the storage provider
    which address took which square.
-2. **Who starts the map cut, and how often.** Planned: the intranet starts it
-   on a schedule, since it already has the provider key and posts to Slack.
-   The other way is one command run by hand. A box only refreshes its files
-   when a build is 90 or more days newer, so a cut every three months would
-   serve existing boxes the same; monthly only gives a new box fresher maps.
+2. **Who starts the map cut, and how often.** Decided 2026-11-19: the
+   intranet runs it, on a temporary server, each month. It already has the
+   provider key and posts to Slack. A cut every three months would serve
+   existing boxes the same, since a box only refreshes its files when a build
+   is 90 or more days newer; monthly was chosen anyway, and it gives a new
+   box fresher maps.
 3. **How long the dedicated server stays after the cutover.** Cancel at the
    first renewal after it, or pay one more month for an easier rollback.
 4. **The 18 GB folder of model test files** in the server's home directory. It
