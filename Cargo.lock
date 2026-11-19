@@ -9046,7 +9046,6 @@ dependencies = [
  "clap",
  "cliclack",
  "console 0.15.11",
- "flate2",
  "hex",
  "indicatif 0.17.11",
  "libc",
@@ -9056,7 +9055,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
- "virtues-qairt",
 ]
 
 [[package]]

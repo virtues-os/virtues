@@ -355,13 +355,7 @@ impl HttpEmbedder {
         {
             Ok(r) => r.status(),
             Err(e) => {
-                // The unit that serves the endpoint differs by profile, as in
-                // `virtues doctor`: a Dragon has no virtues-embed unit at all.
-                let unit = if crate::inference_report::is_dragon_profile() {
-                    "virtues-qnnd"
-                } else {
-                    "virtues-embed"
-                };
+                let unit = crate::inference_report::serving_unit(&base_url);
                 return Err(anyhow!(e)).with_context(|| {
                     format!(
                         "embedding endpoint unreachable at {base_url} — \
@@ -622,11 +616,6 @@ const FIRST_REQUEST_CHARS: usize = 1024;
 const MIN_REQUEST_CHARS: usize = 256;
 const MAX_REQUEST_CHARS: usize = MAX_REQUEST_INPUTS * 2048;
 
-/// The character budget for the next document request, from the last one's
-/// pace. Characters, not inputs, because inputs run from a few words to 2,048
-/// characters.
-static REQUEST_CHARS: AtomicUsize = AtomicUsize::new(FIRST_REQUEST_CHARS);
-
 /// Where the request starting at `start` ends: inputs up to `budget`
 /// characters, at least one, at most [`MAX_REQUEST_INPUTS`].
 fn request_end(texts: &[String], start: usize, budget: usize) -> usize {
@@ -666,6 +655,11 @@ pub struct LocalEmbedder {
     /// The stored vector width (= the vector column's dims), resolved from the
     /// endpoint/config at startup.
     stored_dim: usize,
+    /// The character budget for this endpoint's next document request, from
+    /// the last one's pace. Characters, not inputs, because inputs run from a
+    /// few words to 2,048 characters. Per embedder, because during a model
+    /// change one process talks to a fast current server and a slow next one.
+    request_chars: AtomicUsize,
 }
 
 impl LocalEmbedder {
@@ -677,7 +671,7 @@ impl LocalEmbedder {
     pub(crate) async fn connect(cfg: EndpointConfig) -> Result<Self> {
         let http = HttpEmbedder::connect(cfg).await?;
         let stored_dim = http.stored_dim;
-        Ok(Self { inner: Arc::new(http), stored_dim })
+        Ok(Self { inner: Arc::new(http), stored_dim, request_chars: AtomicUsize::new(FIRST_REQUEST_CHARS) })
     }
 
     /// Embed a search **query** (asymmetric — applies the query prompt; empty
@@ -705,17 +699,17 @@ impl LocalEmbedder {
         let mut start = 0;
         while start < texts.len() {
             thermal::wait_until_cool().await;
-            let budget = REQUEST_CHARS.load(Ordering::Relaxed);
+            let budget = self.request_chars.load(Ordering::Relaxed);
             let end = request_end(&texts, start, budget);
             let chars: usize = texts[start..end].iter().map(|t| t.len()).sum();
             let sent = std::time::Instant::now();
             match self.inner.embed_batch_async(texts[start..end].to_vec()).await {
                 Ok(vectors) => {
-                    REQUEST_CHARS.store(next_request_chars(budget, chars, sent.elapsed()), Ordering::Relaxed);
+                    self.request_chars.store(next_request_chars(budget, chars, sent.elapsed()), Ordering::Relaxed);
                     out.extend(vectors);
                 }
                 Err(e) => {
-                    REQUEST_CHARS.store((budget / 2).max(MIN_REQUEST_CHARS), Ordering::Relaxed);
+                    self.request_chars.store((budget / 2).max(MIN_REQUEST_CHARS), Ordering::Relaxed);
                     return Err(e);
                 }
             }

@@ -234,6 +234,13 @@ pub(crate) async fn start_recommended_change() {
     let Ok(embed_unit) = std::fs::read_to_string(unit_path(EMBED)) else {
         return;
     };
+    // A moved Dragon with virtues-qnnd back beside virtues-embed (an older
+    // installer re-run brings it back): the two race for :18181 at every boot.
+    // Search runs on virtues-embed here, so qnnd goes.
+    if unit_path(QNND).exists() && box_env::get("VIRTUES_EMBED_URL").as_deref() == Some(EMBED_URL) {
+        retire_qnnd();
+        systemctl(&["restart", EMBED]);
+    }
     let target = models_dir().join(EMBED_GGUF);
     if unit_model(&embed_unit).as_deref() == Some(target.as_path()) {
         return;
@@ -465,10 +472,19 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
         ));
     }
     let _lock = super::upgrade::acquire_lock()?;
+    // A change whose index is already live finishes here first, as the next
+    // update would. With automatic updates off, this command is how it does.
+    settle_finished_change(true).await;
     let target = models_dir().join(EMBED_GGUF);
     let current = box_env::get("VIRTUES_EMBED_URL").unwrap_or_else(|| EMBED_URL.to_string());
     let embed_model = std::fs::read_to_string(unit_path(EMBED)).ok().and_then(|t| unit_model(&t));
     if on_recommended_setup() && current == EMBED_URL && embed_model.as_deref() == Some(target.as_path()) {
+        // An older installer re-run on a moved Dragon can put virtues-qnnd back
+        // beside virtues-embed, and the two race for :18181 at every boot.
+        if unit_path(QNND).exists() {
+            retire_qnnd();
+            systemctl(&["restart", EMBED]);
+        }
         ui::ok("search already runs on the recommended setup");
         return Ok(());
     }
@@ -483,8 +499,9 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
     println!("     Search keeps using {current} while your index is rebuilt for it,");
     println!("     then switches. Settings → Search shows how far along it is.");
     if from_npu {
-        println!("     On a small server this takes days. After the switch, the nightly");
-        println!("     update retires virtues-qnnd; updates keep this model current.");
+        println!("     On a small server this takes days. After the switch, the next update");
+        println!("     retires virtues-qnnd, or run this command again; updates keep this");
+        println!("     model current.");
     } else {
         println!("     After the switch, you can stop your own server; updates keep this");
         println!("     model current.");

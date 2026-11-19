@@ -13,7 +13,8 @@ itself against vectors from a model it was not built with. Code:
 **Virtues calls one HTTP API and protects its index from mismatched models.** An OpenAI-style
 `/v1/embeddings` endpoint. Search doesn't rerank: the fused dense + BM25 order
 is the ranking (`search::query` has the measurements). Where the endpoint comes
-from is decided once, at install (`InferenceMode`), and there are three answers:
+from is decided once, at install (`InferenceMode`), and there are two answers,
+plus the Dragon setup older installs still run:
 
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
@@ -23,8 +24,8 @@ from is decided once, at install (`InferenceMode`), and there are three answers:
 
 We do not offer a **managed GPU/NPU mode for arbitrary hardware**: we
 never install or babysit inference software on machines we cannot test. Either
-it is our board (and our daemon), or it is the CPU trial with zero hardware
-variance, or the user owns the endpoint and we validate it at install time. The
+it is the CPU engine with zero hardware variance, or the user owns the endpoint
+and we validate it at install time. The
 bundled path is labelled "not for production" because it is slow on large
 corpora; the daily-use path off our board is Manual.
 
@@ -35,9 +36,11 @@ every other endpoint. Changing the local models is
 
 ## The env contract
 
-Written by the installer into the box env file; read by core.
+Written by the installer into the box env file; read by core. The Dragon
+column is what installs before the move wrote, and what such a box keeps until
+it moves.
 
-| Variable | Dragon | Bundled | Manual |
+| Variable | Dragon (older installs) | Bundled | Manual |
 |---|---|---|---|
 | `VIRTUES_INFERENCE` | `dragon` | `bundled` | `manual` |
 | `VIRTUES_EMBED_URL` | `http://127.0.0.1:18181` | same | user's |

@@ -15,8 +15,11 @@
 //!
 //! There is deliberately no general "managed" mode for arbitrary accelerators:
 //! provisioning tuned sidecars on the thousand SBCs we can't test produces more
-//! broken boxes than it saves keystrokes. Either it's our board (NPU built in),
-//! the CPU engine we ship, or the user owns the endpoint and we validate it.
+//! broken boxes than it saves keystrokes. Either it's the CPU engine we ship,
+//! or the user owns the endpoint and we validate it.
+//!
+//! A re-run keeps the owner's own server: `manual` in the box's env file is
+//! read before anything is detected or asked.
 
 use std::time::{Duration, Instant};
 
@@ -45,9 +48,10 @@ pub enum InferenceMode {
 }
 
 impl InferenceMode {
-    /// Decide the mode, in order: env override (image builds / CI, no TTY
-    /// needed) → Dragon board detection → interactive manual prompts.
-    pub fn resolve() -> Result<Self> {
+    /// Decide the mode, in order: env override (scripted installs, CI, no TTY
+    /// needed) → the box's own `manual` setup on a re-run → Dragon board
+    /// detection → interactive prompts.
+    pub fn resolve(box_env: &std::path::Path) -> Result<Self> {
         // 1. Env override — the non-interactive path for image builds and
         //    scripted installs.
         match std::env::var("VIRTUES_INFERENCE").ok().as_deref() {
@@ -85,14 +89,23 @@ impl InferenceMode {
             None => {}
         }
 
-        // 2. Board detection: a Dragon runs search on its CPU, paced for a
+        // 2. A re-run on a box whose owner runs their own embedding server
+        //    keeps it. Their choice is theirs to undo, with
+        //    `virtues configure-inference`, not the installer's to override by
+        //    detecting the board.
+        if let Some(own) = own_server(box_env) {
+            ui::ok(&format!("Inference mode: manual, keeping your embedding server at {}", own.0));
+            return Ok(Self::Manual { embed_url: own.0, embed_model: own.1 });
+        }
+
+        // 3. Board detection: a Dragon runs search on its CPU, paced for a
         //    board with no fan (`install::dragon_pacing`), no questions asked.
         if is_dragon() {
             ui::ok("Dragon detected — search runs on its CPU");
             return Ok(Self::Bundled);
         }
 
-        // 3. Interactive flow. cliclack reads /dev/tty directly, so this works
+        // 4. Interactive flow. cliclack reads /dev/tty directly, so this works
         //    under `curl | sh` (stdin = pipe) — but not with no controlling
         //    terminal at all (CI, systemd), where the env override is the only
         //    path.
@@ -187,13 +200,27 @@ fn embed_model_from_env() -> String {
         .unwrap_or_else(|| "default".to_string())
 }
 
-/// Is this a Radxa Dragon? Its device tree carries a "radxa,dragon…" compatible
-/// string (covers the q6a/q8b variants). `VIRTUES_BOARD=dragon` says so where
-/// there is no device tree to read.
-fn is_dragon() -> bool {
-    if std::env::var("VIRTUES_BOARD").as_deref() == Ok("dragon") {
-        return true;
+/// The embedding server a re-run box's owner chose, as `(url, model)`, when its
+/// env file says `VIRTUES_INFERENCE=manual` and names one.
+fn own_server(box_env: &std::path::Path) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(box_env).ok()?;
+    let get = |key: &str| {
+        text.lines().rev().find_map(|l| {
+            let (k, v) = l.trim().split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"').to_string()).filter(|v| !v.is_empty())
+        })
+    };
+    if get("VIRTUES_INFERENCE").as_deref() != Some("manual") {
+        return None;
     }
+    let url = normalize_url(&get("VIRTUES_EMBED_URL")?).ok()?;
+    Some((url, get("VIRTUES_EMBED_MODEL").unwrap_or_else(|| "default".to_string())))
+}
+
+/// Is this a Radxa Dragon? Its device tree carries a "radxa,dragon…" compatible
+/// string (covers the q6a/q8b variants); only the Q6A is paced
+/// (`install::dragon_pacing`).
+fn is_dragon() -> bool {
     // /proc/device-tree/compatible is a NUL-separated list of byte strings
     // ("radxa,dragon-q6a\0qcom,…"); lossy UTF-8 is fine for a substring match.
     for path in ["/proc/device-tree/compatible", "/proc/device-tree/model"] {
@@ -673,5 +700,26 @@ mod tests {
         assert_eq!(host_of("https://api.openai.com"), "api.openai.com");
         assert_eq!(host_of("http://[::1]:8080"), "::1");
         assert_eq!(host_of("http://[fd7a:115c::1]:18181/x"), "fd7a:115c::1");
+    }
+}
+
+#[cfg(test)]
+mod own_server_tests {
+    use super::own_server;
+
+    #[test]
+    fn a_rerun_keeps_the_owners_own_server_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("virtues-own-server-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let env = dir.join("virtues.env");
+        std::fs::write(&env, "VIRTUES_INFERENCE=manual\nVIRTUES_EMBED_URL=http://192.168.1.20:11434/\nVIRTUES_EMBED_MODEL=nomic-embed-text\n").unwrap();
+        assert_eq!(
+            own_server(&env),
+            Some(("http://192.168.1.20:11434".to_string(), "nomic-embed-text".to_string()))
+        );
+        std::fs::write(&env, "VIRTUES_INFERENCE=dragon\nVIRTUES_EMBED_URL=http://127.0.0.1:18181\n").unwrap();
+        assert_eq!(own_server(&env), None);
+        assert_eq!(own_server(&dir.join("missing.env")), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

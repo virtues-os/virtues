@@ -11,7 +11,6 @@ name = "virtues-installer"
 path = "src/main.rs"
 
 [dependencies]
-virtues-qairt = { path = "../../crates/virtues-qairt" }
 # TUI / prompts — clack-style rail-connected flow (Astro's @clack/prompts
 # style, ported to Rust). One drop-in replacement for dialoguer Select +
 # Confirm + Input that visually shows the install as a connected sequence
@@ -50,8 +49,3 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Reading `releases/latest` JSON for version resolution.
 serde_json = "1.0"
-
-# Inflating the QAIRT SDK members we pull over HTTP Range (see src/qairt.rs).
-# The `zip` crate is deliberately NOT used: given a Read+Seek backed by range
-# requests it walks the archive, costing 343 requests and 343 MB to extract 15.
-flate2 = "1.1"

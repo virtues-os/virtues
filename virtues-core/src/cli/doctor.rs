@@ -184,12 +184,8 @@ async fn probe_inference(issues: &mut ui::Issues) {
 
     // The unit that owns the endpoint differs by profile, and a remedy that
     // names the wrong service is a remedy that wastes someone's evening.
-    let unit = if crate::inference_report::is_dragon_profile() {
-        "virtues-qnnd"
-    } else {
-        "virtues-embed"
-    };
     let base = endpoint("VIRTUES_EMBED_URL", crate::search::embedder::resolve_base_url());
+    let unit = crate::inference_report::serving_unit(&base);
     {
         let health = format!("{base}/health");
         // Distinguish "nothing is listening" from "listening but not ready"

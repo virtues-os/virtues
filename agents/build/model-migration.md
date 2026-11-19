@@ -49,7 +49,6 @@ the old names, so they stay.
    gh release upload models-1 <file>.gguf <file>.gguf.sha256
    ```
    or through `models-release.yml`, which re-fetches every asset it names.
-   QNN binaries: `MODELS_TAG=models-1 SRC=<host:dir> ./tools/publish-qnn-models.sh`.
    Verify: `gh release view models-1 --json assets`.
 2. **Update every pin site** for that file set, including the SHA-256.
 3. **Cut a code release.**
@@ -84,9 +83,27 @@ boxes to move are ones someone watches (`start_recommended_change` has a dated
 TODO). The command starts the recommended model as `virtues-embed-next` and
 sets `VIRTUES_INFERENCE=bundled`, while `virtues-qnnd` keeps serving search.
 The settle after the swap retires `virtues-qnnd` and its settings before the
-new model takes `:18181`. A Dragon's sidecar unit is always written fresh with
-its pacing (two threads on cores 4 to 6, `CPUWeight=20`), never retargeted
-from an older unit. A Dragon on `manual` is left alone like any other.
+new model takes `:18181`; with automatic updates off, running the command again
+after the swap does the same. A Dragon's sidecar unit is always written fresh
+with its pacing (two threads on cores 4 to 6, `CPUWeight=20`), never retargeted
+from an older unit. A Dragon on `manual` is left alone like any other, by the
+updates and by an installer re-run.
+
+**Backing out of a Dragon's move before the swap.** While Settings → Search
+still shows the rebuild under way, the NPU is still serving search, and the
+move can be called off without losing it:
+
+```
+sudo systemctl disable --now virtues-embed-next
+sudo rm /etc/systemd/system/virtues-embed-next.service && sudo systemctl daemon-reload
+```
+
+then edit `<data dir>/virtues.env`: delete the `VIRTUES_EMBED_NEXT_*` lines and
+set `VIRTUES_INFERENCE=dragon`. The next indexer run drops the partial index
+(`forget_abandoned_build`). **After the swap there is no way back to the NPU's
+index** short of restoring a backup, or pointing the env back at qnnd
+(`VIRTUES_EMBED_URL=http://127.0.0.1:18181`, no prompts) and running
+`virtues reindex`, which leaves search by meaning empty until it catches up.
 
 **Re-running the installer on an existing bundled box** rewrites
 `virtues-embed` to the new model in place and keeps the box's env values,

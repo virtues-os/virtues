@@ -79,7 +79,7 @@ pub async fn run(cli: Config) -> Result<()> {
     // system: a user whose endpoint is broken should learn that before we
     // start installing packages, not after.
     ui::section("Inference");
-    let inference = InferenceMode::resolve()?;
+    let inference = InferenceMode::resolve(&cfg.env_file_path())?;
     let validation = match &inference {
         // Bundled provisions our own local sidecar — nothing to validate (we
         // control the endpoint).
@@ -146,7 +146,7 @@ pub async fn run(cli: Config) -> Result<()> {
     restart.args(["restart", "virtues"]);
     steps::run_step("Start virtues service on the new binary", restart).await?;
 
-    if install::npu_still_serving() {
+    if matches!(inference, InferenceMode::Bundled) && install::npu_still_serving() {
         install::move_off_npu(&cfg).await;
     }
 

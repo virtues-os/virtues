@@ -448,9 +448,9 @@ fn replace_keeping_owner(path: &std::path::Path, contents: &str) -> std::io::Res
     std::fs::rename(&tmp, path)
 }
 
-/// The systemd drop-in that arms a Dragon's hardware watchdog. The installer
-/// writes the same bytes on a fresh install (its bring-up runs as `virtues`,
-/// so this repair can't); uninstall removes it.
+/// The systemd drop-in that arms a Dragon's hardware watchdog. This repair
+/// writes it, from the installer's `virtues migrate --check` and on upgrade;
+/// uninstall removes it.
 pub const WATCHDOG_DROPIN: &str = "/etc/systemd/system.conf.d/10-virtues-watchdog.conf";
 pub const WATCHDOG_CONF: &str = include_str!("watchdog.conf");
 
@@ -461,8 +461,9 @@ pub const WATCHDOG_CONF: &str = include_str!("watchdog.conf");
 /// map crashed the cDSP, and this kernel's FastRPC driver (6.18.2-3-qcom) then
 /// freed reserved DMA pages as the process exited. `BUG: Bad page state` sixty
 /// times, and the box stopped answering on every interface. There was no OOM
-/// and no panic, so nothing rebooted it until someone power-cycled it. `qnnd`
-/// shares that cDSP, so every Dragon can hit it.
+/// and no panic, so nothing rebooted it until someone power-cycled it. Local
+/// mode, and `qnnd` on a Dragon whose search hasn't moved to the CPU, share
+/// that cDSP, so every Dragon can hit it.
 ///
 /// Keyed on the board (`inference_report::is_dragon_board`), with the
 /// manifest's `profile == "dragon"` for older installs. Search no longer runs

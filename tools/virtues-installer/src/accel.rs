@@ -26,7 +26,9 @@ pub enum Kind {
     Intel,
     /// Arm Mali, Qualcomm Adreno and other GPUs llama.cpp reaches via Vulkan.
     OtherGpu,
-    /// NPUs: Intel, AMD Ryzen AI, Rockchip, Hailo, Qualcomm Hexagon.
+    /// NPUs: Intel, AMD Ryzen AI, Rockchip, Hailo. A Qualcomm Hexagon isn't
+    /// listed: the one board Virtues knew it on, the Dragon, runs search on
+    /// its CPU, and the guide has nothing for it.
     Npu,
 }
 
@@ -126,9 +128,6 @@ fn detect_in(root: &Path) -> Vec<Accelerator> {
     }
     if p("/dev/hailo0").exists() {
         push(Accelerator { label: "Hailo NPU".to_string(), kind: Kind::Npu });
-    }
-    if p("/dev/fastrpc-cdsp").exists() {
-        push(Accelerator { label: "Qualcomm Hexagon NPU".to_string(), kind: Kind::Npu });
     }
 
     found.sort_by_key(|a| match a.kind {

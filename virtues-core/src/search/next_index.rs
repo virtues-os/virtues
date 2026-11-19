@@ -192,10 +192,11 @@ async fn rescore_pending(pool: &PgPool) -> Result<bool> {
 }
 
 /// What follows a swap, outside its lock: stamp the chunks with the new model,
-/// forget the old model's event embeddings, resize project centroids, and
-/// rescore every day's events. Safe to run again from the start, and it is,
-/// by every indexer run, until it completes and clears `rescore_pending`.
-/// Whatever invalidates scores must restore them (`dayline::rescore_all_days`).
+/// resize project centroids, and rescore every day's events, whose old
+/// embeddings the swap forgot. Each step is safe to repeat, and rescoring skips
+/// the events a cut-off run already scored, so every indexer run continues it
+/// until it completes and clears `rescore_pending`. Whatever invalidates scores
+/// must restore them (`dayline::rescore_all_days`).
 async fn finish(pool: &PgPool) -> Result<()> {
     let Some((model, dim)) = super::indexer::recorded_geometry(pool).await? else {
         return Err(anyhow!("a model change is finishing but the index records no model"));
@@ -206,7 +207,6 @@ async fn finish(pool: &PgPool) -> Result<()> {
         .bind(&model)
         .execute(pool)
         .await?;
-    sqlx::query(crate::cli::reindex::FORGET_EVENT_EMBEDDINGS).execute(pool).await?;
     resize_centroids(pool, dim).await;
     let (days, scored) = crate::dayline::rescore_all_days(pool)
         .await
@@ -355,6 +355,11 @@ async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
         // swap inside it; they are a cache, so emptying them loses nothing.
         "TRUNCATE search_topic_cache".to_string(),
         format!("ALTER TABLE search_topic_cache ALTER COLUMN embedding TYPE halfvec({dim})"),
+        // The old model's event embeddings and the scores that stand on them
+        // go here, with the swap, and so exactly once. Done in `finish`, every
+        // retry wiped what the last one had rescored, and a rescoring longer
+        // than one run never finished.
+        crate::cli::reindex::FORGET_EVENT_EMBEDDINGS.to_string(),
     ] {
         sqlx::query(&stmt).execute(&mut *tx).await?;
     }
@@ -453,6 +458,13 @@ mod tests {
         insert_vector(&pool, 384).await.unwrap();
 
         begin(&pool, "n", 768).await.unwrap();
+        let built_at_begin: bool = sqlx::query_scalar(
+            "SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass('search_vectors_next_hnsw')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(built_at_begin, "the index is made on the empty table, so the swap has nothing to build");
         fill_next(&pool, 768).await;
         assert_eq!(counts(&pool).await.unwrap(), (1, 1));
         swap(&pool, "n", 768).await.unwrap();

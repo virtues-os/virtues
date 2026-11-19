@@ -71,9 +71,9 @@ pub const EMBED_DOC_PROMPT: &str = "title: none | text: ";
 
 /// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
 /// + answerai-colbert@256 rerank, served by `virtues-qnnd` behind the same
-/// llama-compatible HTTP contract on :18181/:18182. NOT GGUFs and NOT
-/// EmbeddingGemma: that's the llama-server flavor of the same contract. Must
-/// agree with the installer (`config.rs` qnn_embed_bin / qnn_rerank_bin).
+/// llama-compatible HTTP contract on :18181/:18182, on a Dragon that hasn't
+/// moved its search to the CPU. Named here only to report what such a box
+/// runs; nothing fetches them any more.
 pub const QNN_EMBED_BIN: &str = "gte_v68_vtcm2.bin";
 pub const QNN_RERANK_BIN: &str = "cb256_v68_vtcm2.bin";
 
@@ -95,16 +95,31 @@ pub(crate) fn is_dragon_profile() -> bool {
         || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }
 
-/// Is this machine a QCM6490 board such as the Radxa Dragon Q6A, by its device
-/// tree? A question about the board, not the search setup: a Dragon keeps being
-/// one after its search moves from the NPU to the CPU. Its embedding sidecar
-/// runs gently there (`cli::model_set::embed_unit_on`), because it has no fan;
-/// other QCM6490 boards (RB3 Gen2, Rubik Pi 3) share its core layout. Local
-/// mode is offered on it (`local_model::supported`).
+/// Is this machine a Radxa Dragon Q6A, by its device tree? A question about the
+/// board, not the search setup: a Dragon keeps being one after its search moves
+/// from the NPU to the CPU. Its embedding sidecar runs gently there
+/// (`cli::model_set::embed_unit_on`), because it has no fan; local mode is
+/// offered on it (`local_model::supported`); and its hardware watchdog is armed
+/// (`cli::system_repairs`). Only the Q6A: other QCM6490 boards list
+/// `qcom,qcm6490` too, and none of that was measured or wanted on them. Must
+/// match the installer's `dragon_pacing`.
 pub(crate) fn is_dragon_board() -> bool {
     std::fs::read("/proc/device-tree/compatible")
-        .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a" || s == b"qcom,qcm6490"))
+        .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a"))
         .unwrap_or(false)
+}
+
+/// The unit that serves search's embedding endpoint at `base_url`, for a
+/// remedy to name: the next model's sidecar while a change is under way, the
+/// NPU daemon on a Dragon still on it, and the CPU sidecar otherwise.
+pub(crate) fn serving_unit(base_url: &str) -> &'static str {
+    if base_url.trim_end_matches('/').ends_with(":18183") {
+        "virtues-embed-next"
+    } else if is_dragon_profile() {
+        "virtues-qnnd"
+    } else {
+        "virtues-embed"
+    }
 }
 
 fn qnn_models_dir() -> PathBuf {

@@ -149,7 +149,7 @@
 				{#if status.model_change}
 					<span class="note">
 						Moving to {status.model_change.model}: {changePercent}% of the index is rebuilt. Search
-						keeps using the current model until the rebuild finishes.
+						switches to it when the rebuild finishes.
 					</span>
 				{/if}
 			</dd>
@@ -194,6 +194,16 @@
 				<button type="button" class="link" onclick={() => openExternal(GUIDE)}>
 					Read the guide for GPUs and NPUs
 				</button>
+			</section>
+		{:else if status.mode === 'dragon' && !status.model_change}
+			<section class="own">
+				<h3>Move search to this server's CPU</h3>
+				<p>
+					Virtues no longer maintains search on the Dragon's NPU. Run this on the server to move
+					search to its CPU. On a Dragon the new index takes a few days to build, and search
+					switches to it when it's done.
+				</p>
+				<pre><code>sudo virtues configure-inference --recommended</code></pre>
 			</section>
 		{:else if status.mode === 'manual'}
 			<section class="own">

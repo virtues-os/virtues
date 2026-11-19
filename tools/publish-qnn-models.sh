@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Publish the Dragon Q6A (Hexagon v68) QNN inference artifacts to the models
-# release bucket — the context binaries + tokenizers the installer's `install_qnn`
-# fetches (SHA256-verified, same mechanism as the GGUFs).
+# release bucket — the context binaries + tokenizers `virtues-qnnd` loads. No
+# installer fetches them any more: a Dragon runs search on its CPU, and these
+# stay on the release for the Dragons that haven't moved yet. Kept so the files
+# can be re-published if the release ever loses them.
 #
 # The artifacts come from the lab Dragon (they're the exact, on-NPU-validated
 # files — see crates/virtues-qnnd). This script pulls them, stages them under the
@@ -18,8 +20,8 @@ SRC="${SRC:-radxa-box:/home/radxa/npu}"
 MODELS_TAG="${MODELS_TAG:-models-1}"
 REPO="${REPO:-virtues-os/virtues}"
 
-# (asset-name  source-path-relative-to-SRC) — asset-name MUST match the installer
-# (config.rs: qnn_embed_bin / qnn_rerank_bin / qnn_tokenizers).
+# (asset-name  source-path-relative-to-SRC) — the names already on the release,
+# which `inference_report.rs` (QNN_EMBED_BIN / QNN_RERANK_BIN) reports.
 ASSETS=(
   "gte_v68_vtcm2.bin        gte_v68_vtcm2.bin"
   "cb256_v68_vtcm2.bin      cb256_v68_vtcm2.bin"
