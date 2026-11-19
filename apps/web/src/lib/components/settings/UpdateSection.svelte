@@ -17,6 +17,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Switch from './Switch.svelte';
 	import SettingRow from './SettingRow.svelte';
+	import Command from './Command.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -428,7 +429,7 @@
 						{applyError}
 					</p>
 					<p class="how">You can always run it on the server yourself:</p>
-					<code>sudo virtues upgrade</code>
+					<Command command="sudo virtues upgrade" />
 				{/if}
 			</div>
 		{:else}
@@ -562,15 +563,6 @@
 		align-items: center;
 		gap: 6px;
 		margin: 0;
-	}
-
-	.available code {
-		display: block;
-		padding: 6px 10px;
-		border-radius: var(--radius-md);
-		background: var(--color-background);
-		font-family: var(--font-mono, monospace);
-		font-size: 12px;
 	}
 
 	.how,

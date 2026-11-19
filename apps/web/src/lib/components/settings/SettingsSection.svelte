@@ -187,7 +187,7 @@
 				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/assistant/spending', spoken)}>Models and spending</button>.
 			</p>
 		{:else if id === 'data'}
-			<DataSettings />
+			<DataSettings assistantName={spoken} />
 		{:else if id === 'server'}
 			<div class="block" id="setting-updates"><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>
 			<NetworkSection />
@@ -216,16 +216,6 @@
 	   Space sets the blocks apart, no rule between them. */
 	.block {
 		padding: 24px 0 8px;
-	}
-
-	/* A block's h2 is a section heading: the app's serif h2 at the heading step. */
-	.rows :global(.settings-label) {
-		font-family: var(--font-serif);
-		font-size: var(--text-heading);
-		font-weight: 400;
-		line-height: 1.3;
-		letter-spacing: normal;
-		margin: 0 0 8px;
 	}
 
 	.aside {

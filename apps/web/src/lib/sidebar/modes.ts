@@ -78,8 +78,6 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/devices': { icon: 'mynaui:mobile', glyph: 'devices' },
 	'/virtues/server': { icon: 'mynaui:refresh' },
 	'/virtues/backup': { icon: 'mynaui:archive' },
-	'/virtues/keys': { icon: 'mynaui:key', glyph: 'keys' },
-	'/virtues/shared': { icon: 'mynaui:share', glyph: 'shared' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
 	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
 };

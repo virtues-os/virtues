@@ -283,14 +283,6 @@
 	.group {
 		padding: 24px 0 8px;
 	}
-	/* A section heading, as on every Settings page: the app's serif h2. */
-	.settings-label {
-		font-family: var(--font-serif);
-		font-size: var(--text-heading);
-		font-weight: 400;
-		line-height: 1.3;
-		margin: 0 0 8px;
-	}
 	/* A field fills the row's answer column. */
 	.group :global(.input-container) {
 		width: 100%;

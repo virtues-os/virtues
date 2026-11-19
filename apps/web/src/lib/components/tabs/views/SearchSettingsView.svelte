@@ -12,6 +12,7 @@
 	import { onMount } from 'svelte';
 	import { Button } from '$lib';
 	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
+	import Command from '$lib/components/settings/Command.svelte';
 	import { getSearchStatus, type SearchStatus } from '$lib/api/client';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
@@ -117,7 +118,7 @@
 					first index are much faster. Set it up with the guide - about ten minutes - then point
 					search at it by running this on your server:
 				</p>
-				<pre><code>virtues configure-inference --embed-url http://127.0.0.1:8080</code></pre>
+				<div class="cmd"><Command command="virtues configure-inference --embed-url http://127.0.0.1:8080" /></div>
 				<div class="actions">
 					<Button onclick={() => openExternal(status?.accelerator_guide ?? GUIDE)}>Open the setup guide</Button>
 					<Button variant="ghost" onclick={dismiss}>Not now</Button>
@@ -190,7 +191,7 @@
 					Search is faster on a GPU or an NPU. Start an embedding server there, then run this on
 					your server. Your index stays if the new server runs the same model.
 				</p>
-				<pre><code>virtues configure-inference --embed-url http://127.0.0.1:8080</code></pre>
+				<div class="cmd"><Command command="virtues configure-inference --embed-url http://127.0.0.1:8080" /></div>
 				<button type="button" class="link" onclick={() => openExternal(GUIDE)}>
 					Read the guide for GPUs and NPUs
 				</button>
@@ -203,7 +204,7 @@
 					search to its CPU. On a Dragon the new index takes a few days to build, and search
 					switches to it when it's done.
 				</p>
-				<pre><code>sudo virtues configure-inference --recommended</code></pre>
+				<div class="cmd"><Command command="sudo virtues configure-inference --recommended" /></div>
 			</section>
 		{:else if status.mode === 'manual'}
 			<section class="own">
@@ -213,7 +214,7 @@
 					its recommended model on this server's CPU and keep it current, run this on the server.
 					Search keeps using your server until the index is rebuilt for the new model.
 				</p>
-				<pre><code>sudo virtues configure-inference --recommended</code></pre>
+				<div class="cmd"><Command command="sudo virtues configure-inference --recommended" /></div>
 			</section>
 		{/if}
 	{/if}
@@ -243,18 +244,8 @@
 		margin: 0;
 	}
 
-	pre {
+	.cmd {
 		margin: 0 0 12px;
-		padding: 8px 12px;
-		border-radius: var(--radius-md);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		overflow-x: auto;
-	}
-
-	code {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 12px;
 	}
 
 	.actions {

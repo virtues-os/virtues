@@ -1,13 +1,33 @@
 <script lang="ts">
 	/**
-	 * Settings · Your data: how long audio is kept (`keep_recordings_days`,
-	 * enforced by the maintenance sweeper, `api/recordings.rs`), and the
-	 * command that exports everything (`virtues export`, `cli/export.rs`).
+	 * Settings · Your data: copies of your data, what your server keeps, and
+	 * what you've shared.
+	 *
+	 * - Backup opens its page; its row says how old the newest backup is
+	 *   (`GET /api/backup/status`).
+	 * - Export everything is a command, because `virtues export` (`cli/export.rs`)
+	 *   writes on the server and the server has no export endpoint.
+	 * - Keep recordings is `keep_recordings_days`, enforced by the maintenance
+	 *   sweeper (`api/recordings.rs`).
+	 * - Recently deleted holds chats, pages, threads and Drive files for 30 days.
+	 * - A record (a purchase, a visit) is deleted through the assistant's
+	 *   `delete_data` tool or `/delete-data` (`api/deletions.rs`). It is gone at
+	 *   once and tombstoned, so it never passes through Recently deleted; the
+	 *   row says so because the two kinds of deleting are easy to confuse.
+	 * - Shared links and Keys open their own pages under this one.
 	 */
 	import { onMount } from 'svelte';
 	import SettingRow from './SettingRow.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import { getProfile, updateProfile } from '$lib/api/client';
+	import LinkRow from './LinkRow.svelte';
+	import Command from './Command.svelte';
+	import Segmented from '$lib/components/Segmented.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import { getBackupStatus, getProfile, updateProfile, type BackupStatus } from '$lib/api/client';
+	import { backupSummary } from '$lib/settings/backup';
+
+	let { assistantName }: { assistantName: string } = $props();
+
+	const MANUAL = 'https://virtues.com/docs#what-leaves-the-server';
 
 	type Keep = 'forever' | '365' | '90' | '30';
 
@@ -21,6 +41,7 @@
 	let keep = $state<Keep>('forever');
 	let phase = $state<'loading' | 'ready' | 'error'>('loading');
 	let saveError = $state<string | null>(null);
+	let backup = $state<BackupStatus | null>(null);
 
 	async function load() {
 		phase = 'loading';
@@ -33,7 +54,14 @@
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		void load();
+		// absent-ok: without a status the row reads "Open", and the Backup page
+		// says what went wrong.
+		getBackupStatus()
+			.then((s) => (backup = s))
+			.catch(() => (backup = null));
+	});
 
 	async function chooseKeep(next: Keep) {
 		const was = keep;
@@ -49,72 +77,126 @@
 
 	const keepHelp = $derived(
 		saveError ??
-			(keep === 'forever'
-				? 'Your server keeps the audio of every recording.'
-				: 'Audio older than this is deleted once it is transcribed. Transcripts stay, and copies already on a backup drive stay there.'),
+			'Your server keeps the audio of every recording. A shorter time deletes older audio once it is transcribed. Transcripts stay, and copies already on a backup drive stay there.',
 	);
 </script>
 
-{#if phase === 'error'}
-	<div class="load-error" role="alert">
-		<p>Your server couldn't read how long it keeps recordings.</p>
-		<button type="button" class="again" onclick={load}>Try again</button>
-	</div>
-{:else}
-	<SettingRow id="keep-recordings" label="Keep recordings" help={keepHelp} forId="keep-recordings-choice">
-		<Select id="keep-recordings-choice" value={keep} options={KEEP} disabled={phase !== 'ready'} onchange={chooseKeep} />
+<section class="group">
+	<h2 class="settings-label">A copy of everything</h2>
+	<LinkRow
+		id="backup"
+		label="Backup"
+		help="Encrypted, every night, to the drives you plug into your server."
+		href="/virtues/backup"
+		value={backup ? backupSummary(backup) : undefined}
+	/>
+	<SettingRow id="export" label="Export everything">
+		<div class="control">
+			<Command command="sudo virtues export" />
+			<p class="note">
+				Your records, pages and files as readable files, written to <code>/var/lib/virtues/exports</code> on your server,
+				or to a folder you name after the command. Keys and passwords stay out, and the copy isn't encrypted. Add
+				<code>--skip-files</code> to leave out recordings and photos.
+			</p>
+		</div>
 	</SettingRow>
-{/if}
+</section>
 
-<SettingRow id="export" label="Export everything" help="Your records, pages and files as readable files, run on your server. Keys and passwords stay out, and the copy isn't encrypted." block>
-	<code class="command">sudo virtues export</code>
-	<p class="note">
-		It writes to <code>/var/lib/virtues/exports</code>, or to a folder you name after the command. Add
-		<code>--skip-files</code> to leave out recordings and photos.
-	</p>
-</SettingRow>
+<section class="group">
+	<h2 class="settings-label">What your server keeps</h2>
+	{#if phase === 'error'}
+		<div class="load-error" role="alert">
+			<p>Your server couldn't read how long it keeps recordings.</p>
+			<Button variant="secondary" onclick={load}>Try again</Button>
+		</div>
+	{:else}
+		<SettingRow id="keep-recordings" label="Keep recordings" help={keepHelp}>
+			<Segmented id="keep-recordings-choice" label="Keep recordings" value={keep} options={KEEP} disabled={phase !== 'ready'} onchange={chooseKeep} />
+		</SettingRow>
+	{/if}
+	<LinkRow
+		id="recently-deleted"
+		label="Recently deleted"
+		help="Chats, pages, threads and files you've deleted. Each waits 30 days, and you can bring it back until then."
+		href="/storage/trash"
+	/>
+	<SettingRow
+		id="delete-records"
+		label="Delete records"
+		help="For a record such as a purchase or a visit. Your server deletes it at once, so it doesn't wait in Recently deleted. No sync brings it back, and a backup made before keeps its copy."
+	>
+		<p class="how">Ask {assistantName}, or type <code>/delete-data</code> in a chat.</p>
+	</SettingRow>
+</section>
+
+<section class="group">
+	<h2 class="settings-label">Shared links and keys</h2>
+	<LinkRow
+		id="shared-links"
+		label="Shared links"
+		help="Every page, chat or applet you've shared. Turn a link off and it stops opening at once."
+		href="/virtues/data/shared"
+	/>
+	<LinkRow id="keys" label="Keys" help="What your applets sign in with, such as an API key." href="/virtues/data/keys" />
+</section>
+
+<p class="aside">
+	The manual lists <a href={MANUAL} target="_blank" rel="noopener noreferrer">what leaves your server</a>, and when.
+</p>
 
 <style>
-	code {
-		font-family: var(--font-mono);
-		font-size: 12px;
-		white-space: nowrap;
+	.group {
+		padding: 24px 0 8px;
 	}
 
-	code.command {
-		display: block;
-		padding: 8px 12px;
-		border-radius: var(--radius-md);
-		background: var(--color-surface-elevated);
-		font-family: var(--font-mono);
-		font-size: 13px;
+	.control {
+		width: 100%;
+		min-width: 0;
 	}
 
 	.note {
-		margin: 8px 0 0;
-		font-size: 13px;
+		margin: 6px 0 0;
+		font-size: var(--text-caption);
+		line-height: 1.45;
 		color: var(--color-foreground-muted);
+	}
+
+	.how {
+		margin: 0;
+		font-size: 15px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	code {
+		font-family: var(--font-mono);
+		font-size: 0.92em;
+		white-space: nowrap;
 	}
 
 	.load-error {
 		display: flex;
-		align-items: center;
-		gap: 12px;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
 		padding: 12px 0;
-		font-size: 13px;
-		color: var(--color-error);
 	}
 
 	.load-error p {
 		margin: 0;
+		font-size: 13px;
+		color: var(--color-error);
 	}
 
-	.again {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
+	.aside {
+		margin: 32px 0 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.aside a {
 		color: var(--color-primary);
-		cursor: pointer;
+		text-decoration: none;
 	}
 </style>

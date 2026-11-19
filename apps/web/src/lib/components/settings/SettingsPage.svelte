@@ -99,6 +99,17 @@
 		padding-bottom: 4px;
 	}
 
+	/* A section heading on any Settings page: the app's serif h2 at the
+	   heading step. Set here, once, for every page this frame holds. */
+	.page :global(.settings-label) {
+		font-family: var(--font-serif);
+		font-size: var(--text-heading);
+		font-weight: 400;
+		line-height: 1.3;
+		letter-spacing: normal;
+		margin: 0 0 8px;
+	}
+
 	.lede {
 		margin: 8px 0 24px;
 		font-size: 15px;

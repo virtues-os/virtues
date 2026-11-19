@@ -10,7 +10,8 @@ describe("Settings' crumbs", () => {
 		expect(labels('/virtues/assistant/spending', 'Settings · Models and spending')).toEqual(['Settings', 'Your assistant', 'Models and spending']);
 		expect(labels('/virtues/data', 'Settings · What Ari may read')).toEqual(['Settings', 'Your server', 'Your data']);
 		expect(labels('/virtues/billing', 'Settings · Billing')).toEqual(['Settings', 'Your profile', 'Billing']);
-		expect(labels('/virtues/keys', 'Settings · Keys')).toEqual(['Settings', 'Your server', 'Keys']);
+		expect(labels('/virtues/data/keys', 'Settings · Keys')).toEqual(['Settings', 'Your server', 'Your data', 'Keys']);
+		expect(labels('/virtues/data/shared', 'Settings · Shared links')).toEqual(['Settings', 'Your server', 'Your data', 'Shared links']);
 	});
 
 	it('keep a page under its parent page', () => {

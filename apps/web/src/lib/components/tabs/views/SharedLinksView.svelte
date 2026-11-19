@@ -1,11 +1,18 @@
 <script lang="ts">
 	/**
-	 * Settings → Shared links: every link this server has shared, in one place.
+	 * Settings · Your data · Shared links (/virtues/data/shared): every link
+	 * this server has shared, in one place.
 	 *
-	 * Live links sit in the grid with copy and revoke; revoked and expired ones
-	 * fold underneath, as archived projects do. A link opens the page or applet
-	 * it came from, where its Share modal updates it. The links themselves are served by
-	 * the door (`api::publications`), and only while this server is on.
+	 * Working links are rows with copy and turn off; turned-off and expired
+	 * ones fold underneath. A link's title opens the page, chat or applet it
+	 * came from, where its Share modal updates it. The links themselves are
+	 * served by the door (`api::publications`), and only while this server is
+	 * on. A link that asks the server for data each time it opens says so in
+	 * its line (`is_live`); one that doesn't says nothing, because a snapshot
+	 * and a page that reads nothing look the same from here.
+	 *
+	 * "Opened" stays: whether anyone opened what you shared is a fact about
+	 * where your data went, not a score.
 	 */
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -13,10 +20,9 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { Button } from '$lib';
 	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
-	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import Fold from '$lib/components/settings/Fold.svelte';
 	import { listPublications, revokePublication, type Publication } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
 	let all = $state<Publication[]>([]);
 	let loading = $state(true);
@@ -24,7 +30,6 @@
 	let copied = $state<string | null>(null);
 	let revoking = $state<Publication | null>(null);
 	let busy = $state(false);
-	let endedOpen = $state(false);
 
 	const isLive = (p: Publication) =>
 		!p.revoked_at && (!p.expires_at || new Date(p.expires_at).getTime() > Date.now());
@@ -49,22 +54,36 @@
 		return p.open_count === 1 ? 'Once' : `${p.open_count} times`;
 	}
 
+	const shortDate = (iso: string) =>
+		new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
 	function expires(p: Publication): string {
-		if (!p.expires_at) return 'Never';
-		return new Date(p.expires_at).toLocaleDateString(undefined, {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric'
-		});
+		return p.expires_at ? shortDate(p.expires_at) : 'Never';
 	}
 
-	// A link records only whether it asks the server for data; a snapshot and
-	// a page that reads nothing look the same from here, so neither is named.
-	function kind(p: Publication): string {
-		return p.is_live ? 'Live' : '—';
+	/** "today", "yesterday", "3 days ago", "last week", or a date. */
+	function when(iso: string): string {
+		const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+		const days = Math.round((day(new Date()) - day(new Date(iso))) / 86_400_000);
+		if (days <= 0) return 'today';
+		if (days === 1) return 'yesterday';
+		if (days < 7) return `${days} days ago`;
+		if (days < 14) return 'last week';
+		return `on ${shortDate(iso)}`;
 	}
 
-	function openApplet(p: Publication) {
+	function line(p: Publication): string {
+		const what = p.producer_kind === 'applet' ? 'An applet, shared' : p.producer_kind === 'chat' ? 'A chat, shared' : 'Shared';
+		return `${what} ${when(p.created_at)}.${p.is_live ? ' Shows current data each time it opens.' : ''}`;
+	}
+
+	function endedLine(p: Publication): string {
+		const how = p.revoked_at ? `Turned off ${when(p.revoked_at)}` : `Expired ${when(p.expires_at ?? p.created_at)}`;
+		const seen = p.open_count === 0 ? 'Never opened' : `Opened ${opens(p).toLowerCase()}`;
+		return `${how}. ${seen}.`;
+	}
+
+	function openSource(p: Publication) {
 		const route =
 			p.producer_kind === 'page'
 				? `/page/${p.producer_id}`
@@ -97,151 +116,193 @@
 			busy = false;
 		}
 	}
-
-	const columns: Column<Publication>[] = [
-		{ key: 'title', label: 'Page', icon: 'mynaui:file-text', width: '34%', minWidth: '180px' },
-		{ key: 'is_live', label: 'Data', icon: 'mynaui:activity', width: '14%', minWidth: '90px', hideOnMobile: true, getValue: kind },
-		{ key: 'open_count', label: 'Opened', icon: 'mynaui:eye', width: '16%', minWidth: '100px', getValue: opens },
-		{ key: 'expires_at', label: 'Expires', icon: 'mynaui:alarm-clock', width: '16%', minWidth: '110px', hideOnMobile: true, getValue: expires },
-		{
-			key: 'created_at',
-			label: 'Shared',
-			icon: 'mynaui:clock-circle',
-			width: '20%',
-			minWidth: '110px',
-			hideOnMobile: true,
-			getValue: (p) => formatRelativeTimestamp(p.created_at)
-		}
-	];
 </script>
 
-<SettingsPage title="Shared links" lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once." width="medium">
-	{#if !loading && all.length === 0 && !error}
+<SettingsPage
+	title="Shared links"
+	lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once."
+	back={{ route: '/virtues/data', label: 'Your data' }}
+>
+	{#if error}
+		<div class="load-error" role="alert">
+			<p>Your server couldn't list your shared links. {error}</p>
+			<Button variant="secondary" onclick={load}>Try again</Button>
+		</div>
+	{:else if loading}
+		<p class="quiet">Loading your shared links…</p>
+	{:else if all.length === 0}
 		<div class="empty">
 			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
-			<p class="empty-body">
-				Share a page, a chat, or an applet that shows a page, and the link appears here.
-			</p>
+			<p class="empty-body">Share a page, a chat, or an applet that shows a page, and the link appears here.</p>
 		</div>
 	{:else}
-		<UniversalDataGrid
-			items={live}
-			{columns}
-			entityType="publication"
-			{loading}
-			{error}
-			emptyIcon="mynaui:share"
-			emptyMessage={live.length === 0 ? 'No links are working right now' : 'No links match'}
-			loadingMessage="Loading shared links…"
-			searchPlaceholder="Search shared links…"
-			defaultViewMode="table"
-			showCounts={false}
-			onItemClick={openApplet}
-			onRetry={load}
-		>
-			{#snippet tableRow(p: Publication)}
-				<td class="col-name"><span class="name-text">{p.title}</span></td>
-				<td class="col-dim hide-mobile">{kind(p)}</td>
-				<td class="col-dim">{opens(p)}</td>
-				<td class="col-dim hide-mobile">{expires(p)}</td>
-				<td class="col-dim hide-mobile">{formatRelativeTimestamp(p.created_at)}</td>
-			{/snippet}
+		{#if live.length > 0}
+			<div class="cols head" aria-hidden="true">
+				<span>Page</span><span>Opened</span><span>Expires</span><span></span>
+			</div>
+			<ul class="links">
+				{#each live as p (p.id)}
+					<li class="cols link">
+						<span class="what">
+							<button type="button" class="title" onclick={() => openSource(p)}>{p.title}</button>
+							<span class="line">{line(p)}</span>
+						</span>
+						<span class="dim"><span class="tag">Opened </span>{opens(p)}</span>
+						<span class="dim"><span class="tag">Expires </span>{expires(p)}</span>
+						<span class="actions">
+							{#if p.link}
+								<IconButton
+									icon={copied === p.id ? 'mynaui:check' : 'mynaui:copy'}
+									label={copied === p.id ? 'Copied' : `Copy the link to ${p.title}`}
+									size="nested"
+									onclick={() => copy(p)}
+								/>
+							{/if}
+							<IconButton icon="mynaui:unlink" label={`Turn off the link to ${p.title}`} size="nested" onclick={() => (revoking = p)} />
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="quiet">None of your links open right now.</p>
+		{/if}
 
-			{#snippet rowActions(p: Publication)}
-				<span class="actions">
-					{#if p.link}
-						<IconButton
-							icon={copied === p.id ? 'mynaui:check' : 'mynaui:copy'}
-							label={copied === p.id ? 'Copied' : `Copy the link to ${p.title}`}
-							size="nested"
-							onclick={(e) => {
-								e.stopPropagation();
-								copy(p);
-							}}
-						/>
-					{/if}
-					<IconButton
-						icon="mynaui:unlink"
-						label={`Turn off the link to ${p.title}`}
-						size="nested"
-						onclick={(e) => {
-							e.stopPropagation();
-							revoking = p;
-						}}
-					/>
-				</span>
-			{/snippet}
-		</UniversalDataGrid>
-	{/if}
-
-	{#if ended.length > 0}
-		<section class="ended">
-			<button
-				type="button"
-				class="ended-head"
-				aria-expanded={endedOpen}
-				onclick={() => (endedOpen = !endedOpen)}
-			>
-				<Icon icon={endedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
-				<span>Turned off or expired</span>
-			</button>
-			{#if endedOpen}
-				<ul class="ended-list">
-					{#each ended as p (p.id)}
-						<li class="ended-row">
-							<button type="button" class="ended-name" onclick={() => openApplet(p)}>{p.title}</button>
-							<span class="ended-when">
-								{p.revoked_at
-									? `Turned off ${formatRelativeTimestamp(p.revoked_at)}`
-									: `Expired ${formatRelativeTimestamp(p.expires_at ?? p.created_at)}`}
-							</span>
-							<span class="ended-when">{opens(p)}</span>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+		{#if ended.length > 0}
+			<div class="ended">
+				<Fold label="Turned off or expired" sub="These no longer open. Sharing again makes a new link.">
+					<ul class="ended-list">
+						{#each ended as p (p.id)}
+							<li>
+								<button type="button" class="title" onclick={() => openSource(p)}>{p.title}</button>
+								<span class="line">{endedLine(p)}</span>
+							</li>
+						{/each}
+					</ul>
+				</Fold>
+			</div>
+		{/if}
 	{/if}
 </SettingsPage>
 
 <Modal open={revoking !== null} onClose={() => (revoking = null)} title="Turn off this link?" width="sm">
 	{#if revoking}
 		<p class="confirm">
-			The link to <strong>{revoking.title}</strong> stops working for everyone who has it, and your
-			server deletes its copy of the page. You can't turn the same link back on; sharing again makes
-			a new one.
+			The link to <strong>{revoking.title}</strong> stops working for everyone who has it, and your server deletes its copy of
+			the page. You can't turn the same link back on; sharing again makes a new one.
 		</p>
 		<div class="confirm-actions">
-			<Button variant="ghost" onclick={() => (revoking = null)}>Keep it</Button>
+			<Button variant="secondary" onclick={() => (revoking = null)}>Keep it</Button>
 			<Button variant="danger" disabled={busy} onclick={revoke}>Turn off the link</Button>
 		</div>
 	{/if}
 </Modal>
 
 <style>
-	.col-name,
-	.col-dim {
-		padding: 0.625rem 0.75rem;
+	.cols {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 112px 104px 64px;
+		align-items: center;
+		gap: 12px;
 	}
-	.name-text {
-		font-weight: 500;
+
+	.head {
+		margin-top: 32px;
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	.links {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.link {
+		min-height: 56px;
+		padding: 8px 0;
+	}
+
+	.what {
+		min-width: 0;
+	}
+
+	.title {
+		display: block;
+		max-width: 100%;
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		font-size: 15px;
+		text-align: left;
 		color: var(--color-foreground);
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
-	.col-dim {
-		font-size: 0.8125rem;
+
+	.line {
+		display: block;
+		margin-top: 4px;
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+	}
+
+	.dim {
+		font-size: 14px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 	}
+
+	/* The column names, read before each value when the header is hidden. */
+	.tag {
+		display: none;
+	}
+
 	.actions {
-		display: inline-flex;
-		gap: 0.25rem;
+		display: flex;
+		justify-content: flex-end;
+		gap: 4px;
 	}
-	@media (max-width: 768px) {
-		.hide-mobile {
-			display: none;
-		}
+
+	.ended {
+		margin-top: 24px;
 	}
+
+	.ended-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.quiet {
+		margin: 32px 0 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.load-error {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 32px;
+	}
+
+	.load-error p {
+		margin: 0;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+
 	.empty {
 		display: flex;
 		flex-direction: column;
@@ -250,14 +311,17 @@
 		padding: 3rem 1rem;
 		text-align: center;
 	}
+
 	.empty-glyph {
 		color: var(--color-foreground-muted);
 	}
+
 	.empty-title {
 		margin: 0;
 		font-weight: 600;
 		color: var(--color-foreground);
 	}
+
 	.empty-body {
 		margin: 0;
 		max-width: 40ch;
@@ -265,56 +329,46 @@
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
 	}
-	.ended {
-		margin-top: 1.5rem;
-	}
-	.ended-head {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.25rem 0;
-		border: 0;
-		background: none;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.ended-list {
-		list-style: none;
-		margin: 0.5rem 0 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.ended-row {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.375rem 0;
-		font-size: 0.8125rem;
-	}
-	.ended-name {
-		border: 0;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-foreground);
-		cursor: pointer;
-		text-align: left;
-	}
-	.ended-when {
-		color: var(--color-foreground-muted);
-	}
+
 	.confirm {
 		margin: 0 0 1rem;
 		font-size: 0.875rem;
 		line-height: 1.5;
 	}
+
 	.confirm-actions {
 		display: flex;
 		justify-content: flex-end;
 		gap: 0.5rem;
+	}
+
+	@media (max-width: 560px) {
+		.head {
+			display: none;
+		}
+
+		.link {
+			grid-template-columns: minmax(0, 1fr) auto;
+			row-gap: 4px;
+			padding: 12px 0;
+		}
+
+		.what {
+			grid-column: 1;
+		}
+
+		.actions {
+			grid-column: 2;
+			grid-row: 1;
+		}
+
+		.dim {
+			grid-column: 1 / -1;
+			font-size: 13px;
+		}
+
+		.tag {
+			display: inline;
+		}
 	}
 </style>

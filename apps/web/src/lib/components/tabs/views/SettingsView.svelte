@@ -17,17 +17,17 @@
 	               /virtues/assistant/spending/provider — your own AI provider
 	  Appearance   /virtues/appearance     — theme, reading font, motion
 	  Billing      /virtues/billing        — subscription, balance, auto top-up
-	  Your data    /virtues/data           — keep recordings, export everything
+	  Your data    /virtues/data           — backup, export, keep recordings, deleting
+	               /virtues/data/shared    — every link shared through the door
+	               /virtues/data/keys      — the named keys applets use
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
 	  Server       /virtues/server         — updates, and reaching it from away
-	  Keys         /virtues/keys           — the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
 	  Devices      /virtues/devices        — paired devices, and Unpair
 	               /virtues/devices/server — the server's own page: its release
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
-	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
 	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
@@ -123,6 +123,9 @@
 		'/virtues/system/activity': '/virtues/devices',
 		'/virtues/activity': '/virtues/devices',
 		'/virtues/developer/activity': '/virtues/devices',
+		// Shared links and Keys open from Your data.
+		'/virtues/shared': '/virtues/data/shared',
+		'/virtues/keys': '/virtues/data/keys',
 	};
 
 	// Sources left Settings for its own door. `/sources` is a different tab
@@ -179,11 +182,9 @@
 		| 'backup'
 		| 'assistant'
 		| 'billing'
-		| 'keys'
 		| 'system'
 		| 'search'
 		| 'devices'
-		| 'shared'
 		| 'applets'
 		| 'developer';
 
@@ -195,11 +196,9 @@
 		'backup',
 		'assistant',
 		'billing',
-		'keys',
 		'system',
 		'search',
 		'devices',
-		'shared',
 		'applets',
 		'developer',
 	];
@@ -236,7 +235,13 @@
 		{:else if section === 'server'}
 			<SettingsSection section="server" />
 		{:else if section === 'data'}
-			<SettingsSection section="data" />
+			{#if sub === 'shared'}
+				<SharedLinksView />
+			{:else if sub === 'keys'}
+				<KeysView />
+			{:else}
+				<SettingsSection section="data" />
+			{/if}
 		{:else if section === 'backup'}
 			<BackupPage />
 		{:else if section === 'assistant'}
@@ -255,14 +260,10 @@
 			{/if}
 		{:else if section === 'billing'}
 			<SettingsSection section="billing" />
-		{:else if section === 'keys'}
-			<KeysView />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
 			<SearchSettingsView />
-		{:else if section === 'shared'}
-			<SharedLinksView />
 		{:else if section === 'applets'}
 			<!-- Padding on the scroller, the page's width inside it: the same
 			     box model as the Applets page in Home, so the two line up. -->

@@ -63,7 +63,7 @@ export const SECTIONS: readonly Section[] = [
 	{ id: 'assistant', title: 'How {name} talks to you', lede: 'Its name and how it speaks to you.', route: '/virtues/assistant' },
 	{ id: 'tools', title: 'What {name} can do', lede: "Turn off anything you don't want it to do.", route: '/virtues/assistant/tools' },
 	{ id: 'spending', title: 'Models and spending', lede: 'Which models it uses and how much it may spend.', route: '/virtues/assistant/spending' },
-	{ id: 'data', title: 'Your data', lede: 'How long your server keeps recordings, and a copy of everything.', route: '/virtues/data' },
+	{ id: 'data', title: 'Your data', lede: "Copies of your data, what your server keeps, and what you've shared.", route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks and how your pages read.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: "Your subscription, your balance, and what you've paid.", route: '/virtues/billing' },
 	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
@@ -97,11 +97,12 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'byo-ai', title: 'Your own AI provider', section: 'spending', kind: 'page', words: ['own key', 'bring your own', 'provider', 'endpoint', 'openai', 'openrouter', 'ollama', 'byo'], route: '/virtues/assistant/spending/provider' },
 
 	// Your data
-	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
-	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/shared' },
 	{ id: 'backup', title: 'Backup', section: 'data', kind: 'page', words: ['backup', 'drive', 'restore', 'copy', 'recovery key', 'disaster'], route: '/virtues/backup' },
-	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
 	{ id: 'export', title: 'Export everything', section: 'data', kind: 'action', words: ['download', 'copy', 'takeout', 'leave', 'my data', 'json'], route: '/virtues/data' },
+	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
+	{ id: 'delete-records', title: 'Delete records', section: 'data', kind: 'action', words: ['delete', 'remove', 'erase', 'forget', 'purchase', 'visit', 'record', 'delete-data'], route: '/virtues/data' },
+	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/data/shared' },
+	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/data/keys' },
 
 	// Appearance
 	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues/appearance' },
@@ -208,8 +209,6 @@ export const LANDING: readonly { title: string; links: readonly LandingLink[] }[
 			{ label: 'Updates and network', route: '/virtues/server' },
 			{ label: 'Backup', route: '/virtues/backup' },
 			{ label: 'Your data', route: '/virtues/data' },
-			{ label: 'Keys', route: '/virtues/keys' },
-			{ label: 'Shared links', route: '/virtues/shared' },
 		],
 	},
 ];
