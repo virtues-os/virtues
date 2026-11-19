@@ -40,6 +40,7 @@
 		getArticle,
 		getDayRewrite,
 		rewriteDay,
+		writeDayAgain,
 		paintDay,
 		type DayPictureStyle,
 		revertArticle,
@@ -63,8 +64,10 @@
 	import DayArticleBody from "./DayArticleBody.svelte";
 	import DayNumbers from "./DayNumbers.svelte";
 	import DayInline from "./DayInline.svelte";
-	import { ApiError, getRecord, getAssistantProfile, updateUiPreferences } from "$lib/api/client";
+	import { ApiError, getRecord, getAssistantProfile, updateUiPreferences, restoreTrashed } from "$lib/api/client";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
+	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { toast } from "svelte-sonner";
 	import { messageBody, nearTurns } from "$lib/wiki/recordWords";
 	import type { NoteAnchor } from "$lib/wiki/dayNotes";
 	import DayGloss from "./DayGloss.svelte";
@@ -442,6 +445,127 @@
 	async function openDayArticle() {
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
+	}
+
+	// ── Remove this day's page ───────────────────────────────────────────────
+	// Removing takes the written page out of the day and sends it to Recently
+	// deleted; the day's records stay. Your server marks the day, so it does
+	// not write the page again until you ask. The line that says so stands
+	// where the page was.
+	type Removal =
+		| { kind: "none" }
+		| { kind: "removed"; at: string; pageId: string | null; failed?: "put_back" | "write" }
+		| { kind: "writing" };
+	const removalOf = (d: WikiDayApi): Removal =>
+		d.page_removed_at ? { kind: "removed", at: d.page_removed_at, pageId: d.removed_page_id ?? null } : { kind: "none" };
+	let removal = $state.raw<Removal>(removalOf(page));
+	let removalBusy = $state(false);
+	/** Bumped when the day changes, so an answer for another day is dropped. */
+	let removalSeq = 0;
+	let writeAgainTimer: ReturnType<typeof setTimeout> | null = null;
+
+	$effect(() => {
+		removal = removalOf(page);
+		removalSeq++;
+		removalBusy = false;
+		return () => {
+			if (writeAgainTimer) clearTimeout(writeAgainTimer);
+			writeAgainTimer = null;
+		};
+	});
+
+	const removedOn = $derived(
+		removal.kind === "removed"
+			? new Date(removal.at).toLocaleDateString("en-US", { month: "long", day: "numeric" })
+			: "",
+	);
+
+	async function removeDayPage() {
+		if (removalBusy) return;
+		const seq = removalSeq;
+		const ok = await confirmAction({
+			title: `Remove the page for ${date.toLocaleDateString("en-US", { month: "long", day: "numeric" })}?`,
+			body: "Your server deletes the written account of this day and won't write it again unless you ask. The records from that day stay.",
+			confirmLabel: "Remove page",
+			danger: true,
+		});
+		if (!ok || seq !== removalSeq) return;
+		removalBusy = true;
+		try {
+			const a = await getArticle("day", page.id);
+			if (!a?.page_id) throw new Error("This day has no page");
+			await pagesStore.removePage(a.page_id);
+			if (seq !== removalSeq) return;
+			summaryText = "";
+			rewriteHasPage = false;
+			removal = { kind: "removed", at: new Date().toISOString(), pageId: a.page_id };
+		} catch (e) {
+			toast.error("Your server couldn't remove this day's page", {
+				description: e instanceof Error ? e.message : "Nothing changed. Try again",
+			});
+		} finally {
+			if (seq === removalSeq) removalBusy = false;
+		}
+	}
+
+	/** Put it back: the page comes out of Recently deleted as it was. */
+	async function putDayPageBack() {
+		const line = removal;
+		if (line.kind !== "removed" || !line.pageId || removalBusy) return;
+		const seq = removalSeq;
+		removalBusy = true;
+		try {
+			await restoreTrashed("page", line.pageId);
+			const r = await fetchArticle(currentDateSlug);
+			if (seq !== removalSeq) return;
+			if (r.article) summaryText = r.article;
+			removal = { kind: "none" };
+			void askRewrite(currentDateSlug);
+		} catch {
+			if (seq === removalSeq) removal = { ...line, failed: "put_back" };
+		} finally {
+			if (seq === removalSeq) removalBusy = false;
+		}
+	}
+
+	/** How often, and for how long, the day is asked for the page being written. */
+	const WRITE_AGAIN_POLL_MS = 15_000;
+	const WRITE_AGAIN_ASKS = 120;
+
+	/** Write it again: your server writes a new page for the day from its records. */
+	async function writeDayPageAgain() {
+		const line = removal;
+		if (line.kind !== "removed" || removalBusy) return;
+		const seq = removalSeq;
+		const slug = currentDateSlug;
+		removalBusy = true;
+		try {
+			await writeDayAgain(slug);
+		} catch {
+			if (seq === removalSeq) {
+				removal = { ...line, failed: "write" };
+				removalBusy = false;
+			}
+			return;
+		}
+		if (seq !== removalSeq) return;
+		removalBusy = false;
+		removal = { kind: "writing" };
+		let asks = 0;
+		const ask = async () => {
+			writeAgainTimer = null;
+			if (seq !== removalSeq) return;
+			const r = await fetchArticle(slug);
+			if (seq !== removalSeq) return;
+			if (r.article) {
+				summaryText = r.article;
+				removal = { kind: "none" };
+				void askRewrite(slug);
+			} else if (++asks < WRITE_AGAIN_ASKS) {
+				writeAgainTimer = setTimeout(() => void ask(), WRITE_AGAIN_POLL_MS);
+			}
+		};
+		writeAgainTimer = setTimeout(() => void ask(), WRITE_AGAIN_POLL_MS);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1156,6 +1280,17 @@
 						label={linkCopy === "copied" ? "Link copied" : linkCopy === "failed" ? "Couldn't copy the link" : "Copy link"}
 						onclick={copyLink}
 					/>
+					{#if showAutobiography && currentDateSlug < todaySlug}
+						<MenuItem
+							label="Remove this day's page…"
+							destructive
+							disabled={removalBusy || rewriteSending || rewriteRunning}
+							onclick={() => {
+								close();
+								void removeDayPage();
+							}}
+						/>
+					{/if}
 					<div class="menu-rule" role="separator"></div>
 					<MenuItem
 						label={veil.on ? "Show names" : "Hide names"}
@@ -1327,6 +1462,18 @@
 								<p class="empty-state-text">This day hasn't happened yet.</p>
 							{:else if currentDateSlug === todaySlug}
 								<p class="empty-state-text">Your day is still in progress. Your server writes its page after it ends.</p>
+							{:else if removal.kind === "writing"}
+								<p class="empty-state-text" role="status">Your server is writing this day's page. It takes a few minutes. You can leave and come back.</p>
+							{:else if removal.kind === "removed"}
+								<p class="empty-state-text" role="status">
+									You removed this day's page on {removedOn}.
+									{#if removal.pageId}<TextAction inline loading={removalBusy} onclick={putDayPageBack}>Put it back</TextAction>{" "}{/if}<TextAction inline disabled={removalBusy} onclick={writeDayPageAgain}>Write it again</TextAction>
+								</p>
+								{#if removal.failed === "put_back"}
+									<p class="empty-state-text">Your server couldn't put the page back. Try again, or restore it from Recently deleted.</p>
+								{:else if removal.failed === "write"}
+									<p class="empty-state-text">Your server couldn't start writing this day's page. Try again later.</p>
+								{/if}
 							{:else}
 								<p class="empty-state-text">This day has no page yet.</p>
 							{/if}

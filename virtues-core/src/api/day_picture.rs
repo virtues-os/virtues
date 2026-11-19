@@ -1374,7 +1374,7 @@ pub(crate) async fn this_week(pool: &PgPool, today: NaiveDate) -> Result<Week> {
         "SELECT COALESCE(p.content, '') FROM wiki_days d \
          JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
          JOIN app_pages p ON p.id = a.page_id \
-         WHERE d.date >= $1 AND d.date <= $2",
+         WHERE d.date >= $1 AND d.date <= $2 AND p.deleted_at IS NULL",
     )
     .bind(from)
     .bind(today)
@@ -1415,7 +1415,7 @@ pub(crate) async fn this_week(pool: &PgPool, today: NaiveDate) -> Result<Week> {
          JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
          JOIN app_pages p ON p.id = a.page_id \
          WHERE d.date >= $1 AND d.date < $2 \
-           AND a.maintenance <> 'never' \
+           AND a.maintenance <> 'never' AND p.deleted_at IS NULL \
            AND NULLIF(TRIM(p.content), '') IS NOT NULL \
          ORDER BY (SELECT max(COALESCE(e.local_novelty_z, e.novelty_z)) FROM wiki_events e \
                    WHERE e.day_id = d.id AND NOT e.user_hidden) DESC NULLS LAST, \

@@ -205,7 +205,7 @@ pub(crate) async fn assemble(
     let people_rows = sqlx::query(
         "SELECT p.id, p.name, p.metadata->'ios_relations' AS relations, \
                 (SELECT left(pg.content, 900) FROM wiki_articles a JOIN app_pages pg ON pg.id = a.page_id \
-                  WHERE a.subject_type = 'person' AND a.subject_id = p.id) AS article \
+                  WHERE a.subject_type = 'person' AND a.subject_id = p.id AND pg.deleted_at IS NULL) AS article \
          FROM wiki_people p \
          WHERE p.id IN (SELECT DISTINCT entity_id FROM wiki_refs \
                         WHERE entity_type = 'person' AND occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz) \
@@ -403,7 +403,7 @@ pub(crate) async fn assemble(
         "SELECT d.date, pg.content FROM wiki_days d \
          JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
          JOIN app_pages pg ON pg.id = a.page_id \
-         WHERE d.date < $1 AND d.date >= $1 - 7 AND pg.content <> '' \
+         WHERE d.date < $1 AND d.date >= $1 - 7 AND pg.content <> '' AND pg.deleted_at IS NULL \
          ORDER BY d.date DESC LIMIT $2",
     )
     .bind(date)
@@ -1718,7 +1718,7 @@ pub async fn similar_days(pool: &PgPool, date: NaiveDate, limit: i64) -> Result<
          JOIN wiki_articles a ON a.page_id = e.record_id AND a.subject_type = 'day' \
          JOIN wiki_days d ON d.id = a.subject_id \
          JOIN app_pages pg ON pg.id = a.page_id \
-         WHERE e.source_table = 'app_pages' AND e.chunk_index = 0 \
+         WHERE e.source_table = 'app_pages' AND e.chunk_index = 0 AND pg.deleted_at IS NULL \
            AND d.date NOT BETWEEN $1 - 1 AND $1 + 1 \
          ORDER BY v.embedding <=> me.embedding \
          LIMIT $2",

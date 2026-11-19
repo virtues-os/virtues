@@ -732,6 +732,11 @@ fn narration_note(
         NarrateOutcome::Kept(SaveOutcome::KeptYourEdits) => format!(
             "This day's page has been edited by hand, so narration left it as it is. {REWRITE}"
         ),
+        NarrateOutcome::Kept(SaveOutcome::KeptRemoved) => {
+            "You removed this day's page, so narration wrote nothing. Open the day and choose \
+             Write it again to have it written."
+                .to_string()
+        }
         NarrateOutcome::Kept(_) => format!(
             "This day's page has been opened in the editor, so narration left it as it is. {REWRITE}"
         ),

@@ -670,7 +670,8 @@ pub enum NarrateOutcome {
     /// Too little of the day to write from. No model call was made.
     NotEnough,
     /// The day has a page narration may not write over: [`SaveOutcome`]'s
-    /// `KeptNever`, `KeptYourEdits` or `KeptOpened`.
+    /// `KeptNever`, `KeptYourEdits` or `KeptOpened`. Or the owner removed the
+    /// day's page (`KeptRemoved`).
     Kept(SaveOutcome),
     /// Another writer holds the day right now. Nothing was stamped, so the
     /// queue offers it again.
@@ -704,7 +705,7 @@ impl NarrateOutcome {
 ///
 /// In this order, so that every refusal costs no model call: the day's lock
 /// ([`try_lock_day`]; held elsewhere is `Busy` and stamps nothing), then
-/// `narrated_at`, then whether the day is over, then whether its existing
+/// whether its owner removed the day's page, then `narrated_at`, then whether the day is over, then whether its existing
 /// page is one narration may write over. `narrated_at` is stamped when the
 /// page is written (in the write's own transaction, `save_day_article`) and
 /// when it is kept (the day has its page either way, and Rewrite this page is
@@ -724,12 +725,21 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<NarrateOutcom
         // lock, so a rewrite that finished a moment ago is seen. `WikiDay`
         // does not carry it, so read it directly rather than widening a
         // struct that a dozen surfaces deserialize.
-        let row: Option<(String, Option<chrono::DateTime<chrono::Utc>>)> =
-            sqlx::query_as("SELECT id, narrated_at FROM wiki_days WHERE date = $1")
-                .bind(date)
-                .fetch_optional(pool)
-                .await?;
-        if row.as_ref().is_some_and(|(_, at)| at.is_some()) {
+        let row: Option<(String, Option<chrono::DateTime<chrono::Utc>>, bool)> = sqlx::query_as(
+            "SELECT id, narrated_at, page_removed_at IS NOT NULL FROM wiki_days WHERE date = $1",
+        )
+        .bind(date)
+        .fetch_optional(pool)
+        .await?;
+        // REMOVED BY ITS OWNER. Asked before `narrated_at`, which a re-cut on
+        // new evidence clears: the marker is what keeps the page from being
+        // written again, also after the trash has purged it and no article
+        // row is left to say so. Stamped, so the queue stops offering the day.
+        if row.as_ref().is_some_and(|(_, _, removed)| *removed) {
+            stamp_narrated(pool, date).await?;
+            return Ok(NarrateOutcome::Kept(SaveOutcome::KeptRemoved));
+        }
+        if row.as_ref().is_some_and(|(_, at, _)| at.is_some()) {
             tracing::debug!(date = %date, "already narrated");
             return Ok(NarrateOutcome::AlreadyWritten);
         }
@@ -742,7 +752,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<NarrateOutcom
 
         // The same guards `save_day_article` applies, asked first, so a page
         // narration would refuse costs nothing to refuse.
-        if let Some((day_id, _)) = &row {
+        if let Some((day_id, _, _)) = &row {
             if let Some(kept) = kept_by(pool, day_id).await? {
                 stamp_narrated(pool, date).await?;
                 return Ok(NarrateOutcome::Kept(kept));
@@ -814,6 +824,8 @@ pub enum SaveOutcome {
     /// The page has been opened in the editor, so it has a CRDT that a write
     /// through the pool would fork.
     KeptOpened,
+    /// The owner removed the day's page (`wiki_days.page_removed_at`).
+    KeptRemoved,
     /// The draft was empty, so nothing was saved.
     Empty,
 }
@@ -826,6 +838,7 @@ impl SaveOutcome {
             Self::KeptNever => "kept_never",
             Self::KeptYourEdits => "kept_your_edits",
             Self::KeptOpened => "kept_opened",
+            Self::KeptRemoved => "kept_removed",
             Self::Empty => "empty",
         }
     }
@@ -1010,7 +1023,7 @@ pub async fn day_page(pool: &PgPool, date: NaiveDate) -> Result<Option<DayPage>>
          FROM wiki_days d \
          JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
          JOIN app_pages p ON p.id = a.page_id \
-         WHERE d.date = $1",
+         WHERE d.date = $1 AND p.deleted_at IS NULL",
     )
     .bind(date)
     .bind(vec![
@@ -1033,6 +1046,40 @@ pub async fn day_page(pool: &PgPool, date: NaiveDate) -> Result<Option<DayPage>>
         page_id: row.page_id,
         has_your_edits: row.stamped || row.never || edited,
     }))
+}
+
+/// Undo the owner's removal of a day's page so the day can be written
+/// afresh. `false` when the day's page was not removed.
+///
+/// The removed page is purged if the trash still has it: a day has one
+/// article page with an id fixed by the day, so a new page cannot exist
+/// beside the old one. Clearing `narrated_at` and the attempt count makes the
+/// day due, so the queue writes it if the caller's own [`narrate_day`] does
+/// not.
+pub async fn unremove_day_page(pool: &PgPool, date: NaiveDate) -> Result<bool> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT d.id, a.page_id FROM wiki_days d \
+         LEFT JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
+         WHERE d.date = $1 AND d.page_removed_at IS NOT NULL",
+    )
+    .bind(date)
+    .fetch_optional(pool)
+    .await?;
+    let Some((day_id, page_id)) = row else {
+        return Ok(false);
+    };
+    if let Some(page_id) = page_id {
+        crate::api::trash::purge_trashed(pool, crate::api::trash::TrashKind::Page, &page_id).await?;
+    }
+    sqlx::query(
+        "UPDATE wiki_days SET page_removed_at = NULL, narrated_at = NULL, \
+                narration_attempts = 0, narration_attempted_at = NULL, updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(&day_id)
+    .execute(pool)
+    .await?;
+    Ok(true)
 }
 
 /// What [`rewrite_day_page`] did. Every outcome but `Rewritten` and
@@ -4328,5 +4375,71 @@ mod dossier_tests {
         );
         assert_eq!(page_row(&pool, &page.page_id).await.0, ESCAPED_EXPORT);
         assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), ESCAPED_EXPORT);
+    }
+
+    /// Removing a day's page takes its text out of the day, keeps the writer
+    /// from writing it again (also once the trash has purged the page), and
+    /// is undone by putting the page back or by asking for a new one.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_removed_day_page_stays_removed_until_its_owner_says_otherwise(pool: PgPool) {
+        use crate::api::trash::{self, TrashKind};
+        let date: NaiveDate = "2026-01-05".parse().unwrap();
+        let day = crate::api::wiki_days::get_or_create_day(&pool, date).await.unwrap();
+        let article = crate::api::wiki_articles::create_article(&pool, "day", &day.id, "5 January 2026", "A quiet day.")
+            .await
+            .unwrap();
+        let removed_at = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT page_removed_at FROM wiki_days WHERE date = '2026-01-05'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        crate::api::pages::delete_page(&pool, &article.page_id).await.unwrap();
+        let day = crate::api::wiki_days::get_or_create_day(&pool, date).await.unwrap();
+        assert_eq!(day.article, None, "a page in the trash is not the day's text");
+        assert!(day.page_removed_at.is_some());
+        assert_eq!(day.removed_page_id.as_deref(), Some(article.page_id.as_str()));
+        assert!(day_page(&pool, date).await.unwrap().is_none(), "nothing to rewrite");
+        assert!(crate::api::wiki_articles::get_article_prose(&pool, "day", &day.id).await.unwrap().is_none());
+
+        // New evidence clears `narrated_at`; the writer still writes nothing.
+        sqlx::query("UPDATE wiki_days SET narrated_at = NULL WHERE date = $1").bind(date).execute(&pool).await.unwrap();
+        assert!(matches!(
+            narrate_day(&pool, date).await.unwrap(),
+            NarrateOutcome::Kept(SaveOutcome::KeptRemoved)
+        ));
+
+        // Put back: the text and the day are as they were.
+        trash::restore(&pool, TrashKind::Page, &article.page_id).await.unwrap();
+        let day = crate::api::wiki_days::get_or_create_day(&pool, date).await.unwrap();
+        assert_eq!(day.article.as_deref(), Some("A quiet day."));
+        assert!(day.page_removed_at.is_none() && day.removed_page_id.is_none());
+        assert!(!unremove_day_page(&pool, date).await.unwrap(), "a day with its page has nothing to undo");
+
+        // Removed and purged: no article row is left, and the marker holds.
+        trash::trash(&pool, TrashKind::Page, &article.page_id).await.unwrap();
+        trash::purge_trashed(&pool, TrashKind::Page, &article.page_id).await.unwrap();
+        assert!(removed_at(pool.clone()).await.is_some());
+        sqlx::query("UPDATE wiki_days SET narrated_at = NULL WHERE date = $1").bind(date).execute(&pool).await.unwrap();
+        assert!(matches!(
+            narrate_day(&pool, date).await.unwrap(),
+            NarrateOutcome::Kept(SaveOutcome::KeptRemoved)
+        ));
+
+        // Write it again: the marker goes and the day is due.
+        assert!(unremove_day_page(&pool, date).await.unwrap());
+        assert!(removed_at(pool.clone()).await.is_none());
+        assert!(day_is_due(&pool, date).await.unwrap());
+
+        // With the page still in the trash, Write it again purges it first.
+        let article = crate::api::wiki_articles::create_article(&pool, "day", &day.id, "5 January 2026", "A second draft.")
+            .await
+            .unwrap();
+        trash::trash(&pool, TrashKind::Page, &article.page_id).await.unwrap();
+        assert!(unremove_day_page(&pool, date).await.unwrap());
+        assert!(crate::api::wiki_articles::get_article(&pool, "day", &day.id).await.unwrap().is_none());
     }
 }
