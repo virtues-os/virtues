@@ -9,9 +9,6 @@
  * screen.
  *
  * The widths themselves are the `--page-*` tokens in themes.css.
- *
- * TODO(2026-11-18): migrate DetailFrame.svelte (tasks, threads, notes). It
- * still caps its column itself, so the page bar offers no width there.
  */
 
 import { getContext, setContext, untrack } from "svelte";
