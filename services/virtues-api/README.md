@@ -80,6 +80,8 @@ Security model:
 | `VIRTUES_API_FLUSH_INTERVAL` | No | `30` | Seconds between budget flushes |
 | `VIRTUES_API_DEFAULT_BUDGET` | No | `5.0` | Default budget for new users (USD) |
 | `VIRTUES_API_PORT` | No | `9002` | Port to listen on (9000 used by MinIO) |
+| `VIRTUES_MAPS_DIR` | No | `/srv/maps` | Directory the map files are read from when no map storage is set |
+| `VIRTUES_MAPS_S3_ENDPOINT`, `_BUCKET`, `_REGION`, `_ACCESS_KEY`, `_SECRET_KEY` | No | unset | S3-compatible storage holding the map files. Set all five or none. When set, map files are read from the bucket through a key that can only read it, and the directory is not used |
 
 \* At least one provider API key is required.
 

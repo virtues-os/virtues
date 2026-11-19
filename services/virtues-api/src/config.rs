@@ -13,6 +13,52 @@ use anyhow::{bail, Context, Result};
 /// Weak secrets enable brute-force attacks
 pub const MIN_SECRET_LENGTH: usize = 32;
 
+/// Where the map files are in S3-compatible object storage. A read is
+/// path-style: `<endpoint>/<bucket>/latest.json`, `<endpoint>/<bucket>/<build>/<file>`.
+/// It has no `Debug`, so the secret key cannot reach a log through `{:?}`.
+#[derive(Clone)]
+pub struct MapsBucket {
+    /// `VIRTUES_MAPS_S3_ENDPOINT`, e.g. `https://s3.example-region.example.net`.
+    pub endpoint: String,
+    /// `VIRTUES_MAPS_S3_BUCKET`.
+    pub bucket: String,
+    /// `VIRTUES_MAPS_S3_REGION`, the region name the signature carries.
+    pub region: String,
+    /// `VIRTUES_MAPS_S3_ACCESS_KEY`. A key that can only read this bucket.
+    pub access_key: String,
+    /// `VIRTUES_MAPS_S3_SECRET_KEY`.
+    pub secret_key: String,
+}
+
+const MAPS_S3_VARS: [&str; 5] = [
+    "VIRTUES_MAPS_S3_ENDPOINT",
+    "VIRTUES_MAPS_S3_BUCKET",
+    "VIRTUES_MAPS_S3_REGION",
+    "VIRTUES_MAPS_S3_ACCESS_KEY",
+    "VIRTUES_MAPS_S3_SECRET_KEY",
+];
+
+/// All five variables, or none. Some but not all is a boot error: serving
+/// maps from the directory because one name was misspelled would hide the
+/// mistake until the directory is gone.
+fn maps_bucket_from(var: impl Fn(&str) -> Option<String>) -> Result<Option<MapsBucket>> {
+    let values: Vec<Option<String>> = MAPS_S3_VARS.iter().map(|name| var(name).filter(|v| !v.is_empty())).collect();
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    let missing: Vec<&str> = MAPS_S3_VARS.iter().zip(&values).filter(|(_, v)| v.is_none()).map(|(name, _)| *name).collect();
+    if !missing.is_empty() {
+        bail!("Map storage is partly configured. Set {} too, or unset every VIRTUES_MAPS_S3_* variable.", missing.join(", "));
+    }
+    let mut values = values.into_iter().flatten();
+    let mut next = || values.next().expect("five values checked above");
+    let endpoint = next().trim_end_matches('/').to_string();
+    if !endpoint.starts_with("https://") && !endpoint.starts_with("http://") {
+        bail!("VIRTUES_MAPS_S3_ENDPOINT must start with https:// (http:// is accepted for a local test server)");
+    }
+    Ok(Some(MapsBucket { endpoint, bucket: next(), region: next(), access_key: next(), secret_key: next() }))
+}
+
 #[derive(Clone)]
 pub struct Config {
     /// Port to listen on (default: 9002).
@@ -62,6 +108,11 @@ pub struct Config {
     /// default `/srv/maps`). See `routes/maps.rs`.
     pub maps_dir: std::path::PathBuf,
 
+    /// Object storage with the same layout as `maps_dir`, set by the five
+    /// `VIRTUES_MAPS_S3_*` variables. When it is set, `routes/maps.rs` reads
+    /// from it and never from `maps_dir`.
+    pub maps_bucket: Option<MapsBucket>,
+
     // Other OAuth provider credentials (google/notion/strava client_id/secret)
     // are read directly from the environment in `routes/oauth.rs`.
 }
@@ -109,6 +160,7 @@ impl Config {
                 .filter(|d| !d.is_empty())
                 .unwrap_or_else(|| "/srv/maps".to_string())
                 .into(),
+            maps_bucket: maps_bucket_from(|name| std::env::var(name).ok())?,
         })
     }
 
@@ -128,5 +180,51 @@ fn plaid_base_url_from_env() -> Result<String> {
         Some("sandbox") => Ok("https://sandbox.plaid.com".to_string()),
         Some("development") => Ok("https://development.plaid.com".to_string()),
         Some(other) => bail!("PLAID_ENV must be sandbox|development|production, got '{other}'"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vars(set: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let set: Vec<(String, String)> = set.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        move |name| set.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
+    const ALL: [(&str, &str); 5] = [
+        ("VIRTUES_MAPS_S3_ENDPOINT", "https://s3.example.net/"),
+        ("VIRTUES_MAPS_S3_BUCKET", "maps"),
+        ("VIRTUES_MAPS_S3_REGION", "example-1"),
+        ("VIRTUES_MAPS_S3_ACCESS_KEY", "access"),
+        ("VIRTUES_MAPS_S3_SECRET_KEY", "secret"),
+    ];
+
+    #[test]
+    fn no_map_storage_variables_means_the_directory() {
+        assert!(maps_bucket_from(vars(&[])).unwrap().is_none());
+    }
+
+    #[test]
+    fn all_five_variables_make_a_bucket() {
+        let b = maps_bucket_from(vars(&ALL)).unwrap().expect("a bucket");
+        assert_eq!(b.endpoint, "https://s3.example.net");
+        assert_eq!((b.bucket.as_str(), b.region.as_str()), ("maps", "example-1"));
+        assert_eq!((b.access_key.as_str(), b.secret_key.as_str()), ("access", "secret"));
+    }
+
+    #[test]
+    fn a_missing_variable_fails_and_is_named() {
+        let err = maps_bucket_from(vars(&ALL[..4])).err().expect("an error").to_string();
+        assert!(err.contains("VIRTUES_MAPS_S3_SECRET_KEY"), "{err}");
+        let err = maps_bucket_from(vars(&[ALL[0], ("VIRTUES_MAPS_S3_BUCKET", ""), ALL[2], ALL[3], ALL[4]])).err().expect("an error").to_string();
+        assert!(err.contains("VIRTUES_MAPS_S3_BUCKET"), "{err}");
+    }
+
+    #[test]
+    fn the_endpoint_must_be_a_url() {
+        let mut set = ALL;
+        set[0].1 = "s3.example.net";
+        assert!(maps_bucket_from(vars(&set)).is_err());
     }
 }

@@ -23,6 +23,16 @@ sudo systemctl daemon-reload && sudo systemctl enable --now virtues-maps-cut.tim
 virtues-api reads the same directory: run its container with
 `-v /srv/maps:/srv/maps:ro` and `VIRTUES_MAPS_DIR=/srv/maps`.
 
+virtues-api can read the same layout from S3-compatible object storage
+instead: `latest.json` at the top of a bucket and one `<build>/` prefix per
+build. Set the five `VIRTUES_MAPS_S3_*` variables
+(`services/virtues-api/src/config.rs`) with a key that can only read that
+bucket. When they are set the directory is not read.
+
+`upload.sh <build>` copies one build from `/srv/maps` to the bucket with a
+key that can write to it, checks each file against the index's sha256 on the
+way, and writes `latest.json` last, so the API never serves half a build.
+
 ## What a run does
 
 1. Picks the newest Protomaps daily build and downloads it once (~140 GB).
