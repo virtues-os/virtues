@@ -229,7 +229,9 @@ pub(super) fn needs_user(result: &ToolExecutionResult) -> bool {
     result.result.as_ref().is_ok_and(|r| {
         let flag = |k: &str| r.data.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
         // `awaiting_owner`: a sudo write waiting for Allow (`tools::sudo_gate`).
-        flag("needs_binding") || flag("awaiting_owner")
+        // `ends_turn`: a next-step card (`show` choices), whose answer is the
+        // owner's next message. A step after it only repeats the reply.
+        flag("needs_binding") || flag("awaiting_owner") || flag("ends_turn")
     })
 }
 
@@ -499,6 +501,7 @@ mod tests {
             result: Ok(ToolResult::success(data)),
         };
         assert!(needs_user(&with(json!({"needs_binding": true}))));
+        assert!(needs_user(&with(json!({"kind": "choices", "ends_turn": true}))));
         assert!(!needs_user(&with(json!({"needs_binding": false}))));
         assert!(!needs_user(&with(json!(["needs_binding"]))));
     }

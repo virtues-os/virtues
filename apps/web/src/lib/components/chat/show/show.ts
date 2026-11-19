@@ -72,8 +72,10 @@ export interface ShowOutput {
 	row_count?: number;
 	/** table only: the query had more rows than the table shows. */
 	more?: boolean;
-	/** choices only */
+	/** choices only: the button labels, the main one first */
 	options?: string[];
+	/** choices only: why this next step comes up now */
+	context?: string | null;
 	/** The query's own ref, `/chat/{chat}/tool/{call}`, in a saved chat. */
 	ref?: string;
 }

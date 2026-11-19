@@ -44,6 +44,9 @@ struct ShowArgs {
     mark: Option<String>,
     #[serde(default)]
     options: Option<Vec<String>>,
+    /// choices: why this next step comes up now, in one or two sentences.
+    #[serde(default)]
+    context: Option<String>,
     /// interrupted: the date of the change, and the change in a few words.
     #[serde(default)]
     split_at: Option<String>,
@@ -141,7 +144,8 @@ const MAX_TABLE_COLUMNS: usize = 8;
 const MAX_NUMBERS: usize = 4;
 const MAX_SERIES: usize = 3;
 const MAX_TITLE_CHARS: usize = 80;
-const MAX_OPTION_CHARS: usize = 80;
+const MAX_OPTION_CHARS: usize = 40;
+const MAX_CONTEXT_CHARS: usize = 240;
 
 fn invalid(msg: impl Into<String>) -> ToolError {
     ToolError::InvalidParameters(msg.into())
@@ -197,11 +201,19 @@ pub async fn execute(
 
     if kind == Kind::Choices {
         let options = choices(args.options.unwrap_or_default())?;
+        let title = title.ok_or_else(|| {
+            invalid("choices needs `title`: the question the buttons answer, such as \"Check prices and dates for all three?\"")
+        })?;
+        let context = trimmed(&args.context).map(|c| c.chars().take(MAX_CONTEXT_CHARS).collect::<String>());
         return Ok(ToolResult::success(json!({
             "kind": "choices",
             "title": title,
+            "context": context,
             "options": options,
-            "note": "shown as buttons; the owner's tap arrives as their next message",
+            // The agent loop ends the turn here (agent::turn::needs_user).
+            "ends_turn": true,
+            "note": "shown as a card under your reply, the first option as its main button; \
+                     the owner's tap arrives as their next message, and your turn ends here",
         })));
     }
 
@@ -1387,12 +1399,12 @@ fn canonical_columns(kind: Kind, mut columns: Vec<String>, mut rows: Vec<Value>)
 fn choices(options: Vec<String>) -> Result<Vec<String>, ToolError> {
     let options: Vec<String> =
         options.into_iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
-    if !(2..=4).contains(&options.len()) {
-        return Err(invalid(format!("choices takes 2 to 4 options, not {}", options.len())));
+    if !(1..=3).contains(&options.len()) {
+        return Err(invalid(format!("choices takes 1 to 3 options, not {}", options.len())));
     }
     if let Some(long) = options.iter().find(|o| o.chars().count() > MAX_OPTION_CHARS) {
         return Err(invalid(format!(
-            "an option is a short reply, at most {MAX_OPTION_CHARS} characters; '{long}' is longer"
+            "an option is a button label, at most {MAX_OPTION_CHARS} characters; '{long}' is longer"
         )));
     }
     Ok(options)
@@ -1728,10 +1740,11 @@ mod tests {
     }
 
     #[test]
-    fn choices_are_two_to_four_short_replies() {
-        assert!(choices(vec!["Yes".into()]).is_err());
-        assert!(choices(vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()]).is_err());
-        assert!(choices(vec!["Yes".into(), "x".repeat(81)]).is_err());
+    fn choices_are_one_to_three_short_labels() {
+        assert!(choices(vec![]).is_err());
+        assert!(choices(vec!["Look into it".into()]).is_ok());
+        assert!(choices(vec!["a".into(), "b".into(), "c".into(), "d".into()]).is_err());
+        assert!(choices(vec!["Yes".into(), "x".repeat(41)]).is_err());
         assert_eq!(choices(vec![" Yes ".into(), "".into(), "No".into()]).unwrap(), vec!["Yes", "No"]);
     }
 
@@ -1824,8 +1837,15 @@ mod tests {
         assert_eq!((out["mark"].as_str(), out["purpose"].as_str()), (Some("line"), Some("change_over_time")), "{out}");
         let out = call(json!({ "chart": "share", "sql": days })).await.unwrap().data;
         assert_eq!(out["mark"], json!("share"), "{out}");
-        let out = call(json!({ "chart": "choices", "options": ["Yes", "No"] })).await.unwrap().data;
+        let out = call(json!({ "chart": "choices", "title": "Keep this?", "options": ["Save as page", "Not now"] }))
+            .await
+            .unwrap()
+            .data;
         assert_eq!(out["kind"], json!("choices"), "{out}");
+        assert_eq!(out["title"], json!("Keep this?"), "{out}");
+        assert_eq!(out["ends_turn"], json!(true), "the owner's tap answers it, so the turn ends: {out}");
+        // A card without its question has nothing for the buttons to answer.
+        assert!(call(json!({ "chart": "choices", "options": ["Yes", "No"] })).await.is_err());
 
         let out = call(json!({ "kind": "share", "sql": days })).await.unwrap().data;
         assert_eq!((out["kind"].as_str(), out["mark"].as_str()), (Some("chart"), Some("share")), "a mark given as the kind: {out}");

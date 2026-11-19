@@ -7,7 +7,8 @@
 	wrote as markup, and every figure on it came out of the record.
 
 	Unframed, like the rest of the box's turn (design.md, "Framed and unframed blocks"): no border
-	and no ground of its own, a chart at the full width of the column.
+	and no ground of its own, a chart at the full width of the column. The
+	next-step card (choices) is the one framed kind; see ShowChoices.
 -->
 <script lang="ts">
 	import { isKitMark, isShowOutput, type ShowOutput } from "./show";
@@ -84,7 +85,7 @@
 		{:else if out.kind === "timeline"}
 			<ShowTimeline {rows} />
 		{:else if out.kind === "choices"}
-			<ShowChoices options={out.options ?? []} {active} {onChoose} />
+			<ShowChoices title={out.title} context={out.context} options={out.options ?? []} {active} {onChoose} />
 		{/if}
 
 		{#if out && out.kind !== "choices"}
@@ -103,8 +104,9 @@
 		margin: 1.25rem 0 1.5rem;
 		min-width: 0;
 	}
+	/* The next-step card spaces itself, so an older turn whose card is gone leaves no gap. */
 	.show.choices {
-		margin: 0.5rem 0 1rem;
+		margin: 0;
 	}
 	.title {
 		font-family: var(--font-serif);

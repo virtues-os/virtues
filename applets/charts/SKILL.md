@@ -13,8 +13,8 @@ charts in the order listed below. A query whose columns fit none is drawn with
 the purpose's fallback, or refused with the fix.
 
 Name a chart instead of a purpose (`chart: "lollipop"`) only when the owner
-named that chart. Give `choices` with `options` for reply buttons; it takes no
-sql.
+named that chart. A next step (`chart: "choices"`, with `title`, `context` and
+`options`) is described in the show tool itself; it takes no sql.
 
 ## Columns
 
