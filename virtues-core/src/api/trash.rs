@@ -267,8 +267,7 @@ pub async fn purge_expired(pool: &PgPool) -> Result<u64> {
     Ok(n)
 }
 
-/// Clear a record's rows from `search_embeddings`, keeping the BM25 corpus
-/// stats honest (mirrors `extraction::sweep_orphaned_embeddings`).
+/// Clear a record's rows from the search index (`search::evict`).
 async fn drop_embeddings(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
     let ontologies = kind.ontologies();
     if ontologies.is_empty() {
@@ -278,29 +277,9 @@ async fn drop_embeddings(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()>
         .begin()
         .await
         .map_err(|e| Error::Database(format!("drop embeddings tx: {e}")))?;
-    let dropped: Vec<Option<i64>> = sqlx::query_scalar(
-        "DELETE FROM search_embeddings \
-         WHERE ontology = ANY($1) AND record_id = $2 \
-         RETURNING bm25_len",
-    )
-    .bind(ontologies)
-    .bind(id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| Error::Database(format!("drop embeddings: {e}")))?;
-    if !dropped.is_empty() {
-        let dropped_len: i64 = dropped.iter().flatten().sum();
-        sqlx::query(
-            "UPDATE search_index_meta \
-             SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
-             WHERE singleton",
-        )
-        .bind(dropped.len() as i64)
-        .bind(dropped_len)
-        .execute(&mut *tx)
+    crate::search::evict::evict_records(&mut tx, ontologies, &[id.to_string()])
         .await
-        .map_err(|e| Error::Database(format!("drop embeddings stats: {e}")))?;
-    }
+        .map_err(|e| Error::Database(format!("drop embeddings: {e}")))?;
     tx.commit()
         .await
         .map_err(|e| Error::Database(format!("drop embeddings commit: {e}")))

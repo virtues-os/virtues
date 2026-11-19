@@ -204,6 +204,15 @@ pub async fn archive(
 
     let stream = envelope.stream_name();
 
+    // Leave out what the owner deleted. The trigger on each `data_*` table
+    // refuses the row; this keeps the record's raw copy from landing back on
+    // disk when its source sends it again (`raw_copies`).
+    let records = super::raw_copies::without_tombstoned(pool, provider, stream, records).await?;
+    let records: &[Value] = &records;
+    if records.is_empty() {
+        return Ok(None);
+    }
+
     // Degrade, don't die. See MIN_FREE_BYTES: skipping the archive costs us the ability
     // to replay these records; failing here would cost us the records themselves, and
     // every other stream on the device with them.

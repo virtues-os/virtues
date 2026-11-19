@@ -23,6 +23,7 @@
 
 pub mod bm25;
 pub mod embedder;
+pub mod evict;
 pub mod indexer;
 pub mod next_index;
 pub mod query;

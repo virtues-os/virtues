@@ -367,6 +367,7 @@ pub(crate) mod tests {
             "admin",
             "clarity-review",
             "deep-research",
+            "delete-data",
             "meeting-prep",
             "morning-brief",
             "trip-planner",
@@ -480,6 +481,10 @@ pub(crate) mod tests {
             // each description that says what they do.
             ("tasks", &["create_task", "update_task"], 1_950),
             ("sql_write", &["sql_write"], 600),
+            // Proposes a deletion of ingested records. How to scope one is in
+            // the delete-data skill, which the model loads first; this is
+            // what the call does and its two shapes of target.
+            ("delete_data", &["delete_data"], 1_100),
             // A service the owner connected over MCP (`tools/connection.rs`).
             // One tool whatever is connected; the services' own tools go to
             // its worker, never into this list.
@@ -512,9 +517,11 @@ pub(crate) mod tests {
         // four shipped chat applets; the applets a box adds grow it toward
         // that group's ceiling, which this test cannot see. Rose 750 on
         // 2026-11-18 for show's purposes and the charts skill's line in
-        // `use_applet`. The rest sit just above their 2026-09-29 size.
+        // `use_applet`, and 700 more the same day for delete_data and the
+        // delete-data skill's line. The rest sit just above their 2026-09-29
+        // size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 24_100),
+            ("chat", 24_800),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -528,6 +535,9 @@ pub(crate) mod tests {
             // group, and deep research 100 more on 2026-11-16.
             ("clarity-review", 7_150),
             ("deep-research", 13_500),
+            // sql_query, search and delete_data. Just above its size when it
+            // shipped on 2026-11-18.
+            ("delete-data", 9_200),
             ("meeting-prep", 8_550),
             ("morning-brief", 8_850),
             ("new-applet", 3_150),

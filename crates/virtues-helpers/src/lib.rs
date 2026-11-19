@@ -37,6 +37,7 @@ pub mod handles;
 pub mod ids;
 pub mod input;
 pub mod ios;
+pub mod mac;
 pub mod transport;
 
 // Hot-path re-exports (used by every action subprocess binary).

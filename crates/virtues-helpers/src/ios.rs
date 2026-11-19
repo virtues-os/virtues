@@ -69,6 +69,37 @@ pub fn stream_id_or_hash(record: &Value, stream: &str) -> String {
     }
 }
 
+/// [`stream_id_or_hash`] for a record read back from the lake, where `line`
+/// is the record's archived text and `record` is that text parsed.
+///
+/// The lake writes each record as `serde_json::to_string(record)`, which is
+/// the text the hash was taken over, so an id-less record's id is rebuilt from
+/// the line itself. Parsing the line and serializing it again is not the same
+/// thing: `serde_json` reads a float to within a unit in the last place unless
+/// built with `float_roundtrip`, so a reparsed latitude can print differently
+/// and hash to another id.
+pub fn stream_id_of_archived_line(line: &str, record: &Value, stream: &str) -> String {
+    if let Some(id) = record.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        return id.to_string();
+    }
+    let name = format!("{stream}\u{1f}{line}");
+    Uuid::new_v5(&IOS_STREAM_NS, name.as_bytes()).to_string()
+}
+
+/// The stream table of an iOS stream whose records are each one row with a
+/// [`stream_id_or_hash`] id, by the stream's name on the wire. None for a
+/// stream whose records wrap their rows or carry another key (financekit,
+/// bookmark, contacts).
+pub fn hashed_stream_table(stream: &str) -> Option<&'static str> {
+    match stream {
+        "healthkit" => Some(HEALTHKIT_STREAM_TABLE),
+        "location" => Some(LOCATION_STREAM_TABLE),
+        "microphone" => Some(MICROPHONE_STREAM_TABLE),
+        "eventkit" => Some(EVENTKIT_STREAM_TABLE),
+        _ => None,
+    }
+}
+
 /// The source_table string used for all iOS HealthKit records.
 pub const HEALTHKIT_STREAM_TABLE: &str = "stream_ios_healthkit";
 pub const LOCATION_STREAM_TABLE: &str = "stream_ios_location";
@@ -104,5 +135,32 @@ mod tests {
         // Empty id is ignored (falls through to the deterministic hash, not "").
         let rec_empty = json!({"id": "", "latitude": 1.0, "longitude": 2.0});
         assert_ne!(stream_id_or_hash(&rec_empty, LOCATION_STREAM_TABLE), "");
+    }
+
+    #[test]
+    fn an_archived_line_gives_the_id_its_record_was_written_under() {
+        // No `id`: the hash is over the record's serialized text, which is
+        // the line the lake wrote. Coordinates with every digit a double
+        // holds, where a reparse is most likely to print differently.
+        let rec = json!({"latitude": 30.267153000000002, "longitude": -97.74306079999999, "timestamp": "2026-07-01T14:00:00Z"});
+        let line = serde_json::to_string(&rec).unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            stream_id_of_archived_line(&line, &parsed, LOCATION_STREAM_TABLE),
+            stream_id_or_hash(&rec, LOCATION_STREAM_TABLE),
+        );
+        // A client id wins, as it does when the record is written.
+        let rec = json!({"id": "abc-123", "latitude": 1.0});
+        let line = serde_json::to_string(&rec).unwrap();
+        assert_eq!(stream_id_of_archived_line(&line, &rec, LOCATION_STREAM_TABLE), "abc-123");
+    }
+
+    #[test]
+    fn the_hashed_streams_are_the_four_whose_records_are_rows() {
+        assert_eq!(hashed_stream_table("healthkit"), Some(HEALTHKIT_STREAM_TABLE));
+        assert_eq!(hashed_stream_table("location"), Some(LOCATION_STREAM_TABLE));
+        assert_eq!(hashed_stream_table("microphone"), Some(MICROPHONE_STREAM_TABLE));
+        assert_eq!(hashed_stream_table("eventkit"), Some(EVENTKIT_STREAM_TABLE));
+        assert_eq!(hashed_stream_table("financekit"), None);
     }
 }

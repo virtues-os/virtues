@@ -27,7 +27,7 @@ pub const CHOICES: &[i32] = &[30, 90, 365];
 
 /// A lake-relative path as a path under `root`, or None when it would leave
 /// the lake (an absolute path or a `..`), which is never a file to delete.
-fn inside(root: &Path, relative: &str) -> Option<PathBuf> {
+pub(crate) fn inside(root: &Path, relative: &str) -> Option<PathBuf> {
     let rel = Path::new(relative);
     if rel.is_absolute() || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
         return None;

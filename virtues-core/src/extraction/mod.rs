@@ -333,17 +333,9 @@ async fn sweep_orphaned_embeddings(pool: &PgPool) -> Result<()> {
     .await
     .map_err(|e| Error::Database(format!("orphan sweep: {e}")))?;
     if !dropped.is_empty() {
-        let dropped_len: i64 = dropped.iter().flatten().sum();
-        sqlx::query(
-            "UPDATE search_index_meta \
-             SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
-             WHERE singleton",
-        )
-        .bind(dropped.len() as i64)
-        .bind(dropped_len)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("orphan sweep stats: {e}")))?;
+        crate::search::evict::subtract_corpus_totals(&mut tx, &dropped)
+            .await
+            .map_err(|e| Error::Database(format!("orphan sweep stats: {e}")))?;
         tracing::info!(count = dropped.len(), "swept orphaned document embeddings");
     }
     tx.commit()

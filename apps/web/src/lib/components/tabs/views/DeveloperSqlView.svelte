@@ -3,6 +3,9 @@
     import Icon from "$lib/components/Icon.svelte";
     import { Button, IconButton } from "$lib";
     import { getDeveloperTables, ApiError } from "$lib/api/client";
+    import { deleteRows } from "$lib/api/deletions";
+    import { confirmAction } from "$lib/stores/dialog.svelte";
+    import { toast } from "svelte-sonner";
     import { onMount } from "svelte";
 
     let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -16,6 +19,25 @@
     let loadingTables = $state(true);
     let queryExpanded = $state(false);
     let selectedTable = $state<string | null>(null);
+
+    // Deleting rows. Only a data table's rows can go, and only while the grid
+    // shows that table as picked from the list: a query typed by hand may
+    // join or rename, and then a row's id says nothing about which row it is.
+    let resultsTable = $state<string | null>(null);
+    let selected = $state<Set<string>>(new Set());
+    let deleting = $state(false);
+    const canDelete = $derived(
+        resultsTable !== null &&
+            resultsTable.startsWith("data_") &&
+            columns.includes("id") &&
+            columns.includes("source_stream_id"),
+    );
+    const rowIds = $derived.by((): string[] => {
+        if (!canDelete) return [];
+        const rows = (results ?? []) as Record<string, unknown>[];
+        return rows.map((r) => r.id).filter((id): id is string => typeof id === "string");
+    });
+    const allSelected = $derived(rowIds.length > 0 && rowIds.every((id) => selected.has(id)));
 
     onMount(async () => {
         try {
@@ -38,11 +60,13 @@
         }
     });
 
-    async function runQuery() {
+    async function runQuery(fromTable: string | null = null) {
         loading = true;
         error = null;
         results = null;
         columns = [];
+        resultsTable = fromTable;
+        selected = new Set();
 
         try {
             const response = await fetch("/api/developer/sql", {
@@ -69,7 +93,45 @@
     function selectTable(tableName: string) {
         selectedTable = tableName;
         sql = `SELECT * FROM ${tableName} LIMIT 100;`;
-        runQuery();
+        runQuery(tableName);
+    }
+
+    function toggleRow(id: string) {
+        const next = new Set(selected);
+        if (!next.delete(id)) next.add(id);
+        selected = next;
+    }
+
+    function toggleAll() {
+        selected = allSelected ? new Set() : new Set(rowIds);
+    }
+
+    async function deleteSelected() {
+        const table = resultsTable;
+        const ids = rowIds.filter((id) => selected.has(id));
+        if (!table || ids.length === 0 || deleting) return;
+        const rows = `${ids.length} ${ids.length === 1 ? "row" : "rows"}`;
+        const ok = await confirmAction({
+            title: `Delete ${rows} from ${table}?`,
+            body:
+                "Your server removes them with their search entries, their files and the raw copy each sync kept. " +
+                "It refuses them if a sync sends them again. " +
+                "Copies stay in backups made before today, and the rows can't be brought back from here.",
+            confirmLabel: `Delete ${rows}`,
+            danger: true,
+        });
+        if (!ok) return;
+        deleting = true;
+        try {
+            const receipt = await deleteRows(table, ids);
+            const gone = receipt.records ?? 0;
+            toast(`Deleted ${gone.toLocaleString()} ${gone === 1 ? "row" : "rows"} from ${table}`);
+            await runQuery(table);
+        } catch (e: any) {
+            error = `Your server didn't delete those rows: ${e?.message ?? e}`;
+        } finally {
+            deleting = false;
+        }
     }
 
     function handleKeydown(e: KeyboardEvent) {
@@ -125,7 +187,7 @@
         >
             <button
                 onclick={() => (queryExpanded = !queryExpanded)}
-                class="flex items-center gap-2 text-sm text-foreground-muted hover:text-foreground"
+                class="flex min-w-0 items-center gap-2 text-sm text-foreground-muted hover:text-foreground"
             >
                 <Icon
                     icon={queryExpanded
@@ -136,25 +198,42 @@
                 <span>Query</span>
                 {#if sql && !queryExpanded}
                     <span
-                        class="ml-2 max-w-[300px] truncate font-mono text-xs text-foreground-muted/60"
+                        class="ml-2 min-w-0 max-w-[300px] truncate font-mono text-xs text-foreground-muted/60"
                     >
                         {sql}
                     </span>
                 {/if}
             </button>
-            <div class="flex items-center gap-2">
-                <span class="text-xs text-warning">Read-only</span>
+            <div class="flex flex-none items-center gap-2 pl-3">
+                {#if canDelete && selected.size > 0}
+                    <Button
+                        variant="danger"
+                        icon="mynaui:trash"
+                        loading={deleting}
+                        onclick={deleteSelected}
+                    >
+                        Delete {selected.size} {selected.size === 1 ? "row" : "rows"}
+                    </Button>
+                {/if}
+                <span class="whitespace-nowrap text-xs text-warning">Read-only queries</span>
                 <div class="info-wrapper">
                     <IconButton
                         icon="mynaui:info-circle"
-                        label="Why read-only?"
+                        label="What you can change here"
                         size="nested"
                     />
                     <div class="info-popover">
-                        <div class="info-title">You can read these tables, not change them</div>
+                        <div class="info-title">You can read every table and delete rows of your data</div>
                         <p>
-                            Your server reads these tables on every request, so
-                            an edit here would break what it reads.
+                            Pick a table that starts with data_ from the list,
+                            select rows, and choose Delete. Your server removes
+                            each one with its search entries, its files and its
+                            raw copy, and refuses it if a sync sends it again.
+                        </p>
+                        <p class="mt-2">
+                            The other tables are your server's own. It reads
+                            them on every request, so an edit here would break
+                            what it reads.
                         </p>
                         <p class="mt-2">
                             To keep data of your own, make your own database in a
@@ -186,7 +265,7 @@
                             variant="ghost"
                             icon="mynaui:play-solid"
                             {loading}
-                            onclick={runQuery}>Run</Button
+                            onclick={() => runQuery()}>Run</Button
                         >
                     </div>
                 </div>
@@ -211,6 +290,16 @@
                         <table class="min-w-full divide-y divide-border">
                             <thead class="bg-surface sticky top-0 z-10">
                                 <tr>
+                                    {#if canDelete}
+                                        <th scope="col" class="select-cell border-b border-r border-border bg-surface">
+                                            <input
+                                                type="checkbox"
+                                                aria-label="Select every row shown"
+                                                checked={allSelected}
+                                                onchange={toggleAll}
+                                            />
+                                        </th>
+                                    {/if}
                                     {#each columns as header}
                                         <th
                                             scope="col"
@@ -234,7 +323,17 @@
                                     class="divide-y divide-border bg-surface"
                                 >
                                     {#each results as row}
-                                        <tr class="hover:bg-surface-elevated">
+                                        <tr class="hover:bg-surface-elevated" class:row-selected={canDelete && selected.has(row.id)}>
+                                            {#if canDelete}
+                                                <td class="select-cell border-b border-r border-border">
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label="Select this row"
+                                                        checked={selected.has(row.id)}
+                                                        onchange={() => toggleRow(row.id)}
+                                                    />
+                                                </td>
+                                            {/if}
                                             {#each columns as header}
                                                 <td
                                                     class="max-w-[200px] truncate whitespace-nowrap border-b border-r border-border px-4 py-2 font-mono text-xs text-foreground last:border-r-0"
@@ -303,6 +402,22 @@
         background: var(--active-bg);
         color: var(--color-foreground);
         font-weight: 500;
+    }
+
+    /* The row checkbox on a data table. */
+    .select-cell {
+        width: 2.25rem;
+        padding: 0 0.625rem;
+        text-align: center;
+    }
+
+    .select-cell input {
+        accent-color: var(--color-primary);
+        cursor: pointer;
+    }
+
+    .row-selected {
+        background: var(--active-bg);
     }
 
     /* Query accordion animation */

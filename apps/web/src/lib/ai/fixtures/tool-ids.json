@@ -12,6 +12,7 @@
   "connection",
   "create_page",
   "create_task",
+  "delete_data",
   "dispatch_subagents",
   "edit_page",
   "generate_image",

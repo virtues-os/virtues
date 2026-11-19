@@ -41,6 +41,7 @@ pub mod day_memory;
 pub mod day_picture;
 pub mod day_rewrites;
 pub mod day_summary;
+pub mod deletions;
 pub mod developer;
 pub mod drive;
 pub mod entities;

@@ -125,6 +125,7 @@
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
+	import DeletionCard from "$lib/components/chat/DeletionCard.svelte";
 	import TaskCard from "$lib/components/chat/TaskCard.svelte";
 	import ConnectionReceiptCard from "$lib/components/chat/ConnectionReceiptCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
@@ -2314,6 +2315,12 @@
 													text={out?.text ?? sent.input?.text ?? ""}
 													onOpenPerson={(id) => windowShellStore.openRouteInSplitOrActive(`/person/${id}`)}
 												/>
+											{:else if part.type === "tool-delete_data" && (part as any).state === "output-available" && (part as any).output?.awaiting_owner && (part as any).output?.deletion_id}
+												{@const out = (part as any).output}
+												<!-- A deletion the assistant proposed: what it covers, and
+												     the Delete that only you can press. A later call that
+												     only checks on one leaves nothing here. -->
+												<DeletionCard deletionId={out.deletion_id} summary={out.summary ?? ""} />
 											{:else if (part.type === "tool-create_task" || part.type === "tool-update_task") && (part as any).state === "output-available"}
 												{@const out = (part as any).output}
 												<!-- The tasks themselves, with working checkboxes. A failed

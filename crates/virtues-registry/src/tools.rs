@@ -75,6 +75,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         semantic_search_tool(),
         sql_query_tool(true),
         sql_write_tool(),
+        delete_data_tool(),
         sudo_tool(),
         shell_tool(),
         dispatch_subagents_tool(),
@@ -1007,6 +1008,43 @@ fn sql_write_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:database-2-line".to_string(),
         display_order: 7,
+        is_system: false,
+    }
+}
+
+/// Propose deleting records from the owner's data tables (virtues-core
+/// `tools/delete_data.rs`, then `api/deletions.rs`). The tool deletes
+/// nothing: the chat shows a card, the owner allows it there, and the server
+/// deletes each row and writes its tombstone.
+fn delete_data_tool() -> ToolConfig {
+    ToolConfig {
+        id: "delete_data".to_string(),
+        name: "Delete data".to_string(),
+        description: "Propose deleting records you no longer want on your server".to_string(),
+        llm_description: r#"Propose deleting records from the owner's data_* tables, only when they ask to delete, remove or forget something their server collected. The delete-data applet says how to scope it: load it first unless it is already in your instructions. This deletes nothing. The owner gets a card showing what it covers and allows it there; the server then removes the rows and keeps them from being collected again. `summary` finishes the card's question "Delete …?" in plain words ("your messages with David Okafor"). Each target is one table with `where` (a SQL condition, as after WHERE) or `ids`. Your turn ends at the call. `deletion_id` alone returns where an earlier one stands."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": { "type": "string" },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["table"],
+                        "properties": {
+                            "table": { "type": "string" },
+                            "where": { "type": "string" },
+                            "ids": { "type": "array", "items": { "type": "string" } }
+                        }
+                    }
+                },
+                "deletion_id": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:delete-bin-line".to_string(),
+        display_order: 8,
         is_system: false,
     }
 }

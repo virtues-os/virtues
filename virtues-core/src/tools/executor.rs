@@ -586,6 +586,8 @@ impl ToolExecutor {
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
+            // Proposes a deletion of ingested records; the owner allows it on the chat's card.
+            super::delete_data::TOOL => Ok(super::delete_data::run(&self._pool, &arguments, context).await),
             // A connected service, through a worker with only its tools; and
             // those tools, which only that worker calls.
             super::connection::TOOL => Ok(super::connection::run_tool(&self._pool, &arguments, context).await),

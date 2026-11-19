@@ -143,6 +143,19 @@ const TOOLS: Record<string, Presentation> = {
 		depth: 4,
 		say: ["Writing to your records", "Wrote to your records"],
 	},
+	// Drawn in the reply as the deletion itself (DeletionCard); this is its
+	// line in the thinking block. The call only proposes, so it never says
+	// "deleted".
+	delete_data: {
+		noun: "your data",
+		depth: 4,
+		say: (input, live) => {
+			if (typeof input.deletion_id === "string" && input.deletion_id.trim()) {
+				return live ? "Checking on a deletion" : "Checked on a deletion";
+			}
+			return live ? "Working out what to delete" : "Asked you before deleting";
+		},
+	},
 	sudo: {
 		noun: "your server",
 		depth: 4,
