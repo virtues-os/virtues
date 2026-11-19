@@ -122,7 +122,7 @@
 
 <style>
 	:global(.table-menu-container) {
-		--z-floating: 100;
+		--z-floating: var(--z-overlay);
 		padding: 0;
 		background: transparent;
 		border: none;

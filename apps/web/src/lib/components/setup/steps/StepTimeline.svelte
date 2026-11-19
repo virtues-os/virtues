@@ -1887,7 +1887,7 @@
 	}
 	.example-pop {
 		position: absolute;
-		z-index: 5;
+		z-index: var(--z-popover);
 		top: calc(100% + 8px);
 		left: 50%;
 		transform: translateX(-50%);

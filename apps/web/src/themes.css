@@ -765,20 +765,33 @@
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Z-INDEX LADDER
- * One named stacking order for the whole app — consume as `z-index: var(--z-…)`.
- * Theme-invariant (plain :root, not @theme). Replaces ad-hoc magic numbers and
- * the 9999/10000/10001 "stacking war". Ordered low → high.
+ * The stacking order for everything that floats over a page or over the
+ * app, low to high. Write `z-index: var(--z-…)`. A neighbor of a step is a
+ * calc() from it: a scrim under its popover is `calc(var(--z-popover) - 1)`.
+ * The steps are the same in every theme, so they are on plain :root.
+ *
+ * Order inside one component (a placeholder over its field, a marker over
+ * its line, a table's own pinned header) is a small plain number and never
+ * a step from here. A table header at --z-sticky would tie with the page's
+ * sticky bar and could draw over it.
+ *
+ * The setup flow numbers its own fixed layers below --z-overlay. The ladder
+ * has no step for them.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--z-sticky: 20;          /* sticky headers / breadcrumbs / outlines      */
-	--z-dropdown: 50;        /* dropdowns, menus                             */
-	--z-popover: 60;         /* ref preview, selection popover               */
-	--z-overlay: 100;        /* split panes, side panels, tab bar            */
+	--z-sticky: 20;          /* a page's sticky bar, breadcrumbs, outline    */
+	--z-dropdown: 50;        /* dropdowns, menus, a field's list of matches  */
+	--z-popover: 60;         /* ref preview, selection popover, a hover note */
+	--z-page: 70;            /* a full-screen page on the phone; a page
+	                            opened from it is one above                  */
+	--z-overlay: 100;        /* split panes, side panels, tab bar, and the
+	                            floating layer (--z-floating counts up from
+	                            here)                                        */
 	--z-modal: 1000;         /* modal dialogs, search, provisioning overlay  */
 	--z-lightbox: 1100;      /* fullscreen media lightbox                    */
 	--z-context-menu: 1300;  /* right-click context menu                     */
 	--z-context-submenu: 1301; /* its submenu, one above the menu            */
-	--z-tooltip: 1400;       /* tooltips — always on top                     */
+	--z-tooltip: 1400;       /* tooltips and the label that follows a drag   */
 }
 
 /* The reading column, shared by a chat's messages and a page's text: the

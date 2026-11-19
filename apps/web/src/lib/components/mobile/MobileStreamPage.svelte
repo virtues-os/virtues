@@ -109,7 +109,7 @@
 	.page {
 		position: fixed;
 		inset: 0;
-		z-index: 70;
+		z-index: var(--z-page);
 		display: flex;
 		flex-direction: column;
 		background: var(--color-surface);

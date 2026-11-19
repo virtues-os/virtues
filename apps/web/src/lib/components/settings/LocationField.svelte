@@ -190,7 +190,7 @@
 
 	.matches {
 		position: absolute;
-		z-index: 5;
+		z-index: var(--z-dropdown);
 		top: calc(100% + 4px);
 		left: 0;
 		right: 0;

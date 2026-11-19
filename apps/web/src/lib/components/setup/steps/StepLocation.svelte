@@ -485,7 +485,7 @@
 
 	.list {
 		position: absolute;
-		z-index: 5;
+		z-index: var(--z-dropdown);
 		top: calc(100% + 8px);
 		left: 0;
 		right: 0;

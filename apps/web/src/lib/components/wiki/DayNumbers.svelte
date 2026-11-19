@@ -476,7 +476,7 @@
 		position: absolute;
 		left: 0;
 		top: calc(100% + 0.5rem);
-		z-index: 20;
+		z-index: var(--z-tooltip);
 		width: max-content;
 		max-width: 16rem;
 		padding: 0.5rem 0.625rem;

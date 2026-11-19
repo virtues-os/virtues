@@ -1286,7 +1286,7 @@
 	/* Selection color toolbar + note popover */
 	.pdf-sel-toolbar {
 		position: fixed;
-		z-index: 50;
+		z-index: var(--z-popover);
 		display: flex;
 		gap: 4px;
 		padding: 5px 6px;
@@ -1317,11 +1317,11 @@
 	.pdf-note-scrim {
 		position: fixed;
 		inset: 0;
-		z-index: 49;
+		z-index: calc(var(--z-popover) - 1);
 	}
 	.pdf-note {
 		position: fixed;
-		z-index: 50;
+		z-index: var(--z-popover);
 		width: 260px;
 		padding: 8px;
 		border-radius: var(--radius-xl);

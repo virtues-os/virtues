@@ -1429,7 +1429,7 @@
 		position: fixed;
 		transform: translate(12px, -50%);
 		pointer-events: none;
-		z-index: 1000;
+		z-index: var(--z-tooltip);
 		max-width: 280px;
 		overflow: hidden;
 		text-overflow: ellipsis;

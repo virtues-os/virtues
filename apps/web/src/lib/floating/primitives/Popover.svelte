@@ -92,7 +92,7 @@
 	}
 
 	:global(.popover) {
-		--z-floating: 200;
+		--z-floating: calc(var(--z-overlay) + 100);
 	}
 
 	.popover-content {

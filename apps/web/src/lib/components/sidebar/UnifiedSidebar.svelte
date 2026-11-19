@@ -661,7 +661,7 @@
 	   surface, like every other card — no shadow. */
 	.seam-tip {
 		position: fixed;
-		z-index: 1000;
+		z-index: var(--z-tooltip);
 		transform: translateY(-50%);
 		display: flex;
 		flex-direction: column;
