@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
+pub mod sigv4;
+
 const NONCE_LENGTH: usize = 12;
 
 /// Domain separator for deriving the credential-lookup HMAC pepper. Bumping
