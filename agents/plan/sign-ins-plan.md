@@ -1,10 +1,11 @@
 # Sign-ins: keeping a site session alive
 
 **Status:** Proposed 2026-11-19. Nothing here is decided by the owner except
-the three earlier decisions listed under "Already decided". Two parts of
+the three earlier decisions listed under "Already decided". Three parts of
 slice 1 are built on wave and in no release as of 2026-11-19: the Instagram
-sync reports a dead session as one, and a dead sign-in is one attention item.
-Neither has run against a live site or on a server.
+sync reports a dead session as one, a dead sign-in is one attention item, and
+a sync replays a session with the user agent of the browser that made it.
+None has run against a live site, on a server or in a built app.
 
 Some syncs have no API to use, so they act as the owner's browser. The owner
 signs in once in the Mac app, the app hands the session's cookies to the
@@ -38,13 +39,9 @@ in again with as little work for the owner as possible.
 
 ## What goes wrong
 
-1. **The session is replayed as a different browser.** The session is made in
-   a browser that identifies as Safari, and the Instagram sync sends a Chrome
-   user agent. Not shown to have ended a session; it is a known reason sites
-   end one.
-2. **Cookies a site sends back during a sync are dropped.** Sites reissue some
+1. **Cookies a site sends back during a sync are dropped.** Sites reissue some
    cookies on each visit. The server keeps using the copy from connect time.
-3. **Nothing renews a session.** When it ends, the only path is the owner
+2. **Nothing renews a session.** When it ends, the only path is the owner
    noticing and signing in again by hand.
 
 ## The change
@@ -53,20 +50,19 @@ A sign-in belongs to a browser that keeps it alive. The Mac app's Browser pane
 is the first such browser. A browser on the server is the second. The syncs do
 not change with where the cookies came from.
 
-### Slice 1: replay the session as the browser that made it
+### Slice 1: keep the cookies a site reissues
 
 Built already: a session sync that meets a login redirect marks its sign-in
 for reconnect (`virtues_applets::http_client_no_redirects()`, used by the
 Instagram sync), and a sync whose sign-in needs the owner is left out of the
-failed-applet items, so the sign-in's own item is the only one.
+failed-applet items, so the sign-in's own item is the only one. The app's
+sign-in also sends the user agent of its browser (`browser_login_user_agent`,
+shell surface 17), and the X, Instagram and Grok syncs replay the session with
+it (`virtues_applets::session_user_agent`). A sign-in made before that, or
+pasted by the owner, keeps the syncs' default until the owner signs in again.
 
-Left, and each is larger than a change to one applet:
+Left:
 
-- **The sync sends the user agent of the browser that made the session.** The
-  shell's `browser_login` returns only the cookies, so the user agent has to
-  come through a new shell command and the connect form. That is a change to
-  the shell's command surface and its permissions as well as the web app. A
-  sign-in the owner pasted from their own browser has no known user agent.
 - **The sync keeps cookies the site reissues.** A sync applet is not given the
   server's encryption key, so it cannot write the stored sign-in. The applet
   would return the reissued cookies in its output and the runner would merge
