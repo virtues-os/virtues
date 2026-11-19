@@ -106,6 +106,9 @@ async fn main() -> Result<()> {
         "External services: GooglePlaces={}",
         config.google_api_key.is_some(),
     );
+    // Which of the two sources serves /v1/maps/*. The routes themselves log
+    // nothing, so this line is how a deploy is seen to have switched.
+    tracing::info!("Map files: {}", if config.maps_bucket.is_some() { "object storage" } else { "directory" });
 
     // Build HTTP client for embeddings and other direct API calls
     let http_client = reqwest::Client::builder()

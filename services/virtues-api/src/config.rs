@@ -19,6 +19,7 @@ pub const MIN_SECRET_LENGTH: usize = 32;
 #[derive(Clone)]
 pub struct MapsBucket {
     /// `VIRTUES_MAPS_S3_ENDPOINT`, e.g. `https://s3.example-region.example.net`.
+    /// Always `https://`: the path of a read names a square.
     pub endpoint: String,
     /// `VIRTUES_MAPS_S3_BUCKET`.
     pub bucket: String,
@@ -42,7 +43,8 @@ const MAPS_S3_VARS: [&str; 5] = [
 /// maps from the directory because one name was misspelled would hide the
 /// mistake until the directory is gone.
 fn maps_bucket_from(var: impl Fn(&str) -> Option<String>) -> Result<Option<MapsBucket>> {
-    let values: Vec<Option<String>> = MAPS_S3_VARS.iter().map(|name| var(name).filter(|v| !v.is_empty())).collect();
+    let values: Vec<Option<String>> =
+        MAPS_S3_VARS.iter().map(|name| var(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())).collect();
     if values.iter().all(Option::is_none) {
         return Ok(None);
     }
@@ -50,13 +52,27 @@ fn maps_bucket_from(var: impl Fn(&str) -> Option<String>) -> Result<Option<MapsB
     if !missing.is_empty() {
         bail!("Map storage is partly configured. Set {} too, or unset every VIRTUES_MAPS_S3_* variable.", missing.join(", "));
     }
+    // An env file passes quotes through as part of the value. A quoted or
+    // spaced value would boot and then fail every read, so refuse it here.
+    for (name, value) in MAPS_S3_VARS.iter().zip(&values) {
+        if value.as_deref().is_some_and(|v| v.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'')) {
+            bail!("{name} holds a space or a quote. Write the value bare, with no quotes around it.");
+        }
+    }
     let mut values = values.into_iter().flatten();
     let mut next = || values.next().expect("five values checked above");
     let endpoint = next().trim_end_matches('/').to_string();
-    if !endpoint.starts_with("https://") && !endpoint.starts_with("http://") {
-        bail!("VIRTUES_MAPS_S3_ENDPOINT must start with https:// (http:// is accepted for a local test server)");
+    if !endpoint.starts_with("https://") {
+        bail!("VIRTUES_MAPS_S3_ENDPOINT must start with https://");
     }
-    Ok(Some(MapsBucket { endpoint, bucket: next(), region: next(), access_key: next(), secret_key: next() }))
+    let bucket = MapsBucket { endpoint, bucket: next(), region: next(), access_key: next(), secret_key: next() };
+    if bucket.bucket.is_empty() || !bucket.bucket.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.') {
+        bail!("VIRTUES_MAPS_S3_BUCKET must be a bare bucket name: lowercase letters, digits, hyphens and dots.");
+    }
+    if !reqwest::Url::parse(&bucket.endpoint).is_ok_and(|u| u.host_str().is_some() && u.path() == "/" && u.query().is_none()) {
+        bail!("VIRTUES_MAPS_S3_ENDPOINT must be https://<host> with no path.");
+    }
+    Ok(Some(bucket))
 }
 
 #[derive(Clone)]
@@ -224,9 +240,33 @@ mod tests {
     }
 
     #[test]
-    fn the_endpoint_must_be_a_url() {
+    fn values_are_trimmed_and_cannot_hold_quotes_or_spaces() {
         let mut set = ALL;
-        set[0].1 = "s3.example.net";
-        assert!(maps_bucket_from(vars(&set)).is_err());
+        set[4].1 = " secret\n";
+        assert_eq!(maps_bucket_from(vars(&set)).unwrap().expect("a bucket").secret_key, "secret");
+        for (i, bad) in [(4, "\"secret\""), (3, "'access'"), (1, "my maps")] {
+            let mut set = ALL;
+            set[i].1 = bad;
+            let err = maps_bucket_from(vars(&set)).err().expect("an error").to_string();
+            assert!(err.contains(ALL[i].0), "{err}");
+        }
+    }
+
+    #[test]
+    fn the_endpoint_and_bucket_must_make_a_url() {
+        for (i, bad) in [(0, "https://"), (0, "https://s3.example.net/some/path"), (0, "https://s3.example.net?x=1"), (1, "maps/other"), (1, "maps?x=1"), (1, "Maps")] {
+            let mut set = ALL;
+            set[i].1 = bad;
+            assert!(maps_bucket_from(vars(&set)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_endpoint_must_be_https() {
+        for bad in ["s3.example.net", "http://s3.example.net"] {
+            let mut set = ALL;
+            set[0].1 = bad;
+            assert!(maps_bucket_from(vars(&set)).is_err(), "{bad}");
+        }
     }
 }
