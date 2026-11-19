@@ -47,11 +47,14 @@ needs far less.
 - **Map downloads stay unlogged and stay between the box and our API.**
   `services/virtues-api/src/routes/maps.rs` says why: which squares a box takes
   is location data. So the API fetches each file from the bucket and streams
-  it to the box. The storage provider then sees reads from the API server and
-  never sees a box's address beside a square's name. Bucket access logging
-  stays off. This is the property the data sovereign persona would check, and
-  nothing a person sees changes: the manual says nothing about map downloads
-  today and needs no edit.
+  it to the box. A read that reaches storage carries the API server's address
+  and the square's name, and no box's address or key. Bucket access logging
+  stays off. The limit of this: the storage provider also hosts the API
+  server, so it could match the time of a box's connection to the time of a
+  read. That is no more than it can do today from the size of an encrypted
+  download, since every square has a different size. This is the property
+  the data sovereign persona would check, and nothing a person sees changes:
+  the manual says nothing about map downloads today and needs no edit.
 - **A box needs no update.** The routes, the index and the `Range` behavior
   stay as they are, so every released box keeps syncing.
 - **Backups stay off the server and in another region**, encrypted, with WAL

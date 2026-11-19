@@ -13,8 +13,9 @@
 //!
 //! The files are read from one of two places with the same layout. When
 //! `Config::maps_bucket` is set they come from object storage: the API signs
-//! each read and streams the bytes to the box, so the storage provider sees
-//! reads from this server and never a box's address beside a square's name.
+//! each read and streams the bytes to the box, so a read that reaches storage
+//! carries this server's address and the square's name, and no box's address
+//! or key.
 //! A read that fails is answered and not logged, and a `reqwest::Error` is
 //! never formatted, because it carries the URL. Otherwise they come from
 //! `Config::maps_dir`.
@@ -81,7 +82,10 @@ fn is_map_file(s: &str) -> bool {
         _ => return false,
     };
     let n = 1u32 << tier_zoom;
-    let coord = |p: Option<&str>| p.and_then(|v| v.parse::<u32>().ok()).filter(|v| *v < n);
+    // Digits only: `parse` alone would take `+5`, which is not a file name.
+    let coord = |p: Option<&str>| {
+        p.filter(|v| v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse::<u32>().ok()).filter(|v| *v < n)
+    };
     coord(parts.next()).is_some() && coord(parts.next()).is_some() && parts.next().is_none()
 }
 
@@ -135,6 +139,11 @@ async fn file(
     }
 }
 
+/// How long storage has to start answering a read, and to send a whole
+/// `latest.json` or `index.json`. A file's body has no total: it streams for
+/// as long as bytes keep coming (`stream_client`'s read timeout).
+const STORAGE_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn storage_unavailable() -> Response {
     err(StatusCode::BAD_GATEWAY, "maps_storage_unavailable", "Could not read the map files. Try again later.")
 }
@@ -172,7 +181,15 @@ async fn bucket_get(
     for (name, value) in signed {
         req = req.header(name, value);
     }
-    req.send().await.map_err(|_| ())
+    match tokio::time::timeout(STORAGE_ANSWER_TIMEOUT, req.send()).await {
+        Ok(Ok(res)) => Ok(res),
+        _ => Err(()),
+    }
+}
+
+/// A small object's whole body, or `None` when it does not arrive in time.
+async fn small_body(res: reqwest::Response) -> Option<bytes::Bytes> {
+    tokio::time::timeout(STORAGE_ANSWER_TIMEOUT, res.bytes()).await.ok()?.ok()
 }
 
 /// The current build's index, from storage. No `latest.json` or no index is
@@ -188,7 +205,7 @@ async fn bucket_index(http: &reqwest::Client, bucket: &MapsBucket) -> Response {
         StatusCode::NOT_FOUND => return not_published(),
         _ => return storage_unavailable(),
     }
-    let Ok(raw) = latest.bytes().await else {
+    let Some(raw) = small_body(latest).await else {
         return storage_unavailable();
     };
     let Some(build) = serde_json::from_slice::<Latest>(&raw).ok().map(|l| l.build).filter(|b| is_build(b)) else {
@@ -204,13 +221,13 @@ async fn bucket_index(http: &reqwest::Client, bucket: &MapsBucket) -> Response {
         }
         _ => return storage_unavailable(),
     }
-    match index.bytes().await {
-        Ok(bytes) => (
+    match small_body(index).await {
+        Some(bytes) => (
             [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-store")],
             bytes,
         )
             .into_response(),
-        Err(_) => storage_unavailable(),
+        None => storage_unavailable(),
     }
 }
 
@@ -274,6 +291,8 @@ mod tests {
             "visited-z5-32-0.pmtiles",
             "home-z7-100.pmtiles",
             "home-z7-100-80-1.pmtiles",
+            "home-z7-+5-80.pmtiles",
+            "home-z7-5-.pmtiles",
             "planet.pmtiles",
             ".env",
         ] {
@@ -293,8 +312,9 @@ mod tests {
     const WORLD: &[u8] = b"0123456789";
 
     /// A stand-in for the storage service. It serves a directory holding one
-    /// build under `/maps-test/`, and refuses a read that is not signed with
-    /// the test access key or that carries a `Range` the signature leaves out.
+    /// build under `/maps-test/`. Like the real one, it works out the
+    /// signature itself from the `Host`, path, `Range` and date it received
+    /// and refuses a read whose `Authorization` differs.
     async fn storage(with_latest: bool) -> (reqwest::Client, MapsBucket) {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = std::env::temp_dir().join(format!("virtues-maps-test-{}", uuid::Uuid::new_v4()));
@@ -309,10 +329,25 @@ mod tests {
             get(move |Path(key): Path<String>, req: Request| {
                 let file = dir.join(key);
                 async move {
-                    let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
-                    let signed = auth.starts_with("AWS4-HMAC-SHA256 Credential=test-access/")
-                        && req.headers().contains_key("x-amz-date")
-                        && (!req.headers().contains_key(header::RANGE) || auth.contains("SignedHeaders=host;range;"));
+                    // Worked out before the await, so no borrow of `req` crosses it.
+                    let signed = {
+                        let text = |name: &str| req.headers().get(name).and_then(|v| v.to_str().ok());
+                        let now = text("x-amz-date")
+                            .and_then(|d| chrono::NaiveDateTime::parse_from_str(d, "%Y%m%dT%H%M%SZ").ok())
+                            .map(|d| d.and_utc());
+                        now.is_some_and(|now| {
+                            let expected = sign_s3_get(&S3Get {
+                                access_key: "test-access",
+                                secret_key: "test-secret",
+                                region: "test-1",
+                                host: text("host").unwrap_or(""),
+                                path: req.uri().path(),
+                                range: text("range"),
+                                now,
+                            });
+                            text("authorization") == Some(expected[0].1.as_str())
+                        })
+                    };
                     if !signed {
                         return StatusCode::FORBIDDEN.into_response();
                     }
@@ -393,7 +428,7 @@ mod tests {
     #[tokio::test]
     async fn a_read_storage_refuses_is_a_502() {
         let (http, mut bucket) = storage(true).await;
-        bucket.access_key = "someone-else".into();
+        bucket.secret_key = "another-secret".into();
         assert_eq!(bucket_index(&http, &bucket).await.status(), StatusCode::BAD_GATEWAY);
         assert_eq!(bucket_file(&http, &bucket, BUILD, "world.pmtiles", None).await.status(), StatusCode::BAD_GATEWAY);
     }

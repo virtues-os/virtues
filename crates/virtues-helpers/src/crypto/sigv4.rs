@@ -40,7 +40,9 @@ pub fn sign_s3_get(req: &S3Get<'_>) -> [(&'static str, String); 3] {
     let mut headers = format!("host:{}\n", req.host);
     let mut signed = String::from("host");
     if let Some(range) = req.range {
-        headers.push_str(&format!("range:{}\n", range.trim()));
+        // The canonical value is trimmed, with each run of spaces as one space.
+        let range = range.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
+        headers.push_str(&format!("range:{range}\n"));
         signed.push_str(";range");
     }
     headers.push_str(&format!("x-amz-content-sha256:{EMPTY_SHA256}\nx-amz-date:{amz_date}\n"));
@@ -98,6 +100,23 @@ mod tests {
              Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
         );
         assert_eq!(headers[1], ("x-amz-date", "20130524T000000Z".to_string()));
+    }
+
+    #[test]
+    fn spaces_in_a_range_are_signed_as_the_service_reads_them() {
+        let sign = |range| {
+            sign_s3_get(&S3Get {
+                access_key: "AKIAIOSFODNN7EXAMPLE",
+                secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                region: "us-east-1",
+                host: "examplebucket.s3.amazonaws.com",
+                path: "/test.txt",
+                range: Some(range),
+                now: Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap(),
+            })
+        };
+        assert_eq!(sign("  bytes=0-9 "), sign("bytes=0-9"));
+        assert_eq!(sign("bytes=0-9,   20-29"), sign("bytes=0-9, 20-29"));
     }
 
     #[test]
