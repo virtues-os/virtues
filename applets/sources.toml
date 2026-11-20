@@ -122,11 +122,12 @@ auth = { kind = "api_key", fields = ["cookies"] }
 login = { url = "https://grok.com/", cookies = ["sso", "sso-rw"], jar_field = "cookies" }
 
 # One-time import (NOT a living/cron'd source): the user uploads an export file
-# which is parsed box-side and ingested once. Modeled as a source so it gets a
+# which is parsed box-side and ingested once. Claude and ChatGPT only: Gemini's
+# Takeout export has not been checked against a real file. Modeled as a source so it gets a
 # catalog tile + uniform dedup; its action is manual-trigger only (no cron).
 [[source]]
 id = "chat_import"
 display_name = "Chat History"
 icon = "ri:chat-history-line"
-description = "Import past conversations from a Claude, ChatGPT, or Gemini export — a one-time snapshot, not a live sync."
+description = "Bring in your past conversations from a Claude or ChatGPT export. A newer export adds only what is new."
 auth = { kind = "api_key", fields = [] }

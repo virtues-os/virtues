@@ -3,8 +3,9 @@
 //! The export is read one conversation at a time (see `main.rs`), so every
 //! parser here takes a single top-level element of the export's array. The
 //! provider comes from the element's shape: a ChatGPT conversation carries a
-//! `mapping` of nodes, a Claude one carries `chat_messages`. The upload's
-//! provider hint is used only for a shape neither of those matches.
+//! `mapping` of nodes, a Claude one carries `chat_messages`. Any other shape
+//! is passed over. Gemini's Google Takeout export is not read yet: its shape
+//! has not been checked against a real file.
 //!
 //! Each parser is defensive: it skips messages it can't read rather than
 //! failing the import, because exports drift over time. A message with no
@@ -63,20 +64,20 @@ pub fn detect(element: &Value) -> Option<&'static str> {
     }
 }
 
-/// Parse one top-level element of an export. `index` is the element's place
-/// in the export, used only by Gemini records that carry no id of their own.
-pub fn parse_element(hint: Option<&str>, index: usize, element: &Value) -> Vec<ConversationMsg> {
-    match detect(element).or(hint) {
+/// Parse one top-level element of an export.
+pub fn parse_element(element: &Value) -> Vec<ConversationMsg> {
+    match detect(element) {
         Some("chatgpt") => parse_chatgpt(element),
         Some("claude") => parse_claude(element),
-        Some("gemini") => parse_gemini(index, element).into_iter().collect(),
         _ => Vec::new(),
     }
 }
 
 /// A Claude conversation: `uuid`, `created_at`, and `chat_messages[]` whose
 /// entries carry `uuid`, `sender` (`human`/`assistant`), `created_at`
-/// (RFC3339), and `text` (or `content[]`).
+/// (RFC3339), `content[]` and `text`. The text parts of `content` come first:
+/// for a message holding an artifact or a tool call, `text` can be a
+/// placeholder such as "This block is not supported on your current device".
 fn parse_claude(convo: &Value) -> Vec<ConversationMsg> {
     let mut out = Vec::new();
     let Some(conversation_id) = first_str(convo, &["uuid", "conversation_id", "id"]) else {
@@ -90,12 +91,13 @@ fn parse_claude(convo: &Value) -> Vec<ConversationMsg> {
         let Some(role) = m.get("sender").and_then(Value::as_str).and_then(normalize_role) else {
             continue;
         };
-        let content = m
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_string)
-            .or_else(|| join_text_parts(m.get("content")))
+        let content = join_text_parts(m.get("content"))
+            .or_else(|| {
+                m.get("text")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_string)
+            })
             .unwrap_or_default();
         if content.trim().is_empty() {
             continue;
@@ -156,6 +158,15 @@ fn parse_chatgpt(convo: &Value) -> Vec<ConversationMsg> {
         else {
             continue;
         };
+        // A message addressed to a tool (`recipient` other than `all`) is the
+        // model calling it, not something said to the person.
+        if message
+            .get("recipient")
+            .and_then(Value::as_str)
+            .is_some_and(|r| r != "all")
+        {
+            continue;
+        }
         // `text` and `multimodal_text` are what was said. `code`, `thoughts`,
         // `reasoning_recap` and the custom-instructions context are dropped.
         let content_type = message
@@ -173,7 +184,7 @@ fn parse_chatgpt(convo: &Value) -> Vec<ConversationMsg> {
             .map(|parts| {
                 parts
                     .iter()
-                    .filter_map(Value::as_str)
+                    .filter_map(part_text)
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -193,26 +204,18 @@ fn parse_chatgpt(convo: &Value) -> Vec<ConversationMsg> {
     out
 }
 
-/// A Gemini record: text + role + timestamp. The shape is a guess and has not
-/// been checked against a real Google Takeout export.
-fn parse_gemini(index: usize, item: &Value) -> Option<ConversationMsg> {
-    let role = item
-        .get("role")
-        .and_then(Value::as_str)
-        .and_then(normalize_role)
-        .unwrap_or("user");
-    let content = first_str(item, &["text", "content", "message"])?;
-    if content.trim().is_empty() {
-        return None;
-    }
-    let timestamp = parse_ts(item.get("timestamp").or_else(|| item.get("time")))?;
-    let conversation_id =
-        first_str(item, &["conversation_id", "thread_id"]).unwrap_or_else(|| "gemini".into());
-    let message_id = first_str(item, &["id", "message_id"]).unwrap_or_else(|| index.to_string());
-    Some(msg("gemini", &conversation_id, message_id, role, content, timestamp))
-}
-
 // ── helpers ──────────────────────────────────────────────────────────────
+
+/// The text of one ChatGPT content part: a plain string, or the transcript of
+/// a voice message (`{"content_type": "audio_transcription", "text": ...}`).
+/// Images and audio files have no text and give `None`.
+fn part_text(part: &Value) -> Option<&str> {
+    part.as_str().or_else(|| {
+        (part.get("content_type").and_then(Value::as_str) == Some("audio_transcription"))
+            .then(|| part.get("text").and_then(Value::as_str))
+            .flatten()
+    })
+}
 
 fn first_str(v: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
@@ -275,7 +278,7 @@ mod tests {
             }
         });
         assert_eq!(detect(&convo), Some("chatgpt"));
-        let rows = parse_element(None, 0, &convo);
+        let rows = parse_element(&convo);
         let ids: Vec<_> = rows.iter().map(|r| r.message_id.as_str()).collect();
         assert_eq!(ids, ["u1", "a2b"]);
         assert_eq!(rows[0].stream_id, "chatimport:chatgpt:c-1:u1");
@@ -299,9 +302,45 @@ mod tests {
                     "content": { "content_type": "text", "parts": ["result"] } } }
             }
         });
-        let rows = parse_element(None, 0, &convo);
+        let rows = parse_element(&convo);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].content, "hi");
+    }
+
+    #[test]
+    fn chatgpt_keeps_voice_transcripts_and_drops_tool_calls() {
+        let convo = json!({
+            "id": "c-3",
+            "current_node": "a",
+            "mapping": {
+                "u": { "parent": null, "message": {
+                    "id": "u", "author": { "role": "user" }, "create_time": 1_700_000_000,
+                    "content": { "content_type": "multimodal_text", "parts": [
+                        { "content_type": "audio_transcription", "text": "Remind me what I planted" },
+                        { "content_type": "audio_asset_pointer", "asset_pointer": "file-x" }
+                    ] } } },
+                "call": { "parent": "u", "message": {
+                    "id": "call", "author": { "role": "assistant" }, "recipient": "bio", "create_time": 1_700_000_001,
+                    "content": { "content_type": "text", "parts": ["remember: likes tomatoes"] } } },
+                "a": { "parent": "call", "message": {
+                    "id": "a", "author": { "role": "assistant" }, "recipient": "all", "create_time": 1_700_000_002,
+                    "content": { "content_type": "text", "parts": ["Tomatoes and basil."] } } }
+            }
+        });
+        let rows = parse_element(&convo);
+        let said: Vec<_> = rows.iter().map(|r| r.content.as_str()).collect();
+        assert_eq!(said, ["Remind me what I planted", "Tomatoes and basil."]);
+    }
+
+    #[test]
+    fn claude_prefers_text_parts_over_a_placeholder() {
+        let convo = json!({
+            "uuid": "k-3",
+            "chat_messages": [ { "uuid": "m1", "sender": "assistant", "created_at": "2024-05-01T10:00:00Z",
+                "text": "This block is not supported on your current device yet.",
+                "content": [ { "type": "text", "text": "Here is the plan." }, { "type": "tool_use", "name": "artifacts" } ] } ]
+        });
+        assert_eq!(parse_element(&convo)[0].content, "Here is the plan.");
     }
 
     #[test]
@@ -318,7 +357,7 @@ mod tests {
             ]
         });
         assert_eq!(detect(&convo), Some("claude"));
-        let rows = parse_element(Some("chatgpt"), 0, &convo);
+        let rows = parse_element(&convo);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].role, "user");
         assert_eq!(rows[1].content, "Bring a blanket.");
@@ -331,11 +370,11 @@ mod tests {
             "uuid": "k-2",
             "chat_messages": [ { "uuid": "m1", "sender": "human", "text": "hello" } ]
         });
-        assert!(parse_element(None, 0, &convo).is_empty());
+        assert!(parse_element(&convo).is_empty());
     }
 
     #[test]
-    fn an_unknown_shape_without_a_hint_parses_nothing() {
-        assert!(parse_element(None, 0, &json!({ "title": "x" })).is_empty());
+    fn an_unknown_shape_parses_nothing() {
+        assert!(parse_element(&json!({ "title": "x" })).is_empty());
     }
 }

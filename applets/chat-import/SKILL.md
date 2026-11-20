@@ -1,9 +1,9 @@
 ---
 name: chat-import
-description: "Brings a Claude, ChatGPT, or Gemini export into your history - once, and safe to repeat."
+description: "Brings a Claude or ChatGPT export into your history. A newer export adds only what is new."
 metadata:
   invoke: none
   run: chat_import
-  limit: 1800 seconds
+  limit: 600 seconds
 ---
 

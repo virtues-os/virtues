@@ -56,7 +56,7 @@ export const SOURCE_COPY: Record<string, SourceCopy> = {
 	},
 	chat_import: {
 		prominence: 'prominent',
-		why: 'Your past conversations with Claude, ChatGPT, and Gemini.'
+		why: 'Your past conversations with Claude and ChatGPT.'
 	},
 	plaid: {
 		prominence: 'quiet',

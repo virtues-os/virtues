@@ -68,12 +68,12 @@ pub fn routes() -> Router<AppState> {
             "/api/applets/:id/fork",
             post(crate::api::applet_source::fork_handler),
         )
-        // Chat-export upload (Tier 3 one-time import). Per-route body limit
-        // overrides the router-wide 260MB cap — ChatGPT exports can be larger.
+        // Chat-export upload (one-time import). Per-route body limit
+        // overrides the router-wide 260MB cap: a ChatGPT zip carries every
+        // uploaded file and image, and runs to gigabytes.
         .route(
             "/api/chat-import/upload",
-            post(chat_import_upload_handler)
-                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+            post(chat_import_upload_handler).layer(DefaultBodyLimit::max(CHAT_IMPORT_MAX_BYTES)),
         )
         .route("/api/chat-import/status", get(chat_import_status_handler))
         .route("/api/applets/:id/runs", get(list_applet_runs_handler))
@@ -141,44 +141,30 @@ pub async fn trigger_applet_handler(
     run_status_response(result, &applet_id)
 }
 
-/// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
-/// Gemini conversation export: the zip the site emails, or the JSON inside
-/// it. The file streams to a transient local path, so a multi-gigabyte export
-/// never sits in memory, and the `chat_import` action starts in the
+/// The largest chat export the upload takes.
+const CHAT_IMPORT_MAX_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
+/// POST /api/chat-import/upload — multipart upload of a Claude or ChatGPT
+/// conversation export: the zip the site emails, or a conversations JSON file
+/// from inside it. The file streams into the staging folder, so a large
+/// export never sits in memory, and the `chat_import` action starts in the
 /// background. The response is 202 with the run id; the UI follows the run in
 /// `/api/runs?applet_id=applet_chat_import` for its summary or error.
-///
-/// `provider` is optional. The action reads the site from each
-/// conversation's shape and uses the hint only for a shape it doesn't know.
-///
-/// Mounted with a raised body limit (chat exports can exceed the 260MB default).
 pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.upload"));
-
-    let staged = stage_chat_import(&mut multipart, &file_path).await;
-    let provider = match staged {
-        Ok(provider) => provider,
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&file_path).await;
-            return error_response(e);
-        }
+    let staged = match stage_chat_import(&mut multipart).await {
+        Ok(path) => path,
+        Err(e) => return error_response(e),
     };
+    let file_path = staged.path.clone();
 
     let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
-    let mut payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
-    if let Some(p) = provider {
-        payload["provider"] = serde_json::Value::String(p);
-    }
+    let payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
 
     match crate::applet_runner::run_applet_detached(
         &deps,
@@ -189,17 +175,114 @@ pub async fn chat_import_upload_handler(
     .await
     {
         Ok(result) => {
-            // A run that never started never reads the file, so it is ours to remove.
-            if !matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
-                let _ = tokio::fs::remove_file(&file_path).await;
+            // A run that started reads the file and removes it; any other
+            // outcome leaves it to `staged`'s drop.
+            if matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
+                staged.keep();
             }
             run_status_response(result, "applet_chat_import")
         }
-        Err(e) => {
-            let _ = tokio::fs::remove_file(&file_path).await;
-            error_response(e)
+        Err(e) => error_response(e),
+    }
+}
+
+/// An upload in the staging folder, removed when dropped unless kept for a
+/// run that has started. Covers every early return and a request the client
+/// drops mid-upload.
+struct StagedUpload {
+    path: std::path::PathBuf,
+    kept: bool,
+}
+
+impl StagedUpload {
+    fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for StagedUpload {
+    fn drop(&mut self) {
+        if !self.kept {
+            let _ = std::fs::remove_file(&self.path);
         }
     }
+}
+
+/// Where uploads wait for the import: `chat-import` under the state root on a
+/// box, or `virtues-chat-import` in the temp folder in a dev checkout with no
+/// state root. `chat_import` reads only from a folder of one of these names.
+fn chat_import_staging_dir() -> std::path::PathBuf {
+    let root = crate::data_disk::data_dir();
+    if root.is_dir() {
+        root.join("chat-import")
+    } else {
+        std::env::temp_dir().join("virtues-chat-import")
+    }
+}
+
+/// Remove uploads an earlier server process left behind (killed mid-upload,
+/// or its import killed mid-read), once per process and before its first
+/// upload. Only this route writes the folder, and a run from an earlier
+/// process is not running any more.
+fn sweep_chat_import_staging(dir: &std::path::Path) {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let removed = entries
+            .flatten()
+            .filter(|e| std::fs::remove_file(e.path()).is_ok())
+            .count();
+        if removed > 0 {
+            tracing::info!("removed {removed} chat export upload(s) an earlier server left in {}", dir.display());
+        }
+    });
+}
+
+/// Stream the upload's `file` field into the staging folder, mode 0600.
+async fn stage_chat_import(multipart: &mut axum::extract::Multipart) -> Result<StagedUpload, Error> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    use tokio::io::AsyncWriteExt;
+
+    let dir = chat_import_staging_dir();
+    sweep_chat_import_staging(&dir);
+    let stage_failed = |e: std::io::Error| Error::Other(format!("could not save the upload in {}: {e}", dir.display()));
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(stage_failed)?;
+
+    let cut_off = |e: axum::extract::multipart::MultipartError| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            Error::InvalidInput(
+                "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.".into(),
+            )
+        } else {
+            Error::InvalidInput(format!("The upload was cut off. Try it again. ({e})"))
+        }
+    };
+
+    while let Some(mut field) = multipart.next_field().await.map_err(cut_off)? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let path = dir.join(format!("{}.upload", uuid::Uuid::new_v4()));
+        let std_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(stage_failed)?;
+        // Owned from here, so any failure below removes the file.
+        let staged = StagedUpload { path, kept: false };
+        let mut out = tokio::fs::File::from_std(std_file);
+        while let Some(chunk) = field.chunk().await.map_err(cut_off)? {
+            out.write_all(&chunk).await.map_err(stage_failed)?;
+        }
+        out.flush().await.map_err(stage_failed)?;
+        return Ok(staged);
+    }
+    Err(Error::InvalidInput("No file was sent. Choose the export and try again.".into()))
 }
 
 /// One chat site's history on this server: the months that have messages,
@@ -249,55 +332,6 @@ pub async fn chat_import_status_handler(
     Ok(Json(out))
 }
 
-/// Stream the upload's `file` field to `path` and return its `provider`
-/// field, if one was sent.
-async fn stage_chat_import(
-    multipart: &mut axum::extract::Multipart,
-    path: &std::path::Path,
-) -> Result<Option<String>, Error> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut provider = None;
-    let mut wrote_file = false;
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?
-    {
-        match field.name().unwrap_or("") {
-            "provider" => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?;
-                provider = Some(text).filter(|t| !t.is_empty() && t != "auto");
-            }
-            "file" => {
-                let mut out = tokio::fs::File::create(path)
-                    .await
-                    .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?
-                {
-                    out.write_all(&chunk)
-                        .await
-                        .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
-                }
-                out.flush()
-                    .await
-                    .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
-                wrote_file = true;
-            }
-            _ => {}
-        }
-    }
-    if !wrote_file {
-        return Err(Error::InvalidInput("no file provided".into()));
-    }
-    Ok(provider)
-}
 
 /// List all actions with their latest run status.
 pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
