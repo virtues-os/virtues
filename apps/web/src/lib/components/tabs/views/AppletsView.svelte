@@ -19,7 +19,7 @@
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
 	import SiteCard from '$lib/components/applets/SiteCard.svelte';
-	import { siteRoute } from '$lib/applets/sites.svelte';
+	import { siteHome } from '$lib/applets/sites.svelte';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
@@ -70,11 +70,8 @@
 		{ key: 'description', label: 'What it does', hidden: true },
 	];
 
-	/** Where a site opens: its view, or how it runs when it has no view. */
-	const homeOf = (a: Applet) => (a.has_face ? siteRoute(a.id) : `/applet/${a.id}`);
-
 	function openHome(a: Applet) {
-		windowShellStore.openTabFromRoute(homeOf(a), { label: a.name, focusExisting: true });
+		windowShellStore.openTabFromRoute(siteHome(a), { label: a.name, focusExisting: true });
 	}
 
 	function openConversation(a: Applet) {
@@ -112,7 +109,7 @@
 		if (canRun(a)) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
-		items.push(pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: siteHome(a), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 </script>

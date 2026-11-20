@@ -172,18 +172,17 @@
 				<h2 class="settings-label">Yours</h2>
 				{#if groups.yours.length}
 					<p class="group-sub">
-						You use these in
+						What you set up is in
 						<button
 							type="button"
 							class="settings-link"
-							onclick={() => windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true })}>Applets</button
-						>. Here is how their runs went.
+							onclick={() => windowShellStore.openTabFromRoute('/applets', { label: 'Sites', focusExisting: true })}>Sites</button
+						>. Each one's options say when it runs and how its runs went.
 					</p>
-					{@render list(groups.yours)}
 				{:else}
 					<p class="group-sub">
 						Nothing you made runs yet. Ask in chat, such as “write my examen each morning” or “a dashboard of my heart rate”, and it
-						becomes an applet.
+						appears in Sites.
 					</p>
 				{/if}
 			</section>

@@ -142,19 +142,28 @@ Built on wave on 2026-11-20, except the door's name on the rail and the tab.
 
 ### Slice 3: a site's options hold how it runs
 
-- `AppletDetailView` becomes the site's options. They are part of the site's
-  own page, reached by a "Site / Options" switch in its page bar, and not a
-  panel beside it (the owner's call on 2026-11-20). They hold when it runs,
-  what it may spend, the on/off switch, its runs, its prompt, and delete.
-- A site that has no view gets the server's default view: what it made,
-  newest first, each linking to the page or chat it wrote.
-- A site that needs you says so in one line on its card and at the top of its
-  page ("Sign in to Google again"), and the server status line links to it.
-  It is a sentence, not a badge or a count.
-- `settings/AppletsPage.svelte` keeps only your server's upkeep jobs. Sync
-  jobs move to their source's page.
-- One-time reminders are not sites. They stay with
-  [reminders-plan.md](reminders-plan.md).
+Built on wave on 2026-11-20 and seen in the dev app, except the last two
+items under Left.
+
+- A site's page has two sides in one tab, with a "Site / Options" switch in
+  its toolbar (`SiteSwitch.svelte`). Switching replaces the tab's place in
+  history, so Back leaves the site.
+- Site: the view, full page (`AppletView.svelte`). A site with no view shows
+  what it made, newest first, which `AppletDetailView.svelte` already drew:
+  the pages it wrote, or its results.
+- Options: `AppletDetailView` with `?panel=info`, one column in the page.
+  When it runs, its next run and its cost are the first rows, then its run
+  history and its technical details. The panel that opened beside the
+  results is gone (the owner's call on 2026-11-20), and so is the copy of
+  the view that page drew at a fixed height. A link to a site's bare address
+  goes to its view.
+- What a site needs is one sentence above its view with the button that
+  fixes it, the same sentence its card shows.
+- Settings lists your server's own jobs and what needs you. For what you set
+  up, it points to Sites.
+- Left: sync jobs still show in the Settings list and not on their source's
+  page. The Settings page is still titled "Applets". One-time reminders are
+  not sites; they stay with [reminders-plan.md](reminders-plan.md).
 
 ### Slice 4: copy and the manual
 

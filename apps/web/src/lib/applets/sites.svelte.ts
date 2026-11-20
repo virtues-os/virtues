@@ -9,6 +9,13 @@ import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 /** Where a site's view opens as a tab. */
 export const siteRoute = (appletId: string) => `/applet/${appletId}/view`;
 
+/** Where a site's options open: the same tab, on its other side. */
+export const optionsRoute = (appletId: string) => `/applet/${appletId}?panel=info`;
+
+/** Where a site opens: its view, or the page of what it made when it has none. */
+export const siteHome = (site: { id: string; has_face: boolean }) =>
+	site.has_face ? siteRoute(site.id) : `/applet/${site.id}`;
+
 class SiteBuilds {
 	/** How many times each site's view was rebuilt in this session. A frame
 	 *  reads its site's count, so a rebuild reloads it. */
