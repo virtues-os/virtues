@@ -373,6 +373,15 @@ pub async fn credit(
 ) -> Result<i64> {
     let now = Utc::now();
     let mut tx = pool.begin().await?;
+    // Serialize credits per account. `FOR UPDATE` below locks nothing when
+    // the wallet row does not exist yet, so two first credits (a checkout's
+    // and invoice.paid's, or a top-up racing either) would both read zero and
+    // one would overwrite the other. The lock ends with the transaction.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('wallet-credit:' || $1))")
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await
+        .context("lock wallet credit")?;
 
     let existing: Option<(i64, i64)> = sqlx::query_as(
         "SELECT balance_micros, topup_micros FROM wallets WHERE account_id = $1 FOR UPDATE",
@@ -640,6 +649,27 @@ mod tests {
         credit(&pool, a, 20_000_000, CreditMode::Set, Some("renewal")).await.unwrap();
         let w = get_wallet(&pool, a).await.unwrap().unwrap();
         assert_eq!((w.balance_micros, w.topup_micros), (65_000_000, 45_000_000));
+        assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
+    }
+
+    /// Concurrent first credits on a new account all land: none
+    /// overwrites another, and the balance matches the ledger.
+    #[sqlx::test]
+    async fn concurrent_first_credits_all_land(pool: PgPool) {
+        let a = "acct-race";
+        let tasks: Vec<_> = (0..6)
+            .map(|_| {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    credit(&pool, a, 1_000_000, CreditMode::Add, None).await.unwrap();
+                })
+            })
+            .collect();
+        for t in tasks {
+            t.await.unwrap();
+        }
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (6_000_000, 6_000_000));
         assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
     }
 

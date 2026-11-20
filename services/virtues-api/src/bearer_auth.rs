@@ -39,6 +39,10 @@ pub enum BearerError {
     MissingHeader,
     MalformedHeader,
     NotFound,
+    /// The account has no wallet: it has never paid, or a lapsed wallet was
+    /// swept. Answered as `wallet_empty`, which released boxes word as
+    /// "needs a Virtues subscription" for a free account.
+    NoWallet,
     Expired,
     Blocked,
     Internal(String),
@@ -48,7 +52,7 @@ impl virtues_helpers::error::StructuredError for BearerError {
     fn status(&self) -> u16 {
         match self {
             Self::MissingHeader | Self::MalformedHeader | Self::NotFound => 401,
-            Self::Expired => 402,
+            Self::NoWallet | Self::Expired => 402,
             Self::Blocked => 403,
             Self::Internal(_) => 500,
         }
@@ -58,6 +62,7 @@ impl virtues_helpers::error::StructuredError for BearerError {
             Self::MissingHeader => "missing_key",
             Self::MalformedHeader => "malformed_key",
             Self::NotFound => "unknown_key",
+            Self::NoWallet => "wallet_empty",
             Self::Expired => "wallet_expired",
             Self::Blocked => "blocked",
             Self::Internal(_) => "internal",
@@ -68,6 +73,7 @@ impl virtues_helpers::error::StructuredError for BearerError {
             Self::MissingHeader => "Authorization: Bearer header required".into(),
             Self::MalformedHeader => "expected `Authorization: Bearer <api_key>`".into(),
             Self::NotFound => "this server's key is not recognized — link it again".into(),
+            Self::NoWallet => "no Virtues subscription on this account yet".into(),
             Self::Expired => "no active subscription — renew it to continue".into(),
             Self::Blocked => "key is on the behavioral blocklist".into(),
             Self::Internal(m) => m.clone(),
@@ -153,13 +159,13 @@ async fn paying(parts: &Parts, state: &Arc<AppState>) -> Result<BearerAuth, Bear
     let key = box_key(parts, state).await?;
     let pool = &state.db;
 
-    // No wallet and an expired one answer the same: the account never paid,
-    // its subscription lapsed, or the lapsed wallet was swept.
     let wallet = entitlement::get_wallet(pool, &key.account_id)
         .await
         .map_err(|e| BearerError::Internal(e.to_string()))?
-        .filter(|w| w.expires_at >= chrono::Utc::now())
-        .ok_or(BearerError::Expired)?;
+        .ok_or(BearerError::NoWallet)?;
+    if wallet.expires_at < chrono::Utc::now() {
+        return Err(BearerError::Expired);
+    }
 
     // Record the request against the per-bearer rate window; exceeding the
     // ceiling is always flagged + logged, but only *blocks* when enforcement

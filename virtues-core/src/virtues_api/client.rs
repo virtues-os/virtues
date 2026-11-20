@@ -291,7 +291,7 @@ pub fn payment_required_message(body: &Value, feature: &str) -> String {
         Some(crate::virtues_api::renew::Entitlement::Free)
     );
     let msg = match code {
-        "wallet_empty" | "insufficient_budget" if free => format!(
+        "wallet_empty" | "insufficient_budget" | "wallet_expired" if free => format!(
             "{what} needs a Virtues subscription — there is no wallet behind this server yet. Subscribe in Settings → Billing, or bring your own AI key."
         ),
         "wallet_empty" | "insufficient_budget" => format!(
