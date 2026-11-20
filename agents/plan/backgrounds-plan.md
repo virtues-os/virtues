@@ -171,15 +171,42 @@ What the measurement showed:
 
 The lake stays bundled in `static/scenes/` as the default and the fallback.
 Every other style is a versioned archive that the box downloads once when you
-turn the style on, installs into its state root (`/var/lib/virtues/`, beside
-the applet state), and serves to its own apps. The apps never fetch a picture
-from anywhere but the box.
+pick the style, installs into its state root (`/var/lib/virtues/backgrounds`),
+and serves to its own apps. The apps never fetch a picture from anywhere but
+the box. Built in slice 4; the manual page is
+[docs/use/backgrounds.md](../../docs/use/backgrounds.md) and the entry is in
+[privacy-boundary.md](../build/privacy-boundary.md).
 
-The download carries no personal data, but it is a request that leaves the
-server, so it gets a line in the manual and in
-[privacy-boundary.md](../build/privacy-boundary.md) in the slice that adds it.
+- `tools/backgrounds/package.py` writes `catalog.json` and one
+  `<style>-<sha12>.tar` per style. The catalog carries each style's size,
+  sha256 and a small preview per appearance.
+- The archives live in the maps bucket under `backgrounds/`, the owner's
+  choice of "the OVH bucket" on 2026-11-20. `deploy/maps/prune.sh` deletes
+  only eight-digit build folders, so it leaves them alone. virtues-api serves
+  them at `/v1/backgrounds/catalog.json` and `/v1/backgrounds/<archive>`
+  with a subscriber's bearer, reading the bucket with its maps key, and logs
+  nothing (`services/virtues-api/src/routes/backgrounds.rs`).
+- The box (`virtues-core/src/api/backgrounds.rs`) caches the catalog for a
+  day, lists styles it does not have as `available`, and on
+  `POST /api/backgrounds/install/<style>` downloads the archive, checks its
+  size and sha256, unpacks it with no links into a staging folder, checks the
+  manifest and swaps it in. `VIRTUES_BACKGROUNDS_SOURCE` points a box at a
+  self-hosted copy of the same layout. Download and unpack are shared with
+  the map files (`virtues-core/src/downloads.rs`).
 
-Where the archives are hosted is open.
+Before servers can download a style, two steps remain, both the owner's:
+
+1. Upload the output of `package.py` to the bucket under `backgrounds/`,
+   archives first and `catalog.json` last, with the maps writer key.
+2. Deploy virtues-api with the backgrounds route. The API is never deployed
+   from wave without asking; see `agents/build/deployment.md`.
+
+Until then a server's catalog request gets a 404 or 503, and the pickers show
+Plain, the lake and whatever is installed by hand.
+
+Each archive is about 100 MB because it holds AVIF and WebP at two widths.
+Every Apple device of the last few years shows AVIF, so dropping WebP would
+roughly halve it; not decided.
 
 ## Moving styles
 
@@ -236,8 +263,11 @@ Each slice replaces the old way in the same change.
      the settings agent's list of themes.
    - Each style's manifest carries its name in the pickers (`title`, from
      `build.py --title`): Watercolors and Oil paintings.
-4. **Delivery.** The box downloads, installs and serves a style. Manual page
-   and the privacy boundary entry.
+4. **Delivery.** Built 2026-11-20 (see Delivery above): the packaging tool,
+   the virtues-api route, the box's catalog, download and install, the
+   download state on the Settings cards, the manual page and the privacy
+   boundary entry. Tested end to end against a local copy of the catalog;
+   not yet against virtues-api or the bucket.
 5. **A second renderer.** One cheap moving style (dots or a single shader) to
    check the renderer split before more image styles are added.
 6. **Night versions** of the paintings, replacing the curated pairs.
@@ -245,12 +275,12 @@ Each slice replaces the old way in the same change.
 ## Open decisions
 
 1. Daily rotation, as proposed above, or a different change point.
-2. Where style archives are hosted.
+2. Whether archives drop WebP and carry AVIF only.
 3. What the home control's arrows do under a rotating setting, and how
    Follow the day finds sunrise and sunset (both built as proposed above).
 
 ## When this plan is done
 
-Delete it when slice 4 ships. What stays is a manual page on backgrounds, the
-privacy boundary entry, and a paragraph under Materials in
+Delete it when slices 5 and 6 ship. What stays is the manual page on
+backgrounds, the privacy boundary entry, and a paragraph under Materials in
 [design.md](../build/design.md) replacing the one that names the lake.

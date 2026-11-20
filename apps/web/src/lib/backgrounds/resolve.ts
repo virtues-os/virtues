@@ -49,6 +49,21 @@ export interface StyleManifest {
 	collections: Collection[];
 }
 
+/** A style the server can download (GET /api/backgrounds, `available`). */
+export interface AvailableStyle {
+	style: string;
+	title: string;
+	bytes: number;
+	/** A small picture per appearance, as `data:` URLs. */
+	preview: Partial<Record<Appearance, string>>;
+}
+
+/** A download in progress (GET /api/backgrounds, `installing`). */
+export interface DownloadProgress {
+	received_bytes: number;
+	total_bytes: number;
+}
+
 export interface Address {
 	style: string;
 	collection: string;

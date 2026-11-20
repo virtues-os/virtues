@@ -129,10 +129,12 @@ pub fn routes() -> Router<AppState> {
         )
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(unsplash_search_handler))
-        // Home backgrounds: the installed styles and their pictures
-        // (api/backgrounds.rs). The apps load pictures from this server only.
+        // Home backgrounds: the installed styles and their pictures, the ones
+        // the catalog offers, and downloading one (api/backgrounds.rs). The
+        // apps load pictures from this server only.
         .route("/api/backgrounds", get(backgrounds_handler))
         .route("/api/backgrounds/files/*path", get(background_file_handler))
+        .route("/api/backgrounds/install/:style", post(background_install_handler))
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
@@ -944,9 +946,19 @@ pub async fn apply_update_handler() -> Response {
     }
 }
 
-/// GET /api/backgrounds — every installed style's manifest.
-pub async fn backgrounds_handler() -> Response {
-    api_response(crate::api::backgrounds::list().await)
+/// GET /api/backgrounds — the installed styles, the ones the catalog offers,
+/// and any download in progress or failed.
+pub async fn backgrounds_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::backgrounds::list(state.db.pool()).await)
+}
+
+/// POST /api/backgrounds/install/:style — start downloading a style from the
+/// catalog. Returns at once; GET /api/backgrounds reports the progress.
+pub async fn background_install_handler(State(state): State<AppState>, Path(style): Path<String>) -> Response {
+    match crate::api::backgrounds::install(state.db.pool(), &style).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(serde_json::json!({ "style": style }))).into_response(),
+        Err(e) => error_response(e),
+    }
 }
 
 /// GET /api/backgrounds/files/*path — one picture of an installed style.

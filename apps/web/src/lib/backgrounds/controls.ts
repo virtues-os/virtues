@@ -1,9 +1,11 @@
 /**
  * What the home control and the Settings picker do with the background
  * store: step to the picture before or after, keep today's picture, name
- * the current one, and draw thumbnails. These load with the pickers, never
+ * the current one, draw thumbnails, and download a style the server does
+ * not have yet. These load with the pickers, never
  * at launch (agents/plan/backgrounds-plan.md, "The home control").
  */
+import { request } from '$lib/api/client';
 import { background, fileUrl } from '$lib/stores/background.svelte';
 import { formatAddress, parseSetting, pool, type Picture } from './resolve';
 import { narrowest, stepFrom } from './browse';
@@ -51,4 +53,28 @@ export async function keep(): Promise<void> {
 /** A small picture for a thumbnail, in the current appearance. */
 export function thumbnail(style: string, picture: Picture): string {
 	return narrowest(picture[background.appearance], fileUrl(style));
+}
+
+/** How often a picker asks the server how a download is going. */
+const DOWNLOAD_POLL_MS = 1000;
+
+/**
+ * Download a style the server does not have, and make it the setting once
+ * it is installed. The server does the download (api/backgrounds.rs); this
+ * starts it and follows it, so a picker can show its progress from the
+ * store. A failure is left in `background.failed` for the card to say.
+ */
+export async function download(style: string): Promise<void> {
+	await request(`/backgrounds/install/${encodeURIComponent(style)}`, { method: 'POST' });
+	await background.refresh();
+	while (background.installing[style]) {
+		await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_POLL_MS));
+		await background.refresh();
+	}
+	if (background.styles?.some((s) => s.style === style)) await background.set(style);
+}
+
+/** A size in megabytes, rounded, for "Download (95 MB)". */
+export function megabytes(bytes: number): string {
+	return `${Math.max(1, Math.round(bytes / 1_000_000))} MB`;
 }

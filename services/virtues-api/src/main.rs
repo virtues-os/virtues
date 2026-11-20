@@ -209,6 +209,9 @@ async fn main() -> Result<()> {
         // which squares a box downloads is location data, and these routes
         // log nothing (routes/maps.rs).
         .merge(routes::maps::router())
+        // Background styles, merged here for the same reason: these routes
+        // log nothing (routes/backgrounds.rs).
+        .merge(routes::backgrounds::router())
         // F2: no CORS. virtues-api is a server-to-server sidecar (the home box
         // calls it with a Bearer or X-Internal-Secret header). No browser
         // should ever talk to it. The previous `allow_origin: Any +

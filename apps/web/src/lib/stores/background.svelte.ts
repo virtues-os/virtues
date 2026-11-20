@@ -27,6 +27,8 @@ import {
 	widest,
 	type Address,
 	type Appearance,
+	type AvailableStyle,
+	type DownloadProgress,
 	type Picture,
 	type StyleManifest,
 } from '$lib/backgrounds/resolve';
@@ -101,6 +103,10 @@ class BackgroundStore {
 	appearance = $state<Appearance>(appearance());
 	day = $state(dayNumber(new Date()));
 	dayChoice = $state<DayChoice | null>(null);
+	/** Styles the server can download, downloads in progress, and failed ones. */
+	available = $state<AvailableStyle[]>([]);
+	installing = $state<Record<string, DownloadProgress>>({});
+	failed = $state<Record<string, string>>({});
 	#cached = typeof window === 'undefined' ? null : readCachedPicture();
 	#started = false;
 
@@ -181,10 +187,23 @@ class BackgroundStore {
 		if (this.styles === null) await this.#loadStyles();
 	}
 
+	/** Load the styles again: after a download starts, and while it runs. */
+	async refresh(): Promise<void> {
+		await this.#loadStyles();
+	}
+
 	async #loadStyles(): Promise<void> {
 		try {
-			const res = await request<{ styles: StyleManifest[] }>('/backgrounds');
+			const res = await request<{
+				styles: StyleManifest[];
+				available?: AvailableStyle[];
+				installing?: Record<string, DownloadProgress>;
+				failed?: Record<string, string>;
+			}>('/backgrounds');
 			this.styles = res.styles;
+			this.available = res.available ?? [];
+			this.installing = res.installing ?? {};
+			this.failed = res.failed ?? {};
 			this.#cacheToday();
 		} catch (error) {
 			// Without the manifests a path setting shows the cached picture or the lake.

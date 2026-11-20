@@ -4,11 +4,16 @@
 	 * collection in it, then one picture. A choice that stops above a
 	 * picture changes picture each day (lib/backgrounds/resolve.ts). Each
 	 * card shows its pictures in the current appearance.
+	 *
+	 * A style the server does not have yet follows the installed ones, with
+	 * its size. Picking it downloads it to the server, and it becomes the
+	 * setting once it is installed (download in lib/backgrounds/controls.ts).
 	 */
 	import { onMount } from 'svelte';
 	import { background } from '$lib/stores/background.svelte';
 	import { parseSetting, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
-	import { thumbnail } from '$lib/backgrounds/controls';
+	import { download, megabytes, thumbnail } from '$lib/backgrounds/controls';
+	import type { AvailableStyle } from '$lib/backgrounds/resolve';
 
 	onMount(() => {
 		background.start();
@@ -30,9 +35,22 @@
 	}
 
 	const firsts = (s: StyleManifest) => s.collections.map((c) => c.pictures[0]).filter(Boolean);
+
+	/** What a style not on the server says under its name. */
+	function downloadNote(a: AvailableStyle): string {
+		const p = background.installing[a.style];
+		if (p) return `Downloading, ${Math.floor((100 * p.received_bytes) / Math.max(1, p.total_bytes))}%`;
+		if (background.failed[a.style]) return background.failed[a.style];
+		return `${megabytes(a.bytes)} to download`;
+	}
+
+	function startDownload(style: string) {
+		if (background.installing[style]) return;
+		download(style).catch((error) => console.warn('Background download did not start:', error));
+	}
 </script>
 
-{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' | 'lake' = 'one')}
+{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' | 'lake' = 'one', note = '')}
 	<button type="button" role="radio" class="card" class:picked aria-checked={picked} {onclick}>
 		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'} class:lake={kind === 'lake'}>
 			{#each kind === 'many' ? images : images.slice(0, 1) as src (src)}
@@ -40,6 +58,7 @@
 			{/each}
 		</span>
 		<span class="name">{label}</span>
+		{#if note}<span class="note">{note}</span>{/if}
 	</button>
 {/snippet}
 
@@ -49,6 +68,10 @@
 		{@render card('The lake', setting.kind === 'default', () => background.set(''), ['/scenes/lake.webp'], 'lake')}
 		{#each styles as s (s.style)}
 			{@render card(s.title, setting.kind === 'path' && setting.style === s.style, () => background.set(s.style), [thumb(s, firsts(s)[0])])}
+		{/each}
+		{#each background.available as a (a.style)}
+			{@const preview = a.preview[background.appearance] ?? a.preview.light}
+			{@render card(a.title, false, () => startDownload(a.style), preview ? [preview] : [], 'one', downloadNote(a))}
 		{/each}
 	</div>
 
@@ -171,6 +194,13 @@
 
 	.card.picked .name {
 		color: var(--color-foreground);
+	}
+
+	.note {
+		margin-top: -4px;
+		font-size: var(--text-caption);
+		line-height: 1.3;
+		color: var(--color-foreground-muted);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

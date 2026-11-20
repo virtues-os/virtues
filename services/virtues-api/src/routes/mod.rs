@@ -21,6 +21,7 @@
 //! box never holds the master Plaid credential.
 
 pub mod ai;
+pub mod backgrounds;
 pub mod bearer_test;
 pub mod connections;
 pub mod google;
