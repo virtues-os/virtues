@@ -7,5 +7,6 @@ metadata:
   run: google_gmail_sync
   source: google
   writes: communication_email
+  limit: 1800 seconds
 ---
 
