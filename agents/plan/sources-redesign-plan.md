@@ -85,14 +85,16 @@ One page. The section strip goes away.
   sent something. A broken one says so in the row.
 - **Add a source:** two columns of icon, name, one line and Connect.
 - **Tools your assistant can use:** the same rows, with the line "Your
-  assistant works in these when you ask. They aren't synced." (The board
-  says "Nothing is copied from these"; that is wrong, because a tool's result
-  is kept in the chat's history on your server.)
+  assistant works in these when you ask. They aren't synced." It does not
+  say nothing is copied: a tool's result is kept in the chat's history on
+  your server.
 - No search until the list passes about 20 entries.
 - A new box with nothing connected leads with iPhone and Mac.
 
-Activity and Streams move to each source's page. Query moves to Settings ›
-Data, and `/sources/query` redirects there.
+Activity and Streams move to each source's page. Query and the full list of
+every stream move to Settings › Data, so the view of everything your server
+keeps is still one place, and `/sources/query` and `/sources/streams`
+redirect there.
 
 ### One page per source
 
@@ -145,12 +147,14 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    Instagram and Grok. Needs decisions 1 and 2.
 2. **One Sources page.** Delete the section strip and `SOURCES_SECTIONS`,
    add the attention sentence from the store's broken connections, rename
-   Plaid and Chat History in the catalog, and redirect `/sources/catalog`,
-   `/sources/activity` and `/sources/streams` to `/sources`. Query moves to
-   Settings › Data with `/sources/query` redirecting there.
+   Plaid and Chat History in the catalog, and redirect `/sources/catalog`
+   and `/sources/activity` to `/sources`. Query and the full streams list
+   move to Settings › Data, with `/sources/query` and `/sources/streams`
+   redirecting there.
 3. **One page per source.** Merge `SourceDetail` and `CredentialDetailView`.
-   Streams come from the per-source part of `StreamsView`, runs from
-   `SourcesActivity`. Disconnect's "delete what it has" goes through
+   The page's streams are `StreamsView`'s rows filtered to this source, and
+   its runs are `SourcesActivity` filtered by source (its rail already has
+   that filter). Disconnect's "delete what it has" goes through
    `api::deletions`, which every removal of `data_*` rows must use.
 4. **Assistant switches per source.** Add capabilities to the table in
    `capabilities.rs` (for example `email` for `email_archive`,
@@ -181,7 +185,8 @@ Open, each needs the owner's words:
 3. **Notion:** the sync source, the MCP tool, or one row that sets up both.
    They sign in separately today.
 4. **Brand marks:** in each brand's color (as drawn) or all in ink.
-5. **Query:** Settings › Data, as proposed, or somewhere else.
+5. **Query and the full streams list:** Settings › Data, as proposed, or
+   somewhere else.
 6. **Device pages:** the Sources device page and Settings › Devices show the
    same phone. Pick one home and link the other to it.
 7. **Audio schedule on the web:** read-only for now, or build the schedule on
