@@ -167,13 +167,27 @@ items under Left.
 
 ### Slice 4: copy and the manual
 
-Every string in the table above, in the same change: Keys ("what your sites
-and scheduled jobs sign in with"), capabilities, devices, shared links, model
-slots. Rewrite the glossary entry and the backup page. The glossary entry and
-the door's empty state say that a site is private until you share it, because
-"site" can read as "on the public web". The door carries no mark of where
-anything runs. Settle face or view in
-`faces.rs` and AGENTS.md. `tools/check-manual.py` must pass.
+Built on wave on 2026-11-20.
+
+- The words: what you made is a **site**, what your server runs for itself is
+  a **job** (the owner's word, 2026-11-20: on Linux each one is a scheduled
+  process that starts, works and exits, which is a job and not a daemon), and
+  a prompt you start from chat is a slash command. Where a string covers more
+  than one of them it names none ("Nothing uses it yet").
+- The Settings page is titled "Jobs". Keys, capabilities, devices, shared
+  links, model slots, the server status line, the chat's tool lines, the page
+  editor's site block, search and recents say "site" or "job".
+- The manual: the glossary defines Site and Job in place of Applet, and the
+  backup page says "sites". The two planned pages are renamed in the manifest.
+- `applets/AGENTS.md` opens with the three words, and the applet tool tells
+  the assistant to say "site" to the person.
+- The share sheet drew its "stays on your server" line twice; it draws once.
+- Left, each in a file that held another change in progress: the tab and door
+  labels (`tabs/registry.ts`, `sidebarDoors.svelte.ts`, `MobileDrawer.svelte`),
+  "Wiki Editor applet" in `wiki/ThingPage.svelte`, one error string in
+  `api/client.ts`, the assistant's own prompt in `virtues-registry`'s
+  `assistant.rs`, and `face` against `view` in `server/faces.rs`. Server
+  error messages still say "applet".
 
 ### Slice 5: code names (only if D3 says so)
 
@@ -186,6 +200,7 @@ the CLI. Do it only if D3 calls for it, as its own plan.
 | # | Question | Pick |
 |---|---|---|
 | D1 | The noun for a made view | **Decided 2026-11-20: "Sites".** "Artifacts" was the other candidate. It is jargon, it covers documents in Claude and so collides with Pages, and it reads as a static leftover when a site keeps tables and refreshes. "Site" can suggest the public web, so the copy says a site is private until you share it. |
+| D7 | The name for what your server runs for itself | **Decided 2026-11-20: "Jobs".** "Upkeep" was offered and refused. "Daemons" is wrong, because nothing stays running between runs. |
 | D2 | Where scheduled work lives | **Decided 2026-11-20: in Sites.** Each one is a site, and how it runs is in that site's options. There is no "Runs for you" list in Settings. |
 | D3 | Rename in code too? | No. People never see the word, and the sweep costs migrations and a CLI release. Revisit only if the word confuses contributors. |
 | D4 | Is something with no view a site? | Yes, since D2. It gets the server's default view of what it made. |

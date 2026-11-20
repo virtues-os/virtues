@@ -145,7 +145,7 @@
 					rows="10"
 					bind:value={edit.agent}
 					oninput={markDirty}
-					placeholder="What should this applet do each run?"
+					placeholder="What should it do each run?"
 				></textarea>
 			{:else}
 				<div class="pipeline-note">
@@ -163,7 +163,7 @@
 				     how you get back to what ships. -->
 				<div class="prompt-drift">
 					<span>
-						You've changed this built-in applet. Fixes to what you changed don't reach you.
+						You've changed this built-in job. Fixes to what you changed don't reach you.
 					</span>
 					<TextAction inline onclick={useShipped}>Use the version that ships</TextAction>
 				</div>
@@ -228,10 +228,10 @@
 			rows="6"
 			bind:value={edit.memory}
 			oninput={markDirty}
-			placeholder="Empty. This applet has not written itself any notes yet."
+			placeholder="Empty. It has not written itself any notes yet."
 		></textarea>
 		<span class="hint">
-			What this applet wrote down for its own next run. Yours to read, and to correct.
+			What it wrote down for its own next run. Yours to read, and to correct.
 		</span>
 	</label>
 
@@ -248,7 +248,7 @@
 	<section class="source-block">
 		<h3>Source</h3>
 		<p class="source-note">
-			The code this applet runs. Read-only - editing forks it onto this server.
+			The code it runs. Read-only - editing forks it onto this server.
 		</p>
 		<AppletSource appletId={action.id} />
 	</section>

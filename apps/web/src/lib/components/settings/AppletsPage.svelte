@@ -96,7 +96,7 @@
 				action: () => void windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' }),
 			});
 		}
-		items.push({ id: 'open', label: 'Open applet', icon: 'atlas:applets', action: () => openApplet(a) });
+		items.push({ id: 'open', label: 'Open', icon: 'atlas:applets', action: () => openApplet(a) });
 		items.push({ id: 'history', label: 'Run history', icon: 'mynaui:clock-circle', action: () => openApplet(a, 'history') });
 		if (canRun(a)) items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void run(a) });
 		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
@@ -147,14 +147,14 @@
 {/snippet}
 
 <SettingsPage
-	title="Applets"
+	title="Jobs"
 	lede="What runs on its own on your server, and how its last runs went."
 	back={{ route: '/virtues/system', label: 'Your server' }}
 >
 	{#if failed}
-		<LoadError message="Your server couldn’t send your applets." onretry={load} />
+		<LoadError message="Your server couldn’t send its jobs." onretry={load} />
 	{:else if !loaded}
-		<p class="settings-sub">Asking your server about its applets…</p>
+		<p class="settings-sub">Asking your server about its jobs…</p>
 	{:else}
 		<p class="settings-lead">{lead.sentence}</p>
 		<p class="settings-sub">{lead.sub}</p>
@@ -206,23 +206,23 @@
 
 		<div class="tail">
 			{#if groups.finished.length}
-				<Fold label="Finished" sub="One-time applets that already ran. They keep what they made.">
+				<Fold label="Finished" sub="One-time jobs and sites that already ran. They keep what they made.">
 					{@render list(groups.finished)}
 				</Fold>
 			{/if}
-			<Fold label="For troubleshooting" sub="Pick up applet folders that changed outside the app.">
+			<Fold label="For troubleshooting" sub="Pick up job and site folders that changed outside the app.">
 				<Button variant="secondary" disabled={reconciling} onclick={reconcile}>
-					{reconciling ? 'Reading…' : 'Re-read applet folders'}
+					{reconciling ? 'Reading…' : 'Re-read folders'}
 				</Button>
 				{#if reconcileNote}<p class="fold-text">{reconcileNote}</p>{/if}
 			</Fold>
 		</div>
 
 		<p class="settings-aside">
-			Applets sign in with the
+			Jobs and sites sign in with the
 			<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/data/keys', DEFAULT_ASSISTANT_NAME)}
 				>keys</button
-			> on Your data. Each applet’s page has its run history.
+			> on Your data. Each one’s page has its run history.
 		</p>
 	{/if}
 </SettingsPage>

@@ -62,7 +62,7 @@
 	const SLOT_FIELDS = [
 		{ key: 'standard', label: 'Chat', note: '' },
 		{ key: 'deep', label: 'Deep research', note: '' },
-		{ key: 'lite', label: 'Background work', note: 'Titles, summaries and applets. These run often, so pick something cheap and quick.' },
+		{ key: 'lite', label: 'Background work', note: 'Titles, summaries and scheduled work. These run often, so pick something cheap and quick.' },
 		{ key: 'image', label: 'Pictures', note: '' },
 		{
 			key: 'omni',

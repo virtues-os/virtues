@@ -276,7 +276,7 @@ export function contentGlyph(hit: LocalSearchHit): string {
 	return ROOMS[hit.ontology]?.glyph ?? 'atlas:sources';
 }
 
-const RECORD_NOUN: Record<RecentKind, string> = { chat: 'Chat', page: 'Page', thread: 'Thread', applet: 'Applet' };
+const RECORD_NOUN: Record<RecentKind, string> = { chat: 'Chat', page: 'Page', thread: 'Thread', applet: 'Site' };
 
 /** `content_bookmark` → "Bookmark": the kind as a noun, without the table's prefix. */
 function contentNoun(hit: LocalSearchHit): string {

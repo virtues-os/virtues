@@ -139,7 +139,7 @@ const WIDGET_WORDS: Record<string, string> = {
 	video: 'Video',
 	file: 'File',
 	table: 'Table',
-	applet: 'Applet',
+	applet: 'Site',
 	figure: 'Figure',
 	horizontalRule: 'Divider',
 };

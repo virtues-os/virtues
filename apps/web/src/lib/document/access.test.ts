@@ -848,7 +848,7 @@ describe('keyboard paths', () => {
 		expect(sizeByKey('a', 300, range)).toBeNull();
 		for (const [file, label] of [
 			['../components/pages/nodes/MediaNode.svelte', 'Image width'],
-			['../components/pages/nodes/AppletNode.svelte', 'Applet height'],
+			['../components/pages/nodes/AppletNode.svelte', 'Site height'],
 		]) {
 			const source = read(file);
 			expect(source, file).toMatch(/role="slider"\s+tabindex="0"/);

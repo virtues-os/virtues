@@ -87,7 +87,7 @@
 				},
 				{
 					id: "remove",
-					label: "Remove applet",
+					label: "Remove site",
 					icon: "mynaui:trash",
 					variant: "destructive",
 					dividerBefore: true,
@@ -111,7 +111,7 @@
 			class="doc-applet-handle"
 			role="slider"
 			tabindex="0"
-			aria-label="Applet height"
+			aria-label="Site height"
 			aria-orientation="vertical"
 			aria-valuemin={MIN_HEIGHT}
 			aria-valuemax={Math.max(MAX_HEIGHT, height)}

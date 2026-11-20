@@ -122,7 +122,7 @@
 	}
 
 	function usedBy(k: KeyItem): string {
-		return k.used_by.length ? k.used_by.join(', ') : 'No applet yet';
+		return k.used_by.length ? k.used_by.join(', ') : 'Nothing yet';
 	}
 
 	const columns: Column<KeyRow>[] = [
@@ -142,7 +142,7 @@
 <SettingsPage
 	title="Keys"
 	back={{ route: '/virtues/data', label: 'Your data' }}
-	lede="What your applets sign in with, such as an API key. An applet gets only the keys it lists, and the assistant sees their names, never their values."
+	lede="What your sites sign in with, such as an API key. A site gets only the keys it lists, and the assistant sees their names, never their values."
 	width="medium"
 >
 	{#snippet actions()}
@@ -159,7 +159,7 @@
 			{loading}
 			{error}
 			emptyIcon="mynaui:key"
-			emptyMessage="No keys yet. Add one when an applet asks for it."
+			emptyMessage="No keys yet. Add one when a site asks for it."
 			loadingMessage="Loading keys…"
 			searchPlaceholder="Search keys…"
 			defaultViewMode="table"
@@ -230,7 +230,7 @@
 					label="Name"
 					bind:value={editing.name}
 					placeholder="OPENAI_API_KEY"
-					helperText="Capitals, digits and underscores, as the applet names it."
+					helperText="Capitals, digits and underscores, as the site names it."
 					autocomplete="off"
 				/>
 			{/if}
@@ -269,7 +269,7 @@
 		<p class="block-body">
 			{removing.used_by.length
 				? `${removing.used_by.join(', ')} will stop running until you add it again.`
-				: 'No applet uses it right now.'}
+				: 'Nothing uses it right now.'}
 		</p>
 		<div class="form-actions">
 			<Button variant="ghost" onclick={() => (removing = null)}>Cancel</Button>

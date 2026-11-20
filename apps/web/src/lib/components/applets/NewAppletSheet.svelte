@@ -57,7 +57,7 @@
 	}
 </script>
 
-<Modal {open} {onClose} title="New applet" width="md">
+<Modal {open} {onClose} title="New site" width="md">
 	<div class="sheet">
 		<p class="lede">Describe what it should do and when. Virtues sets it up in a new chat.</p>
 		<form
@@ -71,7 +71,7 @@
 				type="text"
 				bind:value={draft}
 				placeholder="Every Sunday evening, write a page that sums up my week"
-				aria-label="What the applet should do"
+				aria-label="What the site should do"
 			/>
 			<IconButton
 				icon="mynaui:arrow-up"

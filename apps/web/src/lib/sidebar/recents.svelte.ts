@@ -43,7 +43,7 @@ export const RECENT_KIND_LABEL: Record<RecentKind, string> = {
 	chat: 'Chat',
 	page: 'Page',
 	thread: 'Thread',
-	applet: 'Applet',
+	applet: 'Site',
 };
 
 function stamp(iso: string | null | undefined): number {

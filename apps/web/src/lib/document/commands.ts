@@ -225,7 +225,7 @@ export function treeCommands(host: TreeCommandHost): TreeCommand[] {
 			},
 		},
 		{
-			label: 'Applet',
+			label: 'Site',
 			keywords: ['widget', 'chart', 'embed'],
 			icon: 'mynaui:grid',
 			run: (editor, range) => {

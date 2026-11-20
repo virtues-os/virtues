@@ -148,7 +148,7 @@ describe('appletsLead', () => {
 
 	it('stops naming them at three', () => {
 		const three = ['A', 'B', 'C'].map((n) => applet({ id: n, name: n, ...failedRun('timed out') }));
-		expect(appletsLead(three, NOW).sentence).toBe('Some of your applets need you.');
+		expect(appletsLead(three, NOW).sentence).toBe('Some of what your server runs needs you.');
 		expect(appletsLead(three, NOW).sub).not.toMatch(/Everything else/);
 	});
 });

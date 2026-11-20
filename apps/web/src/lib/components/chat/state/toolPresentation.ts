@@ -70,11 +70,11 @@ interface Presentation {
 const APPLET_SAY: Record<string, [string, string]> = {
 	list: ["Checking what's set up", "Checked what's set up"],
 	get: ["Checking what's set up", "Checked what's set up"],
-	guide: ["Reading how applets work", "Read how applets work"],
-	setup: ["Setting up an applet", "Set up an applet"],
-	edit: ["Changing an applet", "Changed an applet"],
-	run: ["Running an applet", "Ran an applet"],
-	delete: ["Removing an applet", "Removed an applet"],
+	guide: ["Reading how sites work", "Read how sites work"],
+	setup: ["Setting up a site", "Set up a site"],
+	edit: ["Changing a site", "Changed a site"],
+	run: ["Running a site", "Ran a site"],
+	delete: ["Removing a site", "Removed a site"],
 };
 
 const TOOLS: Record<string, Presentation> = {
@@ -321,22 +321,22 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	skip_step: { noun: "setup", depth: 4, say: ["Skipping a setup step", "Skipped a setup step"] },
 	applet: {
-		noun: "an applet",
+		noun: "a site",
 		depth: 4,
 		say: (input, live) => {
 			// Chats from before 2026-10-28 called setup with `{guide: true}`,
 			// which only read the authoring guide and set nothing up.
 			const key = input.action === "setup" && input.guide === true ? "guide" : String(input.action ?? "");
-			const [now, then] = APPLET_SAY[key] ?? ["Working on an applet", "Worked on an applet"];
+			const [now, then] = APPLET_SAY[key] ?? ["Working on a site", "Worked on a site"];
 			return live ? now : then;
 		},
 	},
 	// An applet's instructions loaded into the turn, or one of its files.
 	use_applet: {
-		noun: "an applet",
+		noun: "a slash command",
 		depth: 4,
 		say: (input, live) => {
-			const name = typeof input.name === "string" && input.name ? input.name : "an applet";
+			const name = typeof input.name === "string" && input.name ? input.name : "a slash command";
 			if (typeof input.file === "string" && input.file) {
 				return live ? `Reading ${input.file} from ${name}` : `Read ${input.file} from ${name}`;
 			}
@@ -344,7 +344,7 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	update_applet_memory: {
-		noun: "an applet",
+		noun: "a site",
 		depth: 4,
 		say: ["Noting something for next time", "Noted something for next time"],
 	},
@@ -365,7 +365,7 @@ const RETIRED: Record<string, Presentation> = {
 	// Folded into `shell` on 2026-10-27.
 	code_interpreter: TOOLS.shell,
 	// Folded into the applet tool's `setup` on 2026-10-27.
-	save_skill: { noun: "an applet", depth: 4, say: ["Saving your applet", "Saved your applet"] },
+	save_skill: { noun: "a site", depth: 4, say: ["Saving your site", "Saved your site"] },
 };
 
 function presentation(name: string): Presentation | undefined {

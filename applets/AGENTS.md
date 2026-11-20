@@ -1,5 +1,10 @@
 # Authoring applets
 
+"Applet" is the code's word and never appears on screen. People see three
+things: a **site** is what they made with the assistant, a **job** is what
+their server runs for itself, and a prompt they can start from chat is in the
+`/` menu. Write "site" in any name, description or reply a person reads.
+
 An applet is a short file, `SKILL.md` in the
 [Agent Skills](https://agentskills.io/specification) format: a name, a
 one-sentence description, and optionally when it starts, a SQL check that

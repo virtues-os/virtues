@@ -49,9 +49,9 @@
 	}
 </script>
 
-<Modal {open} onClose={() => (open = false)} title="Delete applet" width="sm">
+<Modal {open} onClose={() => (open = false)} title="Delete site" width="sm">
 	<div class="del">
-		<p>Delete <strong>{action.name}</strong>? This removes the applet and can't be undone.</p>
+		<p>Delete <strong>{action.name}</strong>? This removes the site and can't be undone.</p>
 		{#if deleteData && deleteData.tables.length > 0}
 			<label class="drop-opt">
 				<input type="checkbox" bind:checked={dropData} />
@@ -70,7 +70,7 @@
 				{/each}
 			</ul>
 			{#if !dropData}
-				<p class="dim">Your server keeps its data, which can outlive the applet.</p>
+				<p class="dim">Your server keeps its data, which can outlive the site.</p>
 			{/if}
 		{/if}
 		{#if err}
@@ -80,7 +80,7 @@
 	{#snippet footer()}
 		<Button variant="ghost" onclick={() => (open = false)} disabled={deleting}>Cancel</Button>
 		<Button variant="danger" onclick={doDelete} disabled={deleting}>
-			{deleting ? 'Deleting…' : dropData ? 'Delete applet and data' : 'Delete applet'}
+			{deleting ? 'Deleting…' : dropData ? 'Delete site and data' : 'Delete site'}
 		</Button>
 	{/snippet}
 </Modal>
