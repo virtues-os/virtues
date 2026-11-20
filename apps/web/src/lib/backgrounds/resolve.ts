@@ -2,8 +2,8 @@
  * The background setting, resolved to a picture.
  *
  * A setting is one path that can stop at any depth: `plain`, a style
- * (`paintings-muted`), a collection in it (`paintings-muted/forest`), or one
- * picture (`paintings-muted/forest/birch-grove`). The empty setting is the
+ * (`watercolors`), a collection in it (`watercolors/forest`), or one
+ * picture (`watercolors/forest/birch-grove`). The empty setting is the
  * default, the bundled lake. A path that stops above a picture rotates daily
  * through every picture under it, shuffled, with no repeat until each has
  * shown. Light and Dark are versions of a picture, never part of the path.

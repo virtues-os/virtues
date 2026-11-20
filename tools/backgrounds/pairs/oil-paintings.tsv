@@ -1,4 +1,4 @@
-# Light and dark pairs for the paintings-original style. One picture per line:
+# Light and dark pairs for the oil-paintings style. One picture per line:
 # collection, light name, dark name, separated by tabs. Edit freely; build.py
 # keeps this file and only proposes pairs for a collection that has none.
 # A fourth column, where present, is the proposal's word similarity (0-1).

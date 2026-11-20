@@ -22,10 +22,10 @@ that file. Your corrections in the file win on every later run.
 The images are large and stay out of git. Only this script and the pairs
 files are tracked. See agents/plan/backgrounds-plan.md.
 
-    python3 tools/backgrounds/build.py --style paintings-muted --title "Muted paintings" \\
+    python3 tools/backgrounds/build.py --style watercolors --title "Watercolors" \\
         --source ~/Desktop/muted-paintings/in-app \\
         --prompts ~/Desktop/muted-paintings/prompts.txt \\
-        --out ~/virtues-backgrounds/paintings-muted
+        --out ~/virtues-backgrounds/watercolors
 """
 
 from __future__ import annotations

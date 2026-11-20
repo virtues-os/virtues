@@ -64,9 +64,9 @@ The setting is one path, and it can stop at any depth:
 | Setting | What you see |
 |---|---|
 | `plain` | No picture. The desk only. |
-| `paintings` | A picture from any collection in the style, changing daily |
-| `paintings/forest` | A picture from Forest, changing daily |
-| `paintings/forest/birch-grove` | That picture, always |
+| `watercolors` | A picture from any collection in the style, changing daily |
+| `watercolors/forest` | A picture from Forest, changing daily |
+| `watercolors/forest/birch-grove` | That picture, always |
 
 When the setting points at something that is not installed or no longer
 exists, the app falls back to the lake.
@@ -114,8 +114,9 @@ third points:
 
 ### Decisions made 2026-11-20
 
-- **Both painting sets ship, as two styles.** The muted set and the original
-  set. Their names in the picker are open.
+- **Both painting sets ship, as two styles.** The muted set is Watercolors
+  (`watercolors`) and the original set is Oil paintings (`oil-paintings`),
+  the owner's choice of names and ids on 2026-11-20.
 - **Light and dark are paired now, night versions later.** Each collection's
   12 light pictures are matched with its 12 dark ones by curation. Later, each
   light painting gets a night version of the same place.
@@ -153,10 +154,9 @@ does not use every picture exactly once. The proposals are rough: pictures
 marked "(earlier)" in the prompts file have no prompt, and words cannot see a
 composition.
 
-The two styles are built in `~/virtues-backgrounds/paintings-muted` and
-`~/virtues-backgrounds/paintings-original`. The ids are working names until
-the picker names are chosen; they become part of a stored setting, so they
-should settle before slice 2 ships.
+The two styles are built in `~/virtues-backgrounds/watercolors` and
+`~/virtues-backgrounds/oil-paintings`. A style's id is part of every stored
+setting that names it, so renaming one after release breaks those settings.
 
 What the measurement showed:
 
@@ -235,8 +235,7 @@ Each slice replaces the old way in the same change.
    - Follow the day in `lib/utils/theme.ts`, `app.html`, the theme cards and
      the settings agent's list of themes.
    - Each style's manifest carries its name in the pickers (`title`, from
-     `build.py --title`). The names are working names: "Muted paintings"
-     and "Paintings".
+     `build.py --title`): Watercolors and Oil paintings.
 4. **Delivery.** The box downloads, installs and serves a style. Manual page
    and the privacy boundary entry.
 5. **A second renderer.** One cheap moving style (dots or a single shader) to
@@ -245,12 +244,9 @@ Each slice replaces the old way in the same change.
 
 ## Open decisions
 
-1. The names of the two painting styles in the picker. Working names are
-   "Muted paintings" and "Paintings", and the ids `paintings-muted` and
-   `paintings-original` are what a saved setting stores.
-2. Daily rotation, as proposed above, or a different change point.
-3. Where style archives are hosted.
-4. What the home control's arrows do under a rotating setting, and how
+1. Daily rotation, as proposed above, or a different change point.
+2. Where style archives are hosted.
+3. What the home control's arrows do under a rotating setting, and how
    Follow the day finds sunrise and sunset (both built as proposed above).
 
 ## When this plan is done
