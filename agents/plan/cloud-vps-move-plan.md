@@ -100,16 +100,15 @@ intranet starts the cut on day 3 of each month on a temporary server and
 deletes the server when it reports; `deploy/maps/run.sh` is the job. The
 first scheduled cut published a build that the live API now serves.
 
-Left:
+The cut timer on the dedicated server is stopped and disabled. Its unit
+files and `/srv/maps` are still there: the directory is slice 1's rollback,
+and it stops getting newer from here on. `virtues-health` there checks that
+the API's key can read `latest.json` and that the build it names is no more
+than 45 days old.
 
-- Stop the cut timer on the dedicated server. It still cuts its own copy
-  each month, which nothing serves.
-- `virtues-health` on the dedicated server compares the bucket with that
-  local cut. When the timer stops, it needs the other check: the newest
-  build in the bucket is younger than the schedule allows.
-- The planet download decides how long a run takes: 15 minutes in the
-  rehearsal and 86 in the first real cut, from the same source. The
-  intranet ends a run after five hours, which leaves room for that.
+The planet download decides how long a run takes: 15 minutes in the
+rehearsal and 86 in the first real cut, from the same source. The intranet
+ends a run after five hours, which leaves room for that.
 
 ### 3. The new VPS and a rehearsal
 
