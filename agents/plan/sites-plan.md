@@ -157,6 +157,7 @@ the CLI. Do it only if D3 calls for it, as its own plan.
 | D3 | Rename in code too? | No. People never see the word, and the sweep costs migrations and a CLI release. Revisit only if the word confuses contributors. |
 | D4 | Does a site without a view still exist as a "site"? | No. No view means it's scheduled work, by definition. Adding a view later moves it into the door. |
 | D5 | Reopening "Applet" as FINAL (decided 2026-07-19) | The owner reopened it on 2026-11-20 by asking for this plan. This plan changes only what people see. |
+| D6 | Is "agent" a word people see? | **Decided 2026-11-20: no.** The owner wants fewer words, so people are not overwhelmed. A person can still set up work that stays on from chat (it wakes on new data, a message or a time). It is listed under its own name in Settings with everything else that runs for you. Sites is the only new noun. |
 
 ## Not in this plan
 
