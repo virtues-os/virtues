@@ -46,6 +46,10 @@ pub fn router() -> Router<AppState> {
         .route("/init/start", post(start))
         .route("/init/poll", post(poll))
         .route("/init", get(verify))
+        // Stripe's success URL for checkouts opened before checkouts were
+        // bound to an account. Kept so those payers see what to do instead
+        // of a 404; nothing here attaches anything.
+        .route("/init/done", get(legacy_done))
         // ─── [1] Log in flow ──────────────────────────────────────────
         // Box-callable login start: takes a device_code + email, looks
         // up the matching customer, sends a magic link via Resend. The
@@ -257,6 +261,17 @@ async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     signin_page(&code)
 }
 
+#[derive(Debug, Deserialize)]
+struct LegacyDoneQuery {
+    #[serde(default)]
+    session_id: String,
+}
+
+async fn legacy_done(Query(q): Query<LegacyDoneQuery>) -> axum::response::Response {
+    tracing::warn!(session_id = %q.session_id, "legacy /init/done: unbound payment needs support");
+    super::account::unbound_payment_page(&q.session_id)
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────--
 
 fn random_hex(n: usize) -> String {
@@ -280,13 +295,15 @@ fn gen_user_code() -> String {
     s
 }
 
-/// Minimal HTML escaping for untrusted text interpolated into a `page()` body
-/// (e.g. a Stripe error message). Covers the characters that could break out of
-/// text context; the messages we render are server-originated, this is hygiene.
+/// HTML escaping for untrusted text interpolated into a page, in text or in a
+/// quoted attribute. Quotes matter: the sign-in error page puts the
+/// caller-supplied code inside `href='…'`.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 pub(super) fn page(title: &str, body: &str) -> axum::response::Response {
@@ -944,14 +961,21 @@ async fn begin_login(
     email: &str,
 ) -> LoginOutcome {
     // Max 3 send attempts per email per hour.
-    let recent: (i64,) = sqlx::query_as(
+    // Fail closed: a DB error must not lift the cap.
+    let recent: (i64,) = match sqlx::query_as(
         "SELECT COUNT(*) FROM login_attempt \
          WHERE email = $1 AND created_at > now() - interval '1 hour'",
     )
     .bind(email)
     .fetch_one(&state.pool)
     .await
-    .unwrap_or((0,));
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("login send-cap lookup failed: {e:#}");
+            return LoginOutcome::Failed;
+        }
+    };
     if recent.0 >= 3 {
         return LoginOutcome::RateLimited;
     }
@@ -1071,8 +1095,9 @@ fn confirm_page(token: &str, email: &str, user_code: &str) -> axum::response::Re
          <p>A box showing link code <span class=code>{user_code}</span> asked to join the \
          Virtues account for <b>{email}</b>. Attaching it lets that box use your account, \
          including its AI credit.</p>\
-         <p class=sub>Only attach it if you started linking a box just now. If you didn't, \
-         close this page. Nothing changes.</p>\
+         <p class=sub>Only attach it if you started linking a box just now. If you typed \
+         your email on a page that showed a link code, check that it matches this one. If you \
+         didn't start this, close this page. Nothing changes.</p>\
          <form method=post action=/init/login/verify>\
          <input type=hidden name=token value='{token}'>\
          <button type=submit>Attach box</button>\
@@ -1143,10 +1168,7 @@ async fn login_verify(
     };
 
     match attach_link_to_account(&state, &device_code_hash, &account_id).await {
-        AttachOutcome::Attached => page(
-            "✓ Box attached",
-            "Your Virtues box is now attached to your account. Go back to the Virtues app — it continues on its own within a few seconds.",
-        ),
+        AttachOutcome::Attached => attached_page(&state, &account_id).await,
         AttachOutcome::LinkGone => page(
             "Link expired",
             "This link took too long, and your box has already moved on to a fresh code. \
@@ -1156,6 +1178,42 @@ async fn login_verify(
             "Something went wrong",
             "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
         ),
+    }
+}
+
+/// The page after a confirmed attach. An account without a subscription is
+/// offered a checkout for that account right here: the owner just proved the
+/// address, so the session can be bound to it. This is also what keeps Setup
+/// working on apps that open this page expecting to reach checkout.
+async fn attached_page(state: &AppState, account_id: &str) -> axum::response::Response {
+    use super::billing_checkout::{open_account_checkout, AccountCheckout};
+    const DONE: &str = "Your Virtues box is now attached to your account. Go back to the \
+                        Virtues app. It continues on its own within a few seconds.";
+    match open_account_checkout(state, account_id).await {
+        Ok(AccountCheckout::Url(url)) => {
+            let url = html_escape(&url);
+            page(
+                "✓ Box attached",
+                &format!(
+                    "Your Virtues box is now attached to your account. To use Virtues AI it \
+                     needs a subscription.<br><br>\
+                     <a href=\"{url}\">Continue to checkout &rarr;</a><br><br>\
+                     <small>Using your own AI instead? Go back to the Virtues app and choose \
+                     Your own AI.</small>"
+                ),
+            )
+        }
+        Ok(AccountCheckout::Entitled) => page("✓ Box attached", DONE),
+        // The attach is done; a checkout that couldn't open is offered again
+        // from the app (Settings, Billing).
+        Err(e) => {
+            tracing::warn!("post-attach checkout failed: {}", e.code);
+            page(
+                "✓ Box attached",
+                "Your Virtues box is now attached to your account. We couldn't open checkout \
+                 just now. You can subscribe from the Virtues app in Settings, Billing.",
+            )
+        }
     }
 }
 
@@ -1369,5 +1427,16 @@ mod confirm_page_tests {
         let html = body(confirm_page("x'><script>", "owner@example.com", "ABCD-EFGH")).await;
         assert!(!html.contains("<script>"));
         assert!(html.contains("value=''"));
+    }
+}
+
+#[cfg(test)]
+mod escape_tests {
+    /// The sign-in error page puts a caller-supplied code inside
+    /// `href='…'`, so quotes must not survive.
+    #[test]
+    fn quotes_cannot_leave_an_attribute() {
+        let out = super::html_escape("' autofocus onfocus='x\"<b>");
+        assert!(!out.contains('\'') && !out.contains('"') && !out.contains('<'));
     }
 }

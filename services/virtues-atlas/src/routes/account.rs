@@ -207,9 +207,16 @@ async fn verify(
     // link. So a missing customer is not an error here. The customer comes
     // from the account this code just proved, never from `customers.email`:
     // that is the address typed at Stripe, which nobody verified.
+    // An owner who re-subscribed under a new customer has two; the one with
+    // an active subscription wins, then the account's own.
     let customer: Option<(String,)> = match sqlx::query_as(
-        "SELECT stripe_customer_id FROM accounts \
-         WHERE email = lower($1) AND stripe_customer_id IS NOT NULL",
+        "SELECT c.stripe_customer_id FROM accounts a \
+         JOIN customers c ON c.account_id = a.account_id \
+         LEFT JOIN subscriptions s ON s.stripe_customer_id = c.stripe_customer_id AND s.status = 'active' \
+         WHERE a.email = lower($1) \
+         ORDER BY (s.stripe_customer_id IS NOT NULL) DESC, \
+                  (c.stripe_customer_id = a.stripe_customer_id) DESC, c.created_at DESC \
+         LIMIT 1",
     )
     .bind(&email)
     .fetch_optional(&state.pool)
@@ -282,8 +289,8 @@ async fn account_checkout_done(
     if session_id.is_empty() || session_id == "cancelled" {
         return page(
             "Checkout cancelled",
-            "Nothing was charged. Go back to the Virtues app — you can try again there, \
-             or skip and run your server LAN-only.",
+            "Nothing was charged. Go back to the Virtues app. You can subscribe from \
+             there whenever you're ready, or connect your own AI instead.",
         );
     }
     let paid = match super::claim::verify_and_claim_session(&state, &session_id).await {
@@ -295,6 +302,15 @@ async fn account_checkout_done(
                 "This payment was already processed. Go back to the Virtues app — it \
                  continues on its own.",
             );
+        }
+        // Opened before checkouts were bound to an account. Nothing here can
+        // attach it safely, so it goes to a person. The session id is what
+        // support looks up in Stripe.
+        Err(e) if e.code == "unbound_session" => {
+            tracing::warn!(session_id = %session_id, "account checkout: unbound session needs support");
+            // Released so a refresh shows this page again, not "already processed".
+            super::claim::release_session_claim(&state, &session_id).await;
+            return unbound_payment_page(&session_id);
         }
         Err(e) => {
             tracing::warn!("account checkout finalize failed: {} {}", e.code, e.message);
@@ -398,6 +414,24 @@ async fn account_checkout_done(
         "Subscription active ✓",
         "Go back to the Virtues app — it notices on its own and carries on with your \
          server's setup.",
+    )
+}
+
+/// A paid session atlas cannot attach on its own. Says so plainly and gives
+/// the reference support needs.
+pub(crate) fn unbound_payment_page(session_id: &str) -> axum::response::Response {
+    let reference: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(80)
+        .collect();
+    page(
+        "We need to finish this by hand",
+        &format!(
+            "If you paid, your payment went through, but we couldn't attach it to your account \
+             automatically. Email support@virtues.com with this reference and we'll attach it \
+             or refund you: <code>{reference}</code>"
+        ),
     )
 }
 
@@ -594,6 +628,25 @@ pub(super) async fn is_entitled(
     .await
 }
 
+/// Does any of this account's Stripe customers have an active subscription?
+/// An owner who re-subscribed under a new customer has two; the account's
+/// own `stripe_customer_id` keeps the first.
+pub(crate) async fn account_is_entitled(
+    pool: &sqlx::PgPool,
+    account_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM subscriptions s \
+         WHERE s.status = 'active' AND s.stripe_customer_id IN ( \
+           SELECT stripe_customer_id FROM customers WHERE account_id = $1 \
+           UNION SELECT stripe_customer_id FROM accounts \
+             WHERE account_id = $1 AND stripe_customer_id IS NOT NULL))",
+    )
+    .bind(account_id)
+    .fetch_one(pool)
+    .await
+}
+
 /// Six digits. Uniform over 000000..=999999 — no modulo bias, and leading zeros
 /// preserved, because a code that renders as five characters confuses people.
 fn gen_code() -> String {
@@ -710,5 +763,33 @@ mod attach_tests {
         account(&pool, "acct_paying", "paying@example.com", Some("cus_first")).await;
         attach_stripe_to_account(&pool, "acct_paying", "cus_second").await.unwrap();
         assert_eq!(customer_of(&pool, "accounts", "acct_paying").await.as_deref(), Some("cus_first"));
+    }
+}
+
+#[cfg(test)]
+mod entitlement_tests {
+    use super::account_is_entitled;
+
+    /// An owner who re-subscribed under a second Stripe customer is entitled
+    /// through it, even though the account's own customer is the first,
+    /// cancelled one. Reading only that one would sell them a second plan.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn any_active_customer_of_the_account_counts(pool: sqlx::PgPool) {
+        for q in [
+            "INSERT INTO accounts (account_id, email, stripe_customer_id) VALUES ('acct_a', 'owner@example.com', 'cus_first')",
+            "INSERT INTO accounts (account_id, email) VALUES ('acct_b', 'other@example.com')",
+            "INSERT INTO customers (stripe_customer_id, email, account_id) VALUES ('cus_first', 'owner@example.com', 'acct_a')",
+            "INSERT INTO customers (stripe_customer_id, email, account_id) VALUES ('cus_second', 'owner@example.com', 'acct_a')",
+            "INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end) VALUES ('sub_1', 'cus_first', 'canceled', now())",
+        ] {
+            sqlx::query(q).execute(&pool).await.unwrap();
+        }
+        assert!(!account_is_entitled(&pool, "acct_a").await.unwrap());
+        sqlx::query("INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end) VALUES ('sub_2', 'cus_second', 'active', now() + interval '30 days')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(account_is_entitled(&pool, "acct_a").await.unwrap());
+        assert!(!account_is_entitled(&pool, "acct_b").await.unwrap());
     }
 }

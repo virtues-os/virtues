@@ -9,7 +9,6 @@
 1 services/virtues-atlas/src/routes/account.rs	.unwrap_or(None);
 1 services/virtues-atlas/src/routes/diag.rs	.ok()
 1 services/virtues-atlas/src/routes/diag.rs	let n = row.map(|(n,)| n).unwrap_or(0);
-1 services/virtues-atlas/src/routes/link.rs	.unwrap_or((0,));
 1 services/virtues-atlas/src/routes/settings.rs	// A read error is NOT "unknown api key". `.ok().flatten()` collapsed the
 1 virtues-core/src/api/annotations.rs	let name = filename.unwrap_or_else(|| file_id.to_string());
 1 virtues-core/src/api/bookmarks.rs	existing.unwrap_or((None, None, None, None));

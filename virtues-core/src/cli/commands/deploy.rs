@@ -155,6 +155,12 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
 
     print_welcome(&atlas_url);
 
+    // A box that is already linked pays for the account it is on; starting a
+    // new link would ask for an email again and could move it to another account.
+    if crate::virtues_api::renew::read_api_key(pool).await?.is_some() {
+        return print_checkout(pool, &http, &atlas_url).await;
+    }
+
     let start = link::start(pool, &http, &atlas_url).await?;
 
     println!();
@@ -165,7 +171,8 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     println!("  Or enter code at:     {}   →  code: {}",
              start.verification_uri, start.user_code);
     println!();
-    println!("  Waiting for you to open the emailed link… (Ctrl-C to cancel)");
+    println!("  Enter your email there, open the link we send, and choose Attach box.");
+    println!("  Waiting… (Ctrl-C to cancel)");
 
     let interval = std::time::Duration::from_secs(start.interval.max(2));
     let deadline =
@@ -261,10 +268,10 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     println!();
     match link::login(pool, &http, &atlas_url, &email).await? {
         LoginStart::Sent => {
-            println!("  Sent magic link to {email}. Waiting… (Ctrl-C to cancel)");
+            println!("  Sent a link to {email}. Open it and choose Attach box. Waiting… (Ctrl-C to cancel)");
         }
         LoginStart::NoAccount => {
-            println!("  No Virtues subscription on {email}. Create one in the app's account step, or run `virtues subscribe`.");
+            println!("  No Virtues account on {email}. Run `virtues subscribe` to create one.");
             return Ok(());
         }
         LoginStart::RateLimited => {
@@ -286,9 +293,10 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
-                // link::poll stores the api_key; atlas funds the wallet at link.
+                // link::poll stored the api_key. The account may not pay yet;
+                // `virtues status` says, and `virtues subscribe` opens checkout.
                 println!();
-                println!("  Logged in. AI ready.");
+                println!("  Logged in. Your box is linked to {email}.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {

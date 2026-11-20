@@ -81,8 +81,9 @@
 				if (gen !== pollGen) return;
 				if (d.status === "ready") {
 					stop();
-					if (intent === "subscribe") await subscribe(true);
-					else await gettingStarted.refresh();
+					// Paid accounts resolve as already subscribed; a new or
+					// unpaid account goes on to checkout.
+					await subscribe(true);
 				} else if (d.status === "expired" || d.status === "none") {
 					stop();
 					mode = "choose";
@@ -116,7 +117,13 @@
 			ticks += 1;
 			await gettingStarted.refresh();
 			if (gen !== pollGen) return;
-			if (gettingStarted.aiConnected || ticks >= 120) stop();
+			if (gettingStarted.aiConnected) stop();
+			else if (ticks >= 120) {
+				stop();
+				mode = "choose";
+				intent = "signin";
+				error = "We stopped waiting for checkout. If you paid, this updates within a minute. Otherwise, try again.";
+			}
 		}, 5000);
 	}
 	/** Open checkout for the linked account. An unlinked server signs in
@@ -128,7 +135,9 @@
 			if (r.kind === "opened") {
 				checkoutUrl = r.url;
 				mode = "checkout";
-				void openExternal(r.url);
+				// After an emailed sign-in the browser already shows a checkout
+				// link on the attach page, so this one waits for a click.
+				if (!afterSignIn) void openExternal(r.url);
 				pollPaid();
 			} else if (r.kind === "needs_signin" && !afterSignIn) {
 				intent = "subscribe";
@@ -158,8 +167,7 @@
 				poll();
 			} else {
 				mode = "signin";
-				if (d.status === "no_account") error = "No Virtues account on that email yet.";
-				else if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
+				if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
 				else error = "That didn't go through. Try again.";
 			}
 		} catch {
@@ -242,7 +250,7 @@
 			<Choices>
 				<Waiting>
 					{intent === "subscribe"
-						? "A link is on its way to your email. Open it and choose Attach box, and checkout opens here next."
+						? "A link is on its way to your email. Open it and choose Attach box, then continue to checkout."
 						: "A sign-in link is on its way to your email. Open it and choose Attach box, and this picks up on its own. You can leave this where it is."}
 				</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
