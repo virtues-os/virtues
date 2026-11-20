@@ -23,5 +23,6 @@ pub mod maps;
 pub mod oauth;
 pub mod places;
 pub mod plaid;
+pub mod push;
 pub mod streaming;
 pub mod unsplash;
