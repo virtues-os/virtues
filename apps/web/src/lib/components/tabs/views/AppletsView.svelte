@@ -1,16 +1,14 @@
 <script lang="ts">
 	/**
-	 * The Applets door: the applets you made, each one row, the ones that need
-	 * you first.
+	 * The Sites door: everything you set up, as cards that each show a preview
+	 * of the site, or as a list. The ones that need you come first.
 	 *
-	 * A row says what the applet is for, when it runs and when it last did, or
-	 * what went wrong and the word that fixes it. Clicking it opens the
-	 * applet's home. An applet with a conversation carries a chat button that
-	 * opens it beside the list, so the list stays in view.
+	 * A card or row opens the site: its view when it has one, and otherwise
+	 * the page that says how it runs. A site with a conversation carries a
+	 * chat button in the list, which opens it beside the door.
 	 *
-	 * The table of every applet, with its days and runs, is Settings > Applets
-	 * (`settings/AppletsPage.svelte`): checking applets is rarer than using them.
-	 * Built-in applets are listed there, and here only when one needs you.
+	 * Built-in applets, with their days and runs, are in Settings
+	 * (`settings/AppletsPage.svelte`).
 	 */
 	import type { Tab } from '$lib/tabs/types';
 	import { Button, Page } from '$lib';
@@ -20,6 +18,8 @@
 	import ListRow from '$lib/components/datagrid/ListRow.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
+	import SiteCard from '$lib/components/applets/SiteCard.svelte';
+	import { siteRoute } from '$lib/applets/sites.svelte';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
@@ -31,8 +31,6 @@
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
-
-	const NEEDS_YOU = 'Needs you';
 
 	let newSheetOpen = $state(false);
 	let retrying = $state<string | null>(null);
@@ -52,7 +50,6 @@
 				a.name.localeCompare(b.name)
 		)
 	);
-	const anyNeedsYou = $derived(applets.some((a) => needsYou(a)));
 
 	function chatOf(a: Applet): string | null {
 		const id = a.config?.chat_id;
@@ -67,21 +64,17 @@
 	}
 
 
+	// The columns are what search reads. Cards and rows draw themselves.
 	const columns: Column<Applet>[] = [
 		{ key: 'name', label: 'Name' },
 		{ key: 'description', label: 'What it does', hidden: true },
-		{
-			key: 'enabled',
-			label: 'Status',
-			hidden: true,
-			groupable: true,
-			groupOrder: [NEEDS_YOU],
-			getValue: (a) => (needsYou(a) ? NEEDS_YOU : anyNeedsYou ? 'Everything else' : 'Your applets'),
-		},
 	];
 
+	/** Where a site opens: its view, or how it runs when it has no view. */
+	const homeOf = (a: Applet) => (a.has_face ? siteRoute(a.id) : `/applet/${a.id}`);
+
 	function openHome(a: Applet) {
-		windowShellStore.openTabFromRoute(`/applet/${a.id}`, { label: a.name, focusExisting: true });
+		windowShellStore.openTabFromRoute(homeOf(a), { label: a.name, focusExisting: true });
 	}
 
 	function openConversation(a: Applet) {
@@ -93,10 +86,6 @@
 	function act(a: Applet, action: AppletAction) {
 		if (action.kind === 'fix') windowShellStore.openTabFromRoute(action.href, { focusExisting: true });
 		else void retry(a);
-	}
-
-	function openManage() {
-		windowShellStore.openTabFromRoute('/virtues/applets', { label: 'Settings' });
 	}
 
 	async function retry(a: Applet) {
@@ -115,7 +104,7 @@
 	function rowMenu(a: Applet, e: MouseEvent) {
 		e.preventDefault();
 		const items: ContextMenuItem[] = [
-			{ id: 'home', label: 'Open applet', icon: 'atlas:applets', action: () => openHome(a) },
+			{ id: 'home', label: 'Open site', icon: 'atlas:applets', action: () => openHome(a) },
 		];
 		if (chatOf(a)) {
 			items.push({ id: 'chat', label: 'Open conversation', icon: 'mynaui:message', action: () => openConversation(a) });
@@ -123,15 +112,14 @@
 		if (canRun(a)) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
-		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 </script>
 
-<Page title="Applets" maxWidth="reading">
+<Page title="Sites" maxWidth="full">
 	{#snippet actions()}
-		<Button variant="secondary" onclick={openManage}>Manage applets</Button>
-		<Button variant="primary" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New applet</Button>
+		<Button variant="primary" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New site</Button>
 	{/snippet}
 
 	{#if err}
@@ -141,22 +129,26 @@
 	<UniversalDataGrid
 		items={applets}
 		{columns}
-		entityType="applets-list"
-		viewModes={['list']}
-		defaultViewMode="list"
-		defaultGroupBy="enabled"
+		entityType="sites"
+		viewModes={['grid', 'list']}
+		defaultViewMode="grid"
+		gridMinWidth="264px"
 		showCounts={false}
 		pageSize={100000}
 		loading={!appletsStore.loaded && !appletsStore.error}
-		error={appletsStore.error && applets.length === 0 ? "Your server couldn't send your applets." : null}
+		error={appletsStore.error && applets.length === 0 ? "Your server couldn't send your sites." : null}
 		emptyIcon="atlas:applets"
-		emptyMessage={'Nothing runs for you yet. Ask in chat - "write my examen each morning," "remind me on the 25th" - and it becomes an applet.'}
-		loadingMessage="Loading applets…"
-		searchPlaceholder="Search applets"
+		emptyMessage={'No sites yet. Ask in chat for something to look at or keep track of, and it appears here. A site is private until you share it.'}
+		loadingMessage="Loading sites…"
+		searchPlaceholder="Search sites"
 		onItemClick={openHome}
 		onItemContextMenu={rowMenu}
 		onRetry={() => void appletsStore.load()}
 	>
+		{#snippet card(a: Applet)}
+			<SiteCard site={a} />
+		{/snippet}
+
 		{#snippet listRow(a: Applet)}
 			{@const trouble = problemOf(a)}
 			<ListRow
@@ -187,11 +179,20 @@
 			{/if}
 		{/snippet}
 	</UniversalDataGrid>
+
+	{#if applets.length > 0}
+		<p class="foot">Ask in chat for something to look at or keep track of, and it appears here. A site is private until you share it.</p>
+	{/if}
 </Page>
 
 <NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
+	.foot {
+		margin: 24px 0 0;
+		font-size: var(--text-small);
+		color: var(--color-foreground-subtle);
+	}
 	.error-msg {
 		margin: 0 0 1rem;
 		font-size: 0.875rem;

@@ -124,16 +124,21 @@ against a server that reports `has_view`.
 
 ### Slice 2: the door shows sites
 
-- The sidebar door is renamed "Sites" and shows everything you set up, as a
-  grid of cards four across by default, with a list as the other view. A card
-  is a preview of the site, its name and when its data last changed. It shows
-  no run status.
-- A site opens as a tab in the browser layout, like a page or a chat, with
-  the chat beside it while it is being built. There is no separate look for
-  sites.
-- `AppletView` becomes the default page for a site.
-- Routes: add the new path and keep `/applet/...` and `/actions/...`
-  resolving, as `/actions` does today.
+Built on wave on 2026-11-20, except the door's name on the rail and the tab.
+
+- The door's page is titled "Sites" and shows everything you set up as a
+  grid of cards, four across on a desktop window, with a list as the other
+  view (`AppletsView.svelte`). A card is a live preview of the site scaled
+  to the card, its name and one line: when it last refreshed, or what it
+  needs from you (`SiteCard.svelte`). A site with no view shows its
+  description until slice 3 gives it a default view. It shows no run status.
+- A card or row opens the site's view as a tab, like a page or a chat. There
+  is no separate look for sites.
+- Left: the label "Applets" on the sidebar door and on the tab
+  (`sidebarDoors.svelte.ts`, `tabs/registry.ts`) and a `/sites` path. Both
+  files held another change in progress when this was built. `/applet/...`
+  and `/actions/...` keep resolving. "Refreshed" is the last successful run,
+  because nothing records when a site's own tables last changed.
 
 ### Slice 3: a site's options hold how it runs
 
