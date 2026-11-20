@@ -33,6 +33,7 @@ use crate::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/internal/device", post(register_device))
+        .route("/internal/device/revoke", post(revoke_device))
         .route("/internal/credit", post(credit_account))
         .route("/internal/block", post(block_key))
         .route("/internal/unblock", post(unblock_key))
@@ -50,6 +51,31 @@ struct RegisterDeviceBody {
     /// legacy whole-account replacement.
     #[serde(default)]
     box_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevokeDeviceBody {
+    /// sha256 of the key, lowercase hex, as `/internal/device` takes it.
+    api_key_hash: String,
+    account_id: String,
+}
+
+/// An owner removed one of their servers: its key stops working here.
+async fn revoke_device(
+    State(state): State<Arc<AppState>>,
+    _auth: AuthenticatedRequest,
+    Json(body): Json<RevokeDeviceBody>,
+) -> impl IntoResponse {
+    let Ok(hash) = hex_decode(&body.api_key_hash) else {
+        return error(StatusCode::BAD_REQUEST, "invalid_hash", "api_key_hash must be lowercase hex");
+    };
+    match entitlement::revoke_device(&state.db, &body.account_id, &hash).await {
+        Ok(n) => (StatusCode::OK, Json(json!({ "ok": true, "revoked": n }))).into_response(),
+        Err(e) => {
+            tracing::warn!("revoke device failed: {e:#}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "revoke_failed", "could not revoke the key")
+        }
+    }
 }
 
 async fn register_device(

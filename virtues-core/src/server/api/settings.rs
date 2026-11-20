@@ -109,6 +109,9 @@ pub fn routes() -> Router<AppState> {
             post(create_billing_portal_handler),
         )
         .route("/api/billing/subscribe", post(subscribe_billing_handler))
+        // The servers on this account, and removing one (owner-proven).
+        .route("/api/billing/servers", get(billing_servers_handler))
+        .route("/api/billing/servers/remove", post(remove_billing_server_handler))
         // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
         .route("/api/billing/usage", get(billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
@@ -586,6 +589,82 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
         Err(e) => {
             tracing::warn!("billing portal [atlas_unreachable]: {e}");
             refuse("atlas_unreachable", TRY_AGAIN)
+        }
+    }
+}
+
+/// GET /api/billing/servers — the servers on this box's account. Same
+/// 200-with-`{error, code}` contract as the other billing doors.
+pub async fn billing_servers_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (StatusCode::OK, Json(serde_json::json!({ "servers": [], "unlinked": true }))).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("billing servers [vault_unreadable]: {e}");
+            return (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't list your servers. Try again.", "code": "vault_unreadable" }))).into_response();
+        }
+    };
+    let http = crate::http_client::virtues_api_client();
+    match crate::virtues_api::renew::fetch_servers(&http, &crate::virtues_api::atlas_url(), &api_key).await {
+        Ok((200, body)) => (StatusCode::OK, Json(body)).into_response(),
+        Ok((status, body)) => {
+            let code = body["error"]["code"].as_str().unwrap_or("unknown").to_string();
+            tracing::warn!("billing servers [{code}]: atlas answered {status}");
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't list your servers. Try again.", "code": code }))).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("billing servers [atlas_unreachable]: {e}");
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't reach the Virtues billing service. Try again.", "code": "atlas_unreachable" }))).into_response()
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct RemoveServerBody {
+    pub id: String,
+}
+
+/// POST /api/billing/servers/remove — stop another server on this account
+/// from using it. Owner-proven: it takes a server offline from Virtues AI.
+pub async fn remove_billing_server_handler(
+    State(state): State<AppState>,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
+    Json(body): Json<RemoveServerBody>,
+) -> Response {
+    let pool = state.db.pool();
+    let refuse = |code: &str, message: &str| {
+        (StatusCode::OK, Json(serde_json::json!({ "error": message, "code": code }))).into_response()
+    };
+    let api_key = match crate::virtues_api::renew::read_api_key(pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return refuse("not_linked", "Connect your Virtues account first."),
+        Err(e) => {
+            tracing::warn!("remove server [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", "Couldn't remove that server. Try again.");
+        }
+    };
+    let http = crate::http_client::virtues_api_client();
+    match crate::virtues_api::renew::remove_server(&http, &crate::virtues_api::atlas_url(), &api_key, &body.id).await {
+        Ok((200, _)) => {
+            let detail = serde_json::json!({ "server": body.id.chars().take(12).collect::<String>() });
+            crate::api::audit::record(pool, Some(&user.device_id), "server_removed", detail, None, None).await;
+            (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+        }
+        Ok((status, body)) => {
+            let code = body["error"]["code"].as_str().unwrap_or("unknown").to_string();
+            tracing::warn!("remove server [{code}]: atlas answered {status}");
+            let message = if code == "this_server" {
+                "That is this server, and a server can't remove itself."
+            } else {
+                "Couldn't remove that server. Try again."
+            };
+            refuse(&code, message)
+        }
+        Err(e) => {
+            tracing::warn!("remove server [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", "Couldn't reach the Virtues billing service. Try again.")
         }
     }
 }

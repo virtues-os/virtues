@@ -333,11 +333,14 @@ pub(crate) async fn mint_box_key(
     label: &str,
     api_key_hash: &[u8],
 ) -> Result<(), sqlx::Error> {
+    // One transaction: a failure between the DELETE and the INSERT must not
+    // leave the box with no key in atlas while virtues-api holds a new one.
+    let mut tx = pool.begin().await?;
     let stripe_customer_id: Option<String> = sqlx::query_scalar(
         "SELECT stripe_customer_id FROM accounts WHERE account_id = $1",
     )
     .bind(account_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .flatten();
     let stripe_customer_id = stripe_customer_id.as_deref();
@@ -351,7 +354,7 @@ pub(crate) async fn mint_box_key(
     )
     .bind(account_id)
     .bind(label)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(
         "INSERT INTO box_key (api_key_hash, account_id, stripe_customer_id, endpoint_id) \
@@ -361,16 +364,16 @@ pub(crate) async fn mint_box_key(
     .bind(account_id)
     .bind(stripe_customer_id)
     .bind(label)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     if let Some(cid) = stripe_customer_id {
         sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
             .bind(cid)
             .bind(api_key_hash)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     }
-    Ok(())
+    tx.commit().await
 }
 
 /// A random 32-byte hex token (api_key / device_code shape).

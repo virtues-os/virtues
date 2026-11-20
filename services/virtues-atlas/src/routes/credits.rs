@@ -148,9 +148,10 @@ async fn do_topup(
     is_auto: bool,
 ) -> axum::response::Response {
     let key = topup_idempotency_key(customer_id, amount_micros, is_auto, Utc::now().timestamp());
+    let credited = credit_after_fee(amount_micros, &state.credit);
     let pi_id = match state
         .stripe
-        .charge_off_session(customer_id, amount_micros, description, &key)
+        .charge_off_session(customer_id, amount_micros, description, &key, account_id, credited)
         .await
     {
         Ok(pi) => pi,
@@ -170,8 +171,9 @@ async fn do_topup(
                 .into_response();
         }
         Err(OffSessionChargeError::AuthenticationRequired(pi)) => {
-            // 3DS required — surface so iOS can prompt the user. Nothing was
-            // charged yet.
+            // 3-D Secure required: nothing is charged yet. If the owner
+            // confirms it later, the `payment_intent.succeeded` webhook
+            // credits it (credit_topup_once), and counts it toward the cap.
             release_monthly_cap(&state.pool, customer_id, amount_micros).await;
             return (
                 StatusCode::PAYMENT_REQUIRED,
@@ -198,65 +200,25 @@ async fn do_topup(
         }
     };
 
-    // Credit each PaymentIntent once. A repeat of a top-up that already
-    // finished gets the same PaymentIntent from Stripe and stops here; its
-    // own reservation is returned.
-    let first = match sqlx::query(
-        "INSERT INTO topup_charges (stripe_payment_intent_id, stripe_customer_id, amount_micros) \
-         VALUES ($1, $2, $3) ON CONFLICT (stripe_payment_intent_id) DO NOTHING",
-    )
-    .bind(&pi_id)
-    .bind(customer_id)
-    .bind(amount_micros)
-    .execute(&state.pool)
-    .await
-    {
-        Ok(r) => r.rows_affected() == 1,
-        Err(e) => {
-            tracing::error!(customer = customer_id, payment_intent = %pi_id, "topup_charges insert failed after charge: {e:#}");
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "credit_failed", "credit failed after charge; try again");
+    match credit_topup_once(state, &pi_id, customer_id, account_id, amount_micros, credited, false).await {
+        Ok(true) => {}
+        // A repeat of a top-up that already finished got the same
+        // PaymentIntent from Stripe; its own reservation is returned.
+        Ok(false) => {
+            release_monthly_cap(&state.pool, customer_id, amount_micros).await;
+            return (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "amount_micros": amount_micros, "already_credited": true })),
+            )
+                .into_response();
         }
-    };
-    if !first {
-        release_monthly_cap(&state.pool, customer_id, amount_micros).await;
-        return (
-            StatusCode::OK,
-            Json(json!({ "ok": true, "amount_micros": amount_micros, "already_credited": true })),
-        )
-            .into_response();
-    }
-
-    let credited = credit_after_fee(amount_micros, &state.credit);
-    if let Err(e) = state
-        .virtues_api
-        .credit(&Credit {
-            account_id: account_id.to_string(),
-            amount_micros: credited,
-            mode: "add",
-            reference: Some(format!("topup:{pi_id}")),
-        })
-        .await
-    {
-        // Charged but not credited. Forget the PaymentIntent so the box's
-        // retry (same idempotency key, same PaymentIntent) credits it.
-        tracing::error!(
-            customer = customer_id,
-            payment_intent = %pi_id,
-            error = %e,
-            "credit with virtues-api failed after Stripe charge; a retry credits it"
-        );
-        if let Err(e) = sqlx::query("DELETE FROM topup_charges WHERE stripe_payment_intent_id = $1")
-            .bind(&pi_id)
-            .execute(&state.pool)
-            .await
-        {
-            tracing::error!(payment_intent = %pi_id, "could not reopen uncredited top-up, reconcile by hand: {e:#}");
+        Err(()) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "credit_failed",
+                "credit failed after charge; try again",
+            );
         }
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "credit_failed",
-            "credit failed after charge; try again",
-        );
     }
 
     if is_auto {
@@ -274,6 +236,80 @@ async fn do_topup(
         Json(json!({ "ok": true, "amount_micros": amount_micros, "credited_micros": credited })),
     )
         .into_response()
+}
+
+/// Credit a succeeded top-up PaymentIntent once. `Ok(true)` means this call
+/// credited it, `Ok(false)` that it was already credited. On a failed credit
+/// the PaymentIntent is forgotten, so the next attempt (the box's retry or
+/// Stripe's webhook retry) credits it. `count_toward_cap` adds the charge to
+/// the month's spend, for charges whose reservation was not held (the webhook).
+pub(crate) async fn credit_topup_once(
+    state: &AppState,
+    pi_id: &str,
+    customer_id: &str,
+    account_id: &str,
+    charged_micros: i64,
+    credit_micros: i64,
+    count_toward_cap: bool,
+) -> Result<bool, ()> {
+    let first = match sqlx::query(
+        "INSERT INTO topup_charges (stripe_payment_intent_id, stripe_customer_id, amount_micros) \
+         VALUES ($1, $2, $3) ON CONFLICT (stripe_payment_intent_id) DO NOTHING",
+    )
+    .bind(pi_id)
+    .bind(customer_id)
+    .bind(charged_micros)
+    .execute(&state.pool)
+    .await
+    {
+        Ok(r) => r.rows_affected() == 1,
+        Err(e) => {
+            tracing::error!(customer = customer_id, payment_intent = %pi_id, "topup_charges insert failed after charge: {e:#}");
+            return Err(());
+        }
+    };
+    if !first {
+        return Ok(false);
+    }
+    if let Err(e) = state
+        .virtues_api
+        .credit(&Credit {
+            account_id: account_id.to_string(),
+            amount_micros: credit_micros,
+            mode: "add",
+            reference: Some(format!("topup:{pi_id}")),
+        })
+        .await
+    {
+        tracing::error!(
+            customer = customer_id,
+            payment_intent = %pi_id,
+            error = %e,
+            "credit with virtues-api failed after Stripe charge; a retry credits it"
+        );
+        if let Err(e) = sqlx::query("DELETE FROM topup_charges WHERE stripe_payment_intent_id = $1")
+            .bind(pi_id)
+            .execute(&state.pool)
+            .await
+        {
+            tracing::error!(payment_intent = %pi_id, "could not reopen uncredited top-up, reconcile by hand: {e:#}");
+        }
+        return Err(());
+    }
+    if count_toward_cap {
+        if let Err(e) = sqlx::query(
+            "UPDATE customers SET monthly_charges_micros = monthly_charges_micros + $2 \
+             WHERE stripe_customer_id = $1",
+        )
+        .bind(customer_id)
+        .bind(charged_micros)
+        .execute(&state.pool)
+        .await
+        {
+            tracing::warn!("monthly spend update failed: {e:#}");
+        }
+    }
+    Ok(true)
 }
 
 /// The wallet credit for a top-up of `amount_micros`: the amount Stripe

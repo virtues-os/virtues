@@ -109,6 +109,17 @@ async fn start(
     body: Option<Json<StartBody>>,
 ) -> axum::response::Response {
     let endpoint_id = body.and_then(|Json(b)| b.r#box.endpoint_id).filter(|s| !s.is_empty());
+    // A key a box never collected must not sit in the table in plaintext.
+    // A link is only live for 15 minutes, so a day-old 'ready' row is dead.
+    if let Err(e) = sqlx::query(
+        "UPDATE device_link SET status = 'expired', api_key = NULL \
+         WHERE status = 'ready' AND expires_at < now() - interval '1 day'",
+    )
+    .execute(&state.pool)
+    .await
+    {
+        tracing::warn!("clearing uncollected link keys failed: {e:#}");
+    }
     let device_code = random_hex(32);
     let user_code = gen_user_code();
     let device_code_hash = sha256(device_code.as_bytes());
@@ -161,8 +172,8 @@ struct PollBody {
 async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum::response::Response {
     let hash = sha256(body.device_code.as_bytes());
 
-    let row: Option<(String, Option<String>, chrono::DateTime<Utc>)> = match sqlx::query_as(
-        "SELECT status, api_key, expires_at FROM device_link WHERE device_code_hash = $1",
+    let row: Option<(String, chrono::DateTime<Utc>)> = match sqlx::query_as(
+        "SELECT status, expires_at FROM device_link WHERE device_code_hash = $1",
     )
     .bind(&hash[..])
     .fetch_optional(&state.pool)
@@ -175,7 +186,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
         }
     };
 
-    let Some((status, api_key, expires_at)) = row else {
+    let Some((status, expires_at)) = row else {
         return Json(json!({ "status": "expired" })).into_response();
     };
     if Utc::now() > expires_at && (status == "pending" || status == "granted") {
@@ -191,15 +202,32 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
 
     match status.as_str() {
         "ready" => {
-            // One-time delivery: hand the api_key over, then clear it.
-            let _ = sqlx::query(
-                "UPDATE device_link SET status = 'claimed', api_key = NULL \
-                 WHERE device_code_hash = $1 AND status = 'ready'",
+            // One-time delivery, atomic: only the poll that flips the row
+            // from 'ready' gets the key, and the key leaves the table with it.
+            // Two polls in flight used to both read and return it.
+            let taken: Option<Option<String>> = match sqlx::query_scalar(
+                "WITH taken AS ( \
+                   SELECT device_code_hash, api_key FROM device_link \
+                   WHERE device_code_hash = $1 AND status = 'ready' FOR UPDATE) \
+                 UPDATE device_link d SET status = 'claimed', api_key = NULL \
+                 FROM taken WHERE d.device_code_hash = taken.device_code_hash \
+                 RETURNING taken.api_key",
             )
             .bind(&hash[..])
-            .execute(&state.pool)
-            .await;
-            Json(json!({ "status": "ready", "api_key": api_key })).into_response()
+            .fetch_optional(&state.pool)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("link key delivery failed: {e:#}");
+                    return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "poll failed");
+                }
+            };
+            match taken.flatten() {
+                Some(key) => Json(json!({ "status": "ready", "api_key": key })).into_response(),
+                // Another poll took it first.
+                None => Json(json!({ "status": "claimed" })).into_response(),
+            }
         }
         "claimed" => Json(json!({ "status": "claimed" })).into_response(),
         "denied" => Json(json!({ "status": "denied" })).into_response(),
@@ -838,10 +866,10 @@ async fn redeem_granted_link(
     )
     .await
     {
-        // Key registered upstream; do NOT release (a retry would re-register
-        // destructively). Park at linking; the next poll answers pending and
-        // an operator sees the warn.
-        tracing::warn!("redemption mint_box_key failed: {e:#}");
+        // Release for the next poll: it registers a fresh key under the same
+        // label, which replaces this undelivered one in both systems.
+        tracing::warn!("redemption mint_box_key failed, releasing for a retry: {e:#}");
+        release().await;
         return Json(json!({ "status": "pending" })).into_response();
     }
     // One-shot delivery, same as the ready path: mark claimed and hand the
@@ -1329,13 +1357,13 @@ async fn attach_link_to_account(
         return AttachOutcome::Failed;
     }
 
-    // Device registered (old key now dropped in virtues-api) — record the key
-    // atlas-side with the same scoping (box_key + the legacy customers
-    // mirror), via the shared mint_box_key so the two systems can never
-    // disagree about rotation scope. Do NOT release the claim past this
-    // point: the old key is already gone upstream, so the row must reach
-    // 'ready' with the new key, and a retry resumes from 'linking' (finalize
-    // below is idempotent on it) rather than re-registering.
+    // Device registered (this label's old key is gone in virtues-api).
+    // Record the key atlas-side with the same scoping, via the shared
+    // mint_box_key so the two systems never disagree about rotation scope.
+    // On failure the claim is released: a retry registers a fresh key under
+    // the same label, which replaces this undelivered one in both systems.
+    // Leaving the row at 'linking' would wedge it, because no door claims a
+    // 'linking' row and the box would hear "pending" until it gave up.
     if let Err(e) = super::claim::mint_box_key(
         &state.pool,
         account_id,
@@ -1344,7 +1372,8 @@ async fn attach_link_to_account(
     )
     .await
     {
-        tracing::warn!("mint_box_key failed: {e:#}");
+        tracing::warn!("mint_box_key failed, releasing the link for a retry: {e:#}");
+        release().await;
         return AttachOutcome::Failed;
     }
 

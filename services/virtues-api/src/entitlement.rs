@@ -161,6 +161,19 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
     Ok(balance)
 }
 
+/// Revoke one box key of an account: the owner removed that server. Returns
+/// how many keys were removed (0 when virtues-api never had it). Scoped to
+/// the account, so a hash can never reach another account's key.
+pub async fn revoke_device(pool: &PgPool, account_id: &str, api_key_hash: &[u8]) -> Result<u64> {
+    let r = sqlx::query("DELETE FROM device_keys WHERE account_id = $1 AND api_key_hash = $2")
+        .bind(account_id)
+        .bind(api_key_hash)
+        .execute(pool)
+        .await
+        .context("revoke device key")?;
+    Ok(r.rows_affected())
+}
+
 /// Register (or rotate) a device api key for an account. It creates no wallet:
 /// a key needs only the account, and a wallet comes from a credit. The balance
 /// is never touched, so re-linking re-points access without moving money.
@@ -513,6 +526,18 @@ mod tests {
         let w = get_wallet(&pool, a).await.unwrap().unwrap();
         assert_eq!((w.balance_micros, w.topup_micros), (6_000_000, 6_000_000));
         assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
+    }
+
+    /// Revoking removes exactly that key on that account, and never a key
+    /// on another account even with the same hash bytes.
+    #[sqlx::test]
+    async fn revoke_removes_only_that_key(pool: PgPool) {
+        register_device(&pool, b"hash-kitchen-000000000000000000", "acct-a", Some("ep-kitchen")).await.unwrap();
+        register_device(&pool, b"hash-office-0000000000000000000", "acct-a", Some("ep-office")).await.unwrap();
+        assert_eq!(revoke_device(&pool, "acct-b", b"hash-office-0000000000000000000").await.unwrap(), 0);
+        assert_eq!(revoke_device(&pool, "acct-a", b"hash-office-0000000000000000000").await.unwrap(), 1);
+        assert!(key_account(&pool, b"hash-office-0000000000000000000").await.unwrap().is_none());
+        assert_eq!(key_account(&pool, b"hash-kitchen-000000000000000000").await.unwrap().as_deref(), Some("acct-a"));
     }
 
     /// Unused allotment does not carry over: a renewal resets it.

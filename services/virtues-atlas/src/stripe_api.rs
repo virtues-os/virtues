@@ -316,6 +316,8 @@ impl StripeClient {
         amount_micros: i64,
         description: &str,
         idempotency_key: &str,
+        account_id: &str,
+        credit_micros: i64,
     ) -> Result<String, OffSessionChargeError> {
         // Stripe takes cents, not micros. Round up to be safe.
         let cents = (amount_micros + 9_999) / 10_000;
@@ -367,7 +369,14 @@ impl StripeClient {
 
         // Step 2: create + confirm the PaymentIntent with the PM bound.
         let cents_str = cents.to_string();
+        let credit_str = credit_micros.to_string();
         let params = [
+            // What the `payment_intent.succeeded` webhook needs to credit a
+            // charge that settles after this call returns (3-D Secure), or
+            // whose credit failed here.
+            ("metadata[kind]", "topup"),
+            ("metadata[account_id]", account_id),
+            ("metadata[credit_micros]", credit_str.as_str()),
             ("customer", customer_id),
             ("amount", cents_str.as_str()),
             ("currency", "usd"),

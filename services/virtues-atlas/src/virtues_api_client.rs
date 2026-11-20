@@ -18,6 +18,12 @@ pub struct VirtuesApiClient {
     internal_secret: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct RevokeDevice {
+    pub api_key_hash: String,
+    pub account_id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RegisterDevice {
     /// The box's iroh EndpointId, when known. Scopes key rotation to THIS box
@@ -75,6 +81,11 @@ impl VirtuesApiClient {
     /// primitive — re-pointing an account never touches its balance.
     pub async fn register_device(&self, payload: &RegisterDevice) -> Result<()> {
         self.post("/internal/device", payload).await
+    }
+
+    /// Stop one box key working in virtues-api (the owner removed that server).
+    pub async fn revoke_device(&self, payload: &RevokeDevice) -> Result<()> {
+        self.post("/internal/device/revoke", payload).await
     }
 
     /// Credit an account: `set` (renewal overwrite) or `add` (top-up).

@@ -35,6 +35,8 @@
 		getBillingUsage,
 		ApiError,
 	} from '$lib/api/client';
+	import { listAccountServers, removeAccountServer, type AccountServer } from '$lib/api/servers';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
 	import { reloadApp } from '$lib/reload';
 
@@ -206,6 +208,49 @@
 	}
 
 	$effect(() => () => stopPolling());
+
+	// ─── Servers on this account ───────────────────────────────────────────
+	// Shown only when another server shares the account: a list holding just
+	// this one says nothing.
+	let servers = $state<AccountServer[]>([]);
+	let removingId = $state<string | null>(null);
+	const otherServers = $derived(servers.filter((s) => !s.this_server));
+
+	async function loadServers() {
+		try {
+			const r = await listAccountServers();
+			servers = r.servers ?? [];
+		} catch {
+			servers = [];
+		}
+	}
+	$effect(() => {
+		if (subscriptionStore.linked) void loadServers();
+	});
+
+	async function removeServer(server: AccountServer) {
+		const ok = await confirmAction({
+			title: 'Remove this server?',
+			body: `The server linked ${formatDate(server.linked_at, { month: 'long', day: 'numeric', year: 'numeric' })} stops using your Virtues account and its AI credit. It can be linked again later.`,
+			confirmLabel: 'Remove server',
+			danger: true,
+		});
+		if (!ok) return;
+		removingId = server.id;
+		try {
+			const r = await removeAccountServer(server.id);
+			if (r.ok) {
+				toast.success('Server removed.');
+				await loadServers();
+			} else {
+				toast.error(r.error ?? "Couldn't remove that server. Try again.");
+			}
+		} catch (e) {
+			toast.error(e instanceof ApiError ? e.message : "Couldn't remove that server. Try again.");
+		} finally {
+			removingId = null;
+		}
+	}
 
 	// ─── Auto top-up ───────────────────────────────────────────────────────
 	type AutoTopupState = { enabled: boolean; failures_24h: number; disabled_at: string | null };
@@ -433,6 +478,25 @@
 		</SettingRow>
 	{/if}
 
+	{#if otherServers.length > 0}
+		<SettingRow
+			id="account-servers"
+			label="Servers on this account"
+			help="Each of these can use your Virtues account and its AI credit. Remove one you don't recognize."
+			block
+		>
+			<ul class="servers">
+				<li><span>This server</span></li>
+				{#each otherServers as server (server.id)}
+					<li>
+						<span>Server linked {formatDate(server.linked_at, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+						<Button variant="secondary" onclick={() => void removeServer(server)} loading={removingId === server.id}>Remove</Button>
+					</li>
+				{/each}
+			</ul>
+		</SettingRow>
+	{/if}
+
 	{#if isSubscribed}
 		<SettingRow id="invoices" label="Payments" help="Your monthly charges and top-ups, each with its receipt.">
 			<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>See payments in Stripe</Button>
@@ -441,6 +505,21 @@
 </section>
 
 <style>
+	.servers {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.servers li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-height: 34px;
+	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-variant-numeric: tabular-nums;

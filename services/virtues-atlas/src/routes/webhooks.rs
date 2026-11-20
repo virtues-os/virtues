@@ -129,6 +129,9 @@ async fn handle_webhook(
         // subscriber out of the portal and top-ups. Subscription status follows
         // the subscription's own events above (`customer.subscription.*`,
         // `invoice.*`), which Stripe sends when a refund really ends one.
+        // A top-up that settled after its request returned (3-D Secure), or
+        // whose credit failed there. Already-credited ones are a no-op.
+        "payment_intent.succeeded" => credit_settled_topup(&state, &event.data.object).await,
         "charge.refunded" | "charge.dispute.created" => refund_preorder(&state.pool, &event.data.object).await,
         other => {
             tracing::debug!(event_type = %other, "stripe webhook ignored");
@@ -191,6 +194,34 @@ async fn record_event(pool: &PgPool, event_id: &str, event_type: &str) -> anyhow
     .execute(pool)
     .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// Credit a top-up PaymentIntent from `payment_intent.succeeded`, once.
+/// Only PaymentIntents atlas stamped as top-ups are handled.
+async fn credit_settled_topup(state: &AppState, object: &Value) -> anyhow::Result<()> {
+    let md = object.get("metadata");
+    let field = |k: &str| md.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    if field("kind") != Some("topup") {
+        return Ok(());
+    }
+    let (Some(pi_id), Some(customer), Some(account_id), Some(credit), Some(charged)) = (
+        object.get("id").and_then(|v| v.as_str()),
+        object.get("customer").and_then(|v| v.as_str()),
+        field("account_id"),
+        field("credit_micros").and_then(|v| v.parse::<i64>().ok()),
+        object.get("amount_received").and_then(|v| v.as_i64()),
+    ) else {
+        tracing::error!("top-up PaymentIntent event is missing fields; reconcile by hand");
+        return Ok(());
+    };
+    match super::credits::credit_topup_once(state, pi_id, customer, account_id, charged * 10_000, credit, true).await {
+        Ok(true) => {
+            tracing::info!(payment_intent = %pi_id, "top-up credited from its webhook");
+            Ok(())
+        }
+        Ok(false) => Ok(()),
+        Err(()) => anyhow::bail!("top-up {pi_id} credit failed; retrying"),
+    }
 }
 
 /// Finalize a subscription checkout from its webhook. Only a transient

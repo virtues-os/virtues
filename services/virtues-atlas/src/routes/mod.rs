@@ -15,6 +15,7 @@ mod health;
 mod link;
 mod preorder;
 mod relay;
+mod servers;
 mod settings;
 mod webhooks;
 
@@ -131,6 +132,7 @@ pub fn router() -> Router<AppState> {
         .merge(credits::router())
         .merge(relay::router())
         .merge(billing_checkout::router())
+        .merge(servers::router())
         .merge(billing_portal::router())
         .merge(entitlement::router())
         .merge(settings::router())
