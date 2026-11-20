@@ -1,11 +1,12 @@
 /**
- * toolSideEffects — the two tool results that do something outside the transcript.
+ * toolSideEffects — the tool results that do something outside the transcript.
  *
- * `create_page` opens the new page beside the chat; `edit_page` runs the AI
- * presence animation over an open one. Both share one hazard: the transcript is
- * re-read on load, so every historical call would fire again. Both therefore
- * SEED on their first settled run — recording what was already there without
- * acting on it — and only act on what arrives after.
+ * `create_page` opens the new page beside the chat, an applet `setup` that has
+ * a view opens the site beside it, and `edit_page` runs the AI presence
+ * animation over an open page. They share one hazard: the transcript is
+ * re-read on load, so every historical call would fire again. Each therefore
+ * SEEDS on its first settled run — recording what was already there without
+ * acting on it, and acts only on what arrives after.
  *
  * Tool parts land in the messages array mutably, so the caller drives these
  * from an `$effect` over `chat.messages`; this module holds the seen-sets and
@@ -31,19 +32,47 @@ export function isFullReplace(edit: { find?: string | null; replace?: string | n
 	return !edit.find && !edit.blocks;
 }
 
+/** A site the assistant just made or rebuilt, for the caller to open. */
+export type BuiltSite = { appletId: string; name: string };
+
+/**
+ * The finished tool calls of one kind that a transcript has already been
+ * asked about. The first ask records every call that is there and returns
+ * nothing, because those were loaded from history. Later asks return what
+ * `read` makes of each call that finished since.
+ */
+class SettledCalls {
+	#seen: Set<string> | null = null;
+
+	collect<T>(messages: Message[], read: (part: ToolResultPart) => T | null): T[] {
+		const seeding = this.#seen === null;
+		const seen = (this.#seen ??= new Set());
+		const fresh: T[] = [];
+		for (const message of messages) {
+			if (message.role !== "assistant") continue;
+			for (const part of message.parts as ToolResultPart[]) {
+				if (part.state !== "output-available" || seen.has(part.toolCallId)) continue;
+				const found = read(part);
+				if (found === null) continue;
+				seen.add(part.toolCallId);
+				if (!seeding) fresh.push(found);
+			}
+		}
+		return fresh;
+	}
+}
+
 export class ToolSideEffects {
-	// Track tool calls that were already complete when we mounted (loaded from history)
-	// Only auto-open pages created AFTER mount (during streaming)
-	#seenCreates: Set<string> | null = null;
-	#createsSeeded = false;
+	#pages = new SettledCalls();
+	#sites = new SettledCalls();
 
 	#editSeeded = false;
 	#animatedEditIds = new Set<string>();
 
 	/** A tab switch starts a new transcript: forget what this one had settled. */
 	reset() {
-		this.#seenCreates = null;
-		this.#createsSeeded = false;
+		this.#pages = new SettledCalls();
+		this.#sites = new SettledCalls();
 	}
 
 	/**
@@ -51,39 +80,31 @@ export class ToolSideEffects {
 	 * keeps reopening an old chat from reopening every page it ever made.
 	 */
 	collectNewPages(messages: Message[]): CreatedPage[] {
-		// First run after load: capture already-completed tool calls (loaded from history)
-		if (this.#seenCreates === null) {
-			this.#seenCreates = new Set();
-			for (const message of messages) {
-				if (message.role !== "assistant") continue;
-				for (const part of message.parts as ToolResultPart[]) {
-					if (part.type === "tool-create_page" && part.state === "output-available") {
-						this.#seenCreates.add(part.toolCallId);
-					}
-				}
-			}
-			this.#createsSeeded = true;
-			return []; // Don't auto-open on first run
-		}
+		return this.#pages.collect(messages, (part) => {
+			if (part.type !== "tool-create_page") return null;
+			const output = part.output;
+			return output?.page_id ? { pageId: output.page_id, title: output.title ?? "" } : null;
+		});
+	}
 
-		// Only process new pages after initial load is complete
-		if (!this.#createsSeeded) return [];
-
-		// Subsequent runs: only auto-open for NEW completions (not loaded from history)
-		const created: CreatedPage[] = [];
-		for (const message of messages) {
-			if (message.role !== "assistant") continue;
-			for (const part of message.parts as ToolResultPart[]) {
-				if (part.type === "tool-create_page" && part.state === "output-available") {
-					const output = part.output;
-					if (output?.page_id && !this.#seenCreates.has(part.toolCallId)) {
-						created.push({ pageId: output.page_id, title: output.title ?? "" });
-						this.#seenCreates.add(part.toolCallId); // Mark as handled
-					}
-				}
-			}
-		}
-		return created;
+	/**
+	 * Sites the assistant made or rebuilt since the last call: an applet setup
+	 * that succeeded and has a view. Seeded like pages, so an old chat opens
+	 * nothing.
+	 */
+	collectNewSites(messages: Message[]): BuiltSite[] {
+		return this.#sites.collect(messages, (part) => {
+			const setup =
+				part.type === "tool-setup_applet" ||
+				(part.type === "tool-applet" && (part as { input?: { action?: string } }).input?.action === "setup");
+			if (!setup) return null;
+			const output = part.output as
+				| { applet_id?: string; name?: string; has_view?: boolean; status?: string }
+				| undefined;
+			if (!output?.applet_id || !output.has_view) return null;
+			if (output.status !== "created" && output.status !== "updated") return null;
+			return { appletId: output.applet_id, name: output.name ?? "" };
+		});
 	}
 
 	/**

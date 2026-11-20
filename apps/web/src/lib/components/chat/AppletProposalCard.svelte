@@ -6,6 +6,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeTriggers } from '$lib/applets/palette';
 	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { openSiteBeside } from '$lib/applets/sites.svelte';
 
 	/**
 	 * The receipt for an applet the assistant made or changed: what it does,
@@ -22,7 +23,8 @@
 		estimatedCostPerDay = null,
 		enabled: startedOn = true,
 		lifecycle = 'forever',
-		updated = false
+		updated = false,
+		hasView = null
 	}: {
 		appletId: string;
 		name: string;
@@ -33,6 +35,9 @@
 		enabled?: boolean;
 		lifecycle?: string;
 		updated?: boolean;
+		/** Whether setup said it has a view. Null on a result stored before
+		 *  setup reported it, where the applets list answers. */
+		hasView?: boolean | null;
 	} = $props();
 
 	// What this card last set, over what setup reported.
@@ -54,15 +59,19 @@
 		}
 	}
 
+	// A site opens as its view. Anything else opens the page that says how it runs.
+	const site = $derived(hasView ?? appletsStore.list.find((a) => a.id === appletId)?.has_face ?? false);
+
 	function open() {
-		windowShellStore.openRouteBeside(`/applet/${appletId}`);
+		if (site) openSiteBeside(appletId, name);
+		else windowShellStore.openRouteBeside(`/applet/${appletId}`);
 	}
 
 	// Setup's result names the schedule. A data trigger comes from the
 	// applets list, loaded once when this applet is not in it yet.
 	let looked = false;
 	$effect(() => {
-		if (looked || schedule || appletsStore.list.some((a) => a.id === appletId)) return;
+		if (looked || (schedule && hasView !== null) || appletsStore.list.some((a) => a.id === appletId)) return;
 		looked = true;
 		void appletsStore.load();
 	});
@@ -77,6 +86,37 @@
 	);
 </script>
 
+{#if site}
+	<!-- A site is open beside the chat, so the chat keeps one line for it:
+	     its name, when it refreshes, what that costs, and the switch. -->
+	<div class="site">
+		<div class="head">
+			<Icon icon="atlas:applets" width="15" />
+			<div class="titles">
+				<TextAction onclick={open}>{name}</TextAction>
+				{#if description}
+					<p class="desc">{description}</p>
+				{/if}
+			</div>
+		</div>
+		{#if err}
+			<p class="err">{err}</p>
+		{/if}
+		<div class="actions">
+			{#if schedule || watch}
+				<span class="state">{enabled ? when : 'Off'}{cost && enabled ? ` · ${cost} (estimated)` : ''}</span>
+			{/if}
+			<TextAction quiet onclick={open}>Open</TextAction>
+			{#if schedule || watch}
+				{#if enabled}
+					<TextAction quiet onclick={() => setEnabled(false)}>Turn off</TextAction>
+				{:else}
+					<Button variant="secondary" onclick={() => setEnabled(true)} loading={working}>Turn on</Button>
+				{/if}
+			{/if}
+		</div>
+	</div>
+{:else}
 <div class="proposal" class:live={enabled}>
 	<div class="head">
 		<Icon icon={enabled ? 'mynaui:check' : 'mynaui:zap'} width="15" />
@@ -121,8 +161,16 @@
 		{/if}
 	</div>
 </div>
+{/if}
 
 <style>
+	.site {
+		border-top: 1px solid var(--color-border);
+		border-bottom: 1px solid var(--color-border);
+		padding: 0.75rem 0;
+		margin-bottom: 0.75rem;
+		max-width: 34rem;
+	}
 	.proposal {
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-xl);

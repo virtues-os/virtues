@@ -97,23 +97,30 @@ on one name.
 
 D1 is decided: "Sites". D2 and D3 below have picks and wait on the owner.
 
-### Slice 1: show the site in chat
+### Slice 1: the chat builds the site beside it
 
-This is the change that makes the idea real, and it helps even if the rename
-waits.
+Built on wave on 2026-11-20, except the last line of wiring. Not yet run
+against a server that reports `has_view`.
 
-- When `setup` returns an applet with a view, the chat receipt renders the
-  view inline (the same sandboxed frame as `document/applet.ts`) with "Open"
-  and "Add to a page". Schedule, cost and the switch move under it in one line.
-- AGENTS.md and `APPLET_ACTIONS`: when the request is to see or track
-  something, make a view, with tables if it keeps data. A view with no prompt
-  and no trigger is a valid site (dot-cloud is one already). Add the recovery
-  guard here.
-- Fix first, from [applets-refactor-plan.md](applets-refactor-plan.md): the
-  CSP case (a view that loads a CDN is blank, so the model must be told
-  external hosts are blocked), the PATCH reply that drops `has_face`, and the
-  face token that never refreshes. A blank frame inline in chat is worse than
-  the receipt it replaces.
+- When `setup` makes or rebuilds an applet with a view, the chat opens the
+  site in the pane beside it and keeps the keyboard
+  (`applets/sites.svelte.ts`, `ToolSideEffects.collectNewSites`). A rebuild
+  reloads a frame that is already showing the site. An old chat opens
+  nothing, and a phone opens nothing because it has no beside. This is the
+  one place the app splits the window without being asked; a page the
+  assistant makes still never does.
+- The chat keeps one row for the site: its name, when it refreshes, what
+  that costs, and the switch (`AppletProposalCard.svelte`).
+- `setup` reports `has_view` and refuses a view that names another host,
+  naming the host. `APPLET_ACTIONS` and AGENTS.md say when to make a view,
+  that it is a whole page, and that it shows what was recorded with no
+  streaks or goals.
+- A frame renews its token before the hour is up (`FaceFrame.svelte`).
+- Left: the two lines in `ChatView.svelte` that call the above are written
+  but not committed, because that file holds another change in progress.
+  "Add to a page" and "Share" on the site's pane are not built. A frame
+  still stops working when the server restarts, since tokens are kept in
+  memory. The PATCH reply already carries `has_face`.
 
 ### Slice 2: the door shows sites
 

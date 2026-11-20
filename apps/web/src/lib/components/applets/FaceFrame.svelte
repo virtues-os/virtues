@@ -5,6 +5,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import type { TabType } from '$lib/tabs/types';
 	import { getTheme, isThemeDark } from '$lib/utils/theme';
+	import { siteBuilds } from '$lib/applets/sites.svelte';
 
 	/**
 	 * The applet face runtime: face/index.html rendered in a sandboxed
@@ -54,13 +55,28 @@
 		windowShellStore.openTabFromRoute(path, { focusExisting: true });
 	}
 
+	// A token lasts an hour on the server. The frame loads again with a new
+	// one shortly before that, or every query in a view left open would start
+	// failing with nothing on screen to say why.
+	const RENEW_BEFORE_MS = 5 * 60 * 1000;
+	let renewals = $state(0);
+
 	$effect(() => {
 		const id = appletId;
-		src = null;
+		// Read so that a rebuild of this site, or a renewal, loads it again.
+		void siteBuilds.counts[id];
+		void renewals;
 		err = null;
+		let renew: ReturnType<typeof setTimeout> | undefined;
+		let gone = false;
 		void (async () => {
 			try {
-				const { token } = await mintFaceToken(id);
+				const { token, expires_in_seconds } = await mintFaceToken(id);
+				if (gone) return;
+				renew = setTimeout(
+					() => (renewals += 1),
+					Math.max(60_000, expires_in_seconds * 1000 - RENEW_BEFORE_MS)
+				);
 				// The face's stylesheet knows only light and dark (faces.rs, VIRTUES_CSS).
 				const theme = isThemeDark(getTheme()) ? 'dark' : 'light';
 				// Absolute on mobile: an iframe src bypasses the fetch shim, so a
@@ -70,27 +86,31 @@
 					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}`
 				);
 			} catch (e) {
-				err = e instanceof Error ? e.message : String(e);
+				if (!gone) err = e instanceof Error ? e.message : String(e);
 			}
 		})();
+		return () => {
+			gone = true;
+			clearTimeout(renew);
+		};
 	});
 </script>
 
 <svelte:window onmessage={onMessage} />
 
 {#if err}
-	<div class="face-error">face unavailable: {err}</div>
+	<div class="face-error">Your server couldn't load this site: {err}. Close it and open it again.</div>
 {:else if src}
 	<iframe
 		bind:this={frame}
 		{src}
 		sandbox="allow-scripts"
-		title="Applet face"
+		title="Site"
 		class="face-frame"
 		style:height
 	></iframe>
 {:else}
-	<div class="face-loading">Loading face…</div>
+	<div class="face-loading">Loading…</div>
 {/if}
 
 <style>
