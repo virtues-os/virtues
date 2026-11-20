@@ -258,7 +258,9 @@ v2 is written down rather than dropped.
 - `/v1/ai/*` (chat/completions, completions, models, search),
   `/v1/places/*`, `/v1/unsplash/*`, `/v1/maps/*`,
   `/v1/services/plaid/*` — gated upstreams
-- `/{provider}/start|callback|exchange|refresh` — the OAuth proxy leg
+- `/{provider}/sessions|start|callback|exchange|refresh` — the OAuth proxy
+  leg. The box registers each connect at `/sessions` with its key, and
+  `/exchange` serves only that key (`routes/oauth.rs`)
 - `GET /health`, `GET /ready`
 
 There is no `POST /voucher` and no `POST /v1/redeem`; both were deleted with the
