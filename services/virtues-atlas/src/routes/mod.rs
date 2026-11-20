@@ -122,7 +122,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .merge(account::router())
         .merge(health::router())
-        .merge(claim::router())
         .merge(link::router())
         .merge(preorder::router())
         .merge(credits::router())

@@ -122,8 +122,9 @@
 
 	// ─── Connect (no account linked yet) ───────────────────────────────────
 	// Device authorization: the server never holds a Stripe key. It starts a
-	// link, you finish checkout on the Atlas-hosted page, and this polls until
-	// the server has the billing token.
+	// link, you sign in with your email on the Atlas-hosted page, and this
+	// polls until the server has its key. Subscribing comes after, from the
+	// Plan row, because a checkout belongs to the account the server is on.
 	type LinkInfo = {
 		user_code: string;
 		verification_uri: string;
@@ -159,7 +160,7 @@
 					stopPolling();
 					linkPolling = false;
 					linkInfo = null;
-					linkError = 'The link expired before checkout finished. Connect again for a new code.';
+					linkError = 'The link expired before sign-in finished. Connect again for a new code.';
 				}
 			} catch {
 				// transient; keep polling
@@ -167,8 +168,8 @@
 		}, intervalMs);
 	}
 
-	// The host the checkout tab hands off to, named before it opens.
-	const checkoutHost = $derived.by(() => {
+	// The host the sign-in tab hands off to, named before it opens.
+	const signinHost = $derived.by(() => {
 		if (!linkInfo) return '';
 		try {
 			return new URL(linkInfo.verification_uri).host;
@@ -199,8 +200,8 @@
 		}
 	}
 
-	// Step 2: the hand-off to checkout, on your click.
-	function proceedToCheckout() {
+	// Step 2: the hand-off to sign-in, on your click.
+	function proceedToSignIn() {
 		if (linkInfo) openExternal(linkInfo.verification_uri_complete);
 	}
 
@@ -364,7 +365,7 @@
 		<SettingRow
 			id="subscription"
 			label="Connect your Virtues account"
-			help="Sign in if you have an account. Creating one takes you through Stripe for the subscription. Your server never sees a payment key."
+			help="Sign in with your email. A new address creates your account, and you can subscribe once your server is connected. Your server never sees a payment key."
 			block
 		>
 			{#if linkError}
@@ -378,23 +379,23 @@
 				<div class="panel">
 					<p class="panel-lede">
 						Continue opens a new tab at
-						<strong>{checkoutHost || 'the Virtues billing page'}</strong>
-						to finish checkout on Stripe. It sends you back here when you're done.
+						<strong>{signinHost || 'the Virtues sign-in page'}</strong>
+						where you enter your email. Open the link we send, and this page picks up on its own.
 					</p>
 					<div class="code-block">
 						<div class="code-caption">Your pairing code</div>
 						<div class="code-figure mono">{linkInfo.user_code}</div>
-						<div class="code-caption">It should match the code on the checkout page. It expires in about 15 minutes.</div>
+						<div class="code-caption">It should match the code on the sign-in page. It expires in about 15 minutes.</div>
 					</div>
-					<div><Button variant="primary" onclick={proceedToCheckout}>Continue to checkout →</Button></div>
+					<div><Button variant="primary" onclick={proceedToSignIn}>Continue to sign in →</Button></div>
 					<p class="panel-foot">
 						Prefer to do it by hand? Go to <span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
 					</p>
-					{#if linkPolling}<p class="panel-foot">Waiting for checkout to finish…</p>{/if}
+					{#if linkPolling}<p class="panel-foot">Waiting for you to open the emailed link…</p>{/if}
 				</div>
 			{:else}
 				<div>
-					<Button variant="primary" onclick={connectSubscription} loading={linkLoading}>Connect subscription</Button>
+					<Button variant="primary" onclick={connectSubscription} loading={linkLoading}>Connect your account</Button>
 				</div>
 			{/if}
 		</SettingRow>

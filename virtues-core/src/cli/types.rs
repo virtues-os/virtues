@@ -788,9 +788,9 @@ pub enum Commands {
     #[command(hide = true)]
     Bringup,
 
-    /// Connect this box to a paid Virtues subscription (device-authorization
-    /// flow). Prints a QR + URL and waits for you to complete checkout on a
-    /// phone or browser; the box never holds a Stripe key.
+    /// Link this box to a Virtues account, then open a subscription checkout
+    /// for it. Prints a QR + URL for the email sign-in, waits for the box to
+    /// be linked, then prints the checkout URL; the box never holds a Stripe key.
     ///
     /// A power-user hatch for re-subscribing or dev iteration. In the normal
     /// flow the app's Setup links the account and nobody runs this. (It used to point at `virtues init` as the "full

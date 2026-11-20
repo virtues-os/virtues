@@ -98,9 +98,9 @@ async fn handle_webhook(
             // Renewal: SET the wallet to the monthly allotment. If the credit
             // fails (transient virtues-api blip), propagate the error so the
             // webhook 500s and Stripe retries (the idempotency row is released
-            // above). `renew_wallet` returns Ok when the customer hasn't claimed
-            // yet, so the first-invoice-before-claim race doesn't retry forever
-            // (claim funds the wallet itself).
+            // above). `renew_wallet` returns Ok when the customer has no row yet,
+            // so the first-invoice-before-done-page race doesn't retry forever
+            // (the done page funds the wallet itself).
             match r {
                 Ok(()) => match event.data.object.get("customer").and_then(|v| v.as_str()) {
                     Some(cust) => renew_wallet(&state, cust).await,
@@ -113,7 +113,7 @@ async fn handle_webhook(
         // failed renewals.
         "invoice.payment_failed" => set_status(&state.pool, &event.data.object, "past_due").await,
         // Pre-order deposit settled. No-op for subscription checkouts (those
-        // settle via /claim + invoice.paid); only `metadata.type ==
+        // settle via /account/checkout/done + invoice.paid); only `metadata.type ==
         // "preorder_deposit"` sessions are recorded.
         "checkout.session.completed" => record_preorder(&state, &event.data.object).await,
         // A refund or dispute touches only the pre-order it paid for. It never
@@ -189,7 +189,7 @@ async fn record_event(pool: &PgPool, event_id: &str, event_type: &str) -> anyhow
 
 /// Record a completed pre-order deposit. Only sessions stamped with
 /// `metadata.type == "preorder_deposit"` are handled here; subscription
-/// checkouts settle via `/claim` + invoice events and are ignored. Idempotent
+/// checkouts settle via `/account/checkout/done` + invoice events and are ignored. Idempotent
 /// on the session id (the webhook-event ledger also dedups deliveries).
 async fn record_preorder(state: &AppState, object: &Value) -> anyhow::Result<()> {
     let is_deposit = object

@@ -8,10 +8,9 @@
 //! be an independent HTTP request — no server-side wizard session.
 //!
 //! Endpoints:
-//!   POST /api/setup/subscribe/start  → start a device link, return the
-//!                                      Stripe-checkout URL bits (create-new)
-//!   POST /api/setup/login/start      → {email}: magic-link to an existing
-//!                                      subscription (reuses the same link)
+//!   POST /api/setup/login/start      → {email}: magic link that links this
+//!                                      box to that address's account (a new
+//!                                      address creates one)
 //!   POST /api/setup/link/poll        → one poll tick; on `ready` the billing
 //!                                      api_key is stored
 //!
@@ -32,27 +31,6 @@ use crate::virtues_api::link::{self, LinkStatus, LoginStart};
 
 fn atlas_url() -> String {
     crate::virtues_api::atlas_url()
-}
-
-/// `POST /api/setup/subscribe/start` — begin the create-new-account branch.
-/// Returns the user-facing checkout bits; the secret device_code stays sealed
-/// box-side. The page then polls `/api/setup/link/poll`.
-pub async fn subscribe_start_handler(
-    _user: AuthUser,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let http = crate::http_client::virtues_api_client();
-    match link::start(state.db.pool(), &http, &atlas_url()).await {
-        Ok(start) => (StatusCode::OK, Json(json!(start))).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, "setup subscribe start failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "atlas_unreachable", "detail": e.to_string()})),
-            )
-                .into_response()
-        }
-    }
 }
 
 #[derive(Deserialize)]

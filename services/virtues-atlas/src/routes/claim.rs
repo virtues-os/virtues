@@ -1,89 +1,39 @@
-//! api_key claim (customer-facing, once per signup).
+//! Paid-session verification and the box-key helpers every key door shares.
 //!
-//! `POST /claim { session_id }`
+//! A Stripe Checkout session is verified here before anything is attached to
+//! it: claimed once (anti-replay), paid, a completed subscription for our
+//! price, with a customer, and stamped with the `account_id` it was created
+//! for. The account always comes from that stamp, which atlas wrote for a
+//! caller it had already authenticated. It never comes from the email Stripe
+//! collected, because Stripe does not check that the payer owns that address.
 //!
-//! After Stripe Checkout, the browser is redirected to
-//! `success_url?session_id=cs_xxx`. The home server posts that session here.
-//! Atlas verifies the payment, creates the customer + subscription, assigns an
-//! opaque `account_id`, mints the device **api_key**, registers it with
-//! virtues-api (`/internal/device`) and funds this period's wallet
-//! (`/internal/credit`), then returns the api_key. The box stores it and sends
-//! it on every proxy call.
-//!
-//! Re-claiming issues a fresh api_key (rotating the stored hash); the wallet is
-//! keyed by the stable `account_id`, so the balance is preserved across it.
+//! The rest of the module is the key lookups (`key_owner` and friends) and
+//! `mint_box_key`, the one place a box key is recorded.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Json},
-    routing::post,
-    Router,
-};
-use anyhow::Context as _;
 use chrono::{TimeZone, Utc};
 use rand::RngCore;
-use serde::Deserialize;
-use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::routes::AppState;
-use crate::virtues_api_client::{Credit, RegisterDevice};
 
-pub fn router() -> Router<AppState> {
-    Router::new().route("/claim", post(claim))
-}
-
-#[derive(Debug, Deserialize)]
-struct ClaimBody {
-    session_id: String,
-}
-
-async fn claim(State(state): State<AppState>, Json(body): Json<ClaimBody>) -> axum::response::Response {
-    match finalize_paid_session(&state, &body.session_id).await {
-        Ok(f) => (
-            StatusCode::CREATED,
-            Json(json!({
-                "api_key": f.api_key,
-                "current_period_end": f.period_end,
-            })),
-        )
-            .into_response(),
-        Err(e) => err(e.status, e.code, &e.message),
-    }
-}
-
-/// The minted credential for a verified paid session.
-pub(crate) struct Finalized {
-    /// The device api_key the box stores + sends to the proxy.
-    pub api_key: String,
-    pub period_end: chrono::DateTime<Utc>,
-    /// The session id we just consumed — for `/link/done` to match against the
-    /// `device_link.stripe_session_id` it stamped, so a session for code A
-    /// can't finalize the row for code B.
-    pub session_id: String,
-    /// The `metadata[user_code]` we stamped at create time, returned so
-    /// `/link/done` can verify it matches the URL code (binding C2 fix).
-    pub metadata_user_code: Option<String>,
-}
-
-/// A finalize failure, carrying the HTTP shape the caller should surface.
+/// Why a checkout session was refused. `code` is stable and logged.
 pub(crate) struct FinalizeErr {
-    pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
 }
 
 /// A Stripe checkout session that passed every guard: paid, complete,
-/// subscription-mode, our price, with a customer. What both finalizers (the
-/// device-link claim and the account checkout) build on — extracted so the
-/// two can never drift on what "paid" means.
+/// subscription-mode, our price, with a customer, bound to an account.
 pub(crate) struct PaidSession {
+    /// The account atlas stamped into `metadata[account_id]` when it created
+    /// the session. The only input that chooses the account.
+    pub account_id: String,
     pub stripe_customer_id: String,
     pub stripe_subscription_id: String,
+    /// The address the payer typed at Stripe. Stored as the customer's
+    /// contact address only; it never chooses an account.
     pub email: String,
     pub period_end: chrono::DateTime<Utc>,
-    pub metadata_user_code: Option<String>,
 }
 
 /// Anti-replay-claim the session id, retrieve it from Stripe, and run every
@@ -96,7 +46,6 @@ pub(crate) async fn verify_and_claim_session(
 ) -> Result<PaidSession, FinalizeErr> {
     if !state.stripe.is_configured() {
         return Err(FinalizeErr {
-            status: StatusCode::SERVICE_UNAVAILABLE,
             code: "stripe_not_configured",
             message: "STRIPE_SECRET_KEY not set".to_string(),
         });
@@ -117,14 +66,12 @@ pub(crate) async fn verify_and_claim_session(
     .map_err(|e| {
         tracing::warn!("claimed_sessions insert failed: {e:#}");
         FinalizeErr {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal",
             message: "could not record claim".to_string(),
         }
     })?;
     if claimed.rows_affected() == 0 {
         return Err(FinalizeErr {
-            status: StatusCode::CONFLICT,
             code: "session_already_claimed",
             message: "this checkout session was already used".to_string(),
         });
@@ -137,7 +84,6 @@ pub(crate) async fn verify_and_claim_session(
         .map_err(|e| {
             tracing::warn!("stripe session retrieve failed: {e:#}");
             FinalizeErr {
-                status: StatusCode::BAD_GATEWAY,
                 code: "stripe_error",
                 message: e.to_string(),
             }
@@ -151,7 +97,6 @@ pub(crate) async fn verify_and_claim_session(
         || (state.allow_promotion_codes && session.payment_status == "no_payment_required");
     if !payment_ok {
         return Err(FinalizeErr {
-            status: StatusCode::PAYMENT_REQUIRED,
             code: "payment_not_complete",
             message: format!("checkout payment_status = {}", session.payment_status),
         });
@@ -162,14 +107,12 @@ pub(crate) async fn verify_and_claim_session(
     // a full api_key. (C1 hardening.)
     if session.mode != "subscription" {
         return Err(FinalizeErr {
-            status: StatusCode::BAD_REQUEST,
             code: "wrong_mode",
             message: format!("session.mode = {} (want subscription)", session.mode),
         });
     }
     if session.status != "complete" {
         return Err(FinalizeErr {
-            status: StatusCode::BAD_REQUEST,
             code: "session_not_complete",
             message: format!("session.status = {}", session.status),
         });
@@ -186,7 +129,6 @@ pub(crate) async fn verify_and_claim_session(
             .unwrap_or(false);
         if !price_ok {
             return Err(FinalizeErr {
-                status: StatusCode::BAD_REQUEST,
                 code: "price_mismatch",
                 message: "session was not for the configured price".to_string(),
             });
@@ -195,7 +137,6 @@ pub(crate) async fn verify_and_claim_session(
 
     let Some(stripe_customer_id) = session.customer.clone() else {
         return Err(FinalizeErr {
-            status: StatusCode::BAD_REQUEST,
             code: "no_customer",
             message: "session has no customer".to_string(),
         });
@@ -215,20 +156,33 @@ pub(crate) async fn verify_and_claim_session(
         .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
         .unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
 
-    let metadata_user_code = session
-        .metadata
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    let Some(account_id) = bound_account_id(&session.metadata) else {
+        tracing::warn!(session_id, "paid checkout session carries no account_id");
+        return Err(FinalizeErr {
+            code: "unbound_session",
+            message: "this checkout session is not bound to an account".to_string(),
+        });
+    };
 
     Ok(PaidSession {
+        account_id,
         stripe_customer_id,
         stripe_subscription_id,
         email,
         period_end,
-        metadata_user_code,
     })
+}
+
+/// The `account_id` atlas stamped into a session's metadata at creation, or
+/// `None` when there is none. A session without one was not created by a
+/// door that knew who was paying, so nothing may be attached to it.
+fn bound_account_id(metadata: &serde_json::Value) -> Option<String> {
+    metadata
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Release the anti-replay claim so the caller's retry can re-run finalize.
@@ -237,171 +191,6 @@ pub(crate) async fn release_session_claim(state: &AppState, session_id: &str) {
         .bind(session_id)
         .execute(&state.pool)
         .await;
-}
-
-pub(crate) async fn finalize_paid_session(
-    state: &AppState,
-    session_id: &str,
-) -> Result<Finalized, FinalizeErr> {
-    let PaidSession {
-        stripe_customer_id,
-        stripe_subscription_id,
-        email,
-        period_end,
-        metadata_user_code,
-    } = verify_and_claim_session(state, session_id).await?;
-
-    // Mint a fresh device api_key (the box's single credential).
-    let api_key = random_token();
-    let api_key_hash = sha256(api_key.as_bytes());
-
-    let internal = |what: &str| FinalizeErr {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        code: "internal",
-        message: what.to_string(),
-    };
-
-    // The account is the identity root (0017): mint-or-fetch it by email
-    // FIRST, so a customer created by this paid checkout lands on the same
-    // account_id a free sign-in already minted — the wallet key never forks.
-    let ensured_account_id = super::account::ensure_account(&state.pool, &email)
-        .await
-        .map_err(|e| {
-            tracing::warn!("claim ensure_account failed: {e:#}");
-            internal("account upsert failed")
-        })?;
-
-    // Upsert customer with the new api_key hash (rotate on re-claim). The
-    // account_id CONVERGES on the email's account (0017) even on conflict —
-    // customers.account_id is what webhooks credit, and any divergence from
-    // the accounts-table id the box registered under sends a subscription's
-    // renewal to a wallet nothing reads.
-    let (account_id,): (String,) = sqlx::query_as(
-        r#"
-        INSERT INTO customers (stripe_customer_id, email, api_key_hash, account_id)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (stripe_customer_id)
-        DO UPDATE SET api_key_hash = $3, email = $2, account_id = $4
-        RETURNING account_id
-        "#,
-    )
-    .bind(&stripe_customer_id)
-    .bind(&email)
-    .bind(&api_key_hash[..])
-    .bind(&ensured_account_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        tracing::warn!("claim upsert customer failed: {e:#}");
-        internal("customer upsert failed")
-    })?;
-    if let Err(e) =
-        super::account::attach_stripe_to_account(&state.pool, &email, &stripe_customer_id).await
-    {
-        tracing::warn!("claim stripe attach failed: {e:#}");
-    }
-
-    // Upsert subscription.
-    sqlx::query(
-        r#"
-        INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end)
-        VALUES ($1, $2, 'active', $3)
-        ON CONFLICT (stripe_subscription_id)
-        DO UPDATE SET status = 'active', current_period_end = $3
-        "#,
-    )
-    .bind(&stripe_subscription_id)
-    .bind(&stripe_customer_id)
-    .bind(period_end)
-    .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        tracing::warn!("claim upsert subscription failed: {e:#}");
-        internal("subscription upsert failed")
-    })?;
-
-    // Which box is this checkout for? The link row carries the endpoint_id
-    // the box self-reported at /init/start (migration 0015); the checkout
-    // session was stamped onto that row before the Stripe redirect. A missing
-    // ROW is a real, benign None (older boxes; checkouts with no device link,
-    // e.g. store pre-orders) and keeps the whole-account rotation. A QUERY
-    // ERROR is not: degrading it to None would turn a transient DB blip into
-    // a whole-account rotation that kills every sibling box's key — silently
-    // un-fixing the bug per-box keys exist to fix (review finding,
-    // 2026-08-24). Fail the finalize instead; the claim is released below and
-    // the box's retry is safe.
-    let endpoint_id: Option<String> = match sqlx::query_scalar(
-        "SELECT endpoint_id FROM device_link WHERE stripe_session_id = $1",
-    )
-    .bind(session_id)
-    .fetch_optional(&state.pool)
-    .await
-    {
-        Ok(row) => row.flatten(),
-        Err(e) => {
-            tracing::warn!("device_link endpoint lookup failed, releasing claim for retry: {e:#}");
-            release_session_claim(state, session_id).await;
-            return Err(internal("endpoint lookup failed — please retry"));
-        }
-    };
-
-    // Register the device key with virtues-api and fund this period's wallet.
-    // A fresh paid checkout funds the monthly allotment immediately ($20);
-    // invoice.paid keeps it fresh monthly.
-    //
-    // CRITICAL: these are the last steps, and they sit downstream of the
-    // already-committed anti-replay `claimed_sessions` row. If either fails
-    // (transient virtues-api blip) we must RELEASE the claim — otherwise the
-    // box gets a 500, never received the api_key, and its retry would hit
-    // `session_already_claimed` forever (bricked checkout). Both calls are
-    // idempotent (register replaces the box's — or, unlabeled, the account's —
-    // key; credit `set` overwrites), so re-running the whole finalize on the
-    // box's retry is safe.
-    let provision = async {
-        state
-            .virtues_api
-            .register_device(&RegisterDevice {
-                box_id: endpoint_id.clone(),
-                api_key_hash: hex::encode(&api_key_hash),
-                account_id: account_id.clone(),
-            })
-            .await
-            .context("register_device")?;
-        // virtues-api holds the key; now record it atlas-side, scoped to the
-        // box (register-before-record, same ordering doctrine as link.rs).
-        mint_box_key(
-            &state.pool,
-            &account_id,
-            endpoint_id.as_deref(),
-            &api_key_hash[..],
-        )
-        .await
-        .context("mint_box_key")?;
-        state
-            .virtues_api
-            .credit(&Credit {
-                account_id: account_id.clone(),
-                amount_micros: state.credit.renewal_micros,
-                mode: "set",
-                reference: Some(format!("checkout:{session_id}")),
-            })
-            .await
-            .context("initial credit")?;
-        anyhow::Ok(())
-    }
-    .await;
-    if let Err(e) = provision {
-        tracing::warn!("provisioning failed, releasing claim for retry: {e:#}");
-        release_session_claim(state, session_id).await;
-        return Err(internal("provisioning failed — please retry"));
-    }
-
-    Ok(Finalized {
-        api_key,
-        period_end,
-        session_id: session_id.to_string(),
-        metadata_user_code,
-    })
 }
 
 /// Resolve an api_key hash → owning `stripe_customer_id`, per-box keys first.
@@ -601,10 +390,25 @@ pub(crate) fn sha256(data: &[u8]) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
-fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(json!({ "error": { "code": code, "message": message } })),
-    )
-        .into_response()
+#[cfg(test)]
+mod bound_account_tests {
+    use super::bound_account_id;
+    use serde_json::json;
+
+    #[test]
+    fn reads_the_stamped_account() {
+        let md = json!({ "account_id": "acct_0123", "user_code": "ABCD-EFGH" });
+        assert_eq!(bound_account_id(&md).as_deref(), Some("acct_0123"));
+    }
+
+    /// A session opened by a door that did not know who was paying carries
+    /// no stamp, and nothing may be attached to it.
+    #[test]
+    fn refuses_a_missing_or_empty_stamp() {
+        assert_eq!(bound_account_id(&json!({})), None);
+        assert_eq!(bound_account_id(&json!({ "account_id": "" })), None);
+        assert_eq!(bound_account_id(&json!({ "account_id": "  " })), None);
+        assert_eq!(bound_account_id(&json!({ "account_id": 7 })), None);
+        assert_eq!(bound_account_id(&serde_json::Value::Null), None);
+    }
 }

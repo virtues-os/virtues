@@ -1,6 +1,6 @@
 //! atlas - identity + funding for Virtues (linked prepaid model).
 //!
-//! Atlas owns the Stripe customer side. At link/claim it mints the box's
+//! Atlas owns the Stripe customer side. At link it mints the box's
 //! device `api_key` and registers it with virtues-api against an opaque
 //! `account_id`; on subscription renewal (`invoice.paid`) and top-up it credits
 //! that account's wallet via virtues-api `/internal/credit`. It never sees

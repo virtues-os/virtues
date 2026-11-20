@@ -3,16 +3,17 @@
 //!
 //! The sibling of `billing_portal.rs`, for the state 0017 created and no door
 //! served: a linked FREE account. Its owner had two ways to reach Stripe and
-//! both were wrong — `/account/checkout` wants an OTP session the box does
+//! both were wrong — the app's checkout wanted an OTP session the box does
 //! not hold, and starting a fresh device link would mint a SECOND account
 //! rather than subscribe this one. So Settings showed "Active" to someone with
 //! no subscription and, once that was fixed, had nothing to offer them.
 //!
-//! This mints a Checkout session with the account's email pre-filled and
-//! sends the browser through the existing `/account/checkout/done`, which
-//! attaches by the email Stripe reports — the same finalizer the airlock's
-//! checkout uses, so there is one definition of "paid" (`claim::verify_and_
-//! claim_session`) and one attach.
+//! This mints a Checkout session bound to the key's account: the account id
+//! goes into the session's metadata, and the account's Stripe customer is
+//! reused when it has one (otherwise its email is pre-filled). The browser
+//! then goes through `/account/checkout/done`, which attaches the
+//! subscription to that stamped account. Nothing the payer types at Stripe
+//! chooses the account.
 //!
 //! Privacy: same wall as the other api_key doors. We resolve api_key → account
 //! to pre-fill an email the account already gave us, and learn nothing about
@@ -71,19 +72,40 @@ async fn create_checkout_session(
         }
     }
 
-    // The email the account signed in with, to pre-fill. Its absence is a
-    // contract break (every key hangs off an account since 0017), not a
-    // reason to open an anonymous checkout that would fork the account.
-    let email = match super::claim::account_email_by_key_hash(&state.pool, &token_hash[..]).await {
-        Ok(e) => e,
+    // The account behind the key, which this checkout is bound to. Its
+    // absence is a contract break (every key hangs off an account since
+    // 0017), not a reason to open a checkout that is bound to nobody.
+    let account_id = match super::claim::account_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            tracing::warn!("checkout: valid key with no account");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key has no account");
+        }
         Err(e) => {
-            tracing::warn!("checkout account email lookup failed: {e:#}");
+            tracing::warn!("checkout account lookup failed: {e:#}");
             return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account lookup failed");
         }
     };
-    let Some(email) = email else {
-        tracing::warn!("checkout: valid key with no account email");
+    let account: Option<(String, Option<String>)> = match sqlx::query_as(
+        "SELECT email, stripe_customer_id FROM accounts WHERE account_id = $1",
+    )
+    .bind(&account_id)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("checkout account row lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account lookup failed");
+        }
+    };
+    let Some((email, stripe_customer_id)) = account else {
+        tracing::warn!(account_id = %account_id, "checkout: key's account has no row");
         return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account has no email");
+    };
+    let customer = match stripe_customer_id.as_deref() {
+        Some(cid) => crate::stripe_api::CheckoutCustomer::Existing(cid),
+        None => crate::stripe_api::CheckoutCustomer::Email(&email),
     };
 
     if !state.stripe.is_configured() || state.stripe_price_id.is_empty() {
@@ -94,14 +116,13 @@ async fn create_checkout_session(
     let cancel_url = format!("{base}/account/checkout/done?session_id=cancelled");
     match state
         .stripe
-        .create_checkout_session_for(
+        .create_checkout_session(
             &state.stripe_price_id,
             &success_url,
             &cancel_url,
-            // No user_code: this checkout belongs to an ACCOUNT, not a link.
-            "",
+            &account_id,
+            customer,
             state.allow_promotion_codes,
-            Some(&email),
         )
         .await
     {

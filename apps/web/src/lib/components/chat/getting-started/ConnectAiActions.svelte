@@ -16,7 +16,8 @@
 	import { cubicOut } from "svelte/easing";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
-	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { setupLinkPoll, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { startCheckout } from "$lib/api/checkout";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import Act from "./ui/Act.svelte";
 	import Choices from "./ui/Choices.svelte";
@@ -32,6 +33,9 @@
 	let apiKey = $state("");
 	let chatModel = $state("");
 	let checkoutUrl = $state<string | null>(null);
+	/** Why the email field is open: to sign in, or as the first half of
+	    subscribing (a checkout needs an account to belong to). */
+	let intent = $state<"signin" | "subscribe">("signin");
 
 	const emailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()));
 	const endpointValid = $derived(/^https?:\/\/\S+/.test(endpointUrl.trim()) && apiKey.trim().length > 0);
@@ -71,7 +75,8 @@
 				const d = await setupLinkPoll<{ status: string }>();
 				if (d.status === "ready") {
 					stop();
-					await gettingStarted.refresh();
+					if (intent === "subscribe") await subscribe(true);
+					else await gettingStarted.refresh();
 				} else if (d.status === "expired" || d.status === "none") {
 					stop();
 					mode = "choose";
@@ -85,23 +90,50 @@
 	function back() {
 		stop();
 		error = null;
+		intent = "signin";
 		mode = "choose";
 	}
 	function open(next: "signin" | "endpoint") {
 		error = null;
+		intent = "signin";
 		mode = next;
 		focusField(next === "signin" ? "gs-email" : "gs-endpoint");
 	}
 
-	async function subscribe() {
+	/** Wait for the subscription to land. Ten minutes of checks: long
+	    enough for a card and a 3-D Secure prompt. */
+	function pollPaid() {
+		stop();
+		let ticks = 0;
+		timer = setInterval(async () => {
+			ticks += 1;
+			await gettingStarted.refresh();
+			if (gettingStarted.aiConnected || ticks >= 120) stop();
+		}, 5000);
+	}
+	/** Open checkout for the linked account. An unlinked server signs in
+	    first; `afterSignIn` is the second try, once the link is ready. */
+	async function subscribe(afterSignIn = false) {
 		error = null;
 		try {
-			const d = await setupSubscribeStart<{ verification_uri_complete?: string; verification_uri?: string }>();
-			checkoutUrl = d.verification_uri_complete || d.verification_uri || null;
-			mode = "checkout";
-			if (checkoutUrl) void openExternal(checkoutUrl);
-			poll();
+			const r = await startCheckout();
+			if (r.kind === "opened") {
+				checkoutUrl = r.url;
+				mode = "checkout";
+				void openExternal(r.url);
+				pollPaid();
+			} else if (r.kind === "needs_signin" && !afterSignIn) {
+				intent = "subscribe";
+				mode = "signin";
+				focusField("gs-email");
+			} else if (r.kind === "already_subscribed") {
+				await gettingStarted.refresh();
+			} else {
+				mode = "choose";
+				error = r.kind === "error" ? r.message : "Couldn't open checkout. Try again.";
+			}
 		} catch {
+			mode = "choose";
 			error = UNREACHABLE;
 		}
 	}
@@ -161,7 +193,7 @@
 					     confirmation step is what actually settles that. -->
 					$20 a month. You'll confirm in your browser.
 				{/snippet}
-				<Act variant="primary" onclick={subscribe}>Subscribe</Act>
+				<Act variant="primary" onclick={() => subscribe()}>Subscribe</Act>
 				<Act onclick={() => open("signin")}>Sign in</Act>
 				<Act onclick={() => open("endpoint")}>Own models</Act>
 			</Choices>
@@ -175,6 +207,9 @@
 					void signIn();
 				}}
 			>
+				{#if intent === "subscribe"}
+					<p class="help">First, your email. We'll send a link, and checkout opens once you've opened it.</p>
+				{/if}
 				<Input
 					id="gs-email"
 					type="email"
@@ -195,7 +230,11 @@
 	{:else if mode === "mailed"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>A sign-in link is on its way to your email. Open it and this picks up on its own. You can leave this where it is.</Waiting>
+				<Waiting>
+					{intent === "subscribe"
+						? "A link is on its way to your email. Open it, and checkout opens here next."
+						: "A sign-in link is on its way to your email. Open it and this picks up on its own. You can leave this where it is."}
+				</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>

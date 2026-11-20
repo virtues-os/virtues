@@ -14,7 +14,7 @@ pub struct Config {
     /// Shared secret authenticating Atlas → virtues-api internal calls.
     pub virtues_api_internal_secret: String,
     /// Stripe secret API key (`sk_test_...` or `sk_live_...`). Used to
-    /// retrieve checkout sessions in the `/claim` flow.
+    /// create and retrieve subscription checkout sessions.
     pub stripe_secret_key: String,
     /// Stripe webhook signing secret (`whsec_...`). Used to verify the
     /// `Stripe-Signature` header on every webhook delivery.
@@ -40,14 +40,14 @@ pub struct Config {
     pub topup_min_micros: i64,
     pub topup_max_micros: i64,
     /// Surface Stripe's "Add promotion code" field at Checkout AND accept
-    /// `payment_status = "no_payment_required"` in `finalize_paid_session`
+    /// `payment_status = "no_payment_required"` in `verify_and_claim_session`
     /// (so 100%-off coupons settle without a charge). Default false. Cap
     /// abuse in Stripe (max_redemptions + restrict_first_time_transactions
     /// + expires_at on every coupon); Stripe is the billing source of truth
     /// and enforces those atomically. Gate the two halves together —
-    /// accepting free claims without showing the field is pointless, and
-    /// showing the field without accepting free claims confuses UX (Checkout
-    /// completes, `/claim` 400s).
+    /// accepting free checkouts without showing the field is pointless, and
+    /// showing the field without accepting free checkouts confuses UX (Checkout
+    /// completes, then the done page refuses it).
     pub allow_promotion_codes: bool,
 
     /// Pre-order deposit amount in the smallest currency unit (cents). Default

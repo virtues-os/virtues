@@ -53,7 +53,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
         // Setup wizard transitions (agents/build/onboarding.md) — session-authed; the
         // wizard reads progress from the public /api/setup/state.
-        .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
         .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
         .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
         // Profile API
