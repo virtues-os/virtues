@@ -118,19 +118,42 @@ async fn ensure_push_id(db: &sqlx::PgPool, account_id: &str) -> sqlx::Result<Str
 
 /// Google's notification. It answers 200 to anything it cannot use, because
 /// any other answer makes Google retry the same call.
+///
+/// Each call is logged with Google's state word and what was done with it,
+/// and nothing that names a box or a channel. Without that line there is no
+/// way to tell a quiet calendar from signals that never arrive: this service
+/// logs no other successful request, and the proxy in front keeps no access
+/// log.
 async fn google_calendar(State(state): State<Arc<AppState>>, headers: HeaderMap) -> StatusCode {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
     let (token, channel, resource_state) =
         (header("x-goog-channel-token"), header("x-goog-channel-id"), header("x-goog-resource-state"));
-    // `sync` is the hello Google sends when a watch starts; nothing changed.
-    if resource_state == "sync" || token.is_empty() || channel.is_empty() || channel.len() > MAX_CHANNEL_ID_LEN {
-        return StatusCode::OK;
-    }
-    match record(&state.db, token, channel).await {
-        Ok(true) => waiter(token).notify_waiters(),
-        Ok(false) => {}
-        Err(e) => tracing::error!(error = %e, "push signal insert failed"),
-    }
+    // The caller chooses this header, so only the words Google sends reach the log.
+    let state_word = match resource_state {
+        "sync" | "exists" | "not_exists" => resource_state,
+        _ => "other",
+    };
+    let outcome = if token.is_empty() || channel.is_empty() || channel.len() > MAX_CHANNEL_ID_LEN {
+        "malformed"
+    } else if resource_state == "sync" {
+        // The hello Google sends when a watch starts; nothing changed.
+        "hello"
+    } else {
+        match record(&state.db, token, channel).await {
+            Ok(true) => {
+                waiter(token).notify_waiters();
+                "kept"
+            }
+            // No box has this push id, the signal is already waiting, or
+            // the box has too many waiting.
+            Ok(false) => "not kept",
+            Err(e) => {
+                tracing::error!(error = %e, "push signal insert failed");
+                "failed"
+            }
+        }
+    };
+    tracing::info!(state = state_word, outcome, "calendar signal from Google");
     StatusCode::OK
 }
 
