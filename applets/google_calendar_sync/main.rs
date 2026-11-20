@@ -17,7 +17,7 @@
 //! shared calendars also gets a Google watch. Google then calls virtues-api
 //! when the calendar changes, the box pulls that signal, and runs this applet
 //! early with the watch's channel id in `push_channels`. A watched calendar
-//! is otherwise checked every six hours, in case a signal was lost. Watches
+//! is still checked on the schedule above, in case a signal was lost. Watches
 //! last up to 30 days and are renewed a day before they end.
 //!
 //! Two failure modes are load-bearing here, because together they froze a real
@@ -68,7 +68,11 @@ const IDLE_EVERY_SECS: i64 = 3_600;
 /// check is due slightly before its interval is up.
 const DUE_SLACK_SECS: i64 = 300;
 /// A watched calendar is still checked this often, in case a signal was lost.
-const WATCHED_EVERY_SECS: i64 = 6 * 3_600;
+/// It matches the 15-minute schedule, so a watch never makes a calendar
+/// slower than it was without one: on the first box to run watches, edits
+/// went unsignalled for 13 hours before signals started arriving. Raise it
+/// once the API's log of Google's calls shows signals can be relied on.
+const WATCHED_EVERY_SECS: i64 = 900;
 /// The longest watch Google gives a calendar.
 const WATCH_TTL_SECS: i64 = 30 * 86_400;
 /// Renew a watch when less than this is left on it.
@@ -612,9 +616,11 @@ mod due_tests {
     }
 
     #[test]
-    fn a_watched_calendar_is_checked_every_six_hours() {
-        assert!(!is_due("me@example.com", NOW, Some(NOW - 3_600), NOW, true));
-        assert!(is_due("me@example.com", NOW, Some(NOW - 6 * 3_600), NOW, true));
+    fn a_watched_calendar_is_still_checked_every_run() {
+        assert!(is_due("me@example.com", NOW, Some(NOW - 900), NOW, true));
+        // Idle for a week and watched: the watch's interval applies, not the hourly one.
+        assert!(is_due("me@example.com", NOW, Some(NOW - 900), NOW - IDLE_AFTER_SECS, true));
+        assert!(!is_due("me@example.com", NOW, Some(NOW - 200), NOW, true));
     }
 
     #[test]
