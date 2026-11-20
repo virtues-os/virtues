@@ -322,7 +322,7 @@ fn print_welcome(_atlas_url: &str) {
     println!("─────────────────────────────────────────────────────────");
     println!("  Welcome to Virtues.");
     println!();
-    println!("  Subscription: $20/mo — what you get:");
+    println!("  Subscription: $29/mo, with $20 of AI each month. What you get:");
     println!("    • AI in your apps (proxied through Virtues; we never");
     println!("      store your prompts or responses — pure in-memory");
     println!("      passthrough, open source, ZDR upstream)");
