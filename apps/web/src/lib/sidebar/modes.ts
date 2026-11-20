@@ -116,7 +116,7 @@ function settingsRows(): ModeRow[] {
 	// of its own, so its row is here rather than in LANDING.
 	rows.push(
 		settingsRow('/virtues/search', 'Search', 'Your server'),
-		settingsRow('/virtues/applets', 'Applets', 'Your server'),
+		settingsRow('/virtues/applets', 'Jobs', 'Your server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);

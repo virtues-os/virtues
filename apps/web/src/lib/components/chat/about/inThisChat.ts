@@ -314,7 +314,7 @@ export function inThisChat(messages: readonly unknown[]): InThisChat {
 					if (name === 'applet' && input.action !== 'setup') break;
 					const appletId = str(out.applet_id);
 					if (appletId && out.status !== 'check_failed') {
-						made.add({ key: `applet:${appletId}`, label: str(out.name) ?? 'Applet', icon: 'mynaui:sparkles', detail: out.status === 'updated' ? 'Applet changed' : 'Applet' }, id);
+						made.add({ key: `applet:${appletId}`, label: str(out.name) ?? 'Site', icon: 'mynaui:sparkles', detail: out.status === 'updated' ? 'Site changed' : 'Site' }, id);
 					}
 					break;
 				}

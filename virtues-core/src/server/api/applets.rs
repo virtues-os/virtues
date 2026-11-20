@@ -68,13 +68,14 @@ pub fn routes() -> Router<AppState> {
             "/api/applets/:id/fork",
             post(crate::api::applet_source::fork_handler),
         )
-        // Chat-export upload (Tier 3 one-time import). Per-route body limit
-        // overrides the router-wide 260MB cap — ChatGPT exports can be larger.
+        // Chat-export upload (one-time import). Per-route body limit
+        // overrides the router-wide 260MB cap: a ChatGPT zip carries every
+        // uploaded file and image, and runs to gigabytes.
         .route(
             "/api/chat-import/upload",
-            post(chat_import_upload_handler)
-                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+            post(chat_import_upload_handler).layer(DefaultBodyLimit::max(CHAT_IMPORT_MAX_BYTES)),
         )
+        .route("/api/chat-import/status", get(chat_import_status_handler))
         .route("/api/applets/:id/runs", get(list_applet_runs_handler))
         .route("/api/applets/:id/log", get(applet_log_handler))
         .route("/api/applets/:id/pages", get(applet_pages_handler))
@@ -140,78 +141,197 @@ pub async fn trigger_applet_handler(
     run_status_response(result, &applet_id)
 }
 
-/// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
-/// Gemini conversation export (Tier 3 "one-time import"). The file is staged to
-/// a transient local path and the `chat_import` action is run synchronously
-/// (one-time imports are user-initiated and expected to take a moment), so the
-/// response carries the "Imported N messages" summary for the confirmation UI.
-///
-/// Mounted with a raised body limit (chat exports can exceed the 260MB default).
+/// The largest chat export the upload takes.
+const CHAT_IMPORT_MAX_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
+/// POST /api/chat-import/upload — multipart upload of a Claude or ChatGPT
+/// conversation export: the zip the site emails, or a conversations JSON file
+/// from inside it. The file streams into the staging folder, so a large
+/// export never sits in memory, and the `chat_import` action starts in the
+/// background. The response is 202 with the run id; the UI follows the run in
+/// `/api/runs?applet_id=applet_chat_import` for its summary or error.
 pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let mut provider = "unknown".to_string();
-    let mut data: Option<axum::body::Bytes> = None;
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        match field.name().unwrap_or("") {
-            "provider" => {
-                if let Ok(t) = field.text().await {
-                    provider = t;
-                }
-            }
-            "file" => {
-                if let Ok(b) = field.bytes().await {
-                    data = Some(b);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let Some(bytes) = data else {
-        return error_response(crate::error::Error::InvalidInput(
-            "no file provided".into(),
-        ));
+    let staged = match stage_chat_import(&mut multipart).await {
+        Ok(path) => path,
+        Err(e) => return error_response(e),
     };
-
-    // Stage to a transient local path the action subprocess reads then deletes.
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.json"));
-    if let Err(e) = std::fs::write(&file_path, &bytes) {
-        return error_response(crate::error::Error::Other(format!(
-            "failed to stage upload: {e}"
-        )));
-    }
+    let file_path = staged.path.clone();
 
     let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
-    let payload = serde_json::json!({
-        "file_path": file_path.to_string_lossy(),
-        "provider": provider,
-    });
+    let payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
 
-    match crate::applet_runner::run_applet(&deps, "applet_chat_import", "manual", Some(&payload))
-        .await
+    match crate::applet_runner::run_applet_detached(
+        &deps,
+        "applet_chat_import",
+        "manual",
+        Some(&payload),
+    )
+    .await
     {
-        Ok(r) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "ok",
-                "summary": r.summary,
-                "run_id": r.run_id,
-            })),
-        )
-            .into_response(),
-        Err(e) => error_response(crate::error::Error::Other(e.to_string())),
+        Ok(result) => {
+            // A run that started reads the file and removes it; any other
+            // outcome leaves it to `staged`'s drop.
+            if matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
+                staged.keep();
+            }
+            run_status_response(result, "applet_chat_import")
+        }
+        Err(e) => error_response(e),
     }
 }
+
+/// An upload in the staging folder, removed when dropped unless kept for a
+/// run that has started. Covers every early return and a request the client
+/// drops mid-upload.
+struct StagedUpload {
+    path: std::path::PathBuf,
+    kept: bool,
+}
+
+impl StagedUpload {
+    fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for StagedUpload {
+    fn drop(&mut self) {
+        if !self.kept {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Where uploads wait for the import: `chat-import` under the state root on a
+/// box, or `virtues-chat-import` in the temp folder in a dev checkout with no
+/// state root. `chat_import` reads only from a folder of one of these names.
+fn chat_import_staging_dir() -> std::path::PathBuf {
+    let root = crate::data_disk::data_dir();
+    if root.is_dir() {
+        root.join("chat-import")
+    } else {
+        std::env::temp_dir().join("virtues-chat-import")
+    }
+}
+
+/// Remove uploads an earlier server process left behind (killed mid-upload,
+/// or its import killed mid-read), once per process and before its first
+/// upload. Only this route writes the folder, and a run from an earlier
+/// process is not running any more.
+fn sweep_chat_import_staging(dir: &std::path::Path) {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let removed = entries
+            .flatten()
+            .filter(|e| std::fs::remove_file(e.path()).is_ok())
+            .count();
+        if removed > 0 {
+            tracing::info!("removed {removed} chat export upload(s) an earlier server left in {}", dir.display());
+        }
+    });
+}
+
+/// Stream the upload's `file` field into the staging folder, mode 0600.
+async fn stage_chat_import(multipart: &mut axum::extract::Multipart) -> Result<StagedUpload, Error> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    use tokio::io::AsyncWriteExt;
+
+    let dir = chat_import_staging_dir();
+    sweep_chat_import_staging(&dir);
+    let stage_failed = |e: std::io::Error| Error::Other(format!("could not save the upload in {}: {e}", dir.display()));
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(stage_failed)?;
+
+    let cut_off = |e: axum::extract::multipart::MultipartError| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            Error::InvalidInput(
+                "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.".into(),
+            )
+        } else {
+            Error::InvalidInput(format!("The upload was cut off. Try it again. ({e})"))
+        }
+    };
+
+    while let Some(mut field) = multipart.next_field().await.map_err(cut_off)? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let path = dir.join(format!("{}.upload", uuid::Uuid::new_v4()));
+        let std_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(stage_failed)?;
+        // Owned from here, so any failure below removes the file.
+        let staged = StagedUpload { path, kept: false };
+        let mut out = tokio::fs::File::from_std(std_file);
+        while let Some(chunk) = field.chunk().await.map_err(cut_off)? {
+            out.write_all(&chunk).await.map_err(stage_failed)?;
+        }
+        out.flush().await.map_err(stage_failed)?;
+        return Ok(staged);
+    }
+    Err(Error::InvalidInput("No file was sent. Choose the export and try again.".into()))
+}
+
+/// One chat site's history on this server: the months that have messages,
+/// oldest first.
+#[derive(Debug, Serialize)]
+pub struct ChatHistory {
+    pub provider: String,
+    pub months: Vec<ChatMonth>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatMonth {
+    /// `YYYY-MM`, in UTC.
+    pub month: String,
+    pub messages: i64,
+}
+
+/// GET /api/chat-import/status — what has arrived from other AI chat sites,
+/// by site and month: the rows the export import (`chat_import`) and the
+/// live syncs (`grok_chats`) wrote. Setup's chats step reads it to say which
+/// sites are in and over what span.
+pub async fn chat_import_status_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ChatHistory>>, Error> {
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT provider, to_char(date_trunc('month', occurred_at AT TIME ZONE 'UTC'), 'YYYY-MM'), \
+                count(*)::bigint \
+           FROM data_content_conversation \
+          WHERE source_table IN ('chat_import', 'grok_chats') \
+          GROUP BY 1, 2 \
+          ORDER BY 1, 2",
+    )
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| Error::Database(format!("read imported chat months: {e}")))?;
+
+    let mut out: Vec<ChatHistory> = Vec::new();
+    for (provider, month, messages) in rows {
+        match out.last_mut() {
+            Some(h) if h.provider == provider => h.months.push(ChatMonth { month, messages }),
+            _ => out.push(ChatHistory {
+                provider,
+                months: vec![ChatMonth { month, messages }],
+            }),
+        }
+    }
+    Ok(Json(out))
+}
+
 
 /// List all actions with their latest run status.
 pub async fn list_applets_handler(State(state): State<AppState>) -> Response {

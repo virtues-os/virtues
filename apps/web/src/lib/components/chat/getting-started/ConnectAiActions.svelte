@@ -16,7 +16,8 @@
 	import { cubicOut } from "svelte/easing";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
-	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { setupLinkPoll, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { startCheckout } from "$lib/api/checkout";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import Act from "./ui/Act.svelte";
 	import Choices from "./ui/Choices.svelte";
@@ -32,6 +33,9 @@
 	let apiKey = $state("");
 	let chatModel = $state("");
 	let checkoutUrl = $state<string | null>(null);
+	/** Why the email field is open: to sign in, or as the first half of
+	    subscribing (a checkout needs an account to belong to). */
+	let intent = $state<"signin" | "subscribe">("signin");
 
 	const emailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()));
 	const endpointValid = $derived(/^https?:\/\/\S+/.test(endpointUrl.trim()) && apiKey.trim().length > 0);
@@ -60,18 +64,26 @@
 		setTimeout(grab, 0);
 	}
 
+	/** Bumped by every stop(), so a tick still awaiting the server when its
+	    poll was stopped or replaced cannot act on the new state. */
+	let pollGen = 0;
 	function stop() {
 		if (timer) clearInterval(timer);
 		timer = null;
+		pollGen += 1;
 	}
 	function poll() {
 		stop();
+		const gen = pollGen;
 		timer = setInterval(async () => {
 			try {
 				const d = await setupLinkPoll<{ status: string }>();
+				if (gen !== pollGen) return;
 				if (d.status === "ready") {
 					stop();
-					await gettingStarted.refresh();
+					// Paid accounts resolve as already subscribed; a new or
+					// unpaid account goes on to checkout.
+					await subscribe(true);
 				} else if (d.status === "expired" || d.status === "none") {
 					stop();
 					mode = "choose";
@@ -85,23 +97,62 @@
 	function back() {
 		stop();
 		error = null;
+		intent = "signin";
 		mode = "choose";
 	}
 	function open(next: "signin" | "endpoint") {
 		error = null;
+		intent = "signin";
 		mode = next;
 		focusField(next === "signin" ? "gs-email" : "gs-endpoint");
 	}
 
-	async function subscribe() {
+	/** Wait for the subscription to land. Ten minutes of checks: long
+	    enough for a card and a 3-D Secure prompt. */
+	function pollPaid() {
+		stop();
+		const gen = pollGen;
+		let ticks = 0;
+		timer = setInterval(async () => {
+			ticks += 1;
+			await gettingStarted.refresh();
+			if (gen !== pollGen) return;
+			if (gettingStarted.aiConnected) stop();
+			else if (ticks >= 120) {
+				stop();
+				mode = "choose";
+				intent = "signin";
+				error = "We stopped waiting for checkout. If you paid, this updates within a minute. Otherwise, try again.";
+			}
+		}, 5000);
+	}
+	/** Open checkout for the linked account. An unlinked server signs in
+	    first; `afterSignIn` is the second try, once the link is ready. */
+	async function subscribe(afterSignIn = false) {
 		error = null;
 		try {
-			const d = await setupSubscribeStart<{ verification_uri_complete?: string; verification_uri?: string }>();
-			checkoutUrl = d.verification_uri_complete || d.verification_uri || null;
-			mode = "checkout";
-			if (checkoutUrl) void openExternal(checkoutUrl);
-			poll();
+			const r = await startCheckout();
+			if (r.kind === "opened") {
+				checkoutUrl = r.url;
+				mode = "checkout";
+				// After an emailed sign-in the browser already shows a checkout
+				// link on the attach page, so this one waits for a click.
+				if (!afterSignIn) void openExternal(r.url);
+				pollPaid();
+			} else if (r.kind === "needs_signin" && !afterSignIn) {
+				intent = "subscribe";
+				mode = "signin";
+				focusField("gs-email");
+			} else if (r.kind === "already_subscribed") {
+				await gettingStarted.refresh();
+			} else {
+				mode = "choose";
+				intent = "signin";
+				error = r.kind === "error" ? r.message : "Couldn't open checkout. Try again.";
+			}
 		} catch {
+			mode = "choose";
+			intent = "signin";
 			error = UNREACHABLE;
 		}
 	}
@@ -116,8 +167,7 @@
 				poll();
 			} else {
 				mode = "signin";
-				if (d.status === "no_account") error = "No Virtues account on that email yet.";
-				else if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
+				if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
 				else error = "That didn't go through. Try again.";
 			}
 		} catch {
@@ -155,13 +205,13 @@
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
 				{#snippet foot()}
-					<!-- The price belongs in view but not on the button: "$20/mo"
+					<!-- The price belongs in view but not on the button: "$29/mo"
 					     set into a filled dark pill reads as "clicking charges
 					     me", when the click only opens a checkout. Naming the
 					     confirmation step is what actually settles that. -->
-					$20 a month. You'll confirm in your browser.
+					$29 a month. You'll confirm in your browser.
 				{/snippet}
-				<Act variant="primary" onclick={subscribe}>Subscribe</Act>
+				<Act variant="primary" onclick={() => subscribe()}>Subscribe</Act>
 				<Act onclick={() => open("signin")}>Sign in</Act>
 				<Act onclick={() => open("endpoint")}>Own models</Act>
 			</Choices>
@@ -175,6 +225,9 @@
 					void signIn();
 				}}
 			>
+				{#if intent === "subscribe"}
+					<p class="help">First, your email. We'll send a link, and checkout opens once you've opened it.</p>
+				{/if}
 				<Input
 					id="gs-email"
 					type="email"
@@ -195,14 +248,23 @@
 	{:else if mode === "mailed"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>A sign-in link is on its way to your email. Open it and this picks up on its own. You can leave this where it is.</Waiting>
+				<Waiting>
+					{intent === "subscribe"
+						? "A link is on its way to your email. Open it and choose Attach box, then continue to checkout."
+						: "A sign-in link is on its way to your email. Open it and choose Attach box, and this picks up on its own. You can leave this where it is."}
+				</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>
 	{:else if mode === "checkout"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>Finish in the window that opened. This picks up on its own once you have, and we charge nothing until you confirm there.</Waiting>
+				<Waiting>Finish checkout in your browser. This picks up on its own once you have, and we charge nothing until you confirm there.</Waiting>
+				{#if checkoutUrl}
+					<!-- A checkout opened from a timer (after the emailed sign-in)
+					     has no click behind it, and a browser may block it. -->
+					<Act onclick={() => checkoutUrl && void openExternal(checkoutUrl)}>Open checkout</Act>
+				{/if}
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>

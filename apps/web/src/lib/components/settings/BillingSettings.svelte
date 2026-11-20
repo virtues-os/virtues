@@ -35,6 +35,8 @@
 		getBillingUsage,
 		ApiError,
 	} from '$lib/api/client';
+	import { listAccountServers, removeAccountServer, type AccountServer } from '$lib/api/servers';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
 	import { reloadApp } from '$lib/reload';
 
@@ -122,8 +124,9 @@
 
 	// ─── Connect (no account linked yet) ───────────────────────────────────
 	// Device authorization: the server never holds a Stripe key. It starts a
-	// link, you finish checkout on the Atlas-hosted page, and this polls until
-	// the server has the billing token.
+	// link, you sign in with your email on the Atlas-hosted page, and this
+	// polls until the server has its key. Subscribing comes after, from the
+	// Plan row, because a checkout belongs to the account the server is on.
 	type LinkInfo = {
 		user_code: string;
 		verification_uri: string;
@@ -159,7 +162,7 @@
 					stopPolling();
 					linkPolling = false;
 					linkInfo = null;
-					linkError = 'The link expired before checkout finished. Connect again for a new code.';
+					linkError = 'The link expired before sign-in finished. Connect again for a new code.';
 				}
 			} catch {
 				// transient; keep polling
@@ -167,8 +170,8 @@
 		}, intervalMs);
 	}
 
-	// The host the checkout tab hands off to, named before it opens.
-	const checkoutHost = $derived.by(() => {
+	// The host the sign-in tab hands off to, named before it opens.
+	const signinHost = $derived.by(() => {
 		if (!linkInfo) return '';
 		try {
 			return new URL(linkInfo.verification_uri).host;
@@ -199,12 +202,55 @@
 		}
 	}
 
-	// Step 2: the hand-off to checkout, on your click.
-	function proceedToCheckout() {
+	// Step 2: the hand-off to sign-in, on your click.
+	function proceedToSignIn() {
 		if (linkInfo) openExternal(linkInfo.verification_uri_complete);
 	}
 
 	$effect(() => () => stopPolling());
+
+	// ─── Servers on this account ───────────────────────────────────────────
+	// Shown only when another server shares the account: a list holding just
+	// this one says nothing.
+	let servers = $state<AccountServer[]>([]);
+	let removingId = $state<string | null>(null);
+	const otherServers = $derived(servers.filter((s) => !s.this_server));
+
+	async function loadServers() {
+		try {
+			const r = await listAccountServers();
+			servers = r.servers ?? [];
+		} catch {
+			servers = [];
+		}
+	}
+	$effect(() => {
+		if (subscriptionStore.linked) void loadServers();
+	});
+
+	async function removeServer(server: AccountServer) {
+		const ok = await confirmAction({
+			title: 'Remove this server?',
+			body: `The server linked ${formatDate(server.linked_at, { month: 'long', day: 'numeric', year: 'numeric' })} stops using your Virtues account and its AI credit. It can be linked again later.`,
+			confirmLabel: 'Remove server',
+			danger: true,
+		});
+		if (!ok) return;
+		removingId = server.id;
+		try {
+			const r = await removeAccountServer(server.id);
+			if (r.ok) {
+				toast.success('Server removed.');
+				await loadServers();
+			} else {
+				toast.error(r.error ?? "Couldn't remove that server. Try again.");
+			}
+		} catch (e) {
+			toast.error(e instanceof ApiError ? e.message : "Couldn't remove that server. Try again.");
+		} finally {
+			removingId = null;
+		}
+	}
 
 	// ─── Auto top-up ───────────────────────────────────────────────────────
 	type AutoTopupState = { enabled: boolean; failures_24h: number; disabled_at: string | null };
@@ -239,6 +285,9 @@
 	type Usage = {
 		balance_micros: number;
 		month_to_date_micros: number;
+		/** The part of the balance that is top-up credit, kept at renewal.
+		    Absent from older servers. */
+		topup_micros?: number;
 		expires_at: string | null;
 		error?: string;
 		/** No Virtues account is connected, so there is no balance to read. */
@@ -285,6 +334,9 @@
 		usage
 			? [
 					renewsLabel ? `Your monthly credit renews ${renewsLabel}.` : '',
+					usage.topup_micros && usage.topup_micros > 0
+						? `${formatMicrosPrecise(usage.topup_micros)} of it is top-up credit, which stays when your monthly credit renews.`
+						: '',
 					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI, web search, places and bank data.`,
 				]
 					.filter(Boolean)
@@ -325,7 +377,7 @@
 	{#if isSubscribed}
 		<SettingRow id="subscription" label="Plan" help={planHelp}>
 			<div class="plan">
-				<span class="plan-name">Virtues, $20 a month</span>
+				<span class="plan-name">Virtues, $29 a month</span>
 				<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>Manage in Stripe</Button>
 			</div>
 		</SettingRow>
@@ -339,12 +391,12 @@
 		<SettingRow
 			id="subscription"
 			label="Plan"
-			help="None yet. One subscription covers hosted AI, web search, places and bank data for $20 a month. Your own AI provider covers the first on its own."
+			help="None yet. One subscription covers hosted AI, web search, places and bank data for $29 a month. Your own AI provider covers the first on its own."
 		>
 			{#if subscribeWaiting}
 				<span class="waiting">Waiting for checkout…</span>
 			{:else}
-				<Button variant="secondary" onclick={openSubscribe} loading={subscribeLoading}>Subscribe, $20 a month</Button>
+				<Button variant="secondary" onclick={openSubscribe} loading={subscribeLoading}>Subscribe, $29 a month</Button>
 			{/if}
 		</SettingRow>
 		{#if subscribeError}
@@ -364,7 +416,7 @@
 		<SettingRow
 			id="subscription"
 			label="Connect your Virtues account"
-			help="Sign in if you have an account. Creating one takes you through Stripe for the subscription. Your server never sees a payment key."
+			help="Sign in with your email. A new address creates your account, and you can subscribe once your server is connected. Your server never sees a payment key."
 			block
 		>
 			{#if linkError}
@@ -378,23 +430,23 @@
 				<div class="panel">
 					<p class="panel-lede">
 						Continue opens a new tab at
-						<strong>{checkoutHost || 'the Virtues billing page'}</strong>
-						to finish checkout on Stripe. It sends you back here when you're done.
+						<strong>{signinHost || 'the Virtues sign-in page'}</strong>
+						where you enter your email. Open the link we send and choose Attach box, and this page picks up on its own.
 					</p>
 					<div class="code-block">
 						<div class="code-caption">Your pairing code</div>
 						<div class="code-figure mono">{linkInfo.user_code}</div>
-						<div class="code-caption">It should match the code on the checkout page. It expires in about 15 minutes.</div>
+						<div class="code-caption">It should match the code on the sign-in page. It expires in about 15 minutes.</div>
 					</div>
-					<div><Button variant="primary" onclick={proceedToCheckout}>Continue to checkout →</Button></div>
+					<div><Button variant="primary" onclick={proceedToSignIn}>Continue to sign in →</Button></div>
 					<p class="panel-foot">
 						Prefer to do it by hand? Go to <span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
 					</p>
-					{#if linkPolling}<p class="panel-foot">Waiting for checkout to finish…</p>{/if}
+					{#if linkPolling}<p class="panel-foot">Waiting for you to open the emailed link…</p>{/if}
 				</div>
 			{:else}
 				<div>
-					<Button variant="primary" onclick={connectSubscription} loading={linkLoading}>Connect subscription</Button>
+					<Button variant="primary" onclick={connectSubscription} loading={linkLoading}>Connect your account</Button>
 				</div>
 			{/if}
 		</SettingRow>
@@ -405,7 +457,7 @@
 			id="auto-top-up"
 			label="Auto top-up"
 			help={autoTopup.enabled
-				? 'Adds $10 when your balance runs out, charged to the card on your subscription.'
+				? 'When your balance runs out, charges $20 to the card on your subscription and adds $19.12 of credit. The difference is the card fee.'
 				: 'Off. AI stops when your balance runs out, until your monthly credit renews.'}
 		>
 			<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />
@@ -426,6 +478,25 @@
 		</SettingRow>
 	{/if}
 
+	{#if otherServers.length > 0}
+		<SettingRow
+			id="account-servers"
+			label="Servers on this account"
+			help="Each of these can use your Virtues account and its AI credit. Remove one you don't recognize."
+			block
+		>
+			<ul class="servers">
+				<li><span>This server</span></li>
+				{#each otherServers as server (server.id)}
+					<li>
+						<span>Server linked {formatDate(server.linked_at, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+						<Button variant="secondary" onclick={() => void removeServer(server)} loading={removingId === server.id}>Remove</Button>
+					</li>
+				{/each}
+			</ul>
+		</SettingRow>
+	{/if}
+
 	{#if isSubscribed}
 		<SettingRow id="invoices" label="Payments" help="Your monthly charges and top-ups, each with its receipt.">
 			<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>See payments in Stripe</Button>
@@ -434,6 +505,21 @@
 </section>
 
 <style>
+	.servers {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.servers li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-height: 34px;
+	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-variant-numeric: tabular-nums;

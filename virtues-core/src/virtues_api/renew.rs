@@ -290,6 +290,42 @@ pub async fn fetch_checkout_session(
     })
 }
 
+/// `POST {atlas}/billing/servers` — the servers on this box's account, as
+/// atlas returns them (`{servers: [{id, linked_at, this_server}]}`), or atlas's
+/// error body with its status.
+pub async fn fetch_servers(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    api_key: &str,
+) -> Result<(u16, serde_json::Value)> {
+    let resp = http
+        .post(format!("{}/billing/servers", atlas_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "api_key": api_key }))
+        .send()
+        .await
+        .context("POST /billing/servers")?;
+    let status = resp.status().as_u16();
+    Ok((status, resp.json().await.unwrap_or_else(|_| serde_json::json!({}))))
+}
+
+/// `POST {atlas}/billing/servers/remove` — stop another server on this
+/// account from using it.
+pub async fn remove_server(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    api_key: &str,
+    id: &str,
+) -> Result<(u16, serde_json::Value)> {
+    let resp = http
+        .post(format!("{}/billing/servers/remove", atlas_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "api_key": api_key, "id": id }))
+        .send()
+        .await
+        .context("POST /billing/servers/remove")?;
+    let status = resp.status().as_u16();
+    Ok((status, resp.json().await.unwrap_or_else(|_| serde_json::json!({}))))
+}
+
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT id FROM credentials WHERE kind = 'source' AND key = $1 LIMIT 1")

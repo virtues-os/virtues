@@ -84,6 +84,36 @@ pub fn secret<'a>(input: &'a AppletInput, key: &str) -> Result<&'a str> {
         .with_context(|| format!("credentials missing secrets.{key}"))
 }
 
+/// Where a Google applet sends its calls.
+pub struct GoogleHosts {
+    /// Gmail's API for the signed-in user, up to and including `users/me`.
+    pub gmail: String,
+    /// Calendar's API root, up to and including `calendar/v3`.
+    pub calendar: String,
+}
+
+/// Google's own hosts, or the address the runner gave in `secrets.api_base`
+/// for a sign-in made through virtues-api. That address answers as Google
+/// does, and `secrets.access_token` is then this server's Virtues key, so
+/// an applet makes the same requests either way.
+pub fn google_hosts(input: &AppletInput) -> GoogleHosts {
+    let base = input
+        .credentials
+        .as_ref()
+        .and_then(|c| c.get("secrets"))
+        .and_then(|s| s.get("api_base"))
+        .and_then(|v| v.as_str())
+        .filter(|b| !b.is_empty())
+        .map(|b| b.trim_end_matches('/').to_string());
+    match base {
+        Some(b) => GoogleHosts { gmail: format!("{b}/gmail/v1/users/me"), calendar: format!("{b}/calendar/v3") },
+        None => GoogleHosts {
+            gmail: "https://gmail.googleapis.com/gmail/v1/users/me".to_string(),
+            calendar: "https://www.googleapis.com/calendar/v3".to_string(),
+        },
+    }
+}
+
 /// The credential's browser session (`secrets.jar`), if a sign-in through the
 /// app stored one. Each entry has at least `name` and `value`.
 fn jar(input: &AppletInput) -> Option<&Vec<serde_json::Value>> {

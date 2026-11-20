@@ -2,21 +2,32 @@
  * Theme management for Virtues (agents/build/design.md, "Themes").
  *
  * Two themes paint the app: Oxford (Light) and Asgard (Dark). What a person
- * picks is a choice: Light, Dark, or Match system, which follows the
- * device's `prefers-color-scheme`. The choice is stored in the assistant
- * profile's `ui_preferences.theme` and cached in localStorage; the theme it
- * resolves to is set as `data-theme` on <html>.
+ * picks is a choice: Light, Dark, Match system, which follows the device's
+ * `prefers-color-scheme`, or Follow the day, which is Light from sunrise to
+ * sunset and Dark otherwise. The choice is stored in the assistant profile's
+ * `ui_preferences.theme` and cached in localStorage; the theme it resolves to
+ * is set as `data-theme` on <html>.
  */
 
-import { getAssistantProfile, updateUiPreferences } from '$lib/api/client';
+import { getAssistantProfile, request, updateUiPreferences } from '$lib/api/client';
 
 /** A theme `themes.css` defines. */
 export type Theme = 'oxford' | 'asgard';
 
-/** What a person picks. `system` resolves to one of the two themes. */
-export type ThemeChoice = Theme | 'system';
+/** What a person picks. `system` and `day` resolve to one of the two themes. */
+export type ThemeChoice = Theme | 'system' | 'day';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
+
+/**
+ * Today's sunrise and sunset for Follow the day, as "<minutes> <minutes>"
+ * after local midnight. app.html's pre-paint reads it too, so the first
+ * frame paints the right theme.
+ */
+const SUN_STORAGE_KEY = 'virtues-sun';
+
+/** Sunrise and sunset when the server has no forecast yet: 07:00 and 19:00. */
+const DEFAULT_SUN: readonly [number, number] = [7 * 60, 19 * 60];
 
 /** Resolved `--background` for the active theme; read by app.html pre-paint. */
 const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
@@ -74,7 +85,7 @@ const RETIRED_THEMES: Record<string, Theme> = {
 
 /** Whether a string is a choice a person can make. */
 export function isValidTheme(value: string): value is ThemeChoice {
-	return value === 'oxford' || value === 'asgard' || value === 'system';
+	return value === 'oxford' || value === 'asgard' || value === 'system' || value === 'day';
 }
 
 /** Resolve a stored name, following retirements. */
@@ -87,8 +98,29 @@ function resolveChoice(stored: string | null | undefined): ThemeChoice | null {
 const darkQuery = (): MediaQueryList | null =>
 	typeof window === 'undefined' || !window.matchMedia ? null : window.matchMedia('(prefers-color-scheme: dark)');
 
+/** Cached sunrise and sunset, in minutes after local midnight. */
+function sunTimes(): readonly [number, number] {
+	try {
+		const [rise, set] = (localStorage.getItem(SUN_STORAGE_KEY) ?? '').split(' ').map(Number);
+		if (Number.isFinite(rise) && Number.isFinite(set) && rise < set) return [rise, set];
+	} catch {
+		// Storage disabled: the default hours.
+	}
+	return DEFAULT_SUN;
+}
+
+const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes();
+
+/** Whether it is between today's sunrise and sunset. */
+export function isDaytime(now: Date = new Date()): boolean {
+	const [rise, set] = sunTimes();
+	const m = minutesOf(now);
+	return m >= rise && m < set;
+}
+
 /** The theme a choice paints right now. */
 export function themeFor(choice: ThemeChoice): Theme {
+	if (choice === 'day') return isDaytime() ? DEFAULT_THEMES.light : DEFAULT_THEMES.dark;
 	if (choice !== 'system') return choice;
 	return darkQuery()?.matches ? DEFAULT_THEMES.dark : DEFAULT_THEMES.light;
 }
@@ -121,6 +153,64 @@ function followSystem(on: boolean): void {
 	if (on) {
 		systemListener = () => paint(themeFor('system'), 'system');
 		query.addEventListener('change', systemListener);
+	}
+}
+
+/**
+ * Follow the day: repaint at the next sunrise or sunset, and when the window
+ * comes back (a sleeping laptop misses its timer). Sun times come from the
+ * server's weather forecast for today, which is made for its last known
+ * location; without one the day runs from 07:00 to 19:00.
+ */
+let dayTimer: ReturnType<typeof setTimeout> | null = null;
+let dayVisibility: (() => void) | null = null;
+
+function followDay(on: boolean): void {
+	if (dayTimer) clearTimeout(dayTimer);
+	dayTimer = null;
+	if (dayVisibility) document.removeEventListener('visibilitychange', dayVisibility);
+	dayVisibility = null;
+	if (!on) return;
+
+	const repaint = () => {
+		if (getThemeChoice() === 'day') paint(themeFor('day'), 'day');
+	};
+	const schedule = () => {
+		if (dayTimer) clearTimeout(dayTimer);
+		const [rise, set] = sunTimes();
+		const now = new Date();
+		const m = minutesOf(now);
+		const next = m < rise ? rise : m < set ? set : rise + 24 * 60;
+		const at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, next, 5);
+		dayTimer = setTimeout(() => {
+			repaint();
+			void refreshSun().then(repaint);
+			schedule();
+		}, at.getTime() - now.getTime());
+	};
+	dayVisibility = () => {
+		if (document.visibilityState !== 'visible') return;
+		repaint();
+		schedule();
+	};
+	document.addEventListener('visibilitychange', dayVisibility);
+	schedule();
+	void refreshSun().then(() => {
+		repaint();
+		schedule();
+	});
+}
+
+/** Today's sunrise and sunset from the server's forecast, cached for the pre-paint. */
+async function refreshSun(): Promise<void> {
+	try {
+		const weather = await request<{ sunrise?: string | null; sunset?: string | null } | null>('/weather/current');
+		if (!weather?.sunrise || !weather.sunset) return;
+		const rise = minutesOf(new Date(weather.sunrise));
+		const set = minutesOf(new Date(weather.sunset));
+		if (rise < set) localStorage.setItem(SUN_STORAGE_KEY, `${rise} ${set}`);
+	} catch {
+		// No forecast or no server: keep the cached or default hours.
 	}
 }
 
@@ -157,6 +247,7 @@ export function applyTheme(choice: ThemeChoice): void {
 		// Storage disabled: the choice lasts for this page.
 	}
 	followSystem(choice === 'system');
+	followDay(choice === 'day');
 	paint(themeFor(choice), choice);
 }
 
@@ -216,13 +307,14 @@ export function isThemeDark(theme: Theme): boolean {
 
 /** Every choice, in the order every list shows them. */
 export function getAvailableThemes(): ThemeChoice[] {
-	return [DEFAULT_THEMES.light, DEFAULT_THEMES.dark, 'system'];
+	return [DEFAULT_THEMES.light, DEFAULT_THEMES.dark, 'system', 'day'];
 }
 
 const DISPLAY_NAMES: Record<ThemeChoice, string> = {
 	oxford: 'Light',
 	asgard: 'Dark',
-	system: 'Match system'
+	system: 'Match system',
+	day: 'Follow the day'
 };
 
 /** A choice's name in the interface. */
@@ -265,7 +357,8 @@ export const themePreviewColors: Record<
 export const themeMetadata: Record<ThemeChoice, { icon: string; description: string }> = {
 	oxford: { icon: 'mynaui:sun', description: 'Dark ink on white' },
 	asgard: { icon: 'mynaui:moon', description: 'Light ink on near-black' },
-	system: { icon: 'mynaui:circle-half', description: 'Follows your device' }
+	system: { icon: 'mynaui:circle-half', description: 'Follows your device' },
+	day: { icon: 'mynaui:sunrise', description: 'Light from sunrise to sunset' }
 };
 
 // ── Accent ──────────────────────────────────────────────────────────────────

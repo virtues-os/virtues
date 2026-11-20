@@ -146,7 +146,7 @@ export function appletsLead(applets: Applet[], now = Date.now()): { sentence: st
 		if (!last) {
 			return living.length
 				? { sentence: 'Everything is running on schedule.', sub: 'Nothing has run yet.' }
-				: { sentence: 'Nothing runs on your server yet.', sub: 'Applets you make in chat appear here.' };
+				: { sentence: 'Nothing runs on your server yet.', sub: 'Its jobs appear here once it has run one.' };
 		}
 		return {
 			sentence: 'Everything is running on schedule.',
@@ -167,5 +167,5 @@ export function appletsLead(applets: Applet[], now = Date.now()): { sentence: st
 		};
 	}
 
-	return { sentence: 'Some of your applets need you.', sub: `Each one under Needs you says what happened.${others}` };
+	return { sentence: 'Some of what your server runs needs you.', sub: `Each one under Needs you says what happened.${others}` };
 }

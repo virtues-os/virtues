@@ -1,8 +1,12 @@
 //! Route handlers for virtues-api API proxy
 //!
-//! All billable API requests are proxied through virtues-api for unified budget enforcement.
+//! Every request that costs Virtues money is proxied through virtues-api. AI
+//! (`/v1/ai/*`, including web search) settles against the wallet through
+//! `entitlement::settle`. Everything else is included in the subscription and
+//! needs only a live wallet (`BearerAuth`), with fair-use limits on Places
+//! (per day) and Plaid (banks per account, `crate::banks`).
 //!
-//! Routes (all metered calls use bearer-auth + DB entitlement::charge):
+//! Routes:
 //! - /v1/ai/*            - LLM chat / completions / models
 //! - /v1/ai/search       - Web search (gateway-executed)
 //! - /v1/places/*        - Location autocomplete
@@ -10,6 +14,7 @@
 //! - /v1/services/plaid/* - Bank data (keeps the master Plaid secret off the box)
 //! - /v1/maps/*          - Map files for the boxes (bearer-gated, never logged)
 //! - /v1/push/*          - Calendar change signals a box collects (push.rs)
+//! - /v1/google/*        - Gmail and Calendar through a verified app we do not run yet (google.rs)
 //!
 //! Bank connections (Plaid) start through the OAuth proxy (`oauth.rs`,
 //! via_proxy); the per-user data syncs run through the `plaid.rs` proxy so the
@@ -18,6 +23,7 @@
 pub mod ai;
 pub mod bearer_test;
 pub mod connections;
+pub mod google;
 pub mod search;
 pub mod health;
 pub mod internal;

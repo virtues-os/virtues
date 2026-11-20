@@ -66,3 +66,60 @@ describe('the edit card', () => {
 		expect(isFullReplace({ find: '', replace: '- [ ] Book seats', blocks: ['t7c2k1aa'] })).toBe(false);
 	});
 });
+
+function setupTurn(toolCallId: string, output: unknown) {
+	return {
+		role: 'assistant',
+		parts: [{ type: 'tool-applet', state: 'output-available', toolCallId, input: { action: 'setup' }, output }],
+	};
+}
+
+describe('opening what the assistant made', () => {
+	it('opens nothing that was already in the chat, then each new page once', () => {
+		const effects = new ToolSideEffects();
+		const old = {
+			role: 'assistant',
+			parts: [{ type: 'tool-create_page', state: 'output-available', toolCallId: 'c1', output: { page_id: 'page_1', title: 'Notes' } }],
+		};
+		expect(effects.collectNewPages([old])).toEqual([]);
+		const fresh = {
+			role: 'assistant',
+			parts: [{ type: 'tool-create_page', state: 'output-available', toolCallId: 'c2', output: { page_id: 'page_2' } }],
+		};
+		expect(effects.collectNewPages([old, fresh])).toEqual([{ pageId: 'page_2', title: '' }]);
+		expect(effects.collectNewPages([old, fresh])).toEqual([]);
+	});
+
+	it('opens a site when setup made or rebuilt one with a view', () => {
+		const effects = new ToolSideEffects();
+		const old = setupTurn('s1', { status: 'created', applet_id: 'applet_user__water_log', name: 'Water log', has_view: true });
+		expect(effects.collectNewSites([old])).toEqual([]);
+
+		const rebuilt = setupTurn('s2', { status: 'updated', applet_id: 'applet_user__water_log', name: 'Water log', has_view: true });
+		expect(effects.collectNewSites([old, rebuilt])).toEqual([{ appletId: 'applet_user__water_log', name: 'Water log' }]);
+		expect(effects.collectNewSites([old, rebuilt])).toEqual([]);
+	});
+
+	it('leaves alone a setup with no view, a refused one, and other applet actions', () => {
+		const effects = new ToolSideEffects();
+		expect(effects.collectNewSites([])).toEqual([]);
+		const turns = [
+			setupTurn('s1', { status: 'created', applet_id: 'applet_user__week_in_review', name: 'Week in review', has_view: false }),
+			setupTurn('s2', { status: 'check_failed', applet_id: 'applet_user__water_log', has_view: true }),
+			{
+				role: 'assistant',
+				parts: [{ type: 'tool-applet', state: 'output-available', toolCallId: 's3', input: { action: 'run' }, output: { status: 'created', applet_id: 'applet_user__water_log', has_view: true } }],
+			},
+		];
+		expect(effects.collectNewSites(turns)).toEqual([]);
+	});
+
+	it('starts over on a new transcript', () => {
+		const effects = new ToolSideEffects();
+		const made = setupTurn('s1', { status: 'created', applet_id: 'applet_user__water_log', name: 'Water log', has_view: true });
+		effects.collectNewSites([]);
+		expect(effects.collectNewSites([made])).toHaveLength(1);
+		effects.reset();
+		expect(effects.collectNewSites([made])).toEqual([]);
+	});
+});

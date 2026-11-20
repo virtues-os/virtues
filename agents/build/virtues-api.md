@@ -140,7 +140,7 @@ This is the complete list. If it isn't here, we don't have it.
 | Where | What | What it is *not* |
 |---|---|---|
 | Billing | email, Stripe customer, subscription status, `account_id` | no usage, no content |
-| The API | `account_id`; each box key's hash and box label, until that box links again; the wallet (balance, expiry) and its ledger rows (`amount`, `kind`, `timestamp`, pre-markup cost), deleted 7 days after the wallet lapses | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call. No record of when a key was used |
+| The API | `account_id`; each box key's hash and box label, until that box links again; the wallet (balance, the part of it that is top-up credit, expiry) and its ledger rows (`amount`, `kind`, `timestamp`, real cost), deleted 7 days after the wallet lapses unless it still holds top-up credit, which is kept until it is spent | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call. No record of when a key was used |
 | The relay | which two endpoint keys are connected, the addresses they connect from, and how many bytes pass when | no key to decrypt with — but **not** "no logs": nothing enforces or attests that, and by design it sees volume and timing |
 | Your box | everything | — |
 
@@ -167,7 +167,7 @@ And the limit, which we state openly:
   amounts at these times.* It would not get what you asked, what came back, or
   even which model. But it would get something.
 
-A subpoena to Billing alone yields: *"This customer pays us $20/month."*
+A subpoena to Billing alone yields: *"This customer pays us $29/month."*
 A subpoena to the API alone yields: *"Account `acct_9f…` has $4.40 left."*
 A subpoena to both yields: *those two facts, joined — a spend timeline with a
 name on it.* Amounts and timestamps. No content, and not even which model

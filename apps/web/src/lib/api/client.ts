@@ -2662,19 +2662,6 @@ export function listSkills(): Promise<SkillList> {
 	return apiGet<SkillList>("/skills");
 }
 
-/** The question an empty new chat offers (`GET /api/suggestions/current`). */
-export interface SuggestedQuestion {
-	id: string;
-	kind: string;
-	question: string;
-	/** What it is about, attached as mentions when it is used. */
-	refs: { url: string; label: string }[];
-}
-
-export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion | null }> {
-	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
-}
-
 /** One part of a day in the chat sky (`api::sky::Moment`). Hours count from
  *  the day's local midnight in its own zone; last night starts below zero. */
 export interface SkyMoment {
@@ -2769,14 +2756,6 @@ export function getSkyContext(date: string): Promise<SkyContext> {
 	return apiGet<SkyContext>(`/sky/context/${encodeURIComponent(date)}`);
 }
 
-
-/** The suggestion was drawn, sent or put away; the box keeps a ledger. */
-export function recordSuggestionOutcome(
-	id: string,
-	outcome: "shown" | "used" | "dismissed",
-): Promise<{ ok: boolean }> {
-	return apiSend<{ ok: boolean }>("POST", `/suggestions/${encodeURIComponent(id)}/outcome`, { outcome });
-}
 
 export interface RefSearchResponse {
 	results: RefSearchResult[];

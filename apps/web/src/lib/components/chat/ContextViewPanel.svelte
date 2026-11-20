@@ -170,7 +170,7 @@
 		active_project: 'Project',
 		scoped: 'Scoped to the thread',
 		compacted_conversation: 'Earlier conversation, summarized',
-		applet: 'Applet',
+		applet: 'Slash command',
 		active_context: 'Open page',
 		rules: 'Rules',
 		interview: 'Interview',

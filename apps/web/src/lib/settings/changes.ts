@@ -17,7 +17,7 @@ function capitalize(text: string): string {
 function capabilityOf(tool: string): string | null {
 	if (tool === 'web_search') return 'Search the web';
 	if (tool === 'browse' || tool.startsWith('browser_')) return 'Use your browser';
-	if (tool === 'applet') return 'Make and change applets';
+	if (tool === 'applet') return 'Make and change sites';
 	if (tool === 'create_page' || tool === 'edit_page') return 'Write in your pages';
 	return null;
 }

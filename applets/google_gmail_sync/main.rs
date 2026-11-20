@@ -28,10 +28,6 @@ use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "google_gmail_sync";
-const PROFILE: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
-const LIST: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
-const GET_BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
-const HISTORY: &str = "https://gmail.googleapis.com/gmail/v1/users/me/history";
 const PAGE_SIZE: u32 = 100;
 const MAX_PAGES: u32 = 5;
 const HISTORY_PAGE_SIZE: u32 = 500;
@@ -56,7 +52,9 @@ async fn main() -> Result<()> {
     // on the first HTTPS call. `http_client()` installs the ring provider (and
     // adds a timeout a bare client lacks entirely).
     let client = virtues_applets::http_client();
-    let sync = Sync { client: &client, token: &access_token, pool: &pool, storage: &storage };
+    // Google's own host, or virtues-api standing in for it.
+    let hosts = virtues_applets::google_hosts(&input);
+    let sync = Sync { client: &client, token: &access_token, gmail: &hosts.gmail, pool: &pool, storage: &storage };
 
     let history_id = input.config.get("history_id").and_then(|v| v.as_str()).map(String::from);
     let user_email = input.config.get("user_email").and_then(|v| v.as_str()).map(String::from);
@@ -89,6 +87,8 @@ async fn main() -> Result<()> {
 struct Sync<'a> {
     client: &'a reqwest::Client,
     token: &'a str,
+    /// Gmail's API for the signed-in user, up to and including `users/me`.
+    gmail: &'a str,
     pool: &'a sqlx::PgPool,
     storage: &'a virtues::storage::Storage,
 }
@@ -109,7 +109,7 @@ impl Sync<'_> {
         let mut fetched = 0usize;
 
         loop {
-            let mut req = self.client.get(HISTORY).bearer_auth(self.token).query(&[
+            let mut req = self.client.get(format!("{}/history", self.gmail)).bearer_auth(self.token).query(&[
                 ("startHistoryId", start),
                 ("maxResults", &HISTORY_PAGE_SIZE.to_string()),
             ]);
@@ -208,7 +208,7 @@ impl Sync<'_> {
         let query = format!("after:{after}");
 
         for _ in 0..MAX_PAGES {
-            let mut req = self.client.get(LIST).bearer_auth(self.token).query(&[
+            let mut req = self.client.get(format!("{}/messages", self.gmail)).bearer_auth(self.token).query(&[
                 ("q", query.as_str()),
                 ("maxResults", &PAGE_SIZE.to_string()),
             ]);
@@ -276,7 +276,7 @@ impl Sync<'_> {
 
     async fn profile(&self) -> Result<Value> {
         self.client
-            .get(PROFILE)
+            .get(format!("{}/profile", self.gmail))
             .bearer_auth(self.token)
             .send()
             .await
@@ -292,7 +292,7 @@ impl Sync<'_> {
     async fn fetch_message(&self, id: &str) -> Result<Option<Value>> {
         let resp = self
             .client
-            .get(format!("{GET_BASE}/{id}"))
+            .get(format!("{}/messages/{id}", self.gmail))
             .bearer_auth(self.token)
             .query(&[("format", "full")])
             .send()

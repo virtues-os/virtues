@@ -1,0 +1,12 @@
+-- How much of a wallet's balance is top-up credit.
+--
+-- A wallet holds two kinds of credit. The monthly allotment comes with the
+-- subscription, is spent first, and is reset at each renewal. Top-up credit
+-- is money the owner paid for on top of that: it is spent only after the
+-- allotment, and a renewal keeps it. `balance_micros` stays the total, so
+-- every reader of the balance is unchanged; the allotment is
+-- `balance_micros - topup_micros`.
+--
+-- 0 for every existing wallet: until now a renewal reset top-ups along with
+-- the allotment, so no top-up credit survives to be counted.
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS topup_micros bigint NOT NULL DEFAULT 0;

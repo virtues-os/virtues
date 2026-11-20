@@ -3,7 +3,6 @@
 	import Button from '$lib/components/Button.svelte';
 	import Switch from '$lib/components/settings/Switch.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
-	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -33,7 +32,8 @@
 	} from '$lib/api/client';
 	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
-	import RecentDots from '$lib/components/applets/RecentDots.svelte';
+	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
+	import { siteRoute } from '$lib/applets/sites.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -71,7 +71,7 @@
 		const name = slot ? `${slot.mark[0].toUpperCase()}${slot.mark.slice(1)} model` : 'Background model';
 		return {
 			label: name,
-			tip: `This applet's prompt runs on your ${name.toLowerCase()}, with what it was written to read.`,
+			tip: `Its prompt runs on your ${name.toLowerCase()}, with what it was written to read.`,
 		};
 	});
 
@@ -86,18 +86,12 @@
 		windowShellStore.updateTab(tab.id, { route: open ? `${base}?panel=info` : base });
 	}
 
-	/** Info's full view, from the inspector, with Run history or Technical
-	 *  details already open. */
-	function openInfo(panel: 'history' | 'details') {
-		if (appletId) windowShellStore.updateTab(tab.id, { route: `/applet/${appletId}?panel=${panel}` });
-	}
-
-	// The inspector: Info beside the results, so they stay in view. Closed
-	// whenever the tab moves to another applet.
-	let insp = $state(false);
+	// A site with a view shows it full page on its own route. This page is
+	// then its options, so a link to the bare address goes to the view.
 	$effect(() => {
-		void appletId;
-		insp = false;
+		if (action && action.id === appletId && action.has_face && !inInfo) {
+			windowShellStore.retarget(tab.id, siteRoute(action.id), action.name);
+		}
 	});
 
 	let historyOpen = $state(false);
@@ -451,14 +445,6 @@
 					sharing = true;
 				}
 			});
-			items.push({
-				id: 'full',
-				label: 'Open full page',
-				icon: 'mynaui:external-link',
-				action: () => {
-					windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
-				}
-			});
 		}
 		items.push(
 			pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
@@ -466,7 +452,7 @@
 		if (a.owner !== 'system') {
 			items.push({
 				id: 'delete',
-				label: 'Delete applet',
+				label: 'Delete',
 				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
@@ -488,11 +474,12 @@
 			     can tell it things or change it there. -->
 			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
-		<IconButton
-			icon="mynaui:info-circle"
-			label="Info"
-			pressed={insp}
-			onclick={() => (insp = !insp)}
+		<SiteSwitch
+			tabId={tab.id}
+			appletId={action.id}
+			name={action.name}
+			hasView={action.has_face}
+			showing={inInfo ? 'options' : 'site'}
 		/>
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
 		{#if action.archived_at}
@@ -500,7 +487,7 @@
 				Turn back on
 			</Button>
 		{:else}
-			<Switch checked={action.enabled} label="Run this applet" disabled={saving} onchange={(next) => setEnabled(next)} />
+			<Switch checked={action.enabled} label="Run it" disabled={saving} onchange={(next) => setEnabled(next)} />
 		{/if}
 	{/if}
 {/snippet}
@@ -527,37 +514,6 @@
 	</li>
 {/snippet}
 
-{#snippet inspector()}
-	{#if action}
-		<aside class="insp" aria-label={`Info for ${action.name}`}>
-			{#if action.description}
-				<section>
-					<h2 class="list-head">Goal</h2>
-					<p class="insp-text">{action.description}</p>
-				</section>
-			{/if}
-			<section>
-				<h2 class="list-head">Recent runs</h2>
-				{#if daysErr}
-					<p class="insp-text muted">Your server couldn't read its recent runs.</p>
-				{:else}
-					<RecentDots {action} {index} />
-				{/if}
-			</section>
-			<Card list>
-				<div class="insp-row"><span>Next run</span><span class="insp-value">{nextRunText}</span></div>
-				<div class="insp-row"><span>Cost</span><span class="insp-value">{costText}</span></div>
-				<button type="button" class="insp-row link" onclick={() => openInfo('history')}>
-					<span>Run history</span><Icon icon="mynaui:chevron-right" width="16" />
-				</button>
-				<button type="button" class="insp-row link" onclick={() => openInfo('details')}>
-					<span>Technical details</span><Icon icon="mynaui:chevron-right" width="16" />
-				</button>
-			</Card>
-		</aside>
-	{/if}
-{/snippet}
-
 <div class="applet-home">
 	{#if loading && !action}
 		<p class="state">Loading…</p>
@@ -568,13 +524,24 @@
 			{#if inInfo}
 				<div class="narrow">
 					<header class="head sub">
-						<button type="button" class="backlink" onclick={() => showInfo(false)}>
-							<Icon icon="mynaui:arrow-left" width="14" />
-							{action.name}
-						</button>
-						<h1 class="title">Info</h1>
+						<!-- The desktop's toolbar holds the Site / Options switch. A
+						     phone has no toolbar, so it gets a way back here. -->
+						{#if !toolbar.inToolbar && !action.has_face}
+							<button type="button" class="backlink" onclick={() => showInfo(false)}>
+								<Icon icon="mynaui:arrow-left" width="14" />
+								{action.name}
+							</button>
+						{:else if !toolbar.inToolbar}
+							<div class="head-actions">{@render headActions()}</div>
+						{/if}
+						<h1 class="title">Options</h1>
 						{#if action.description}<p class="status">{action.description}</p>{/if}
 					</header>
+					<Card list>
+						<div class="fact"><span>When it runs</span><span class="fact-value">{describeTriggers(action)}</span></div>
+						<div class="fact"><span>Next run</span><span class="fact-value">{nextRunText}</span></div>
+						<div class="fact"><span>Cost</span><span class="fact-value">{costText}</span></div>
+					</Card>
 					<AppletInfo bind:action {index} {daysErr} bind:historyOpen bind:technicalOpen>
 						{#snippet history()}
 							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
@@ -606,10 +573,10 @@
 					<p class="error-msg">{err}</p>
 				{/if}
 
-				<!-- Its results, with a column beside them: All pages for an applet
-				     that writes pages, the inspector when Info is open. A failure
-				     shows where its result is missing, with the fix that fits. -->
-				<div class="body" class:with-side={made === 'pages' || insp}>
+				<!-- Its results, with All pages beside them for one that writes
+				     pages. A failure shows where its result is missing, with the
+				     fix that fits. -->
+				<div class="body" class:with-side={made === 'pages'}>
 					<div class="results">
 						{#if made === 'pages'}
 							{#if selectedPage}
@@ -632,9 +599,7 @@
 							{#if problem}
 								<ul class="result-list" role="list">{@render problemRow()}</ul>
 							{/if}
-							{#if made === 'dashboard' && action.has_face}
-								<FaceFrame appletId={action.id} height="460px" />
-							{:else if made === 'dashboard'}
+							{#if made === 'dashboard'}
 								<p class="empty">No dashboard yet. It's set to make one and hasn't yet.</p>
 							{:else if results.length > 0}
 								<section>
@@ -658,9 +623,7 @@
 						{/if}
 					</div>
 
-					{#if insp}
-						{@render inspector()}
-					{:else if made === 'pages'}
+					{#if made === 'pages'}
 						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
 							<h2 class="list-head">All pages</h2>
 							{#if problem}
@@ -820,7 +783,7 @@
 		align-items: flex-start;
 	}
 
-	/* Results, and beside them All pages or the inspector. */
+	/* Results, and beside them All pages. */
 	.body.with-side {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 264px;
@@ -839,46 +802,19 @@
 		min-width: 0;
 	}
 
-	.insp {
-		display: flex;
-		flex-direction: column;
-		gap: 24px;
-		padding-left: 24px;
-		border-left: 1px solid var(--color-border);
-	}
-	.insp-text {
-		margin: 0;
-		font-size: 14px;
-		line-height: 1.5;
-	}
-	.insp-text.muted {
-		color: var(--color-foreground-muted);
-	}
-	.insp-row {
+	.fact {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		width: 100%;
 		min-height: 40px;
 		padding: 8px 16px;
-		border: 0;
-		background: none;
-		font: inherit;
 		font-size: 14px;
-		text-align: left;
-		color: var(--color-foreground);
 	}
-	.insp-row + .insp-row {
+	.fact + .fact {
 		border-top: 1px solid var(--color-border);
 	}
-	.insp-row.link {
-		cursor: pointer;
-	}
-	.insp-row.link:hover {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
-	}
-	.insp-value {
+	.fact-value {
 		color: var(--color-foreground-muted);
 		text-align: right;
 	}

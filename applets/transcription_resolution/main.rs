@@ -22,13 +22,13 @@ use anyhow::Result;
 use virtues_helpers::{connect_from_env, output_with_records, read_input};
 
 /// Maximum recordings to process per cron tick. Drained sequentially, so the
-/// run time is ~BATCH_SIZE × per-call latency; the action runner's 300s
-/// SUBPROCESS_TIMEOUT is the ceiling. At 30 and ~2–4s/call a run finishes in
-/// ~1–2 min, well inside both the timeout and the 1-min cron cadence, giving
-/// ~30/min of drain (6× the old 5/2min) — enough to clear a multi-hundred
-/// backlog in minutes rather than hours. A single poison row (e.g. a missing
-/// audio file) now wastes 1 of 30 slots instead of 1 of 5.
-const BATCH_SIZE: i64 = 30;
+/// run time is ~BATCH_SIZE × per-call latency, and the action runner's 300s
+/// SUBPROCESS_TIMEOUT is the ceiling. A run killed at the ceiling loses the
+/// call in flight, which is billed and then billed again on retry. Flex-tier
+/// calls take ~15-25s on a 5-minute chunk (60s worst seen), so 10 keeps a run
+/// near 200s. The cron fires every 2 minutes, so that drains ~300 chunks an
+/// hour against ~12 arriving.
+const BATCH_SIZE: i64 = 10;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -1,6 +1,6 @@
 //! atlas - identity + funding for Virtues (linked prepaid model).
 //!
-//! Atlas owns the Stripe customer side. At link/claim it mints the box's
+//! Atlas owns the Stripe customer side. At link it mints the box's
 //! device `api_key` and registers it with virtues-api against an opaque
 //! `account_id`; on subscription renewal (`invoice.paid`) and top-up it credits
 //! that account's wallet via virtues-api `/internal/credit`. It never sees
@@ -70,6 +70,8 @@ async fn main() -> Result<()> {
         public_url: cfg.public_url.clone(),
         credit: routes::CreditPolicy {
             renewal_micros: cfg.renewal_micros,
+            card_fee_basis_points: cfg.card_fee_basis_points,
+            card_fee_fixed_micros: cfg.card_fee_fixed_micros,
             auto_topup_micros: cfg.auto_topup_micros,
             topup_min_micros: cfg.topup_min_micros,
             topup_max_micros: cfg.topup_max_micros,

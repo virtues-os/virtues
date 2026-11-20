@@ -249,7 +249,7 @@
 			try {
 				const list = appletCommands(await listApplets(), pin.at);
 				if (!list.length) {
-					toast("No applet on your server has a face to show in a page yet.");
+					toast("You have no site to show in a page yet. Ask for one in chat.");
 					return;
 				}
 				appletList = list;
@@ -257,7 +257,7 @@
 				slashPos = placeOf(editor.view, pin) ?? at;
 				slashOpen = true;
 			} catch (err) {
-				toast.error("Couldn't load your applets", {
+				toast.error("Couldn't load your sites", {
 					description: err instanceof Error ? err.message : String(err),
 				});
 			}

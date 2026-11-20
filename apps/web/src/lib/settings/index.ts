@@ -97,7 +97,6 @@ export const SETTINGS: readonly Setting[] = [
 
 	// What the assistant can do
 	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
-	{ id: 'suggested-questions', title: 'Suggested questions', section: 'tools', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas', 'speaking up'], route: '/virtues/assistant/tools' },
 
 	// Models and spending
 	{ id: 'models', title: 'Models {name} runs on', section: 'spending', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant/spending' },
@@ -116,7 +115,8 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/data/keys' },
 
 	// Appearance
-	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues/appearance' },
+	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look', 'night', 'sunset', 'sunrise'], route: '/virtues/appearance' },
+	{ id: 'background', title: 'Background', section: 'appearance', kind: 'control', words: ['background', 'picture', 'painting', 'wallpaper', 'image', 'home', 'lake', 'plain'], route: '/virtues/appearance' },
 	{ id: 'accent', title: 'Accent', section: 'appearance', kind: 'control', words: ['accent', 'color', 'colour', 'tint', 'highlight', 'brand', 'personalize'], route: '/virtues/appearance' },
 	{ id: 'glass', title: 'Glass', section: 'appearance', kind: 'control', words: ['glass', 'transparency', 'translucent', 'blur', 'see-through', 'solid', 'frosted'], route: '/virtues/appearance' },
 	{ id: 'reading-font', title: 'Reading font', section: 'appearance', kind: 'control', words: ['font', 'typeface', 'serif', 'sans', 'mono', 'pages', 'reading'], route: '/virtues/appearance' },

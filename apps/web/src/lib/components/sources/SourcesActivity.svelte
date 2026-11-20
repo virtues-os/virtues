@@ -112,7 +112,7 @@
 				id: r.id,
 				// A run whose applet is gone keeps its history under a null
 				// applet_id — deliberate, it is an audit trail.
-				applet: applet?.name ?? (r.applet_id ?? 'deleted applet'),
+				applet: applet?.name ?? (r.applet_id ?? 'deleted job'),
 				applet_id: r.applet_id,
 				source: sourceId ? store.sourceLabel(sourceId) : '—',
 				status: r.status,
@@ -235,7 +235,7 @@
 
 <Page
 	title="Activity"
-	description="Every applet run on this server, newest first. Filter to just your sources, or to what failed."
+	description="Every run on this server, newest first. Filter to just your sources, or to what failed."
 	maxWidth="full"
 >
 	{#if err}

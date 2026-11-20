@@ -221,7 +221,7 @@ describe('PageContent, in its source', () => {
 
 	it('the share sheet says what stays on the server', () => {
 		const sheet = source('../applets/ShareSheet.svelte');
-		expect(sheet).toContain("'1 applet or file stays on your server.'");
-		expect(sheet).toContain('applets and files stay on your server.');
+		expect(sheet).toContain("'1 site or file stays on your server.'");
+		expect(sheet).toContain('sites and files stay on your server.');
 	});
 });

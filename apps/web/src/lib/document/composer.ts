@@ -90,20 +90,16 @@ export interface Composer {
 	/** Replace the message (an external `value` set), the caret at its end. */
 	setMarkdown(markdown: string): void;
 	setDisabled(disabled: boolean): void;
-	/** Swap the empty-state hint: the chat's mode can change after creation. */
-	/** The placeholder drawn in the empty field, and what assistive tech
-	 *  reads as it (`aria-placeholder`), which defaults to the same text. */
-	setPlaceholder(text: string, spoken?: string): void;
+	/** Swap the placeholder drawn in the empty field, which assistive tech
+	 *  reads too (`aria-placeholder`): the chat's mode can change after
+	 *  creation. */
+	setPlaceholder(text: string): void;
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
 	/** Put a ref where a row or tab was dropped: under the pointer when it
 	 *  is over the text, otherwise at the end of the message. */
 	insertRefHere(label: string, url: string, at?: { x: number; y: number }): void;
-	/** Replace the message with `text`, as written (not read as markdown),
-	 *  and mentions of `refs` after it, caret at the end, in one step that
-	 *  one undo takes back: an accepted suggested question. */
-	fill(text: string, refs: { url: string; label: string }[]): void;
 	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
 	 *  `refocus: false` when it closed because the focus went elsewhere. */
 	closeRef(opts?: { refocus?: boolean }): void;
@@ -584,8 +580,8 @@ export function createComposer(o: ComposerOptions): Composer {
 		setDisabled(disabled) {
 			if (editor.isEditable === disabled) editor.setEditable(!disabled, false);
 		},
-		setPlaceholder(text, spoken = text) {
-			editor.view.dom.setAttribute('aria-placeholder', spoken);
+		setPlaceholder(text) {
+			editor.view.dom.setAttribute('aria-placeholder', text);
 			if (text === hint) return;
 			hint = text;
 			// Placeholder draws on the next transaction.
@@ -623,16 +619,6 @@ export function createComposer(o: ComposerOptions): Composer {
 			const pos = hit ? hit.pos : state.doc.content.size;
 			view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(pos))));
 			refAtCaret(label, url);
-		},
-		fill(text, refs) {
-			const { schema, doc } = editor.state;
-			const inline: PmNode[] = [schema.text(text)];
-			for (const r of refs) inline.push(schema.text(' '), refNode(r.label, r.url));
-			if (refs.length > 0) inline.push(schema.text(' '));
-			const tr = editor.state.tr.replaceWith(0, doc.content.size, schema.nodes.paragraph.create(null, inline));
-			tr.setSelection(Selection.atEnd(tr.doc));
-			editor.view.dispatch(tr.scrollIntoView());
-			editor.commands.focus();
 		},
 		closeRef({ refocus = true } = {}) {
 			closeTrigger(editor.view, '@');

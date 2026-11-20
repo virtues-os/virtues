@@ -76,7 +76,7 @@ a link back, the title, one sentence. The sections and their rows:
 | Page | Rows ("planned" where not built yet) |
 |---|---|
 | Profile | Your name; what the assistant calls you; birthday; work; where you work; where you live (the time zone); units, which the app and the assistant both use |
-| The assistant (titled with its name) | Its name; how it talks to you, with a sample reply on request; what it can do: search the web, use your browser, make and change applets, write in your pages; subjects it never raises; models; suggested questions; what it remembers (opens) |
+| The assistant (titled with its name) | Its name; how it talks to you, with a sample reply on request; what it can do: search the web, use your browser, make and change applets, write in your pages; subjects it never raises; models; what it remembers (opens) |
 | Appearance | Theme; glass; reading font; text size; reduce motion |
 | Billing | Subscription (Stripe); balance; auto top-up; the two spending limits; bring your own AI (opens); what AI has cost (opens) |
 | Updates and network | Updates, with install updates on their own and which updates ("Released", "Early, may break"); reach your server away from home |

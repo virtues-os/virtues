@@ -74,7 +74,7 @@
 	}
 
 	function line(p: Publication): string {
-		const what = p.producer_kind === 'applet' ? 'An applet, shared' : p.producer_kind === 'chat' ? 'A chat, shared' : 'Shared';
+		const what = p.producer_kind === 'applet' ? 'A site, shared' : p.producer_kind === 'chat' ? 'A chat, shared' : 'Shared';
 		return `${what} ${when(p.created_at)}.${p.is_live ? ' Shows current data each time it opens.' : ''}`;
 	}
 
@@ -121,7 +121,7 @@
 
 <SettingsPage
 	title="Shared links"
-	lede="Every page, chat or applet you've shared. Turn a link off and it stops opening at once."
+	lede="Every page, chat or site you've shared. Turn a link off and it stops opening at once."
 	back={{ route: '/virtues/data', label: 'Your data' }}
 >
 	{#if error}
@@ -132,7 +132,7 @@
 		<div class="empty">
 			<span class="empty-glyph"><Icon icon="mynaui:share" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
-			<p class="empty-body">Share a page, a chat, or an applet that shows a page, and the link appears here.</p>
+			<p class="empty-body">Share a page, a chat or a site, and the link appears here.</p>
 		</div>
 	{:else}
 		{#if live.length > 0}

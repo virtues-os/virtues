@@ -72,7 +72,12 @@ const fn f(field: &'static str, setting_id: &'static str, kind: Kind, store: Sto
 }
 
 const UNITS: &[(&str, &str)] = &[("us", "US units: miles, pounds, Fahrenheit"), ("metric", "metric units")];
-const THEMES: &[(&str, &str)] = &[("oxford", "Light"), ("asgard", "Dark"), ("system", "match the device")];
+const THEMES: &[(&str, &str)] = &[
+    ("oxford", "Light"),
+    ("asgard", "Dark"),
+    ("system", "match the device"),
+    ("day", "follow the day: light from sunrise to sunset, dark otherwise"),
+];
 const ACCENTS: &[(&str, &str)] = &[
     ("navy", "navy"),
     ("blue", "blue"),

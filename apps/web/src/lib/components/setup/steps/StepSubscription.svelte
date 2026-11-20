@@ -32,7 +32,8 @@
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
-	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { setupLinkPoll, setupLoginStart, setByoKey } from "$lib/api/client";
+	import { startCheckout } from "$lib/api/checkout";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import StepFrame from "../StepFrame.svelte";
 	import { setup, intoLabel } from "../setup.svelte";
@@ -83,6 +84,9 @@
 	/** "Chat model" waits behind More options: almost nobody needs it. */
 	let moreOptions = $state(false);
 	let checkoutUrl = $state<string | null>(null);
+	/** Why the email field is open: to sign in, or as the first half of
+	 *  subscribing (a checkout needs an account to belong to). */
+	let intent = $state<"signin" | "subscribe">("signin");
 
 	const emailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()));
 	const endpointValid = $derived(/^https?:\/\/\S+/.test(endpointUrl.trim()) && apiKey.trim().length > 0);
@@ -117,18 +121,26 @@
 		setTimeout(grab, 0);
 	}
 
+	/** Bumped by every stop(), so a tick still awaiting the server when its
+	    poll was stopped or replaced cannot act on the new state. */
+	let pollGen = 0;
 	function stop() {
 		if (timer) clearInterval(timer);
 		timer = null;
+		pollGen += 1;
 	}
 	function poll() {
 		stop();
+		const gen = pollGen;
 		timer = setInterval(async () => {
 			try {
 				const d = await setupLinkPoll<{ status: string }>();
+				if (gen !== pollGen) return;
 				if (d.status === "ready") {
 					stop();
-					await gettingStarted.refresh();
+					// Paid accounts resolve as already subscribed; a new or
+					// unpaid account goes on to checkout.
+					await subscribe(true);
 				} else if (d.status === "expired" || d.status === "none") {
 					stop();
 					mode = "choose";
@@ -142,23 +154,62 @@
 	function back() {
 		stop();
 		error = null;
+		intent = "signin";
 		mode = "choose";
 	}
 	function open(next: "signin" | "endpoint") {
 		error = null;
+		intent = "signin";
 		mode = mode === next ? "choose" : next;
 		if (mode === next) focusField(next === "signin" ? "setup-email" : "setup-endpoint");
 	}
 
-	async function subscribe() {
+	/** Wait for the subscription to land. Ten minutes of checks: long
+	 *  enough for a card and a 3-D Secure prompt. */
+	function pollPaid() {
+		stop();
+		const gen = pollGen;
+		let ticks = 0;
+		timer = setInterval(async () => {
+			ticks += 1;
+			await gettingStarted.refresh();
+			if (gen !== pollGen) return;
+			if (gettingStarted.aiConnected) stop();
+			else if (ticks >= 120) {
+				stop();
+				mode = "choose";
+				intent = "signin";
+				error = "We stopped waiting for checkout. If you paid, this updates within a minute. Otherwise, try again.";
+			}
+		}, 5000);
+	}
+	/** Open checkout for the linked account. An unlinked server signs in
+	 *  first; `afterSignIn` is the second try, once the link is ready. */
+	async function subscribe(afterSignIn = false) {
 		error = null;
 		try {
-			const d = await setupSubscribeStart<{ verification_uri_complete?: string; verification_uri?: string }>();
-			checkoutUrl = d.verification_uri_complete || d.verification_uri || null;
-			mode = "checkout";
-			if (checkoutUrl) void openExternal(checkoutUrl);
-			poll();
+			const r = await startCheckout();
+			if (r.kind === "opened") {
+				checkoutUrl = r.url;
+				mode = "checkout";
+				// After an emailed sign-in the browser already shows a checkout
+				// link on the attach page, so this one waits for a click.
+				if (!afterSignIn) void openExternal(r.url);
+				pollPaid();
+			} else if (r.kind === "needs_signin" && !afterSignIn) {
+				intent = "subscribe";
+				mode = "signin";
+				focusField("setup-email");
+			} else if (r.kind === "already_subscribed") {
+				await gettingStarted.refresh();
+			} else {
+				mode = "choose";
+				intent = "signin";
+				error = r.kind === "error" ? r.message : "Couldn't open checkout. Try again.";
+			}
 		} catch {
+			mode = "choose";
+			intent = "signin";
 			error = UNREACHABLE;
 		}
 	}
@@ -173,8 +224,7 @@
 				poll();
 			} else {
 				mode = "signin";
-				if (d.status === "no_account") error = "There's no Virtues account for that email yet. Set up a subscription instead.";
-				else if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
+				if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
 				else error = "That didn't go through. Try again.";
 			}
 		} catch {
@@ -261,7 +311,7 @@
 					<span class="radio" aria-hidden="true"></span>
 				</span>
 				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
-				<span class="price"><span class="amount">$20</span> a month</span>
+				<span class="price"><span class="amount">$29</span> a month</span>
 			</button>
 			<button
 				type="button"
@@ -299,16 +349,16 @@
 				</div>
 			{:else}
 				<div class="go">
-					<button class="setup-go" onclick={subscribe}>
+					<button class="setup-go" onclick={() => subscribe()}>
 						Continue to checkout
 						<Icon icon="mynaui:arrow-right" width="16" />
 					</button>
-					<p class="fine">You'll confirm in your browser.</p>
+					<p class="fine">{signedIn ? "You'll confirm in your browser." : "We'll confirm your email first, then you confirm in your browser."}</p>
 				</div>
 			{/if}
 		{/if}
 
-		{#if !signedIn && pick === "sub" && mode !== "checkout"}
+		{#if !signedIn && pick === "sub" && mode !== "checkout" && intent === "signin"}
 			<div class="links">
 				<button
 					class="link"
@@ -329,6 +379,9 @@
 					void signIn();
 				}}
 			>
+				{#if intent === "subscribe"}
+					<p class="help">First, your email. We'll send a link, and checkout opens once you've opened it.</p>
+				{/if}
 				<Input
 					id="setup-email"
 					type="email"
@@ -340,14 +393,21 @@
 				/>
 				<div class="row">
 					<button type="submit" class="setup-go small" disabled={!emailValid || mode === "sending"}>
-						{mode === "sending" ? "Sending…" : "Email me a sign-in link"}
+						{mode === "sending" ? "Sending…" : intent === "subscribe" ? "Email me a link" : "Email me a sign-in link"}
 					</button>
 				</div>
 			</form>
 		{:else if mode === "mailed"}
 			<div class="waiting fold narrow" in:fly={IN}>
 				<span class="wait-mark" aria-hidden="true"><ThinkingMark depth={4} size={18} /></span>
-				<p>A sign-in link is on its way to {email.trim()}. Open it and this page picks up on its own.</p>
+				<p>
+					{intent === "subscribe"
+						? `A link is on its way to ${email.trim()}. Open it and choose Attach box, then continue to checkout.`
+						: `A sign-in link is on its way to ${email.trim()}. Open it and choose Attach box, and this page picks up on its own.`}
+				</p>
+			</div>
+			<div class="card-row">
+				<button class="setup-past" onclick={back}>Back</button>
 			</div>
 		{:else if mode === "endpoint" || mode === "saving"}
 			<form

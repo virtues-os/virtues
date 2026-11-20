@@ -18,31 +18,33 @@
 //!
 //! ## Charge model
 //!
-//! Every `charge()`:
-//!   1. 20% universal markup (env `USAGE_MARKUP_BASIS_POINTS=2000`) on the
-//!      real upstream cost — how Virtues makes money on usage.
-//!   2. Per-call cap ($5 billed).
-//!   3. Atomic decrement guarded by `expires_at > now()` AND
-//!      `balance >= billed`, plus a `ledger` 'charge' row, in one transaction.
+//! Only AI spends from the wallet: model calls and web search. Bank data,
+//! places and maps are included in the subscription and need only a live
+//! wallet (`BearerAuth`), never a debit.
+//!
+//! Every `settle()`:
+//!   1. Usage is billed at cost by default (env `USAGE_MARKUP_BASIS_POINTS`,
+//!      default 0). The margin is in the subscription price, not in usage:
+//!      the plan's price is more than its monthly allotment, and top-ups
+//!      are credited net of the card fee (atlas `credits.rs`).
+//!   2. An unconditional debit plus a `ledger` 'charge' row, in one
+//!      transaction. The route's pre-flight gate refuses the next call once
+//!      the balance is spent.
 //!
 //! There is **no per-day spend wall** — the Cursor-style model uses a
 //! user-settable MONTHLY top-up ceiling (`customers.monthly_cap_micros`,
 //! enforced atlas-side on top-up) as the only spend ceiling.
 //!
-//! On `InsufficientBudget` the box surfaces "wallet empty" (optionally one
+//! When the balance is spent the box surfaces "wallet empty" (optionally one
 //! auto-topup via atlas, which credits the wallet here).
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use sqlx::PgPool;
 
-/// Per-call cost cap. Rejects pathologically large prompts. Fixed defense,
-/// not user-tunable. Applied AFTER markup — `billed > PER_CALL_CAP_MICROS` 400s.
-pub const PER_CALL_CAP_MICROS: i64 = 5_000_000; // $5/call billed
-
-/// Universal markup applied to the real upstream cost before debit.
-/// 2000 basis points = 20%.
-pub const DEFAULT_MARKUP_BASIS_POINTS: i64 = 2_000;
+/// Markup applied to the real upstream cost before debit, in basis points
+/// (100 = 1%). 0: usage is billed at cost.
+pub const DEFAULT_MARKUP_BASIS_POINTS: i64 = 0;
 
 /// Returns the configured markup basis points (env: `USAGE_MARKUP_BASIS_POINTS`).
 pub fn markup_basis_points() -> i64 {
@@ -72,7 +74,10 @@ pub fn usd_to_micros(usd: f64) -> i64 {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Wallet {
     pub account_id: String,
+    /// Everything spendable: the monthly allotment plus top-up credit.
     pub balance_micros: i64,
+    /// The part of `balance_micros` that is top-up credit (migration 0014).
+    pub topup_micros: i64,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -93,7 +98,9 @@ pub async fn key_account(pool: &PgPool, api_key_hash: &[u8]) -> Result<Option<St
 pub async fn get_wallet(pool: &PgPool, account_id: &str) -> Result<Option<Wallet>> {
     let row = sqlx::query_as::<_, Wallet>(
         r#"
-        SELECT account_id, balance_micros, expires_at
+        SELECT account_id, balance_micros,
+               LEAST(topup_micros, GREATEST(balance_micros, 0)) AS topup_micros,
+               expires_at
         FROM wallets
         WHERE account_id = $1
         "#,
@@ -105,76 +112,14 @@ pub async fn get_wallet(pool: &PgPool, account_id: &str) -> Result<Option<Wallet
     Ok(row)
 }
 
-/// Charge an account for an upstream call.
-///
-/// `real_cost_micros` is what the upstream provider charged us. The 20% markup
-/// is applied, validated against per-call cap / daily ceiling / balance, then
-/// atomically debited together with a `ledger` 'charge' row.
-pub async fn charge(
-    pool: &PgPool,
-    account_id: &str,
-    real_cost_micros: i64,
-) -> Result<ChargeOk, ChargeError> {
-    if real_cost_micros <= 0 {
-        return Err(ChargeError::InvalidCost);
-    }
-
-    let billed = apply_markup(real_cost_micros);
-    if billed > PER_CALL_CAP_MICROS {
-        return Err(ChargeError::CallTooExpensive);
-    }
-
-    let mut tx = pool.begin().await.map_err(|e| ChargeError::Db(e.into()))?;
-
-    // Atomic decrement guarded by expiry + balance. No per-day wall — the
-    // Cursor-style model uses a user-settable MONTHLY top-up ceiling
-    // (enforced atlas-side on top-up) as the only spend ceiling.
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"
-        UPDATE wallets
-        SET balance_micros = balance_micros - $1
-        WHERE account_id = $2
-          AND expires_at > now()
-          AND balance_micros >= $1
-        RETURNING balance_micros
-        "#,
-    )
-    .bind(billed)
-    .bind(account_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| ChargeError::Db(e.into()))?;
-
-    if row.is_some() {
-        // Journal the debit (negative) in the same transaction.
-        sqlx::query(
-            "INSERT INTO ledger (account_id, micros, kind, real_micros) \
-             VALUES ($1, $2, 'charge', $3)",
-        )
-        .bind(account_id)
-        .bind(-billed)
-        .bind(real_cost_micros)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ChargeError::Db(e.into()))?;
-
-        tx.commit().await.map_err(|e| ChargeError::Db(e.into()))?;
-        return Ok(ChargeOk { billed_micros: billed });
-    }
-
-    // Gate failed — nothing was written; classify why.
-    tx.rollback().await.map_err(|e| ChargeError::Db(e.into()))?;
-    classify_failure(pool, account_id, billed).await
-}
-
 /// Post-paid settlement for a call whose cost is only known *after* it
-/// succeeds (AI: the gateway reports `usage.cost` in the response). Unlike
-/// `charge()`, it debits **unconditionally** — the response already went out,
+/// succeeds (AI: the gateway reports `usage.cost` in the response). It debits
+/// **unconditionally** — the response already went out,
 /// so we must record the true spend even if it dips the balance negative by at
 /// most one call. The pre-flight budget gate (see `routes/ai.rs`) then refuses
 /// the *next* call once the balance is in the red. This is what makes the
-/// wallet actually enforce on the chat path; a guarded `charge()` here would
-/// plateau the balance at a few cents and leak unlimited free calls. Returns
+/// wallet actually enforce on the chat path; a debit guarded by the balance
+/// would plateau it at a few cents and leak unlimited free calls. Returns
 /// the new balance.
 pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> Result<i64> {
     if real_cost_micros <= 0 {
@@ -187,7 +132,8 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
     // Unconditional debit — only requires the wallet to still exist.
     let row: Option<(i64,)> = sqlx::query_as(
         "UPDATE wallets \
-         SET balance_micros = balance_micros - $1 \
+         SET balance_micros = balance_micros - $1, \
+             topup_micros = LEAST(topup_micros, GREATEST(balance_micros - $1, 0)) \
          WHERE account_id = $2 \
          RETURNING balance_micros",
     )
@@ -215,59 +161,17 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
     Ok(balance)
 }
 
-/// On a failed debit, disambiguate why: not found / expired / insufficient
-/// balance.
-async fn classify_failure(
-    pool: &PgPool,
-    account_id: &str,
-    _billed: i64,
-) -> Result<ChargeOk, ChargeError> {
-    let row: Option<(DateTime<Utc>, i64)> = sqlx::query_as(
-        "SELECT expires_at, balance_micros FROM wallets WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ChargeError::Db(e.into()))?;
-
-    match row {
-        None => Err(ChargeError::NotFound),
-        Some((expires_at, _)) if expires_at <= Utc::now() => Err(ChargeError::Expired),
-        Some(_) => Err(ChargeError::InsufficientBudget),
-    }
-}
-
-/// Refund a previously-charged amount back to the balance, with a compensating
-/// `ledger` 'refund' row. Best-effort. Refunds the **billed** amount.
-pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    let updated = sqlx::query(
-        r#"
-        UPDATE wallets
-        SET balance_micros = balance_micros + $1
-        WHERE account_id = $2
-        "#,
-    )
-    .bind(billed_micros)
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await
-    .context("refund balance")?;
-    // If the wallet vanished (e.g. swept between charge and a slow upstream
-    // failure), there's nothing to refund — skip the ledger row rather than
-    // orphan it (the FK would reject it anyway). Keeps balance == SUM(ledger).
-    if updated.rows_affected() == 0 {
-        tx.rollback().await?;
-        return Ok(());
-    }
-    sqlx::query("INSERT INTO ledger (account_id, micros, kind) VALUES ($1, $2, 'refund')")
+/// Revoke one box key of an account: the owner removed that server. Returns
+/// how many keys were removed (0 when virtues-api never had it). Scoped to
+/// the account, so a hash can never reach another account's key.
+pub async fn revoke_device(pool: &PgPool, account_id: &str, api_key_hash: &[u8]) -> Result<u64> {
+    let r = sqlx::query("DELETE FROM device_keys WHERE account_id = $1 AND api_key_hash = $2")
         .bind(account_id)
-        .bind(billed_micros)
-        .execute(&mut *tx)
+        .bind(api_key_hash)
+        .execute(pool)
         .await
-        .context("refund ledger row")?;
-    tx.commit().await?;
-    Ok(())
+        .context("revoke device key")?;
+    Ok(r.rows_affected())
 }
 
 /// Register (or rotate) a device api key for an account. It creates no wallet:
@@ -348,8 +252,11 @@ pub enum CreditMode {
 /// Credit an account (subscription renewal or top-up), writing the matching
 /// `ledger` row so `balance == SUM(ledger)` holds. Returns the new balance.
 ///
-/// `Set` records the **delta** that brings the balance to `amount` (so a
-/// monthly overwrite that claws back unused credit stays journal-consistent).
+/// `Set` (renewal) resets the monthly allotment to `amount` and keeps the
+/// top-up credit, so the balance becomes `amount + top-up credit`. It records
+/// the **delta**, so a renewal that claws back unused allotment stays
+/// journal-consistent. `Add` (top-up) adds to both the balance and the
+/// top-up credit.
 pub async fn credit(
     pool: &PgPool,
     account_id: &str,
@@ -359,33 +266,50 @@ pub async fn credit(
 ) -> Result<i64> {
     let now = Utc::now();
     let mut tx = pool.begin().await?;
+    // Serialize credits per account. `FOR UPDATE` below locks nothing when
+    // the wallet row does not exist yet, so two first credits (a checkout's
+    // and invoice.paid's, or a top-up racing either) would both read zero and
+    // one would overwrite the other. The lock ends with the transaction.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('wallet-credit:' || $1))")
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await
+        .context("lock wallet credit")?;
 
-    let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT balance_micros FROM wallets WHERE account_id = $1 FOR UPDATE")
-            .bind(account_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .context("lock account for credit")?;
-    let old_balance = existing.map(|(b,)| b).unwrap_or(0);
+    let existing: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT balance_micros, topup_micros FROM wallets WHERE account_id = $1 FOR UPDATE",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .context("lock account for credit")?;
+    // absent-ok: no wallet row yet means nothing to keep; the query error was `?`-ed above.
+    let (old_balance, old_topup) = existing.unwrap_or((0, 0));
+    // Top-up credit never exceeds what is left; an older image that
+    // ignored the column can leave it stale.
+    let topup = old_topup.min(old_balance.max(0)).max(0);
 
-    let (new_balance, delta, kind) = match mode {
-        CreditMode::Set => (amount_micros, amount_micros - old_balance, "grant"),
-        CreditMode::Add => (old_balance + amount_micros, amount_micros, "topup"),
+    let (new_balance, new_topup, kind) = match mode {
+        CreditMode::Set => (amount_micros + topup, topup, "grant"),
+        CreditMode::Add => (old_balance + amount_micros, topup + amount_micros, "topup"),
     };
+    let delta = new_balance - old_balance;
 
     match mode {
         CreditMode::Set => {
             sqlx::query(
                 r#"
-                INSERT INTO wallets (account_id, balance_micros, expires_at)
-                VALUES ($1, $2, $3)
+                INSERT INTO wallets (account_id, balance_micros, topup_micros, expires_at)
+                VALUES ($1, $2, $3, $4)
                 ON CONFLICT (account_id) DO UPDATE
                 SET balance_micros = EXCLUDED.balance_micros,
+                    topup_micros = EXCLUDED.topup_micros,
                     expires_at = EXCLUDED.expires_at
                 "#,
             )
             .bind(account_id)
             .bind(new_balance)
+            .bind(new_topup)
             .bind(cohort_align_after(now + Duration::days(30)))
             .execute(&mut *tx)
             .await
@@ -394,14 +318,16 @@ pub async fn credit(
         CreditMode::Add => {
             sqlx::query(
                 r#"
-                INSERT INTO wallets (account_id, balance_micros, expires_at)
-                VALUES ($1, $2, $3)
+                INSERT INTO wallets (account_id, balance_micros, topup_micros, expires_at)
+                VALUES ($1, $2, $3, $4)
                 ON CONFLICT (account_id) DO UPDATE
-                SET balance_micros = wallets.balance_micros + $2
+                SET balance_micros = EXCLUDED.balance_micros,
+                    topup_micros = EXCLUDED.topup_micros
                 "#,
             )
             .bind(account_id)
-            .bind(amount_micros)
+            .bind(new_balance)
+            .bind(new_topup)
             .bind(cohort_align_after(now + Duration::days(30)))
             .execute(&mut *tx)
             .await
@@ -461,6 +387,7 @@ pub async fn usage_summary(
 
     Ok(UsageSummary {
         balance_micros: acct.balance_micros,
+        topup_micros: acct.topup_micros,
         month_to_date_micros: mtd.unwrap_or(0),
         expires_at: Some(acct.expires_at),
         entries,
@@ -470,6 +397,9 @@ pub async fn usage_summary(
 #[derive(Debug, Default, serde::Serialize)]
 pub struct UsageSummary {
     pub balance_micros: i64,
+    /// The part of `balance_micros` that is top-up credit, which a renewal
+    /// keeps. The rest is this month's allotment.
+    pub topup_micros: i64,
     pub month_to_date_micros: i64,
     pub expires_at: Option<DateTime<Utc>>,
     pub entries: Vec<LedgerEntry>,
@@ -481,38 +411,6 @@ pub struct LedgerEntry {
     pub micros: i64,
     pub kind: String,
     pub real_micros: Option<i64>,
-}
-
-/// Outcome of a successful charge. The real upstream cost and the resulting
-/// balance are persisted on the ledger row and the account respectively;
-/// callers only need what the user was billed.
-#[derive(Debug, Clone, Copy)]
-pub struct ChargeOk {
-    /// What the user was charged (post-markup).
-    pub billed_micros: i64,
-}
-
-#[derive(Debug)]
-pub enum ChargeError {
-    InsufficientBudget,
-    Expired,
-    NotFound,
-    InvalidCost,
-    CallTooExpensive,
-    Db(anyhow::Error),
-}
-
-impl std::fmt::Display for ChargeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InsufficientBudget => write!(f, "wallet empty — add credits"),
-            Self::Expired => write!(f, "no active subscription — renew it to continue"),
-            Self::NotFound => write!(f, "no wallet for this account"),
-            Self::InvalidCost => write!(f, "real_cost_micros must be > 0"),
-            Self::CallTooExpensive => write!(f, "single call exceeds per-call cap"),
-            Self::Db(e) => write!(f, "db error: {e}"),
-        }
-    }
 }
 
 /// First-of-month 00:00 UTC at or after `dt` — the cohort-aligned wallet
@@ -542,25 +440,19 @@ fn month_start_utc(now: DateTime<Utc>) -> DateTime<Utc> {
 mod tests {
     use super::*;
 
-    /// `charge()` debits the balance, refuses once the wallet is empty, and
-    /// writes a ledger row each time, keeping `balance == SUM(ledger)`. (No
-    /// daily cap — the only spend ceiling is the monthly top-up cap atlas-side.)
+    /// `settle()` debits the balance and writes a ledger row each time,
+    /// keeping `balance == SUM(ledger)`. (No daily cap — the only spend
+    /// ceiling is the monthly top-up cap atlas-side.)
     #[sqlx::test]
-    async fn charge_debits_and_journals(pool: PgPool) {
+    async fn settle_debits_and_journals(pool: PgPool) {
         // Fund $10 via a renewal credit.
         credit(&pool, "acct-low", 10_000_000, CreditMode::Set, None)
             .await
             .unwrap();
 
-        // billed = 4_800_000 each; two land (9.6M ≤ 10M), the third has no
-        // balance left and trips InsufficientBudget.
-        charge(&pool, "acct-low", 4_000_000).await.expect("1st ok");
-        charge(&pool, "acct-low", 4_000_000).await.expect("2nd ok");
-        let third = charge(&pool, "acct-low", 4_000_000).await;
-        assert!(
-            matches!(third, Err(ChargeError::InsufficientBudget)),
-            "third charge should exhaust the wallet, got {third:?}"
-        );
+        // Billed at cost (no markup by default): 4M + 4M leaves 2M.
+        assert_eq!(settle(&pool, "acct-low", 4_000_000).await.expect("1st ok"), 6_000_000);
+        assert_eq!(settle(&pool, "acct-low", 4_000_000).await.expect("2nd ok"), 2_000_000);
 
         // balance projection == SUM(ledger).
         let acct = get_wallet(&pool, "acct-low").await.unwrap().unwrap();
@@ -572,6 +464,92 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(acct.balance_micros, sum.unwrap(), "balance must equal ledger sum");
+    }
+
+    async fn ledger_sum(pool: &PgPool, account: &str) -> i64 {
+        let (sum,): (Option<i64>,) =
+            sqlx::query_as("SELECT SUM(micros)::bigint FROM ledger WHERE account_id = $1")
+                .bind(account)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        // absent-ok: SUM over no ledger rows is NULL, which is a zero balance.
+        sum.unwrap_or(0)
+    }
+
+    /// The allotment is spent before top-up credit, and a renewal resets the
+    /// allotment but keeps whatever top-up credit is left. The balance still
+    /// equals the ledger after every step.
+    #[sqlx::test]
+    async fn renewal_keeps_topup_credit_and_allotment_is_spent_first(pool: PgPool) {
+        let a = "acct-two";
+        credit(&pool, a, 20_000_000, CreditMode::Set, None).await.unwrap(); // $20 allotment
+        credit(&pool, a, 50_000_000, CreditMode::Add, Some("topup:pi_1")).await.unwrap(); // $50 top-up
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (70_000_000, 50_000_000));
+
+        // $15 comes out of the allotment; top-up credit is untouched. (One
+        // pre-paid call is capped at $5, so the bulk is settled post-paid.)
+        settle(&pool, a, 5_000_000).await.unwrap();
+        settle(&pool, a, 10_000_000).await.unwrap();
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (55_000_000, 50_000_000));
+
+        // $10 more: $5 of allotment is left, so $5 comes out of top-up credit.
+        settle(&pool, a, 10_000_000).await.unwrap();
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (45_000_000, 45_000_000));
+
+        // Renewal: a fresh $20 allotment on top of the $45 of top-up credit.
+        credit(&pool, a, 20_000_000, CreditMode::Set, Some("renewal")).await.unwrap();
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (65_000_000, 45_000_000));
+        assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
+    }
+
+    /// Concurrent first credits on a new account all land: none
+    /// overwrites another, and the balance matches the ledger.
+    #[sqlx::test]
+    async fn concurrent_first_credits_all_land(pool: PgPool) {
+        let a = "acct-race";
+        let tasks: Vec<_> = (0..6)
+            .map(|_| {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    credit(&pool, a, 1_000_000, CreditMode::Add, None).await.unwrap();
+                })
+            })
+            .collect();
+        for t in tasks {
+            t.await.unwrap();
+        }
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (6_000_000, 6_000_000));
+        assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
+    }
+
+    /// Revoking removes exactly that key on that account, and never a key
+    /// on another account even with the same hash bytes.
+    #[sqlx::test]
+    async fn revoke_removes_only_that_key(pool: PgPool) {
+        register_device(&pool, b"hash-kitchen-000000000000000000", "acct-a", Some("ep-kitchen")).await.unwrap();
+        register_device(&pool, b"hash-office-0000000000000000000", "acct-a", Some("ep-office")).await.unwrap();
+        assert_eq!(revoke_device(&pool, "acct-b", b"hash-office-0000000000000000000").await.unwrap(), 0);
+        assert_eq!(revoke_device(&pool, "acct-a", b"hash-office-0000000000000000000").await.unwrap(), 1);
+        assert!(key_account(&pool, b"hash-office-0000000000000000000").await.unwrap().is_none());
+        assert_eq!(key_account(&pool, b"hash-kitchen-000000000000000000").await.unwrap().as_deref(), Some("acct-a"));
+    }
+
+    /// Unused allotment does not carry over: a renewal resets it.
+    #[sqlx::test]
+    async fn unused_allotment_resets_at_renewal(pool: PgPool) {
+        let a = "acct-idle";
+        credit(&pool, a, 20_000_000, CreditMode::Set, None).await.unwrap();
+        settle(&pool, a, 2_000_000).await.unwrap();
+        credit(&pool, a, 20_000_000, CreditMode::Set, None).await.unwrap();
+        let w = get_wallet(&pool, a).await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (20_000_000, 0));
+        assert_eq!(w.balance_micros, ledger_sum(&pool, a).await);
     }
 
     /// `/v1/usage` decodes for an account that has spent this month. The
@@ -589,8 +567,8 @@ mod tests {
         let empty = usage_summary(&pool, "acct-u", 10).await.unwrap();
         assert_eq!(empty.month_to_date_micros, 0, "funded but unspent");
 
-        charge(&pool, "acct-u", 1_000_000).await.expect("charge");
-        charge(&pool, "acct-u", 2_000_000).await.expect("charge");
+        settle(&pool, "acct-u", 1_000_000).await.expect("settle");
+        settle(&pool, "acct-u", 2_000_000).await.expect("settle");
         let spent = usage_summary(&pool, "acct-u", 10).await.unwrap();
         let acct = get_wallet(&pool, "acct-u").await.unwrap().unwrap();
         assert!(spent.month_to_date_micros > 0);
@@ -611,7 +589,7 @@ mod tests {
         register_device(&pool, b"keyhash-old-0000000000000000", "acct-r", None)
             .await
             .unwrap();
-        charge(&pool, "acct-r", 1_000_000).await.expect("charge under old key path");
+        settle(&pool, "acct-r", 1_000_000).await.expect("settle under old key path");
 
         let before = get_wallet(&pool, "acct-r").await.unwrap().unwrap().balance_micros;
         // Rotate to a new key for the SAME account.

@@ -87,7 +87,7 @@
 		if (!credential) return;
 		const ok = await confirmAction({
 			title: `Disconnect ${credential.name}?`,
-			body: 'Applets that use it stop running until you connect it again.',
+			body: 'What uses it stops running until you connect it again.',
 			confirmLabel: 'Disconnect',
 			danger: true,
 		});
@@ -209,9 +209,9 @@
 		{/if}
 
 		<section class="card">
-			<h2>Applets</h2>
+			<h2>Used by</h2>
 			{#if applets.length === 0}
-				<p class="dim">No applets use it yet.</p>
+				<p class="dim">Nothing uses it yet.</p>
 			{:else}
 				<ul class="applet-list">
 					{#each applets as a}

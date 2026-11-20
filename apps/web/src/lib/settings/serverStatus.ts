@@ -132,11 +132,11 @@ export function serverLead(input: LeadInput): Lead {
 		const one = appletsNeedingYou.length === 1;
 		return {
 			kind: 'applets',
-			sentence: one ? `${appletsNeedingYou[0]} needs you.` : 'Some of your applets need you.',
+			sentence: one ? `${appletsNeedingYou[0]} needs you.` : 'Some of what your server runs needs you.',
 			sub: one
 				? 'Its last run didn’t finish, or a run is more than an hour late.'
 				: 'Their last runs didn’t finish, or a run is more than an hour late.',
-			action: { label: 'Open Applets', route: '/virtues/applets' },
+			action: { label: 'Open Jobs', route: '/virtues/applets' },
 		};
 	}
 

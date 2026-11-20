@@ -8,7 +8,7 @@
 //! We only extract usage metadata from the final chunk for billing.
 //!
 //! The charge side is a callback supplied by the caller: the bearer-auth
-//! path in `ai.rs` passes a closure that calls `entitlement::charge()`
+//! path in `ai.rs` passes a closure that calls `entitlement::settle()`
 //! against Postgres once the final usage is known.
 
 use axum::response::{sse::Event as SseEvent, IntoResponse, Response, Sse};
@@ -103,7 +103,7 @@ fn resolve_cost_micros(
 ///
 /// `on_complete` is called once with the resolved `cost_micros` after the
 /// upstream stream emits `[DONE]`. The bearer-auth AI route wires this to
-/// `entitlement::charge()`. The streaming hot path knows nothing about
+/// `entitlement::settle()`. The streaming hot path knows nothing about
 /// budget storage.
 ///
 /// `request` is the caller's body, opaque; `model` is the id the route

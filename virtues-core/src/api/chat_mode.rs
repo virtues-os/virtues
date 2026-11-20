@@ -467,8 +467,10 @@ pub(crate) mod tests {
             // One tool for every applet action, chosen by `action`; setup's
             // line is the whole instruction for writing one. Raised 150 on
             // 2026-10-27 for setup's invoke, tools and model, and 200 on
-            // 2026-10-28 for the three data triggers.
-            ("applets", &["applet"], 3_150),
+            // 2026-10-28 for the three data triggers, and 400 on 2026-11-20
+            // for what a view is: a whole page beside the chat, with nothing
+            // loaded from another host.
+            ("applets", &["applet"], 3_550),
             // The applets chat may load, listed by name and description. The
             // shipped catalog has none; a box's grows to the cap in
             // `use_applet_tool`.
@@ -527,7 +529,7 @@ pub(crate) mod tests {
         // 2026-11-19 for the Gmail and Calendar tools and the next-step
         // card. The rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 29_700),
+            ("chat", 30_050),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -547,7 +549,7 @@ pub(crate) mod tests {
             ("delete-data", 9_200),
             ("meeting-prep", 8_550),
             ("morning-brief", 8_850),
-            ("new-applet", 3_150),
+            ("new-applet", 3_550),
             ("trip-planner", 9_300),
             ("weekly-review", 9_000),
         ];

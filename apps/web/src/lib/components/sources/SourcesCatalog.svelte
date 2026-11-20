@@ -367,7 +367,7 @@
 		},
 		{
 			key: 'applets',
-			label: 'Applets',
+			label: 'Jobs',
 			icon: 'mynaui:zap',
 			width: '12%',
 			minWidth: '90px',

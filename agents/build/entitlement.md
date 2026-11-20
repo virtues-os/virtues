@@ -111,22 +111,35 @@ blocklist stops it, or when it is deleted on purpose.
 
 ## 4. Flows
 
-### 4.1 Signup → link (once)
+### 4.1 Link, then subscribe
 The box never holds a Stripe key and never sees a checkout page. Linking is a
 device-authorization flow (RFC 8628 shape, `services/virtues-atlas/src/routes/link.rs`):
 
 1. Box `POST /init/start` to Atlas → `device_code` (secret, kept as a
    box secret in `credentials`) plus a short `user_code` and verification URL shown to the
    user.
-2. The user opens the URL and is redirected to Stripe Checkout.
-3. On Stripe success Atlas finalizes (`GET /init/done`): verifies payment,
-   upserts `customers` + `subscriptions`, assigns an `account_id` if the
-   customer has none, mints a random **api_key** and stores only its hash,
-   registers it with virtues-api (`POST /internal/device`, hash plus
-   `account_id`) and credits the wallet (`POST /internal/credit`).
+2. The user opens the URL (`GET /init?code=…`), enters an email, and opens
+   the magic link Atlas sends (`/init/login-web`, `/init/login/verify`). The
+   app's own sign-in does the same through `/init/approve` or `/init/grant`.
+   A new address creates the account when the link is opened.
+3. Atlas attaches the link to that account: mints a random **api_key**,
+   stores only its hash, and registers it with virtues-api
+   (`POST /internal/device`, hash plus `account_id`).
 4. Box `POST /init/poll {device_code}` in a loop; on `ready` it receives the
    raw api_key and stores it in the credential vault under
    `source_id = "virtues_api"`.
+
+Subscribing is a second step from the linked box. The box asks
+`POST /billing/checkout/sessions` with its key, and Atlas creates a Checkout
+session stamped with the key's `account_id` (`metadata[account_id]`), reusing
+the account's Stripe customer when it has one. After payment,
+`GET /account/checkout/done` reads the account from that stamp, upserts
+`customers` + `subscriptions`, and credits the wallet
+(`POST /internal/credit`). A session without the stamp is refused.
+
+The email the payer types at Stripe never chooses an account. Stripe does not
+check that the payer owns that address, so an account chosen by it would let
+anyone pay and attach a key or a subscription to someone else's account.
 
 Re-linking rotates the api_key and re-points the device at the **same**
 `account_id`, so the balance survives.
@@ -135,8 +148,21 @@ Re-linking rotates the api_key and re-points the device at the **same**
 There is no client-side renewal dance. Renewal is a **Stripe webhook** to Atlas,
 which SETs the month's allotment on the wallet via `POST /internal/credit`.
 Top-ups are a card charge through Atlas (`POST /credits/topup`, and
-`POST /credits/auto-topup` for the standing arrangement), which credits the same
-way. The box is not involved and holds no refresh token.
+`POST /credits/auto-topup` for the standing arrangement), which ADDs to the
+wallet. The box is not involved and holds no refresh token.
+
+A wallet holds two kinds of credit (virtues-api migration 0014). The
+**monthly allotment** ($20, `RENEWAL_MICROS`) is spent first and reset at each
+renewal; unused allotment does not carry over. **Top-up credit** is spent only
+after the allotment and is kept at renewal. `balance_micros` is the total and
+`topup_micros` is the top-up part.
+
+Usage is billed at cost (`USAGE_MARKUP_BASIS_POINTS`, default 0). The margin
+is the subscription price minus the allotment. A top-up is credited net of
+the card fee (`CARD_FEE_BASIS_POINTS` 290 and `CARD_FEE_FIXED_MICROS` $0.30),
+so $20 charged adds $19.12 of credit and a top-up never costs Virtues money.
+A top-up carries a Stripe idempotency key, and `topup_charges` records each
+credited PaymentIntent, so a retried top-up charges and credits once.
 
 ### 4.3 Per-call charging
 The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
@@ -203,13 +229,12 @@ v2 is written down rather than dropped.
 ## 7. Endpoints
 
 **Atlas**
-- `POST /init/start`, `POST /init/poll`, `GET /init/done` — the device link
-  (§4.1); `GET /init/checkout` and the `/init/login*` routes serve the
-  browser side
-- `POST /claim {session_id}` — Stripe session → api_key. Still mounted; no
-  box calls it. Its finalizer is the one `/init/done` and the account
-  checkout share
-- `POST /billing/checkout/sessions` — a linked free account subscribes
+- `POST /init/start`, `POST /init/poll` — the device link (§4.1);
+  `GET /init`, `GET /init/signin` and the `/init/login*` routes serve the
+  browser side, `/init/approve` and `/init/grant` the app's sign-in
+- `POST /billing/checkout/sessions` — a linked account subscribes; the only
+  door that opens a subscription checkout
+- `GET /account/checkout/done` — Stripe's success URL for that checkout
 - `POST /credits/topup` / `POST /credits/auto-topup` — card-funded wallet top-up
 - `POST /billing/portal/sessions` — → Stripe Customer Portal `{url}`
 - `POST /webhooks/stripe` — maintains subscription status; drives renewal
@@ -233,7 +258,9 @@ v2 is written down rather than dropped.
 - `/v1/ai/*` (chat/completions, completions, models, search),
   `/v1/places/*`, `/v1/unsplash/*`, `/v1/maps/*`,
   `/v1/services/plaid/*` — gated upstreams
-- `/{provider}/start|callback|exchange|refresh` — the OAuth proxy leg
+- `/{provider}/sessions|start|callback|exchange|refresh` — the OAuth proxy
+  leg. The box registers each connect at `/sessions` with its key, and
+  `/exchange` serves only that key (`routes/oauth.rs`)
 - `GET /health`, `GET /ready`
 
 There is no `POST /voucher` and no `POST /v1/redeem`; both were deleted with the

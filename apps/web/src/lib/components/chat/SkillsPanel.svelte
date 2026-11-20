@@ -98,7 +98,7 @@
 		bind:this={listEl}
 		onscroll={updateFade}
 		role="listbox"
-		aria-label="Applets"
+		aria-label="Slash commands"
 	>
 		{#each matches as s, i (s.name)}
 			<button
@@ -122,9 +122,9 @@
 				{:else if skills.failed}
 					Applets didn't load. Check that your server is reachable, then type / again.
 				{:else if query}
-					No applet matches "{query}".
+					Nothing matches "{query}".
 				{:else}
-					You have no applets to start from chat yet.
+					You have nothing to start from chat yet.
 				{/if}
 			</p>
 		{/each}
@@ -140,7 +140,7 @@
 			onclick={() => skills.create && onSelect(skills.create)}
 		>
 			<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
-			<span class="skill-name">New applet</span>
+			<span class="skill-name">New site</span>
 		</button>
 	{/if}
 </div>

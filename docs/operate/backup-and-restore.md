@@ -68,7 +68,7 @@ file.
   it can't decrypt them, so a backup refuses to run when the file is missing
   or has no key in it.
 - The **data lake**: recordings, uploads and files.
-- **Authored applets**, the ones written on the server rather than shipped with
+- **Your sites**, which are written on your server rather than shipped with
   it.
 - A **manifest** recording the binary and schema versions, plus a SHA-256 hash
   of every file. Verification and restore use these hashes to detect a damaged
@@ -119,7 +119,7 @@ being written, the backup stops, deletes the dump and says how much space it
 found.
 
 On a drive, the backup is split into a full snapshot of the database,
-environment file and applets, plus separate incremental archives of the lake.
+environment file and sites, plus separate incremental archives of the lake.
 Old full snapshots are deleted only when the drive starts filling up, and the
 newest one is never deleted, so a large disk keeps several. Lake increments
 are never deleted, because the lake only grows and can't be rebuilt from
@@ -181,7 +181,7 @@ can't skip the version check or the checksums. If an archive came from a
 newer release, [upgrade](/docs/operate/upgrading) first and then restore.
 
 After the database loads, restore resets the passwords of the two limited
-database logins that the assistant and applets use to query your data. Your
+database logins that the assistant and sites use to query your data. Your
 server derives those passwords from the encryption key in its `virtues.env`
 (`/var/lib/virtues/virtues.env` unless you installed elsewhere), and a
 restore onto a fresh install brings back a different key from the one that

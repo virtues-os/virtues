@@ -269,15 +269,8 @@
 					{#if preview.embeds_left_out}
 						<li>
 							{preview.embeds_left_out === 1
-								? '1 applet or file stays on your server.'
-								: `${preview.embeds_left_out} applets and files stay on your server.`}
-						</li>
-					{/if}
-					{#if preview.embeds_left_out}
-						<li>
-							{preview.embeds_left_out === 1
-								? '1 applet or file stays on your server.'
-								: `${preview.embeds_left_out} applets and files stay on your server.`}
+								? '1 site or file stays on your server.'
+								: `${preview.embeds_left_out} sites and files stay on your server.`}
 						</li>
 					{/if}
 					{#if preview.names.length}

@@ -219,6 +219,16 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 /// key needs the app's owner proof (`api::owner_proof`), and this route asks
 /// for none.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
+    // A Google sign-in made through virtues-api keeps its grant there. Read
+    // which connection it is before the row is emptied, and remove it there
+    // once the row is revoked.
+    let api_connection: Option<String> = sqlx::query_scalar(
+        "SELECT metadata->>'api_connection_id' FROM credentials WHERE id = $1 AND kind = 'source' AND key = 'google'",
+    )
+    .bind(credential_id)
+    .fetch_optional(db)
+    .await?
+    .flatten();
     let emptied = crate::credentials::emptied_secrets()?;
     let affected = sqlx::query(
         r#"UPDATE credentials
@@ -253,6 +263,14 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
         .bind(credential_id)
         .execute(db)
         .await?;
+
+    // The box has let go either way. If virtues-api cannot be reached now the
+    // grant stays there until it is removed by hand, so say so in the log.
+    if let Some(connection) = api_connection.filter(|c| !c.is_empty()) {
+        if let Err(e) = super::google_api::disconnect(db, &connection).await {
+            tracing::warn!(credential_id, error = %e, "revoked here, but virtues-api did not remove the Google connection");
+        }
+    }
 
     Ok(())
 }

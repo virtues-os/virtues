@@ -1,9 +1,9 @@
-//! Google Places via bearer-auth + entitlement::charge().
+//! Google Places for subscribers.
 //!
-//! Charge model: charge before upstream → refund if upstream fails. The
-//! charge window is short enough that race-vs-cancel is negligible at
-//! our scale; the refund keeps customers honest when upstream errors
-//! out (timeout, 5xx, etc.).
+//! Places is included in the subscription, so a lookup never touches the
+//! wallet. It needs a live subscription (`BearerAuth`) and keeps working when
+//! the month's AI credit is spent. A daily limit per account bounds what one
+//! account can cost; ordinary use is a handful of lookups a day, far below it.
 
 use axum::{
     extract::{Path, State},
@@ -12,17 +12,54 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::{NaiveDate, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, ChargeError};
 use crate::AppState;
 
-/// Google Places: ~$0.003 per autocomplete or details request.
-/// Tracked as 3,000 micros.
-const PLACES_COST_MICROS: i64 = 3_000;
+/// Lookups allowed per account per UTC day. Env: `PLACES_DAILY_LIMIT`.
+const DEFAULT_DAILY_LIMIT: u32 = 500;
+
+fn daily_limit() -> u32 {
+    std::env::var("PLACES_DAILY_LIMIT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n: &u32| *n > 0)
+        .unwrap_or(DEFAULT_DAILY_LIMIT)
+}
+
+/// Today's lookups per account. Held in memory: a restart forgets the day's
+/// counts, which only ever lets an account through, and virtues-api runs as
+/// one process. Nothing about a lookup is kept beyond the count.
+fn counts() -> &'static DashMap<String, (NaiveDate, u32)> {
+    static COUNTS: OnceLock<DashMap<String, (NaiveDate, u32)>> = OnceLock::new();
+    COUNTS.get_or_init(DashMap::new)
+}
+
+/// Count one lookup for the account. `false` when today's limit is reached.
+fn take_lookup(account_id: &str, today: NaiveDate, limit: u32) -> bool {
+    let mut entry = counts().entry(account_id.to_string()).or_insert((today, 0));
+    if entry.0 != today {
+        *entry = (today, 0);
+    }
+    if entry.1 >= limit {
+        return false;
+    }
+    entry.1 += 1;
+    true
+}
+
+fn limit_reached() -> axum::response::Response {
+    error_resp(
+        StatusCode::TOO_MANY_REQUESTS,
+        "fair_use_limit",
+        "Place search is paused until tomorrow. Bank data, maps and AI keep working.",
+    )
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -50,13 +87,10 @@ async fn places_autocomplete(
             "Google Places API key not set",
         );
     };
-    let pool = &state.db;
-
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
-    let charged = match entitlement::charge(pool, &ent.account_id, PLACES_COST_MICROS).await {
-        Ok(c) => c,
-        Err(e) => return charge_error_resp(e),
-    };
+    if !take_lookup(&ent.account_id, Utc::now().date_naive(), daily_limit()) {
+        return limit_reached();
+    }
 
     // Forward the request body as-is — `#[serde(flatten)] other: Value`
     // ensures any extra fields flow through to Google without name munging.
@@ -69,7 +103,7 @@ async fn places_autocomplete(
         .send()
         .await;
 
-    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
+    passthrough(upstream).await
 }
 
 async fn places_details(
@@ -85,13 +119,10 @@ async fn places_details(
             "Google Places API key not set",
         );
     };
-    let pool = &state.db;
-
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
-    let charged = match entitlement::charge(pool, &ent.account_id, PLACES_COST_MICROS).await {
-        Ok(c) => c,
-        Err(e) => return charge_error_resp(e),
-    };
+    if !take_lookup(&ent.account_id, Utc::now().date_naive(), daily_limit()) {
+        return limit_reached();
+    }
 
     let upstream = state
         .http_client
@@ -107,87 +138,23 @@ async fn places_details(
         .send()
         .await;
 
-    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
+    passthrough(upstream).await
 }
 
-/// Shared tail: pass upstream response through, refund on any upstream
-/// failure (transport error OR non-2xx). `billed_micros` is what was
-/// actually decremented (post-markup) and is what we refund.
-async fn finish_charged(
-    pool: &sqlx::PgPool,
-    account_id: &str,
-    billed_micros: i64,
-    upstream: Result<reqwest::Response, reqwest::Error>,
-) -> axum::response::Response {
+/// Return Google's answer, success or error, as is.
+async fn passthrough(upstream: Result<reqwest::Response, reqwest::Error>) -> axum::response::Response {
     match upstream {
         Ok(resp) => {
             let status = resp.status();
             let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
-
-            if !status.is_success() {
-                if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
-                    tracing::warn!("places refund failed after upstream non-2xx: {re:#}");
-                }
-            } else {
-                tracing::info!(
-                    billed_micros,
-                    "places upstream success — charge retained"
-                );
-            }
-
             (
-                StatusCode::from_u16(status.as_u16())
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                 Json(body),
             )
                 .into_response()
         }
-        Err(e) => {
-            if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
-                tracing::warn!("places refund failed after upstream transport error: {re:#}");
-            }
-            error_resp(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string())
-        }
+        Err(e) => error_resp(StatusCode::BAD_GATEWAY, "upstream_error", &e.without_url().to_string()),
     }
-}
-
-fn charge_error_resp(e: ChargeError) -> axum::response::Response {
-    let (status, code, message) = match e {
-        ChargeError::Expired => (
-            StatusCode::PAYMENT_REQUIRED,
-            "wallet_expired",
-            "subscription wallet expired — reconnect".to_string(),
-        ),
-        ChargeError::InsufficientBudget => (
-            StatusCode::PAYMENT_REQUIRED,
-            "insufficient_budget",
-            "today's budget exhausted".to_string(),
-        ),
-        ChargeError::NotFound => (
-            StatusCode::UNAUTHORIZED,
-            "unknown_key",
-            "api key not recognized — reconnect".to_string(),
-        ),
-        ChargeError::InvalidCost => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cost",
-            "cost_micros must be > 0".to_string(),
-        ),
-        ChargeError::CallTooExpensive => (
-            StatusCode::BAD_REQUEST,
-            "call_too_expensive",
-            "single call exceeds per-call cap".to_string(),
-        ),
-        ChargeError::Db(err) => {
-            tracing::warn!("places charge db error: {err:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "charge failed".to_string(),
-            )
-        }
-    };
-    error_resp(status, code, &message)
 }
 
 fn error_resp(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
@@ -196,4 +163,28 @@ fn error_resp(status: StatusCode, code: &str, message: &str) -> axum::response::
         Json(json!({ "error": { "code": code, "message": message } })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_daily_limit_resets_the_next_day() {
+        let day1 = NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
+        let day2 = NaiveDate::from_ymd_opt(2030, 1, 2).unwrap();
+        let acct = "places-test-reset";
+        assert!(take_lookup(acct, day1, 2));
+        assert!(take_lookup(acct, day1, 2));
+        assert!(!take_lookup(acct, day1, 2));
+        assert!(take_lookup(acct, day2, 2));
+    }
+
+    #[test]
+    fn accounts_have_separate_limits() {
+        let day = NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
+        assert!(take_lookup("places-test-a", day, 1));
+        assert!(!take_lookup("places-test-a", day, 1));
+        assert!(take_lookup("places-test-b", day, 1));
+    }
 }

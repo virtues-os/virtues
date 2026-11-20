@@ -7,7 +7,7 @@
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";
-	import type { RefSearchResult, SkillSummary, SuggestedQuestion } from "$lib/api/client";
+	import type { RefSearchResult, SkillSummary } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
@@ -33,8 +33,6 @@
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
 		skill = $bindable(null),
-		suggestion = null,
-		onSuggestion = undefined,
 		mentionQuery = $bindable(null),
 		inline = false,
 	}: {
@@ -53,11 +51,6 @@
 		 *  text. It stays after a send, so an applet that asks questions gets
 		 *  the answers, until the person takes it off. */
 		skill?: SkillSummary | null;
-		/** A question to offer in the empty field, in the placeholder's place. */
-		suggestion?: SuggestedQuestion | null;
-		/** What became of the suggestion: drawn (`shown`), sent (`used`), or
-		 *  put away with Escape (`dismissed`). */
-		onSuggestion?: (id: string, outcome: "shown" | "used" | "dismissed") => void;
 		/** What is typed after an open `@`, else null. The chat sky lights
 		 *  the moments it matches. */
 		mentionQuery?: string | null;
@@ -133,8 +126,8 @@
 	// markdown, as it is sent and as its draft is kept.
 	let inputEl: HTMLDivElement;
 	let editor: Composer | null = null;
-	// Set once the editor exists, so an effect that ran before it did (a
-	// suggestion that arrived first) runs again.
+	// Set once the editor exists, so an effect that ran before it did runs
+	// again.
 	let editorReady = $state(false);
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
@@ -243,57 +236,13 @@
 		editor?.setDisabled(next);
 	});
 
-	// The suggested question is drawn where the text would start, while the
-	// field is empty and nothing else is in the way. It is a layer of its
-	// own, not the placeholder, so a long question wraps and the field grows
-	// to hold it. Assistive tech reads it as the placeholder.
-	const ghost = $derived(
-		suggestion && inputIsEmpty && !skill && !trayOpen && !disabled ? suggestion : null,
-	);
-	let ghostHeight = $state(0);
-	// The suggestion filled in with Tab, until the message is sent.
-	let filledFrom: string | null = null;
-	const reportedShown = new Set<string>();
-
+	// The placeholder can change after the editor exists: the chat's mode
+	// decides it.
 	$effect(() => {
-		const visible = ghost ? "" : placeholder;
-		const spoken = ghost?.question ?? placeholder;
-		if (editorReady) editor?.setPlaceholder(visible, spoken);
+		const text = placeholder;
+		if (editorReady) editor?.setPlaceholder(text);
 	});
 
-	// Reported once it is drawn in a tab someone can see, so the ledger's
-	// "shown" means seen.
-	$effect(() => {
-		const id = ghost?.id;
-		if (!id || reportedShown.has(id) || document.visibilityState !== "visible") return;
-		reportedShown.add(id);
-		onSuggestion?.(id, "shown");
-	});
-
-	// The keycap after the question says Tab takes it. It retires once the
-	// person has sent a few suggestions, and shows only while the field has
-	// the keyboard, which is when Tab would work.
-	const HINT_KEY = "virtues.suggestionHint.used";
-	const HINT_RETIRES_AFTER = 3;
-	function hintUses(): number {
-		try {
-			return Number(localStorage.getItem(HINT_KEY) ?? 0) || 0;
-		} catch {
-			return 0;
-		}
-	}
-	let showKeyHint = $state(hintUses() < HINT_RETIRES_AFTER);
-
-	function useSuggestion() {
-		// Held first: filling the field empties `ghost` before the next line.
-		const used = ghost;
-		if (!used || !editor) return;
-		editor.fill(used.question, used.refs);
-		filledFrom = used.id;
-	}
-
-	// The field is as tall as its content, or as the question drawn in it.
-	let contentHeight = MIN_HEIGHT;
 	// Set once the text wraps, and kept until the field is empty. Going back
 	// to one row while text is in it would narrow the field and wrap it again.
 	let wrapped = $state(false);
@@ -301,18 +250,11 @@
 		if (inputIsEmpty) wrapped = false;
 	});
 	const oneRow = $derived(inline && !wrapped);
+	// The field is as tall as its content.
 	function setHeight(contentPx: number) {
-		contentHeight = contentPx;
 		if (contentPx > MIN_HEIGHT + 4) wrapped = true;
-		fitHeight(ghost ? ghostHeight : 0);
+		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
 	}
-	function fitHeight(ghostPx: number) {
-		const want = Math.max(contentHeight, ghostPx > 0 ? ghostPx + 4 : 0);
-		inputHeight.target = Math.min(Math.max(want, MIN_HEIGHT), MAX_HEIGHT);
-	}
-	$effect(() => {
-		fitHeight(ghost ? ghostHeight : 0);
-	});
 
 	function pickContext(result: RefSearchResult) {
 		// Always inline: a message attaches files through the attach path, so
@@ -397,23 +339,6 @@
 		}
 	}
 
-	// Tab takes the suggested question, Escape puts it away: only from the
-	// text itself, so Tab still moves between the composer's buttons. Caught
-	// before the editor, whose Tab moves focus and whose Escape blurs.
-	function onShellKeydownCapture(e: KeyboardEvent) {
-		if (!ghost || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || inComposition(e)) return;
-		if (!inputEl?.contains(e.target as Node)) return;
-		if (e.key === "Tab") {
-			e.preventDefault();
-			e.stopPropagation();
-			useSuggestion();
-		} else if (e.key === "Escape") {
-			e.preventDefault();
-			e.stopPropagation();
-			onSuggestion?.(ghost.id, "dismissed");
-		}
-	}
-
 	function handleSubmit() {
 		const typed = outgoingMessage(docText);
 		// A skill rides as the message's leading `/name`, which ChatView
@@ -422,18 +347,6 @@
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		onSubmit?.(content);
-		// Used means sent with the question still in it, not only filled in.
-		if (filledFrom && suggestion?.id === filledFrom && typed.includes(suggestion.question)) {
-			onSuggestion?.(filledFrom, "used");
-			try {
-				localStorage.setItem(HINT_KEY, String(hintUses() + 1));
-			} catch {
-				// Storage refused (private window): the hint keeps showing.
-			}
-			showKeyHint = hintUses() < HINT_RETIRES_AFTER;
-		}
-		filledFrom = null;
-
 		docText = "";
 		value = "";
 		editor?.setMarkdown("");
@@ -527,7 +440,6 @@
 		onfocusin={() => (focusWithin = true)}
 		onfocusout={onShellFocusOut}
 		onkeydown={onShellKeydown}
-		onkeydowncapture={onShellKeydownCapture}
 		role="textbox"
 		tabindex="-1"
 	>
@@ -606,27 +518,6 @@
 				     scrolls once the content passes the cap, so the caret scrolls
 				     into view through the nearest scrollable ancestor, as
 				     ProseMirror expects. -->
-				{#if ghost}
-					<div class="ghost" bind:offsetHeight={ghostHeight}>
-						<span aria-hidden="true">{ghost.question}</span>
-						{#if mobileLayout.isMobile}
-							<!-- A phone has no Tab: the question is taken with a tap.
-							     mousedown is held back so the field keeps focus. -->
-							<button
-								type="button"
-								class="ghost-use"
-								onmousedown={(e) => e.preventDefault()}
-								onclick={(e) => {
-									e.stopPropagation();
-									useSuggestion();
-								}}
-								aria-label="Use the suggested question: {ghost.question}"
-							>Use</button>
-						{:else if showKeyHint && isFocused}
-							<kbd class="ghost-key" aria-hidden="true">tab</kbd>
-						{/if}
-					</div>
-				{/if}
 				<div
 					id="chat-input"
 					bind:this={inputEl}
@@ -918,47 +809,6 @@
 		color: var(--color-foreground);
 	}
 
-	/* The suggested question, drawn where the first character would go
-	   (the field's 6px plus the paragraph's 4px, and its 2px top), in the
-	   placeholder's color. Clicks pass through to the field. */
-	.ghost {
-		position: absolute;
-		top: 0.125rem;
-		left: 0.625rem;
-		right: 0.625rem;
-		font-size: 1rem;
-		line-height: 1.5rem;
-		color: color-mix(in srgb, var(--color-foreground-subtle) 60%, transparent);
-		overflow-wrap: anywhere;
-		pointer-events: none;
-	}
-
-	/* A keycap that sits in the line after the question and wraps with it. */
-	.ghost-key {
-		display: inline-block;
-		margin-left: 0.375rem;
-		padding: 0 0.3125rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		font-family: inherit;
-		font-size: 0.6875rem;
-		line-height: 1.125rem;
-		vertical-align: 0.0625rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.ghost-use {
-		margin-left: 0.375rem;
-		padding: 0 0.4375rem;
-		border-radius: var(--radius-sm);
-		background: var(--fill-bg);
-		font-size: 0.8125rem;
-		line-height: 1.375rem;
-		color: var(--color-foreground);
-		pointer-events: auto;
-		cursor: pointer;
-	}
-
 	.chat-input {
 		flex: 1;
 		min-width: 0;
@@ -1013,8 +863,7 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
-	/* Softer than the subtle ink, so the empty field sits back. The
-	   suggested question above uses the same color. */
+	/* Softer than the subtle ink, so the empty field sits back. */
 	.chat-input :global(.composer-field p.is-editor-empty:first-child::before) {
 		content: attr(data-placeholder);
 		float: left;

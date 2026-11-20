@@ -20,6 +20,7 @@
 //! account until one has the conversation. A grant made before these scopes
 //! existed fails with a message that says to reconnect Google in Sources.
 
+use crate::api::google_api::Route;
 use std::future::Future;
 
 use base64::Engine;
@@ -34,8 +35,6 @@ pub const LABEL_TOOL: &str = "email_label";
 pub const DRAFT_TOOL: &str = "email_draft";
 pub const CALENDAR_TOOL: &str = "calendar_event";
 
-const GMAIL: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
-const CALENDAR: &str = "https://www.googleapis.com/calendar/v3/calendars";
 
 /// The private extended property that marks an event this tool created.
 const CREATED_BY: &str = "virtues";
@@ -61,6 +60,9 @@ pub fn is_delete(arguments: &Value) -> bool {
 struct Account {
     credential_id: String,
     email: Option<String>,
+    /// Set when the sign-in was made through virtues-api, which then takes
+    /// this account's Google calls (`api::google_api`).
+    connection: Option<String>,
 }
 
 /// Why a Google call failed.
@@ -94,8 +96,8 @@ fn scope_message(area: Area) -> String {
 /// The owner's active Google sign-ins, oldest first. With `account`, only
 /// the one with that address.
 async fn accounts(pool: &PgPool, account: Option<&str>) -> Result<Vec<Account>, String> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT id, metadata->>'email' FROM credentials \
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, metadata->>'email', metadata->>'api_connection_id' FROM credentials \
           WHERE kind = 'source' AND key = 'google' AND status = 'active' \
           ORDER BY created_at",
     )
@@ -104,7 +106,7 @@ async fn accounts(pool: &PgPool, account: Option<&str>) -> Result<Vec<Account>, 
     .map_err(|e| format!("Could not read your Google sign-ins: {e}"))?;
     let all: Vec<Account> = rows
         .into_iter()
-        .map(|(credential_id, email)| Account { credential_id, email })
+        .map(|(credential_id, email, connection)| Account { credential_id, email, connection })
         .collect();
     if all.is_empty() {
         return Err("Google is not connected. Tell the owner to connect Google in Sources.".into());
@@ -127,20 +129,26 @@ async fn accounts(pool: &PgPool, account: Option<&str>) -> Result<Vec<Account>, 
     Ok(matched)
 }
 
-/// A current access token for one sign-in, refreshed first if it is about
-/// to expire.
-async fn token(pool: &PgPool, account: &Account) -> Result<String, Failure> {
+/// Where one sign-in's calls go and what to send as the bearer: Google's
+/// hosts with a current access token, refreshed first if it is about to
+/// expire, or virtues-api for a sign-in made through it.
+async fn route(pool: &PgPool, account: &Account) -> Result<Route, Failure> {
+    let reconnect = |why: String| Failure::Other(format!("{why}. Reconnect Google in Sources."));
+    if let Some(connection) = &account.connection {
+        let metadata = json!({ crate::api::google_api::CONNECTION_KEY: connection });
+        return crate::api::google_api::route(pool, &metadata, &Value::Null)
+            .await
+            .map_err(|e| Failure::Other(format!("Could not reach Google for this sign-in: {e}")));
+    }
     virtues_helpers::auth::ensure_fresh(pool, &account.credential_id)
         .await
         .map_err(|e| Failure::Other(format!("Could not refresh the Google sign-in: {e}")))?;
     let secrets = virtues_helpers::auth::vault::read_credential_secrets(pool, &account.credential_id)
         .await
         .map_err(|e| Failure::Other(format!("Could not read the Google sign-in: {e}")))?;
-    secrets
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| Failure::Other("The Google sign-in has no access token. Reconnect Google in Sources.".into()))
+    crate::api::google_api::route(pool, &json!({}), &secrets)
+        .await
+        .map_err(|e| reconnect(format!("The Google sign-in cannot be used ({e})")))
 }
 
 fn client() -> Result<&'static reqwest::Client, Failure> {
@@ -200,7 +208,7 @@ fn classify(status: u16, body: &str) -> Failure {
     Failure::Other(format!("Google answered {status}: {message}"))
 }
 
-/// Run `op` with each account's token until one has what it needs. Returns
+/// Run `op` with each account's route until one has what it needs. Returns
 /// the answer and the account that gave it.
 async fn on_each_account<F, Fut>(
     pool: &PgPool,
@@ -210,17 +218,17 @@ async fn on_each_account<F, Fut>(
     op: F,
 ) -> Result<(Value, Account), String>
 where
-    F: Fn(String) -> Fut,
+    F: Fn(Route) -> Fut,
     Fut: Future<Output = Result<Value, Failure>>,
 {
     for account in accounts {
-        let token = match token(pool, account).await {
+        let route = match route(pool, account).await {
             Ok(t) => t,
             Err(Failure::Other(why)) => return Err(why),
             Err(Failure::Scope) => return Err(scope_message(area)),
             Err(Failure::NotFound) => continue,
         };
-        match op(token).await {
+        match op(route).await {
             Ok(v) => return Ok((v, account.clone())),
             Err(Failure::NotFound) => continue,
             Err(Failure::Scope) => return Err(scope_message(area)),
@@ -291,12 +299,12 @@ async fn conversations(pool: &PgPool, refs: &[String]) -> Result<(Vec<Conversati
     Ok((found, missing))
 }
 
-async fn modify_thread(token: String, thread: String, add: Vec<String>, remove: Vec<String>) -> Result<Value, Failure> {
+async fn modify_thread(route: Route, thread: String, add: Vec<String>, remove: Vec<String>) -> Result<Value, Failure> {
     let client = client()?;
     send(
         client
-            .post(format!("{GMAIL}/threads/{thread}/modify"))
-            .bearer_auth(token)
+            .post(format!("{}/threads/{thread}/modify", route.gmail))
+            .bearer_auth(&route.token)
             .json(&json!({ "addLabelIds": add, "removeLabelIds": remove })),
     )
     .await
@@ -335,8 +343,8 @@ pub async fn archive(pool: &PgPool, args: &Value, _context: &ToolContext) -> Too
     let mut failed = Vec::new();
     for conversation in &found {
         let thread = conversation.conversation_id.clone();
-        let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such conversation.", |token| {
-            modify_thread(token, thread.clone(), add.clone(), remove.clone())
+        let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such conversation.", |route| {
+            modify_thread(route, thread.clone(), add.clone(), remove.clone())
         })
         .await;
         match result {
@@ -395,12 +403,12 @@ async fn record_archive(pool: &PgPool, conversation_id: &str, undo: bool, reason
 
 /// A label name resolved to Gmail's id. `create` makes a user label that
 /// does not exist yet.
-async fn label_ids(token: &str, names: &[String], create: bool) -> Result<Vec<String>, Failure> {
+async fn label_ids(route: &Route, names: &[String], create: bool) -> Result<Vec<String>, Failure> {
     if names.is_empty() {
         return Ok(Vec::new());
     }
     let client = client()?;
-    let listed = send(client.get(format!("{GMAIL}/labels")).bearer_auth(token)).await?;
+    let listed = send(client.get(format!("{}/labels", route.gmail)).bearer_auth(&route.token)).await?;
     let labels = listed.get("labels").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     let mut ids = Vec::new();
     for name in names {
@@ -414,8 +422,8 @@ async fn label_ids(token: &str, names: &[String], create: bool) -> Result<Vec<St
             None if create => {
                 let made = send(
                     client
-                        .post(format!("{GMAIL}/labels"))
-                        .bearer_auth(token)
+                        .post(format!("{}/labels", route.gmail))
+                        .bearer_auth(&route.token)
                         .json(&json!({ "name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show" })),
                 )
                 .await?;
@@ -469,12 +477,12 @@ pub async fn label(pool: &PgPool, args: &Value, _context: &ToolContext) -> ToolR
     let mut failed = Vec::new();
     for conversation in &found {
         let thread = conversation.conversation_id.clone();
-        let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such conversation.", |token| {
+        let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such conversation.", |route| {
             let (thread, add, remove) = (thread.clone(), add.clone(), remove.clone());
             async move {
-                let add_ids = label_ids(&token, &add, true).await?;
-                let remove_ids = label_ids(&token, &remove, false).await?;
-                modify_thread(token, thread, add_ids.clone(), remove_ids.clone()).await?;
+                let add_ids = label_ids(&route, &add, true).await?;
+                let remove_ids = label_ids(&route, &remove, false).await?;
+                modify_thread(route, thread, add_ids.clone(), remove_ids.clone()).await?;
                 Ok(json!({ "add": add_ids, "remove": remove_ids }))
             }
         })
@@ -642,7 +650,7 @@ pub async fn draft(pool: &PgPool, args: &Value, _context: &ToolContext) -> ToolR
     let cc = list_arg(args, "cc");
     let subject = str_arg(args, "subject").map(String::from);
 
-    let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such email or draft.", |token| {
+    let result = on_each_account(pool, &accounts, Area::Mail, "Gmail has no such email or draft.", |route| {
         let (reply_to, replace, to, cc, subject, body) =
             (reply_to.clone(), replace.clone(), to.clone(), cc.clone(), subject.clone(), body.clone());
         async move {
@@ -652,8 +660,8 @@ pub async fn draft(pool: &PgPool, args: &Value, _context: &ToolContext) -> ToolR
             if let Some(id) = &reply_to {
                 let original = send(
                     client
-                        .get(format!("{GMAIL}/messages/{id}"))
-                        .bearer_auth(&token)
+                        .get(format!("{}/messages/{id}", route.gmail))
+                        .bearer_auth(&route.token)
                         .query(&[
                             ("format", "metadata"),
                             ("metadataHeaders", "Message-ID"),
@@ -689,8 +697,8 @@ pub async fn draft(pool: &PgPool, args: &Value, _context: &ToolContext) -> ToolR
                 Some(id) => {
                     let existing = send(
                         client
-                            .get(format!("{GMAIL}/drafts/{id}"))
-                            .bearer_auth(&token)
+                            .get(format!("{}/drafts/{id}", route.gmail))
+                            .bearer_auth(&route.token)
                             .query(&[("format", "metadata"), ("metadataHeaders", DRAFT_HEADER)]),
                     )
                     .await?;
@@ -703,11 +711,11 @@ pub async fn draft(pool: &PgPool, args: &Value, _context: &ToolContext) -> ToolR
                             "That draft was not written by Virtues, so it stays as it is. Write a new draft instead.".into(),
                         ));
                     }
-                    client.put(format!("{GMAIL}/drafts/{id}")).json(&json!({ "id": id, "message": message }))
+                    client.put(format!("{}/drafts/{id}", route.gmail)).json(&json!({ "id": id, "message": message }))
                 }
-                None => client.post(format!("{GMAIL}/drafts")).json(&json!({ "message": message })),
+                None => client.post(format!("{}/drafts", route.gmail)).json(&json!({ "message": message })),
             };
-            let saved = send(request.bearer_auth(&token)).await?;
+            let saved = send(request.bearer_auth(&route.token)).await?;
             Ok(json!({
                 "draft_id": saved.get("id"),
                 "conversation_id": saved.pointer("/message/threadId"),
@@ -845,12 +853,12 @@ pub async fn calendar_event(pool: &PgPool, args: &Value, context: &ToolContext) 
             }
             fields.insert("extendedProperties".into(), json!({ "private": { "created_by": CREATED_BY } }));
             let body = Value::Object(fields);
-            let url = format!("{CALENDAR}/{}/events", encode_path(&calendar));
-            on_each_account(pool, &accounts[..1], Area::Calendar, "Google has no such calendar.", |token| {
-                let (url, body) = (url.clone(), body.clone());
+            let path = format!("{}/events", encode_path(&calendar));
+            on_each_account(pool, &accounts[..1], Area::Calendar, "Google has no such calendar.", |route| {
+                let (url, body) = (format!("{}/calendars/{path}", route.calendar), body.clone());
                 async move {
                     // `sendUpdates=none`: no one is emailed about the event.
-                    send(client()?.post(url).bearer_auth(token).query(&[("sendUpdates", "none")]).json(&body)).await
+                    send(client()?.post(url).bearer_auth(&route.token).query(&[("sendUpdates", "none")]).json(&body)).await
                 }
             })
             .await
@@ -863,24 +871,24 @@ pub async fn calendar_event(pool: &PgPool, args: &Value, context: &ToolContext) 
                 Ok(t) => t,
                 Err(why) => return ToolResult::error(why),
             };
-            let url = format!("{CALENDAR}/{}/events/{}", encode_path(&calendar), encode_path(&event));
+            let path = format!("{}/events/{}", encode_path(&calendar), encode_path(&event));
             if action == "update" {
                 if fields.is_empty() {
                     return ToolResult::error("Say what to change: title, start, end, location or description.");
                 }
                 let body = Value::Object(fields);
-                on_each_account(pool, &accounts, Area::Calendar, "Google has no such event.", |token| {
-                    let (url, body) = (url.clone(), body.clone());
+                on_each_account(pool, &accounts, Area::Calendar, "Google has no such event.", |route| {
+                    let (url, body) = (format!("{}/calendars/{path}", route.calendar), body.clone());
                     async move {
-                        send(client()?.patch(url).bearer_auth(token).query(&[("sendUpdates", "none")]).json(&body)).await
+                        send(client()?.patch(url).bearer_auth(&route.token).query(&[("sendUpdates", "none")]).json(&body)).await
                     }
                 })
                 .await
             } else {
-                on_each_account(pool, &accounts, Area::Calendar, "Google has no such event.", |token| {
-                    let url = url.clone();
+                on_each_account(pool, &accounts, Area::Calendar, "Google has no such event.", |route| {
+                    let url = format!("{}/calendars/{path}", route.calendar);
                     async move {
-                        send(client()?.delete(&url).bearer_auth(token).query(&[("sendUpdates", "none")])).await?;
+                        send(client()?.delete(&url).bearer_auth(&route.token).query(&[("sendUpdates", "none")])).await?;
                         Ok(json!({ "id": event_target_id(&url) }))
                     }
                 })

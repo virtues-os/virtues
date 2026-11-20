@@ -1,5 +1,10 @@
 # Authoring applets
 
+"Applet" is the code's word and never appears on screen. People see three
+things: a **site** is what they made with the assistant, a **job** is what
+their server runs for itself, and a prompt they can start from chat is in the
+`/` menu. Write "site" in any name, description or reply a person reads.
+
 An applet is a short file, `SKILL.md` in the
 [Agent Skills](https://agentskills.io/specification) format: a name, a
 one-sentence description, and optionally when it starts, a SQL check that
@@ -108,6 +113,17 @@ A check on new data, with no model call unless a reading is high:
 - **Two cadences are two applets**, each restating what it needs.
 - **No persona applets.** "Reply to Mom as me" is not something an applet can
   do; offer one that drafts replies as pages for the owner to send.
+
+- **A view is a whole page, written in one document.** Make one when the
+  person asks to see or keep track of something. It opens beside the chat and
+  they keep it, so give it a title, a sentence that says what the data shows,
+  and then the chart or table. A view cannot reach any other host: a
+  stylesheet, script, font or image from a CDN never arrives, and setup
+  refuses a view that names one. Write the styles and scripts in the
+  document and draw charts with inline SVG or canvas.
+- **A view shows what was recorded.** Dates, values, and a chart of them. It
+  has no streaks, no count toward a goal and no "days since", because someone
+  in recovery may be the one reading it.
 
 Examples that ship: `applets/morning-examen/` (a scheduled prompt with a
 limit) and `applets/dot-cloud/` (a view with no prompt).

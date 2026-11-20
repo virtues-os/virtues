@@ -187,6 +187,13 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
         findings.push(finding("view", "the view is over 48 KB", None));
     }
     if let Some(view) = &draft.view {
+        if let Some(host) = other_host(view) {
+            findings.push(finding(
+                "view",
+                &format!("the view loads or links {host}, and a view cannot reach any other host"),
+                Some("write its styles and scripts in the document and draw charts with inline SVG or canvas"),
+            ));
+        }
         for file in ["virtues.css", "virtues.js"] {
             if view.contains(&format!("\"/{file}\"")) || view.contains(&format!("'/{file}'")) {
                 findings.push(finding(
@@ -423,7 +430,8 @@ pub async fn execute(
     if has_tables {
         capabilities.push(format!("keeps its own tables in applet_{}", plan.slug));
     }
-    if draft.view.is_some() || folder.join("view.html").is_file() {
+    let has_view = draft.view.is_some() || folder.join("view.html").is_file();
+    if has_view {
         capabilities.push("has a view".into());
     }
     // Only an applet with a prompt spends anything. The per-run figure is a
@@ -443,6 +451,7 @@ pub async fn execute(
         "schedule": schedule,
         "lifecycle": until.as_deref().map(|u| if u.eq_ignore_ascii_case("once") { "once" } else { "until" }).unwrap_or("forever"),
         "capabilities": capabilities,
+        "has_view": has_view,
         "estimated_cost_per_day": est_cost_per_day,
         "run_it_with": chat_started.then(|| format!("/{spec}")),
         "skill_md": plan.text,
@@ -472,6 +481,29 @@ fn spec_name(name: &str) -> String {
         }
     }
     out.trim_end_matches('-').chars().take(64).collect::<String>().trim_end_matches('-').to_string()
+}
+
+/// The first address in a view that names another host, in a `src`, an
+/// `href`, a CSS `url()` or an `@import`. The view's CSP allows only the
+/// server itself, so a stylesheet, script, font or image from anywhere else
+/// never arrives and the page renders blank or bare.
+fn other_host(view: &str) -> Option<String> {
+    let lower = view.to_ascii_lowercase();
+    let mut first: Option<usize> = None;
+    for lead in ["src=", "href=", "url(", "@import "] {
+        for (at, _) in lower.match_indices(lead) {
+            let rest = lower[at + lead.len()..].trim_start_matches(['"', '\'', ' ']);
+            if rest.starts_with("http://") || rest.starts_with("https://") || rest.starts_with("//") {
+                let start = lower.len() - rest.len();
+                first = Some(first.map_or(start, |f| f.min(start)));
+            }
+        }
+    }
+    let start = first?;
+    let end = view[start..]
+        .find(|c: char| c == '"' || c == '\'' || c == ')' || c == '>' || c.is_whitespace())
+        .map_or(view.len(), |e| start + e);
+    Some(view[start..end].chars().take(80).collect())
 }
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
@@ -746,6 +778,16 @@ mod tests {
         let findings = plan(&pool, &draft).await.err().expect("refused");
         assert!(findings.iter().any(|f| f["field"] == "view" && f["error"].as_str().unwrap().contains("/virtues.css")), "{findings:?}");
         assert!(!findings.iter().any(|f| f["error"].as_str().unwrap().contains("/virtues.js")), "{findings:?}");
+    }
+
+    /// A view that loads from another host is a finding that names the host.
+    #[test]
+    fn a_view_that_names_another_host_is_found() {
+        let cdn = "<link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"https://cdn.example.com/chart.js\"></script>";
+        assert_eq!(other_host(cdn).as_deref(), Some("https://cdn.example.com/chart.js"));
+        assert_eq!(other_host("<style>@import url(//fonts.example.com/a.css);</style>").as_deref(), Some("//fonts.example.com/a.css"));
+        let own = "<link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"virtues.js\"></script><p>See https://example.com in the text.</p>";
+        assert_eq!(other_host(own), None);
     }
 
     /// A typo in a table name is the failure the authoring contract calls out

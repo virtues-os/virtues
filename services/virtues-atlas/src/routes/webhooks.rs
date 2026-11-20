@@ -98,9 +98,9 @@ async fn handle_webhook(
             // Renewal: SET the wallet to the monthly allotment. If the credit
             // fails (transient virtues-api blip), propagate the error so the
             // webhook 500s and Stripe retries (the idempotency row is released
-            // above). `renew_wallet` returns Ok when the customer hasn't claimed
-            // yet, so the first-invoice-before-claim race doesn't retry forever
-            // (claim funds the wallet itself).
+            // above). `renew_wallet` returns Ok when the customer has no row yet,
+            // so the first-invoice-before-done-page race doesn't retry forever
+            // (the done page funds the wallet itself).
             match r {
                 Ok(()) => match event.data.object.get("customer").and_then(|v| v.as_str()) {
                     Some(cust) => renew_wallet(&state, cust).await,
@@ -112,10 +112,16 @@ async fn handle_webhook(
         // Handle dunning so the active-sub gate (credits/auto-topup) closes on
         // failed renewals.
         "invoice.payment_failed" => set_status(&state.pool, &event.data.object, "past_due").await,
-        // Pre-order deposit settled. No-op for subscription checkouts (those
-        // settle via /claim + invoice.paid); only `metadata.type ==
-        // "preorder_deposit"` sessions are recorded.
-        "checkout.session.completed" => record_preorder(&state, &event.data.object).await,
+        // A subscription checkout is finished here as well as on the success
+        // page, so a payer who closes the tab before the redirect still gets
+        // their subscription and wallet. The async event covers payment
+        // methods that settle after the session completes.
+        "checkout.session.completed" | "checkout.session.async_payment_succeeded" => {
+            match event.data.object.get("mode").and_then(|v| v.as_str()) {
+                Some("subscription") => finish_subscription_checkout(&state, &event.data.object).await,
+                _ => record_preorder(&state, &event.data.object).await,
+            }
+        }
         // A refund or dispute touches only the pre-order it paid for. It never
         // moves the subscription: a customer's charges include credit top-ups,
         // and a status keyed on the customer cannot tell a refunded top-up from
@@ -123,6 +129,9 @@ async fn handle_webhook(
         // subscriber out of the portal and top-ups. Subscription status follows
         // the subscription's own events above (`customer.subscription.*`,
         // `invoice.*`), which Stripe sends when a refund really ends one.
+        // A top-up that settled after its request returned (3-D Secure), or
+        // whose credit failed there. Already-credited ones are a no-op.
+        "payment_intent.succeeded" => credit_settled_topup(&state, &event.data.object).await,
         "charge.refunded" | "charge.dispute.created" => refund_preorder(&state.pool, &event.data.object).await,
         other => {
             tracing::debug!(event_type = %other, "stripe webhook ignored");
@@ -187,9 +196,52 @@ async fn record_event(pool: &PgPool, event_id: &str, event_type: &str) -> anyhow
     Ok(res.rows_affected() == 1)
 }
 
+/// Credit a top-up PaymentIntent from `payment_intent.succeeded`, once.
+/// Only PaymentIntents atlas stamped as top-ups are handled.
+async fn credit_settled_topup(state: &AppState, object: &Value) -> anyhow::Result<()> {
+    let md = object.get("metadata");
+    let field = |k: &str| md.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    if field("kind") != Some("topup") {
+        return Ok(());
+    }
+    let (Some(pi_id), Some(customer), Some(account_id), Some(credit), Some(charged)) = (
+        object.get("id").and_then(|v| v.as_str()),
+        object.get("customer").and_then(|v| v.as_str()),
+        field("account_id"),
+        field("credit_micros").and_then(|v| v.parse::<i64>().ok()),
+        object.get("amount_received").and_then(|v| v.as_i64()),
+    ) else {
+        tracing::error!("top-up PaymentIntent event is missing fields; reconcile by hand");
+        return Ok(());
+    };
+    match super::credits::credit_topup_once(state, pi_id, customer, account_id, charged * 10_000, credit, true).await {
+        Ok(true) => {
+            tracing::info!(payment_intent = %pi_id, "top-up credited from its webhook");
+            Ok(())
+        }
+        Ok(false) => Ok(()),
+        Err(()) => anyhow::bail!("top-up {pi_id} credit failed; retrying"),
+    }
+}
+
+/// Finalize a subscription checkout from its webhook. Only a transient
+/// failure is an error (Stripe retries it); the rest are settled or need a
+/// person, and retrying them would change nothing.
+async fn finish_subscription_checkout(state: &AppState, object: &Value) -> anyhow::Result<()> {
+    use super::account::{finalize_subscription_checkout, FinalizeFail};
+    let Some(session_id) = object.get("id").and_then(|v| v.as_str()) else {
+        anyhow::bail!("checkout session event without an id");
+    };
+    match finalize_subscription_checkout(state, session_id).await {
+        Ok(()) | Err(FinalizeFail::AlreadyDone) | Err(FinalizeFail::NotPaidYet) => Ok(()),
+        Err(FinalizeFail::Unbound) | Err(FinalizeFail::MissingAccount) => Ok(()),
+        Err(FinalizeFail::Retry) => anyhow::bail!("subscription checkout {session_id} did not finish; retrying"),
+    }
+}
+
 /// Record a completed pre-order deposit. Only sessions stamped with
 /// `metadata.type == "preorder_deposit"` are handled here; subscription
-/// checkouts settle via `/claim` + invoice events and are ignored. Idempotent
+/// checkouts go to `finish_subscription_checkout`. Idempotent
 /// on the session id (the webhook-event ledger also dedups deliveries).
 async fn record_preorder(state: &AppState, object: &Value) -> anyhow::Result<()> {
     let is_deposit = object
@@ -301,15 +353,32 @@ async fn refund_preorder(pool: &PgPool, object: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Set status by customer id (cancellation and dunning).
+/// Which subscription rows an event is about: its own subscription when the
+/// event names one (a subscription object's `id`, an invoice's
+/// `subscription`), else every subscription of its customer. Scoping by
+/// customer alone would mark every subscription of that customer when one
+/// of them is cancelled.
+fn event_scope(object: &Value) -> anyhow::Result<(&'static str, String)> {
+    let sub = if object.get("object").and_then(|v| v.as_str()) == Some("subscription") {
+        object.get("id").and_then(|v| v.as_str())
+    } else {
+        object.get("subscription").and_then(|v| v.as_str())
+    };
+    match sub.filter(|s| !s.is_empty()) {
+        Some(id) => Ok(("stripe_subscription_id", id.to_string())),
+        None => Ok(("stripe_customer_id", extract_customer(object)?)),
+    }
+}
+
+/// Set status (cancellation and dunning).
 async fn set_status(pool: &PgPool, object: &Value, status: &str) -> anyhow::Result<()> {
-    let customer_id = extract_customer(object)?;
-    sqlx::query("UPDATE subscriptions SET status = $1 WHERE stripe_customer_id = $2")
+    let (col, id) = event_scope(object)?;
+    sqlx::query(&format!("UPDATE subscriptions SET status = $1 WHERE {col} = $2"))
         .bind(status)
-        .bind(&customer_id)
+        .bind(&id)
         .execute(pool)
         .await?;
-    tracing::info!(customer_id = %customer_id, status, "subscription status updated");
+    tracing::info!(scope = col, id = %id, status, "subscription status updated");
     Ok(())
 }
 
@@ -322,7 +391,7 @@ async fn set_period_and_status(
     status: Option<&str>,
     explicit_period: Option<chrono::DateTime<Utc>>,
 ) -> anyhow::Result<()> {
-    let customer_id = extract_customer(object)?;
+    let (col, id) = event_scope(object)?;
     let period_end = explicit_period.or_else(|| {
         object
             .get("current_period_end")
@@ -332,30 +401,29 @@ async fn set_period_and_status(
 
     match (period_end, status) {
         (Some(end), Some(st)) => {
-            sqlx::query(
+            sqlx::query(&format!(
                 "UPDATE subscriptions SET current_period_end = $1, status = $2, updated_at = now() \
-                 WHERE stripe_customer_id = $3",
-            )
+                 WHERE {col} = $3"
+            ))
             .bind(end)
             .bind(st)
-            .bind(&customer_id)
+            .bind(&id)
             .execute(pool)
             .await?;
         }
         (Some(end), None) => {
-            sqlx::query(
-                "UPDATE subscriptions SET current_period_end = $1, updated_at = now() \
-                 WHERE stripe_customer_id = $2",
-            )
+            sqlx::query(&format!(
+                "UPDATE subscriptions SET current_period_end = $1, updated_at = now() WHERE {col} = $2"
+            ))
             .bind(end)
-            .bind(&customer_id)
+            .bind(&id)
             .execute(pool)
             .await?;
         }
         (None, Some(st)) => {
-            sqlx::query("UPDATE subscriptions SET status = $1 WHERE stripe_customer_id = $2")
+            sqlx::query(&format!("UPDATE subscriptions SET status = $1 WHERE {col} = $2"))
                 .bind(st)
-                .bind(&customer_id)
+                .bind(&id)
                 .execute(pool)
                 .await?;
         }
@@ -386,4 +454,20 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
         Json(json!({ "error": { "code": code, "message": message } })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::event_scope;
+    use serde_json::json;
+
+    #[test]
+    fn an_event_is_scoped_to_its_own_subscription() {
+        let sub = json!({ "object": "subscription", "id": "sub_1", "customer": "cus_1" });
+        assert_eq!(event_scope(&sub).unwrap(), ("stripe_subscription_id", "sub_1".to_string()));
+        let inv = json!({ "object": "invoice", "id": "in_1", "subscription": "sub_2", "customer": "cus_1" });
+        assert_eq!(event_scope(&inv).unwrap(), ("stripe_subscription_id", "sub_2".to_string()));
+        let bare = json!({ "object": "invoice", "id": "in_2", "customer": "cus_1" });
+        assert_eq!(event_scope(&bare).unwrap(), ("stripe_customer_id", "cus_1".to_string()));
+    }
 }

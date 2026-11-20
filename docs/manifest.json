@@ -44,7 +44,7 @@
 				{ "slug": "use/asking", "title": "Asking questions", "planned": true },
 				{ "slug": "use/wiki", "title": "People & places", "planned": true },
 				{ "slug": "use/pages-and-projects", "title": "Pages & projects", "planned": true },
-				{ "slug": "use/applets", "title": "Applets", "planned": true }
+				{ "slug": "use/sites", "title": "Sites", "planned": true }
 			]
 		},
 		{
@@ -61,7 +61,7 @@
 		{
 			"title": "Build on it",
 			"pages": [
-				{ "slug": "build/applets", "title": "Writing an applet", "planned": true },
+				{ "slug": "build/sites", "title": "Writing a site", "planned": true },
 				{ "slug": "build/api", "title": "The API", "planned": true },
 				{ "slug": "build/schema", "title": "Schema & ontology", "planned": true }
 			]

@@ -1509,29 +1509,37 @@ fn is_draft(r: &serde_json::Value) -> bool {
     r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
-/// Newest stable (non-prerelease) box release tag. The releases list is
-/// newest-first, so the first match wins.
+/// The newest box release on a channel: the one published last.
+///
+/// GitHub's list is not reliably newest-first. With `v0.2.0-staging.10`
+/// published fifteen hours after `v0.2.0-staging.9`, the list still put
+/// `.9` first, and taking the first match left prerelease boxes believing
+/// `.9` was the newest. `published_at` is an ISO 8601 UTC time, so the
+/// strings order as the times do. A release without one sorts last, and the
+/// list's order breaks a tie.
+fn newest_box_tag(rels: &[serde_json::Value], prerelease: bool) -> Option<String> {
+    let mut best: Option<(&str, &str)> = None;
+    for r in rels.iter().filter(|r| !is_draft(r) && is_prerelease(r) == prerelease) {
+        let Some(tag) = release_tag(r).filter(|t| is_box_tag(t)) else { continue };
+        let published = r.get("published_at").and_then(|v| v.as_str()).unwrap_or("");
+        if best.is_none_or(|(_, at)| published > at) {
+            best = Some((tag, published));
+        }
+    }
+    best.map(|(tag, _)| tag.to_string())
+}
+
+/// Newest stable (non-prerelease) box release tag.
 pub(crate) async fn fetch_latest_tag() -> Result<String, crate::Error> {
-    let rels = list_releases().await?;
-    rels.iter()
-        .filter(|r| !is_draft(r) && !is_prerelease(r))
-        .filter_map(release_tag)
-        .find(|t| is_box_tag(t))
-        .map(|s| s.to_string())
+    newest_box_tag(&list_releases().await?, false)
         .ok_or_else(|| crate::Error::Other("no stable Linux release found".to_string()))
 }
 
 /// Newest *prerelease* box tag (the staging/edge channel).
 pub(crate) async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
-    let rels = list_releases().await?;
-    rels.iter()
-        .filter(|r| !is_draft(r) && is_prerelease(r))
-        .filter_map(release_tag)
-        .find(|t| is_box_tag(t))
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            crate::Error::Other("no Linux prerelease found in the latest 30 releases".to_string())
-        })
+    newest_box_tag(&list_releases().await?, true).ok_or_else(|| {
+        crate::Error::Other("no Linux prerelease found in the latest 30 releases".to_string())
+    })
 }
 
 /// The commit a release tag points at — without downloading the release.
@@ -1984,6 +1992,23 @@ mod tests {
         ] {
             assert!(!is_box_tag(tag), "{tag} is not a box release");
         }
+    }
+
+    /// GitHub listed `.9` ahead of `.10`; the later publish time decides.
+    #[test]
+    fn the_newest_release_is_the_one_published_last_whatever_the_list_order() {
+        let rels = serde_json::json!([
+            { "tag_name": "v0.2.0-staging.9", "prerelease": true, "draft": false, "published_at": "2026-11-20T03:31:04Z" },
+            { "tag_name": "v0.2.0-staging.10", "prerelease": true, "draft": false, "published_at": "2026-11-20T18:06:59Z" },
+            { "tag_name": "v0.2.0-staging.11", "prerelease": true, "draft": true, "published_at": null },
+            { "tag_name": "mac-v9.9.9", "prerelease": true, "draft": false, "published_at": "2026-11-21T00:00:00Z" },
+            { "tag_name": "v0.1.1", "prerelease": false, "draft": false, "published_at": "2026-10-01T00:00:00Z" },
+            { "tag_name": "v0.1.0", "prerelease": false, "draft": false, "published_at": "2026-09-01T00:00:00Z" },
+        ]);
+        let rels = rels.as_array().unwrap();
+        assert_eq!(newest_box_tag(rels, true).as_deref(), Some("v0.2.0-staging.10"));
+        assert_eq!(newest_box_tag(rels, false).as_deref(), Some("v0.1.1"));
+        assert_eq!(newest_box_tag(&[], true), None);
     }
 
     #[test]

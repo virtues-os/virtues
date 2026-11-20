@@ -27,6 +27,14 @@ pub fn stripe_error_message(body: &str) -> String {
         .unwrap_or_else(|| "Stripe rejected the request".to_string())
 }
 
+/// Who a subscription Checkout Session bills: the account's existing Stripe
+/// customer, or a new one Stripe creates with the account's email pre-filled.
+#[derive(Debug, Clone, Copy)]
+pub enum CheckoutCustomer<'a> {
+    Existing(&'a str),
+    Email(&'a str),
+}
+
 #[derive(Clone)]
 pub struct StripeClient {
     http: Client,
@@ -51,7 +59,7 @@ impl StripeClient {
     /// Retrieve a checkout session by ID with `line_items` expanded so the
     /// caller can validate the session was for *our* configured price (a
     /// cheap-price-on-the-same-account attack would otherwise pass our paid
-    /// gate). Used in `POST /claim` and `GET /link/done`.
+    /// gate). Used by `claim::verify_and_claim_session`.
     pub async fn retrieve_checkout_session(
         &self,
         session_id: &str,
@@ -108,52 +116,36 @@ impl StripeClient {
             .context("parse checkout session json")
     }
 
-    /// Create a subscription Checkout Session for the device-link flow. The
-    /// `user_code` is stamped into metadata so the success handler can match
-    /// the completed session back to its pending device-link row. Returns the
-    /// hosted Checkout URL to redirect the customer to.
+    /// Create a subscription Checkout Session for an account the caller has
+    /// already authenticated (a signed-in session or a box key). Returns the
+    /// hosted Checkout URL.
+    ///
+    /// `account_id` is stamped into the session's metadata and the
+    /// subscription's metadata, and the finalizer reads the account from
+    /// there. The email Stripe collects never chooses an account: Stripe does
+    /// not check that the payer owns it, so choosing by it let anyone pay and
+    /// land on another owner's account. `customer` reuses the account's Stripe
+    /// customer when it has one, and otherwise pre-fills its email.
     pub async fn create_checkout_session(
         &self,
         price_id: &str,
         success_url: &str,
         cancel_url: &str,
-        user_code: &str,
+        account_id: &str,
+        customer: CheckoutCustomer<'_>,
         allow_promotion_codes: bool,
     ) -> Result<CreatedCheckoutSession> {
-        self.create_checkout_session_for(
-            price_id,
-            success_url,
-            cancel_url,
-            user_code,
-            allow_promotion_codes,
-            None,
-        )
-        .await
-    }
-
-    /// [`create_checkout_session`] with the payer's email pre-filled. Used by
-    /// the api_key-authed checkout door (a linked free account buying a
-    /// subscription): `account_checkout_done` attaches the subscription to
-    /// the account by the email Stripe reports, so pre-filling it is what
-    /// keeps "free me" and "paying me" the same account. Stripe still lets
-    /// the person change it; if they do, the subscription lands on a second
-    /// account — the same outcome as any mistyped email at checkout.
-    pub async fn create_checkout_session_for(
-        &self,
-        price_id: &str,
-        success_url: &str,
-        cancel_url: &str,
-        user_code: &str,
-        allow_promotion_codes: bool,
-        customer_email: Option<&str>,
-    ) -> Result<CreatedCheckoutSession> {
+        if account_id.is_empty() {
+            return Err(anyhow!("checkout session needs an account_id"));
+        }
         let mut params: Vec<(&str, &str)> = vec![
             ("mode", "subscription"),
             ("line_items[0][price]", price_id),
             ("line_items[0][quantity]", "1"),
             ("success_url", success_url),
             ("cancel_url", cancel_url),
-            ("metadata[user_code]", user_code),
+            ("metadata[account_id]", account_id),
+            ("subscription_data[metadata][account_id]", account_id),
             // v3: force card collection even when a 100%-off coupon zeros
             // the first invoice. Stripe's default `if_required` skips the
             // payment-method step in that case, leaving us with no saved
@@ -161,13 +153,14 @@ impl StripeClient {
             // a card on file — auto-top-up is part of the launch product.
             ("payment_method_collection", "always"),
         ];
-        // Staging only: surface Stripe's "Add promotion code" field. Caller
-        // (link.rs) reads `state.allow_promotion_codes` — stays false in prod.
+        // Staging only: surface Stripe's "Add promotion code" field. Stays
+        // false in prod (`state.allow_promotion_codes`).
         if allow_promotion_codes {
             params.push(("allow_promotion_codes", "true"));
         }
-        if let Some(email) = customer_email {
-            params.push(("customer_email", email));
+        match customer {
+            CheckoutCustomer::Existing(id) => params.push(("customer", id)),
+            CheckoutCustomer::Email(email) => params.push(("customer_email", email)),
         }
         let resp = self
             .http
@@ -199,9 +192,9 @@ impl StripeClient {
     /// `metadata[type] = "preorder_deposit"` (on both the session and the
     /// PaymentIntent) so the webhook can route the completion to `preorders`.
     ///
-    /// A payment-mode session can never satisfy `finalize_paid_session` (which
+    /// A payment-mode session can never satisfy `verify_and_claim_session` (which
     /// requires `mode == "subscription"`), so a deposit can never be replayed
-    /// into a device api_key.
+    /// into a subscription.
     pub async fn create_deposit_checkout_session(
         &self,
         price_id: &str,
@@ -322,6 +315,9 @@ impl StripeClient {
         customer_id: &str,
         amount_micros: i64,
         description: &str,
+        idempotency_key: &str,
+        account_id: &str,
+        credit_micros: i64,
     ) -> Result<String, OffSessionChargeError> {
         // Stripe takes cents, not micros. Round up to be safe.
         let cents = (amount_micros + 9_999) / 10_000;
@@ -373,7 +369,14 @@ impl StripeClient {
 
         // Step 2: create + confirm the PaymentIntent with the PM bound.
         let cents_str = cents.to_string();
+        let credit_str = credit_micros.to_string();
         let params = [
+            // What the `payment_intent.succeeded` webhook needs to credit a
+            // charge that settles after this call returns (3-D Secure), or
+            // whose credit failed here.
+            ("metadata[kind]", "topup"),
+            ("metadata[account_id]", account_id),
+            ("metadata[credit_micros]", credit_str.as_str()),
             ("customer", customer_id),
             ("amount", cents_str.as_str()),
             ("currency", "usd"),
@@ -395,6 +398,9 @@ impl StripeClient {
             .http
             .post(format!("{}/payment_intents", STRIPE_API))
             .basic_auth(&self.secret_key, Some(""))
+            // A retry with the same key gets the first PaymentIntent back
+            // instead of a second charge (see credits::topup_idempotency_key).
+            .header("Idempotency-Key", idempotency_key)
             .form(&params)
             .send()
             .await
@@ -549,8 +555,8 @@ pub struct CheckoutSession {
     pub customer: Option<String>,
     pub subscription: Option<String>,
     pub customer_details: Option<CustomerDetails>,
-    /// Free-form metadata set at session creation. We stamp `user_code` here in
-    /// `create_checkout_session` and verify it back in `/link/done`.
+    /// Free-form metadata set at session creation. `create_checkout_session`
+    /// stamps `account_id` here, and the finalizer reads the account from it.
     #[serde(default)]
     pub metadata: serde_json::Value,
     /// Present when retrieved with `expand[]=line_items`. Used to validate the

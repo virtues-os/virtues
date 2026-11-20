@@ -137,17 +137,14 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
     handle_status(virtues).await
 }
 
-/// `virtues subscribe` — connect this box to a paid Virtues subscription via the
-/// device-authorization flow.
+/// `virtues subscribe` — link this box to a Virtues account, then open a
+/// subscription checkout for that account.
 ///
-/// Two onboarding paths printed at once — user picks whatever's easiest:
-///
-///   1. Phone scan      → QR code rendered in terminal (unicode half-blocks)
-///   2. Browser open    → URL printed alongside
-///
-/// Both converge on the same atlas /init/* device-authorization flow. On
-/// success the device `api_key` is stored in the box vault (atlas registers the
-/// device + funds the wallet at link).
+/// Linking is the device-authorization flow: a QR code and a URL go to the
+/// atlas sign-in page, where the owner enters their email and opens the link
+/// it sends (a new address creates the account). Once the box has its key,
+/// the checkout URL comes from the key-authed `/billing/checkout/sessions`,
+/// so the subscription lands on the account the box is linked to.
 pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     use crate::virtues_api::link::{self, LinkStatus};
 
@@ -158,17 +155,24 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
 
     print_welcome(&atlas_url);
 
+    // A box that is already linked pays for the account it is on; starting a
+    // new link would ask for an email again and could move it to another account.
+    if crate::virtues_api::renew::read_api_key(pool).await?.is_some() {
+        return print_checkout(pool, &http, &atlas_url).await;
+    }
+
     let start = link::start(pool, &http, &atlas_url).await?;
 
     println!();
     print_qr_block(&start.verification_uri_complete);
     println!();
-    println!("  Subscribe via phone:  scan the code above");
+    println!("  Sign in via phone:    scan the code above");
     println!("  Or open in browser:   {}", start.verification_uri_complete);
     println!("  Or enter code at:     {}   →  code: {}",
              start.verification_uri, start.user_code);
     println!();
-    println!("  Waiting for checkout to complete… (Ctrl-C to cancel)");
+    println!("  Enter your email there, open the link we send, and choose Attach box.");
+    println!("  Waiting… (Ctrl-C to cancel)");
 
     let interval = std::time::Duration::from_secs(start.interval.max(2));
     let deadline =
@@ -181,11 +185,10 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
-                // link::poll stores the api_key; atlas funds the wallet at link.
-                // Lazy renew on the first AI call handles any in-poll renew failure.
+                // link::poll stored the api_key. Paying is the second half.
                 println!();
-                println!("  Subscribed. AI ready.");
-                return handle_status(virtues).await;
+                println!("  Box linked to your account.");
+                return print_checkout(pool, &http, &atlas_url).await;
             }
             Ok(LinkStatus::Expired) => {
                 println!("  link expired or denied — run `virtues subscribe` again.");
@@ -201,12 +204,39 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     }
 }
 
+/// Print a checkout URL (and its QR code) for the account this box is linked
+/// to. The subscription shows up in `virtues status` once it is paid.
+async fn print_checkout(pool: &sqlx::PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<()> {
+    use crate::virtues_api::renew::{self, CheckoutSession};
+
+    let Some(api_key) = renew::read_api_key(pool).await? else {
+        println!("  The box has no key yet. Run `virtues subscribe` again.");
+        return Ok(());
+    };
+    match renew::fetch_checkout_session(http, atlas_url, &api_key).await? {
+        CheckoutSession::Url(url) => {
+            println!();
+            print_qr_block(&url);
+            println!();
+            println!("  Subscribe:  {url}");
+            println!("  `virtues status` shows the subscription once it is paid.");
+        }
+        CheckoutSession::AlreadySubscribed => {
+            println!("  This account already has a subscription. AI ready.");
+        }
+        CheckoutSession::Failed { code, status } => {
+            println!("  Couldn't open checkout ({code}, HTTP {status}). Run `virtues subscribe` again.");
+        }
+    }
+    Ok(())
+}
+
 /// Magic-link login for `[1] Log in to existing Virtues account`.
 ///
 /// Pairs with `handle_subscribe`: both mint a device_code via `link::start`
 /// and both poll `link::poll` until ready. The login path differs in how
 /// the device_link gets flipped to ready:
-///   - subscribe: user completes Stripe Checkout → atlas finalizes
+///   - subscribe: the same magic link, then a checkout for the linked account
 ///   - login:     user clicks magic link in email → atlas finalizes
 /// Same poll loop afterward.
 pub async fn handle_login(virtues: &Virtues) -> Result<()> {
@@ -238,10 +268,10 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     println!();
     match link::login(pool, &http, &atlas_url, &email).await? {
         LoginStart::Sent => {
-            println!("  Sent magic link to {email}. Waiting… (Ctrl-C to cancel)");
+            println!("  Sent a link to {email}. Open it and choose Attach box. Waiting… (Ctrl-C to cancel)");
         }
         LoginStart::NoAccount => {
-            println!("  No Virtues subscription on {email}. Create one in the app's account step, or run `virtues subscribe`.");
+            println!("  No Virtues account on {email}. Run `virtues subscribe` to create one.");
             return Ok(());
         }
         LoginStart::RateLimited => {
@@ -263,9 +293,10 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
-                // link::poll stores the api_key; atlas funds the wallet at link.
+                // link::poll stored the api_key. The account may not pay yet;
+                // `virtues status` says, and `virtues subscribe` opens checkout.
                 println!();
-                println!("  Logged in. AI ready.");
+                println!("  Logged in. Your box is linked to {email}.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {
@@ -291,7 +322,7 @@ fn print_welcome(_atlas_url: &str) {
     println!("─────────────────────────────────────────────────────────");
     println!("  Welcome to Virtues.");
     println!();
-    println!("  Subscription: $20/mo — what you get:");
+    println!("  Subscription: $29/mo, with $20 of AI each month. What you get:");
     println!("    • AI in your apps (proxied through Virtues; we never");
     println!("      store your prompts or responses — pure in-memory");
     println!("      passthrough, open source, ZDR upstream)");

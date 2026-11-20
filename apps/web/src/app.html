@@ -26,12 +26,19 @@
 		<script>
 			(function () {
 				try {
-					// The stored choice (lib/utils/theme.ts): oxford, asgard or
-					// system. Anything else is a retired name, which paints
-					// Oxford until theme.ts maps it.
+					// The stored choice (lib/utils/theme.ts): oxford, asgard,
+					// system or day. Anything else is a retired name, which
+					// paints Oxford until theme.ts maps it. Follow the day reads
+					// the cached sunrise and sunset, in minutes after midnight.
 					var t = localStorage.getItem("virtues-theme");
-					var sys = t === "system";
-					if (sys) t = matchMedia("(prefers-color-scheme: dark)").matches ? "asgard" : "oxford";
+					var sys = t === "system" || t === "day";
+					if (t === "system") t = matchMedia("(prefers-color-scheme: dark)").matches ? "asgard" : "oxford";
+					if (t === "day") {
+						var sun = (localStorage.getItem("virtues-sun") || "420 1140").split(" ");
+						var now = new Date();
+						var m = now.getHours() * 60 + now.getMinutes();
+						t = m >= +sun[0] && m < +sun[1] ? "oxford" : "asgard";
+					}
 					if (t === "oxford" || t === "asgard") document.documentElement.setAttribute("data-theme", t);
 					// Settings · Appearance · Accent (lib/utils/theme.ts).
 					// A chosen color (`#rrggbb`) paints its cached two tunings.
@@ -47,9 +54,10 @@
 					// Settings · Appearance · Glass (stores/glass.svelte.ts).
 					var g = localStorage.getItem("virtues-glass");
 					if (g) document.documentElement.setAttribute("data-glass", g);
-					// Under Match system the cached page colour may be the other
-					// theme's, if the device switched since, so paint the one
-					// this frame resolves to. Asgard's --page is #141416.
+					// Under Match system or Follow the day the cached page colour
+					// may be the other theme's, if the device or the hour
+					// switched since, so paint the one this frame resolves to.
+					// Asgard's --page is #141416.
 					var bg = sys
 						? t === "asgard" ? "#141416" : "#FFFFFF"
 						: localStorage.getItem("virtues-theme-surface") ||

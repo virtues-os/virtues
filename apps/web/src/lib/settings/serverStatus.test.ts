@@ -47,7 +47,7 @@ describe('the opening sentence', () => {
 
 	it('names one applet that needs you, and does not count several', () => {
 		expect(serverLead({ ...well, appletsNeedingYou: ['Garden watering'] }).sentence).toBe('Garden watering needs you.');
-		expect(serverLead({ ...well, appletsNeedingYou: ['Garden watering', 'Reading list'] }).sentence).toBe('Some of your applets need you.');
+		expect(serverLead({ ...well, appletsNeedingYou: ['Garden watering', 'Reading list'] }).sentence).toBe('Some of what your server runs needs you.');
 	});
 
 	it('says how much is left on a fuller disk that is not yet almost full', () => {

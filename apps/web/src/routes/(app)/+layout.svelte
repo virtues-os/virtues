@@ -11,6 +11,7 @@
 	import { listenForWebLinks } from "$lib/utils/webLinks";
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
 	import { search } from "$lib/stores/search.svelte";
+	import Background from "$lib/components/Background.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import NewTaskDialog from "$lib/components/tasks/NewTaskDialog.svelte";
 	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
@@ -444,13 +445,9 @@
 	     sidebar and the panes alike. It does not move between pages: the
 	     glass floats over it and the paper covers it. -->
 	{#if !mobileLayout.isMobile}
-		<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
-		     macOS (174 KB), the JPEG last (508 KB). -->
-		<picture>
-			<source srcset="/scenes/lake.avif" type="image/avif" />
-			<source srcset="/scenes/lake.webp" type="image/webp" />
-			<img class="window-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" />
-		</picture>
+		<div class="window-scene" aria-hidden="true">
+			<Background position="70% 100%" />
+		</div>
 	{/if}
 
 	<!-- One row across the whole window: the ∴ over the sidebar, each pane's
@@ -697,11 +694,8 @@
 		z-index: -1;
 		width: 100%;
 		height: 52%;
-		object-fit: cover;
-		object-position: 70% 100%;
 		pointer-events: none;
 		user-select: none;
-		filter: var(--window-scene-filter);
 		-webkit-mask-image: var(--window-scene-mask);
 		mask-image: var(--window-scene-mask);
 		/* When the window opens the painting settles into place out of a
