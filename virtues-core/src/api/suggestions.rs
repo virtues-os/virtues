@@ -266,7 +266,7 @@ async fn fingerprint(pool: &PgPool, tz: Option<Tz>, now: DateTime<Utc>) -> Resul
             (SELECT max(created_at) FROM data_communication_transcription), \
             (SELECT max(created_at) FROM app_chats), \
             (SELECT max(updated_at) FROM app_pages), \
-            (SELECT max(updated_at) FROM app_projects), \
+            (SELECT max(updated_at) FROM app_threads), \
             (SELECT max(updated_at) FROM wiki_events))",
     )
     .fetch_one(pool)
@@ -470,7 +470,7 @@ async fn build_dossier(
     .fetch_all(pool)
     .await?;
     let projects: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, name, updated_at FROM app_projects \
+        "SELECT id, name, updated_at FROM app_threads \
          WHERE archived_at IS NULL AND deleted_at IS NULL AND updated_at > $1 - interval '14 days' \
          ORDER BY updated_at DESC LIMIT 4",
     )
