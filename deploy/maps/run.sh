@@ -60,18 +60,44 @@ save_log() {
     -T "$LOG" "$S3_ENDPOINT/$S3_BUCKET/runs/$RUN_ID.log" -o /dev/null || echo "the log did not upload"
 }
 
+# What the system did around a failure: package runs and unit restarts are
+# the usual outside cause.
+diagnose() {
+  echo "--- up since $(uptime -s 2>/dev/null); last package runs:"
+  grep -E '^(Start-Date|Commandline|End-Date)' /var/log/apt/history.log 2>/dev/null | tail -9
+  journalctl --no-pager -o short-iso -n 15 -u virtues-maps-run -u unattended-upgrades -u apt-daily-upgrade 2>/dev/null
+}
+
+# The final report makes the caller delete the storage key, so the log is
+# uploaded first.
 fail() {
   echo "✖ $PHASE: $1"
-  report failed "$1"
+  diagnose
   save_log
+  report failed "$1"
   exit 1
 }
+
+# This script runs once per server. A second start means something restarted
+# its service and killed the first run partway, so say that and stop.
+MARK=/run/virtues-maps-run.started
+if [ -e "$MARK" ]; then
+  fail "run.sh was started a second time; a restart of its service stopped the first run"
+fi
+touch "$MARK"
 
 echo "$(date -Is) map run $RUN_ID on $(nproc) cores, $(df -BG --output=avail / | tail -1 | tr -d ' ') free"
 report running
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq && apt-get install -y -qq python3-venv git curl > /dev/null || fail "could not install packages"
+# Ubuntu's background upgrades start within the first hour of a new server.
+# They take the package lock, and their restart hook (needrestart) restarts
+# every service whose libraries changed, this one included. Switch both off
+# for the life of the server, and finish any package run they were stopped in.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+systemctl mask --now apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service > /dev/null 2>&1
+dpkg --configure -a > /dev/null 2>&1
+APT="apt-get -o DPkg::Lock::Timeout=600 -y -qq"
+$APT update && $APT install python3-venv git curl > /dev/null || fail "could not install packages"
 curl -fsSL --retry 5 "https://github.com/protomaps/go-pmtiles/releases/download/v$PMTILES_VERSION/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz" \
   | tar -xz -C /usr/local/bin pmtiles || fail "could not download pmtiles $PMTILES_VERSION"
 echo "$PMTILES_SHA256  /usr/local/bin/pmtiles" | sha256sum -c --quiet || fail "the pmtiles binary is not the pinned one"
@@ -111,5 +137,5 @@ note=""
 PHASE="done"
 mins=$(( ($(date +%s) - STARTED) / 60 ))
 echo "$(date -Is) ✓ build $BUILD: $FILES files, $SIZE, $mins minutes"
-report "done" "Build $BUILD: $FILES files, $SIZE, in $mins minutes.$note"
 save_log
+report "done" "Build $BUILD: $FILES files, $SIZE, in $mins minutes.$note"
