@@ -28,26 +28,74 @@ export interface Variant {
 	files: { avif: Record<string, string>; webp: Record<string, string> };
 }
 
-export interface Picture {
+/** A picture of an image style: one file set per appearance. */
+export interface ImagePicture {
 	id: string;
 	light: Variant;
 	dark: Variant;
 }
 
-export interface Collection {
+/**
+ * A picture of the dots style: how the field moves. The app draws it on a
+ * canvas in the current theme's ink (components/backgrounds/DotsField.svelte),
+ * so one picture serves Light and Dark.
+ */
+export interface DotsPicture {
 	id: string;
 	title: string;
-	pictures: Picture[];
+	dots: DotsParams;
 }
 
-export interface StyleManifest {
+export interface DotsParams {
+	/** How the field moves: drifting on a slow current, swelling in and out, or falling. */
+	motion: 'drift' | 'swell' | 'rain';
+	/** Space between dots on the grid, in CSS pixels. */
+	gap: number;
+	/** Dot radius, in CSS pixels. */
+	radius: number;
+	/** How far a dot wanders from its place, in CSS pixels. */
+	reach: number;
+	/** Seconds for one slow cycle of the motion. */
+	period: number;
+}
+
+export type Picture = ImagePicture | DotsPicture;
+
+export function isDots(p: Picture): p is DotsPicture {
+	return 'dots' in p;
+}
+
+/** A picture's name in the current appearance. */
+export function pictureTitle(p: Picture, appearance: Appearance): string {
+	return isDots(p) ? p.title : p[appearance].title;
+}
+
+export interface Collection<P extends Picture = Picture> {
+	id: string;
+	title: string;
+	pictures: P[];
+}
+
+interface StyleBase {
 	version: 1;
 	style: string;
 	/** The style's name in the pickers. */
 	title: string;
-	renderer: 'image';
-	collections: Collection[];
 }
+
+/** A style of pictures, installed on the server (tools/backgrounds/build.py). */
+export interface ImageStyle extends StyleBase {
+	renderer: 'image';
+	collections: Collection<ImagePicture>[];
+}
+
+/** A style drawn by the app itself, shipped with it (lib/backgrounds/builtin.ts). */
+export interface DotsStyle extends StyleBase {
+	renderer: 'dots';
+	collections: Collection<DotsPicture>[];
+}
+
+export type StyleManifest = ImageStyle | DotsStyle;
 
 /** A style the server can download (GET /api/backgrounds, `available`). */
 export interface AvailableStyle {

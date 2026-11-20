@@ -6,10 +6,12 @@
 	 * The parent places and sizes it, and owns its mask and animation.
 	 *
 	 * A picture from a style has its own dark version, so only the lake is
-	 * dimmed in Dark, through `--window-scene-filter`.
+	 * dimmed in Dark, through `--window-scene-filter`. The dots style is
+	 * drawn by the app in the theme's ink (DotsField).
 	 */
 	import { onMount } from "svelte";
 	import { background } from "$lib/stores/background.svelte";
+	import DotsField from "$lib/components/backgrounds/DotsField.svelte";
 
 	let {
 		position = "50% 100%",
@@ -34,6 +36,8 @@
 		<source srcset="/scenes/lake.webp" type="image/webp" />
 		<img class:dim={dimLake} src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" style:object-position={position} />
 	</picture>
+{:else if shown.kind === "dots"}
+	<DotsField params={shown.params} appearance={background.appearance} />
 {:else if shown.kind === "picture"}
 	{#key shown.key}
 		<picture>

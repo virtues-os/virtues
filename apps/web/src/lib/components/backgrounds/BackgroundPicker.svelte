@@ -12,7 +12,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import { background } from '$lib/stores/background.svelte';
-	import { parseSetting, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
+	import { parseSetting, pictureTitle, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
 	import { download, megabytes, thumbnail } from '$lib/backgrounds/controls';
 	import type { AvailableStyle } from '$lib/backgrounds/resolve';
 
@@ -36,7 +36,7 @@
 	});
 
 	const setting = $derived(parseSetting(background.setting));
-	const styles = $derived(background.styles ?? []);
+	const styles = $derived(background.allStyles);
 	const style = $derived(setting.kind === 'path' ? (styles.find((s) => s.style === setting.style) ?? null) : null);
 	const collection = $derived(
 		style && setting.kind === 'path' && setting.collection ? (style.collections.find((c) => c.id === setting.collection) ?? null) : null,
@@ -111,7 +111,7 @@
 			)}
 			{#each collection.pictures as p (p.id)}
 				{@render card(
-					p[background.appearance].title,
+					pictureTitle(p, background.appearance),
 					setting.kind === 'path' && setting.picture === p.id,
 					() => background.set(`${style.style}/${collection.id}/${p.id}`),
 					[thumb(style, p)],

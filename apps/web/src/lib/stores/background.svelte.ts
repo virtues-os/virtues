@@ -16,10 +16,12 @@
 import { backendUrl } from '$lib/config/backend';
 import { getAssistantProfile, request, updateUiPreferences } from '$lib/api/client';
 import { getTheme, isThemeDark } from '$lib/utils/theme';
+import { BUILTIN_STYLES, isBuiltin } from '$lib/backgrounds/builtin';
 import {
 	dayNumber,
 	find,
 	formatAddress,
+	isDots,
 	parseSetting,
 	pickForDay,
 	pool,
@@ -28,6 +30,7 @@ import {
 	type Address,
 	type Appearance,
 	type AvailableStyle,
+	type DotsParams,
 	type DownloadProgress,
 	type Picture,
 	type StyleManifest,
@@ -36,11 +39,12 @@ import {
 const SETTING_KEY = 'virtues-background';
 const PICTURE_KEY = 'virtues-background-picture';
 
-/** What to draw. `lake` is the bundled default; `none` draws nothing. */
+/** What to draw. `lake` is the bundled default; `none` draws nothing; `dots` is drawn by the app. */
 export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
-	| { kind: 'picture'; key: string; avif: string; webp: string; src: string; title: string };
+	| { kind: 'picture'; key: string; avif: string; webp: string; src: string; title: string }
+	| { kind: 'dots'; key: string; params: DotsParams };
 
 /** Another picture for one day of a rotating setting. */
 interface DayChoice {
@@ -121,7 +125,7 @@ class BackgroundStore {
 	readonly today = $derived.by((): { address: string; picture: Picture } | null => {
 		const setting = parseSetting(this.setting);
 		if (setting.kind !== 'path') return null;
-		if (this.styles === null) {
+		if (this.styles === null && !isBuiltin(setting.style)) {
 			// Not loaded yet: the picture cached for this setting today, if any.
 			const c = this.#cached;
 			return c && c.setting === this.setting && c.day === this.day ? { address: c.address, picture: c.picture } : null;
@@ -134,12 +138,15 @@ class BackgroundStore {
 				: undefined;
 		const address = chosen ?? pickForDay(items, this.setting, this.day);
 		if (!address) return null;
-		const picture = find(this.styles, address);
+		const picture = find(this.allStyles, address);
 		return picture ? { address: formatAddress(address), picture } : null;
 	});
 
-	/** Every picture the setting covers, once the styles are loaded. */
-	readonly pool = $derived.by((): Address[] => (this.styles ? pool(this.styles, parseSetting(this.setting)) : []));
+	/** The styles the app draws itself, then the ones installed on the server. */
+	readonly allStyles = $derived.by((): StyleManifest[] => [...BUILTIN_STYLES, ...(this.styles ?? [])]);
+
+	/** Every picture the setting covers. */
+	readonly pool = $derived.by((): Address[] => pool(this.allStyles, parseSetting(this.setting)));
 
 	readonly shown = $derived.by((): Shown => {
 		const setting = parseSetting(this.setting);
@@ -152,6 +159,7 @@ class BackgroundStore {
 			// cached for today: fall back to the lake.
 			return this.styles === null && !this.stylesUnavailable ? { kind: 'none' } : { kind: 'lake' };
 		}
+		if (isDots(today.picture)) return { kind: 'dots', key: today.address, params: today.picture.dots };
 		const v = today.picture[this.appearance];
 		const style = today.address.split('/')[0];
 		const url = fileUrl(style);
@@ -301,7 +309,7 @@ class BackgroundStore {
 		const value = parsed.kind === 'default' ? '' : setting;
 		this.#changedHere = true;
 		this.#remember(value);
-		if (parsed.kind === 'path' && this.styles === null) await this.#loadStyles();
+		if (parsed.kind === 'path' && this.styles === null && !isBuiltin(parsed.style)) await this.#loadStyles();
 		else this.#cacheToday();
 		await updateUiPreferences({ background: value });
 	}

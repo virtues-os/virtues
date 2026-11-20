@@ -59,7 +59,7 @@
 	// The style the swiper shows: the setting's, or the first installed one
 	// while no style is chosen.
 	const style = $derived.by(() => {
-		const styles = background.styles ?? [];
+		const styles = background.allStyles;
 		const name = setting.kind === 'path' ? setting.style : styles[0]?.style;
 		return styles.find((s) => s.style === name) ?? null;
 	});

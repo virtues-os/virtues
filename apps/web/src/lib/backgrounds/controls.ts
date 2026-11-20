@@ -2,13 +2,14 @@
  * What the home control and the Settings picker do with the background
  * store: step to the picture before or after, keep today's picture, name
  * the current one, draw thumbnails, and download a style the server does
- * not have yet. These load with the pickers, never
- * at launch (agents/plan/backgrounds-plan.md, "The home control").
+ * not have yet. These load with the pickers, never at launch
+ * (agents/plan/backgrounds-plan.md, "The home control").
  */
 import { request } from '$lib/api/client';
 import { background, fileUrl } from '$lib/stores/background.svelte';
-import { formatAddress, parseSetting, pool, type Picture } from './resolve';
+import { formatAddress, isDots, parseSetting, pictureTitle, pool, type Picture } from './resolve';
 import { narrowest, stepFrom } from './browse';
+import { dotsPreview } from './dots';
 
 /** Whether the setting changes picture each day. */
 export function isRotating(): boolean {
@@ -19,10 +20,10 @@ export function isRotating(): boolean {
 /** Today's picture with the names of its collection, or null when there is none. */
 export function current(): { address: string; title: string; collectionTitle: string } | null {
 	const today = background.today;
-	if (!today || !background.styles) return null;
+	if (!today) return null;
 	const [style, collection] = today.address.split('/');
-	const c = background.styles.find((s) => s.style === style)?.collections.find((x) => x.id === collection);
-	return { address: today.address, title: today.picture[background.appearance].title, collectionTitle: c?.title ?? collection };
+	const c = background.allStyles.find((s) => s.style === style)?.collections.find((x) => x.id === collection);
+	return { address: today.address, title: pictureTitle(today.picture, background.appearance), collectionTitle: c?.title ?? collection };
 }
 
 /**
@@ -38,8 +39,8 @@ export async function step(dir: 1 | -1): Promise<void> {
 		return;
 	}
 	const setting = parseSetting(background.setting);
-	if (setting.kind !== 'path' || !background.styles) return;
-	const siblings = pool(background.styles, { kind: 'path', style: setting.style, collection: setting.collection });
+	if (setting.kind !== 'path') return;
+	const siblings = pool(background.allStyles, { kind: 'path', style: setting.style, collection: setting.collection });
 	const next = stepFrom(siblings, at, dir);
 	if (next) await background.set(formatAddress(next));
 }
@@ -52,6 +53,7 @@ export async function keep(): Promise<void> {
 
 /** A small picture for a thumbnail, in the current appearance. */
 export function thumbnail(style: string, picture: Picture): string {
+	if (isDots(picture)) return dotsPreview(`${style}/${picture.id}`, picture.dots, background.appearance === 'dark');
 	return narrowest(picture[background.appearance], fileUrl(style));
 }
 

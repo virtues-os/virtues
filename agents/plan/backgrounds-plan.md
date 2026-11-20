@@ -229,6 +229,17 @@ Shaders, loops and drawn styles have three costs an image does not:
 - A moving style pauses when the window is hidden and drops its frame rate
   when nothing on screen is changing.
 
+Dots, the first, was built in slice 5 (the owner's pick of "drifting dots"
+over a shader). It ships in the app (`lib/backgrounds/builtin.ts`), so it
+needs no download, and its pictures are parameters, not files: three
+collections (Current, Swell, Rain) of two pictures each. The resolver's
+types split `ImageStyle` and `DotsStyle`, and the store lists built-in
+styles before the server's. `components/backgrounds/DotsField.svelte`
+draws at most 20 frames a second in the theme's ink, stops while the
+window is hidden, and holds one frame under Reduce motion; the pickers'
+thumbnails are stills of the same drawing (`lib/backgrounds/dots.ts`). It
+does not yet lower its frame rate when nothing else on screen moves.
+
 ## What each persona gets
 
 - **Narrative seeker:** a painting that belongs to the day, behind the place
@@ -278,8 +289,7 @@ Each slice replaces the old way in the same change.
    download state on the Settings cards, the manual page and the privacy
    boundary entry. Tested end to end against a local copy of the catalog.
    Archives uploaded and the API route deployed on 2026-11-20.
-5. **A second renderer.** One cheap moving style (dots or a single shader) to
-   check the renderer split before more image styles are added.
+5. **A second renderer.** Built 2026-11-20: Dots (see Moving styles).
 6. **Night versions** of the paintings, replacing the curated pairs.
 
 ## Open decisions
