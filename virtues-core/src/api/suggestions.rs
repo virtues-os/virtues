@@ -421,12 +421,12 @@ async fn build_dossier(
     // the owner's: the ones that may be waiting on them.
     let messages: Vec<(String, Option<String>, Option<String>, Option<String>, DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, from_name, channel, body, occurred_at FROM ( \
-            SELECT DISTINCT ON (COALESCE(thread_id, id)) id, from_name, channel, body, occurred_at, \
+            SELECT DISTINCT ON (COALESCE(conversation_id, id)) id, from_name, channel, body, occurred_at, \
                    COALESCE((metadata->>'is_from_me')::boolean, false) AS from_me \
             FROM data_communication_message \
             WHERE occurred_at > $1 - interval '48 hours' AND deleted_at_source IS NULL \
               AND NOT COALESCE(is_archived, false) \
-            ORDER BY COALESCE(thread_id, id), occurred_at DESC) latest \
+            ORDER BY COALESCE(conversation_id, id), occurred_at DESC) latest \
          WHERE NOT from_me ORDER BY occurred_at DESC LIMIT 12",
     )
     .bind(now)
@@ -787,6 +787,23 @@ fn cut_at_paragraph(text: &str, budget: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every query the run makes, against the migrated schema. These queries
+    /// are untyped, so a renamed table or column compiles and passes every
+    /// other test here, then fails on a server: after projects became
+    /// threads, the run failed there twice, on a stale table name and then
+    /// on a stale column. An empty database is enough to catch either.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_dossier_queries_match_the_schema(pool: PgPool) {
+        let now = Utc::now();
+        fingerprint(&pool, None, now).await.expect("the freshness query");
+        build_dossier(&pool, None, None, now).await.expect("the dossier queries");
+        let tz: Tz = "America/Chicago".parse().unwrap();
+        fingerprint(&pool, Some(tz), now).await.expect("the freshness query, with a time zone");
+        build_dossier(&pool, Some("America/Chicago"), Some(tz), now).await.expect("the dossier queries, with a time zone");
+        store(&pool, "fingerprint", &[]).await.expect("storing a run");
+        exists(&pool, "sug_none").await.expect("the lookup of one suggestion");
+    }
 
     fn dossier() -> Dossier {
         let mut d = Dossier::default();
