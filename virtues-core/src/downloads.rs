@@ -91,6 +91,10 @@ pub async fn verified(
     }
     out.flush().await?;
     drop(out);
+    if written < expected.bytes {
+        // The body ended early: keep what arrived, so the next try resumes.
+        bail!("{what} download interrupted before the end");
+    }
 
     let sha = sha256_file(tmp).await?;
     if sha != expected.sha256 {

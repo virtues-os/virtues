@@ -124,3 +124,22 @@ describe('narrowest', () => {
 		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.webp');
 	});
 });
+
+describe('pickForDay across cycles', () => {
+	it('never shows one picture two days running, and shows each once per cycle', () => {
+		for (const n of [2, 3, 5, 12]) {
+			const items = Array.from({ length: n }, (_, i) => i);
+			for (const key of ['a', 'paintings', 'paintings/forest']) {
+				let previous: number | undefined;
+				for (let day = 20_000; day < 20_000 + n * 40; day++) {
+					const pick = pickForDay(items, key, day);
+					expect(pick).not.toBe(previous);
+					previous = pick;
+				}
+				const start = Math.ceil(20_000 / n) * n;
+				const cycle = new Set(Array.from({ length: n }, (_, i) => pickForDay(items, key, start + i)));
+				expect(cycle.size).toBe(n);
+			}
+		}
+	});
+});

@@ -191,10 +191,14 @@ the box. Built in slice 4; the manual page is
   with a subscriber's bearer, reading the bucket with its maps key, and logs
   nothing (`services/virtues-api/src/routes/backgrounds.rs`).
 - The box (`virtues-core/src/api/backgrounds.rs`) caches the catalog for a
-  day, lists styles it does not have as `available`, and on
+  day (a failed fetch waits an hour before the next), never makes a listing
+  wait for it, lists styles it does not have as `available`, and on
   `POST /api/backgrounds/install/<style>` downloads the archive, checks its
   size and sha256, unpacks it with no links into a staging folder, checks the
-  manifest and swaps it in. `VIRTUES_BACKGROUNDS_SOURCE` points a box at a
+  manifest and swaps it in. A style it downloaded whose archive the catalog
+  has replaced is updated the same way, the old copy serving until the swap.
+  A picker follows a download through `GET /api/backgrounds/downloads`.
+  `VIRTUES_BACKGROUNDS_SOURCE` points a box at a
   self-hosted copy of the same layout. Download and unpack are shared with
   the map files (`virtues-core/src/downloads.rs`).
 

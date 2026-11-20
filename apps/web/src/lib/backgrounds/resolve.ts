@@ -139,23 +139,33 @@ function random(seed: number): () => number {
 	};
 }
 
-/**
- * The picture for a day. Days are grouped into cycles as long as the pool;
- * each cycle walks its own shuffle of the pool, so a picture shows once per
- * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
- * pictures do not walk in step.
- */
-export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
-	const n = items.length;
-	if (n === 0) return undefined;
-	if (n === 1) return items[0];
-	const cycle = Math.floor(day / n);
-	const order = items.map((_, i) => i);
+/** The order a cycle walks the pool in: a shuffle seeded by the setting and the cycle. */
+function cycleOrder(n: number, key: string, cycle: number): number[] {
+	const order = Array.from({ length: n }, (_, i) => i);
 	const next = random(hash(`${key}:${cycle}`));
 	for (let i = n - 1; i > 0; i--) {
 		const j = Math.floor(next() * (i + 1));
 		[order[i], order[j]] = [order[j], order[i]];
 	}
+	return order;
+}
+
+/**
+ * The picture for a day. Days are grouped into cycles as long as the pool;
+ * each cycle walks its own shuffle of the pool, so a picture shows once per
+ * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
+ * pictures do not walk in step. A cycle never opens with the picture the one
+ * before it ended on, so no picture shows two days running.
+ */
+export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
+	const n = items.length;
+	if (n === 0) return undefined;
+	if (n === 1) return items[0];
+	// Two pictures can only alternate without a repeat.
+	if (n === 2) return items[(((day + hash(key)) % 2) + 2) % 2];
+	const cycle = Math.floor(day / n);
+	const order = cycleOrder(n, key, cycle);
+	if (order[0] === cycleOrder(n, key, cycle - 1)[n - 1]) [order[0], order[1]] = [order[1], order[0]];
 	return items[order[((day % n) + n) % n]];
 }
 

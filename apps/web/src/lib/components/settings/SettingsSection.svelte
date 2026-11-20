@@ -139,7 +139,7 @@
 			<SettingRow id="theme" label={title('theme')} help="Light, dark, the same as your device, or light from sunrise to sunset. It follows you to every device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
 			</SettingRow>
-			<SettingRow id="background" label={title('background')} help="The picture behind home. A style or a collection shows a different picture each day. A style downloads to your server the first time you pick it." block>
+			<SettingRow id="background" label={title('background')} help="The picture behind home. A style or a collection shows a different picture each day." block>
 				<BackgroundPicker />
 			</SettingRow>
 			<SettingRow id="accent" label={title('accent')} help="The color of links, selections and the main button on each page." block>

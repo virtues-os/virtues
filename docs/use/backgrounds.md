@@ -18,10 +18,12 @@ It changes at midnight and does not repeat until every picture in it has
 shown.
 
 The button in the bottom right corner of a new chat does the same things
-from home: the arrows show the picture before or after for the rest of the
-day, **Keep this picture** makes today's picture your setting, and the row
-of collections switches between them. It also sets Light, Dark, Match
-system or Follow the day, which is Light from sunrise to sunset.
+from home. When your background changes daily, the arrows show the picture
+before or after for the rest of the day, and **Keep this picture** makes
+today's picture your setting. When you chose one picture, the arrows choose
+its neighbor in the collection instead. The row of collections switches
+between them. The button also sets Light, Dark, Match system or Follow the
+day, which is Light from sunrise to sunset.
 
 ## Next steps
 
@@ -35,10 +37,12 @@ laptop load these pictures from your server.
 The lake is part of Virtues. Every style is downloaded by your server the
 first time you pick it, and the card shows its size before you do.
 
-- **What is sent:** your server asks Virtues for the list of styles at most
-  once a day, when an app opens the backgrounds, and asks for a style's
-  archive when you pick it. Both requests carry your server's Virtues key,
-  as every request to Virtues does, so Virtues can tell which account picked
+- **What is sent:** when an app opens the backgrounds, your server asks
+  Virtues for the list of styles if its copy is a day old, and at most once
+  an hour while it cannot get one. It asks for a style's archive when you
+  pick the style, and again when Virtues publishes a newer version of a
+  style you have. These requests carry your server's Virtues key, as every
+  request to Virtues does, so Virtues can tell which account downloaded
   which style. They carry nothing from your records, and the service that
   answers them writes nothing about them to its logs.
 - **What comes back:** one archive per style, about 100 MB, the same for
@@ -48,6 +52,7 @@ first time you pick it, and the card shows its size before you do.
   Your phone and laptop load the pictures from your server only, never from
   Virtues.
 
-A downloaded style stays on your server until you delete its folder. A
-server with no Virtues subscription offers Plain only, and home shows the
-lake.
+A downloaded style stays on your server until you delete its folder, and
+keeps showing while a newer version downloads. A server with no Virtues
+subscription cannot download styles; it keeps the ones it has and offers
+Plain.

@@ -16,9 +16,23 @@
 	import { download, megabytes, thumbnail } from '$lib/backgrounds/controls';
 	import type { AvailableStyle } from '$lib/backgrounds/resolve';
 
+	/** How often, and how many times, the picker asks again while the server fetches its catalog. */
+	const CATALOG_POLL_MS = 1500;
+	const CATALOG_POLLS = 20;
+
 	onMount(() => {
 		background.start();
-		void background.ensureStyles();
+		let stopped = false;
+		void (async () => {
+			// Fresh on every visit: styles the server learned of since the app
+			// loaded, and a first catalog the server is still fetching.
+			await background.refresh();
+			for (let i = 0; i < CATALOG_POLLS && background.catalogPending && !stopped; i++) {
+				await new Promise((resolve) => setTimeout(resolve, CATALOG_POLL_MS));
+				if (!stopped) await background.refresh();
+			}
+		})();
+		return () => (stopped = true);
 	});
 
 	const setting = $derived(parseSetting(background.setting));

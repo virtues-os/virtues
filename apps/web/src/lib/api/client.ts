@@ -3022,9 +3022,18 @@ export function updateAssistantProfile<T = unknown>(patch: Record<string, unknow
  * rather than writing, because writing the patch alone would erase every
  * other preference.
  */
-export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
-	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
-	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+// One write at a time: each reads the stored preferences and writes them back
+// merged, so two that overlapped (a theme click during a background change)
+// would each drop the other's key.
+let uiPreferencesWrite: Promise<void> = Promise.resolve();
+
+export function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const write = uiPreferencesWrite.then(async () => {
+		const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+		await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+	});
+	uiPreferencesWrite = write.catch(() => {});
+	return write;
 }
 
 // ── Changed lately (Settings) ────────────────────────────────────────────────

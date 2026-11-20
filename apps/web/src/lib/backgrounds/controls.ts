@@ -60,18 +60,38 @@ const DOWNLOAD_POLL_MS = 1000;
 
 /**
  * Download a style the server does not have, and make it the setting once
- * it is installed. The server does the download (api/backgrounds.rs); this
- * starts it and follows it, so a picker can show its progress from the
- * store. A failure is left in `background.failed` for the card to say.
+ * it is installed, unless the setting changed while it downloaded. The
+ * server does the download (api/backgrounds.rs); this starts it and follows
+ * it, so a picker can show its progress from the store. A failure, including
+ * one that stops it starting, is left in `background.failed` for the card.
  */
 export async function download(style: string): Promise<void> {
-	await request(`/backgrounds/install/${encodeURIComponent(style)}`, { method: 'POST' });
-	await background.refresh();
-	while (background.installing[style]) {
-		await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_POLL_MS));
-		await background.refresh();
+	const settingAtStart = background.setting;
+	try {
+		await request(`/backgrounds/install/${encodeURIComponent(style)}`, { method: 'POST' });
+	} catch (error) {
+		background.noteFailure(style, startFailure(error));
+		return;
 	}
-	if (background.styles?.some((s) => s.style === style)) await background.set(style);
+	try {
+		await background.refreshDownloads();
+		while (background.installing[style]) {
+			await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_POLL_MS));
+			await background.refreshDownloads();
+		}
+	} catch (error) {
+		console.warn('Following the background download failed:', error);
+	}
+	await background.refresh();
+	const installed = background.styles?.some((s) => s.style === style);
+	if (installed && background.setting === settingAtStart) await background.set(style);
+}
+
+/** What a card says when a download did not start. */
+function startFailure(error: unknown): string {
+	const message = error instanceof Error ? error.message : '';
+	if (/free space|not published/i.test(message)) return message.replace(/^[^:]*:\s*/, '');
+	return 'The download did not start. Try again.';
 }
 
 /** A size in megabytes, rounded, for "Download (95 MB)". */

@@ -11,9 +11,11 @@
 //! `<api>/v1/backgrounds/catalog.json`, or from `VIRTUES_BACKGROUNDS_SOURCE`
 //! for a self-hosted copy. When you pick one, this server downloads its
 //! archive once, checks its size and sha256, unpacks it beside the others and
-//! serves it from then on. A request to virtues-api carries this server's
-//! key, as every request to it does; it says which style was picked and
-//! nothing else (docs/backgrounds.md, agents/build/privacy-boundary.md).
+//! serves it from then on. When the catalog later names a newer archive for
+//! a style this server downloaded, the server fetches it the same way and
+//! keeps serving the old copy until the new one is in. A request to
+//! virtues-api carries this server's key, as every request to it does; the
+//! catalog request names nothing and an archive request names a style, (docs/use/backgrounds.md, agents/build/privacy-boundary.md).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -59,6 +61,17 @@ pub struct Styles {
     pub installing: HashMap<String, Progress>,
     /// The last download that failed, by style, as a sentence for the person.
     pub failed: HashMap<String, String>,
+    /// Whether the catalog is being fetched now, so a picker can ask again
+    /// shortly for styles it does not list yet.
+    pub catalog_pending: bool,
+}
+
+/// Downloads in progress and failed, without the manifests and previews, for
+/// a picker that is following a download.
+#[derive(Debug, Serialize)]
+pub struct Downloads {
+    pub installing: HashMap<String, Progress>,
+    pub failed: HashMap<String, String>,
 }
 
 /// A style the server can download.
@@ -78,23 +91,61 @@ pub struct Progress {
 }
 
 /// The installed styles, the ones the catalog offers, and any download in
-/// progress or failed.
+/// progress or failed. Never waits for the catalog: a missing or day-old one
+/// is fetched in the background and `catalog_pending` says so. A style this
+/// server downloaded whose archive the catalog has replaced is updated in the
+/// background.
 pub async fn list(pool: &PgPool) -> Result<Styles> {
     let root = state_dir();
+    recover_interrupted_swaps(&root).await;
     let installed = installed_in(&root).await?;
-    let catalog = catalog(pool, &root).await;
-    let have: Vec<&str> = installed.iter().filter_map(|m| m["style"].as_str()).collect();
-    let available = catalog
-        .map(|c| {
-            c.styles
-                .into_iter()
-                .filter(|e| !have.contains(&e.style.as_str()))
-                .map(|e| Available { style: e.style, title: e.title, bytes: e.bytes, preview: e.preview })
-                .collect()
-        })
-        .unwrap_or_default();
-    let (installing, failed) = install_states();
-    Ok(Styles { styles: installed, available, installing, failed })
+    let have: Vec<String> = installed.iter().filter_map(|m| m["style"].as_str().map(String::from)).collect();
+    let mut available = Vec::new();
+    if let Some(catalog) = catalog(pool, &root).await {
+        for entry in catalog.styles {
+            if !have.contains(&entry.style) {
+                available.push(Available {
+                    style: entry.style,
+                    title: entry.title,
+                    bytes: entry.bytes,
+                    preview: entry.preview,
+                });
+            } else if installed_sha(&root, &entry.style).await.is_some_and(|sha| sha != entry.sha256) {
+                update_in_background(pool, &root, entry).await;
+            }
+        }
+    }
+    let Downloads { installing, failed } = downloads();
+    Ok(Styles { styles: installed, available, installing, failed, catalog_pending: REFRESHING.load(Ordering::SeqCst) })
+}
+
+/// The sha256 of the archive an installed style came from, or `None` for a
+/// style put in place by hand (the build tool's output in a dev checkout),
+/// which is never replaced.
+async fn installed_sha(root: &Path, style: &str) -> Option<String> {
+    let raw = tokio::fs::read(root.join(style).join(".archive.json")).await.ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    v["sha256"].as_str().map(String::from)
+}
+
+/// Put back a style whose swap stopped between its two renames (the server
+/// stopped there), so it is not missing until someone downloads it again.
+async fn recover_interrupted_swaps(root: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(root).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(style) = name.strip_prefix(".old-") else {
+            continue;
+        };
+        if is_style_id(style) && !root.join(style).exists() {
+            match tokio::fs::rename(entry.path(), root.join(style)).await {
+                Ok(()) => tracing::info!("backgrounds: put back {style} after an interrupted update"),
+                Err(e) => tracing::warn!("backgrounds: putting back {style}: {e}"),
+            }
+        }
+    }
 }
 
 /// Every installed style whose manifest parses, has this server's version,
@@ -164,8 +215,13 @@ fn check_manifest(dir: &Path, style: &str) -> std::result::Result<(), String> {
 
 /// How old the cached catalog may be before the next listing refreshes it.
 const CATALOG_MAX_AGE: Duration = Duration::from_secs(24 * 3600);
-/// How long a listing waits for a first catalog when none is cached.
-const FIRST_CATALOG_WAIT: Duration = Duration::from_secs(5);
+/// How long after a failed catalog fetch the next one may start, so a server
+/// that cannot reach the source does not ask on every listing.
+const CATALOG_RETRY_AFTER: Duration = Duration::from_secs(3600);
+/// The most a catalog may weigh. Today's, with previews, is about 130 KB.
+const CATALOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
+/// The most one preview may weigh, as a `data:` URL.
+const PREVIEW_MAX_CHARS: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 struct Catalog {
@@ -235,43 +291,62 @@ fn parse_catalog(bytes: &[u8]) -> Option<Catalog> {
         return None;
     }
     catalog.styles.retain(entry_is_sound);
+    for entry in &mut catalog.styles {
+        entry.preview = sound_preview(&entry.preview);
+    }
     Some(catalog)
+}
+
+/// Keep only previews the apps can draw without asking another host: small
+/// `data:image/` URLs, one per appearance.
+fn sound_preview(preview: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    for theme in ["light", "dark"] {
+        if let Some(url) = preview.get(theme).and_then(|v| v.as_str()) {
+            if url.starts_with("data:image/") && url.len() <= PREVIEW_MAX_CHARS {
+                out.insert(theme.to_string(), serde_json::Value::String(url.to_string()));
+            }
+        }
+    }
+    serde_json::Value::Object(out)
 }
 
 static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The cached catalog, refreshed when it is missing or a day old. A missing
-/// one is waited for briefly; a stale one is served while a refresh runs.
-/// `None` when there is no catalog at all (offline, no account, or none
-/// published), which lists only the installed styles.
+/// Clears `REFRESHING` when a refresh ends, however it ends.
+struct RefreshDone;
+
+impl Drop for RefreshDone {
+    fn drop(&mut self) {
+        REFRESHING.store(false, Ordering::SeqCst);
+    }
+}
+
+async fn age_of(path: &Path) -> Option<Duration> {
+    tokio::fs::metadata(path).await.ok()?.modified().ok()?.elapsed().ok()
+}
+
+/// The cached catalog. When it is missing or a day old, and no fetch started
+/// in the last hour, a fetch starts in the background; this never waits for
+/// it. `None` when there is no catalog yet (offline, no account, none
+/// published, or the first fetch still running).
 async fn catalog(pool: &PgPool, root: &Path) -> Option<Catalog> {
     let path = root.join(".catalog.json");
     let cached = tokio::fs::read(&path).await.ok().and_then(|b| parse_catalog(&b));
-    let age = tokio::fs::metadata(&path)
-        .await
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.elapsed().ok());
-    let stale = age.is_none_or(|a| a > CATALOG_MAX_AGE);
-    if !stale {
-        return cached;
+    let stale = age_of(&path).await.is_none_or(|a| a > CATALOG_MAX_AGE);
+    let tried_recently = age_of(&root.join(".catalog-attempt")).await.is_some_and(|a| a < CATALOG_RETRY_AFTER);
+    if stale && !tried_recently && !REFRESHING.swap(true, Ordering::SeqCst) {
+        let _ = tokio::fs::create_dir_all(root).await;
+        if let Err(e) = tokio::fs::write(root.join(".catalog-attempt"), b"").await {
+            tracing::warn!("backgrounds: noting the catalog fetch: {e}");
+        }
+        let (pool, root) = (pool.clone(), root.to_path_buf());
+        tokio::spawn(async move {
+            let _done = RefreshDone;
+            refresh_catalog(&pool, &root).await;
+        });
     }
-    if REFRESHING.swap(true, Ordering::SeqCst) {
-        return cached;
-    }
-    let (pool, root_owned) = (pool.clone(), root.to_path_buf());
-    let task = tokio::spawn(async move {
-        let fresh = refresh_catalog(&pool, &root_owned).await;
-        REFRESHING.store(false, Ordering::SeqCst);
-        fresh
-    });
-    if cached.is_some() {
-        return cached;
-    }
-    match tokio::time::timeout(FIRST_CATALOG_WAIT, task).await {
-        Ok(Ok(fresh)) => fresh,
-        _ => None,
-    }
+    cached
 }
 
 async fn refresh_catalog(pool: &PgPool, root: &Path) -> Option<Catalog> {
@@ -296,7 +371,15 @@ async fn refresh_catalog(pool: &PgPool, root: &Path) -> Option<Catalog> {
         tracing::info!("backgrounds: the catalog answered {}", resp.status());
         return None;
     }
+    if resp.content_length().is_some_and(|n| n > CATALOG_MAX_BYTES) {
+        tracing::warn!("backgrounds: the catalog is larger than {CATALOG_MAX_BYTES} bytes; ignoring it");
+        return None;
+    }
     let bytes = resp.bytes().await.ok()?;
+    if bytes.len() as u64 > CATALOG_MAX_BYTES {
+        tracing::warn!("backgrounds: the catalog is larger than {CATALOG_MAX_BYTES} bytes; ignoring it");
+        return None;
+    }
     let catalog = parse_catalog(&bytes)?;
     if let Err(e) = tokio::fs::create_dir_all(root).await {
         tracing::warn!("backgrounds: creating {}: {e}", root.display());
@@ -318,7 +401,8 @@ enum InstallState {
 
 static INSTALLS: LazyLock<Mutex<HashMap<String, InstallState>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn install_states() -> (HashMap<String, Progress>, HashMap<String, String>) {
+/// Downloads in progress and failed, for `GET /api/backgrounds/downloads`.
+pub fn downloads() -> Downloads {
     let installs = INSTALLS.lock().unwrap_or_else(|e| e.into_inner());
     let mut progress = HashMap::new();
     let mut failed = HashMap::new();
@@ -335,7 +419,7 @@ fn install_states() -> (HashMap<String, Progress>, HashMap<String, String>) {
             }
         }
     }
-    (progress, failed)
+    Downloads { installing: progress, failed }
 }
 
 /// Room to leave on the disk beyond the archive and its unpacked copy.
@@ -351,26 +435,44 @@ pub async fn install(pool: &PgPool, style: &str) -> Result<()> {
     let entry = catalog(pool, &root)
         .await
         .and_then(|c| c.styles.into_iter().find(|e| e.style == style))
-        .ok_or_else(|| Error::NotFound(format!("no background style {style} to download")))?;
+        .ok_or_else(|| Error::NotFound("This style is not published any more.".to_string()))?;
+    start_install(pool, &root, entry).await
+}
+
+/// Fetch a newer archive of a style this server already has. Skipped while
+/// one is running, and after one failed in this run of the server, so a
+/// failing update is not retried on every listing.
+async fn update_in_background(pool: &PgPool, root: &Path, entry: CatalogStyle) {
+    if INSTALLS.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&entry.style) {
+        return;
+    }
+    let style = entry.style.clone();
+    match start_install(pool, root, entry).await {
+        Ok(()) => tracing::info!("backgrounds: updating {style} to the catalog's newer archive"),
+        Err(e) => tracing::warn!("backgrounds: not updating {style}: {e}"),
+    }
+}
+
+async fn start_install(pool: &PgPool, root: &Path, entry: CatalogStyle) -> Result<()> {
     tokio::fs::create_dir_all(root.join(".download"))
         .await
         .map_err(|e| Error::Storage(format!("creating the backgrounds folder: {e}")))?;
-    let free = crate::storage::lake::free_bytes_at(&root).unwrap_or(u64::MAX);
+    let free = crate::storage::lake::free_bytes_at(root).unwrap_or(u64::MAX);
     if free < entry.bytes.saturating_mul(2) + MIN_FREE_BYTES {
         return Err(Error::Storage("There is not enough free space on your server for this style.".to_string()));
     }
     let received = Arc::new(AtomicU64::new(0));
     {
         let mut installs = INSTALLS.lock().unwrap_or_else(|e| e.into_inner());
-        if matches!(installs.get(style), Some(InstallState::Downloading { .. })) {
+        if matches!(installs.get(&entry.style), Some(InstallState::Downloading { .. })) {
             return Ok(());
         }
-        installs.insert(style.to_string(), InstallState::Downloading { received: received.clone(), total: entry.bytes });
+        installs.insert(entry.style.clone(), InstallState::Downloading { received: received.clone(), total: entry.bytes });
     }
-    let pool = pool.clone();
+    let (pool, root) = (pool.clone(), root.to_path_buf());
     tokio::spawn(async move {
         let style = entry.style.clone();
-        let outcome = download_and_install(&pool, &root, &entry, &received).await;
+        let outcome = download_and_install(&pool, &root, entry, &received).await;
         let mut installs = INSTALLS.lock().unwrap_or_else(|e| e.into_inner());
         match outcome {
             Ok(()) => {
@@ -385,39 +487,104 @@ pub async fn install(pool: &PgPool, style: &str) -> Result<()> {
     Ok(())
 }
 
+/// Why a download did not produce the archive.
+enum Fetch {
+    /// The source has no such archive: the catalog this server holds is older
+    /// than the one published.
+    Gone,
+    /// The bytes arrived but are not what the catalog describes.
+    Mismatch,
+    /// The connection failed or the source refused.
+    Failed,
+}
+
 async fn download_and_install(
     pool: &PgPool,
     root: &Path,
-    entry: &CatalogStyle,
+    mut entry: CatalogStyle,
     received: &AtomicU64,
 ) -> std::result::Result<(), String> {
-    let style = &entry.style;
+    const GONE: &str = "This style is not published any more.";
+    for attempt in 0..2 {
+        match fetch_archive(pool, root, &entry, received).await {
+            Ok(archive) => return install_downloaded(root, &entry, archive).await,
+            Err(Fetch::Gone) if attempt == 0 => {
+                // Read the catalog again and try the archive it names now.
+                let fresh = refresh_catalog(pool, root).await.and_then(|c| c.styles.into_iter().find(|e| e.style == entry.style));
+                match fresh {
+                    Some(fresh) if fresh.archive != entry.archive => {
+                        received.store(0, Ordering::Relaxed);
+                        if let Some(InstallState::Downloading { total, .. }) =
+                            INSTALLS.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&entry.style)
+                        {
+                            *total = fresh.bytes;
+                        }
+                        entry = fresh;
+                    }
+                    _ => return Err(GONE.to_string()),
+                }
+            }
+            Err(Fetch::Gone) => return Err(GONE.to_string()),
+            Err(Fetch::Mismatch) => return Err("The download did not match the published style. Try again later.".to_string()),
+            Err(Fetch::Failed) => {
+                return Err("The download did not finish. Check your server's connection and try again.".to_string())
+            }
+        }
+    }
+    Err(GONE.to_string())
+}
+
+/// Download one archive into `.download/`, resuming a partial copy of the
+/// same archive. A partial file is named after its archive, so a resume can
+/// never append one archive to another; partial files of the style's older
+/// archives are removed first.
+async fn fetch_archive(pool: &PgPool, root: &Path, entry: &CatalogStyle, received: &AtomicU64) -> std::result::Result<PathBuf, Fetch> {
+    let dir = root.join(".download");
+    let tmp_name = format!("{}.tmp", entry.archive);
+    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(f)) = entries.next_entry().await {
+            let name = f.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&format!("{}-", entry.style)) && name != tmp_name && name != entry.archive {
+                let _ = tokio::fs::remove_file(f.path()).await;
+            }
+        }
+    }
     let (base, self_hosted) = source_base();
     let key = bearer(pool, self_hosted).await;
-    let http = http()?;
-    let archive = root.join(".download").join(format!("{style}.tar"));
-    let tmp = root.join(".download").join(format!("{style}.tar.tmp"));
+    let http = http().map_err(|_| Fetch::Failed)?;
+    let archive = dir.join(&entry.archive);
     let expected = crate::downloads::Expected { bytes: entry.bytes, sha256: &entry.sha256, what: "background" };
     let url = format!("{base}/{}", entry.archive);
-    if let Err(e) = crate::downloads::verified(&http, &url, key.as_deref(), &tmp, &archive, &expected, Some(received)).await
-    {
-        tracing::warn!("backgrounds: downloading {style}: {e:#}");
-        // A file that arrived but is not what the catalog describes is not
-        // the connection's fault, and trying again at once will not help.
-        let text = format!("{e:#}");
-        if text.contains("checksum") || text.contains("expected size") {
-            return Err("The download did not match the published style. Try again later.".to_string());
+    match crate::downloads::verified(&http, &url, key.as_deref(), &dir.join(&tmp_name), &archive, &expected, Some(received)).await {
+        Ok(()) => Ok(archive),
+        Err(e) => {
+            tracing::warn!("backgrounds: downloading {}: {e:#}", entry.style);
+            let text = format!("{e:#}");
+            if text.contains("answered 404") {
+                Err(Fetch::Gone)
+            } else if text.contains("checksum") || text.contains("expected size") {
+                Err(Fetch::Mismatch)
+            } else {
+                Err(Fetch::Failed)
+            }
         }
-        return Err("The download did not finish. Check your server's connection and try again.".to_string());
     }
-    let (root_owned, style_owned, sha) = (root.to_path_buf(), style.clone(), entry.sha256.clone());
-    let result = tokio::task::spawn_blocking(move || install_archive(&root_owned, &style_owned, &archive, &sha))
-        .await
-        .map_err(|_| "Installing the style stopped partway. Try again.".to_string())?;
-    if let Err(e) = &result {
-        tracing::warn!("backgrounds: installing {style}: {e}");
+}
+
+async fn install_downloaded(root: &Path, entry: &CatalogStyle, archive: PathBuf) -> std::result::Result<(), String> {
+    let (root_owned, style, sha) = (root.to_path_buf(), entry.style.clone(), entry.sha256.clone());
+    let result = tokio::task::spawn_blocking(move || install_archive(&root_owned, &style, &archive, &sha)).await;
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            tracing::warn!("backgrounds: installing {}: {e}", entry.style);
+            Err("The style could not be installed on your server. Try again.".to_string())
+        }
+        Err(e) => {
+            tracing::warn!("backgrounds: the install task for {} stopped: {e}", entry.style);
+            Err("The style could not be installed on your server. Try again.".to_string())
+        }
     }
-    result.map_err(|e| format!("The downloaded style could not be installed: {e}."))
 }
 
 /// Unpack a downloaded archive beside the installed styles, check it, and put
@@ -613,5 +780,33 @@ mod tests {
         let archives: Vec<_> = catalog.styles.iter().map(|e| e.archive.as_str()).collect();
         assert_eq!(archives, ["dots-1a2b.tar"]);
         assert!(parse_catalog(br#"{"version":2,"styles":[]}"#).is_none());
+    }
+
+    #[test]
+    fn previews_are_small_data_urls_only() {
+        let big = format!("data:image/webp;base64,{}", "A".repeat(PREVIEW_MAX_CHARS));
+        let preview = serde_json::json!({
+            "light": "data:image/webp;base64,AAAA",
+            "dark": "https://example.com/tracker.webp",
+            "dusk": "data:image/webp;base64,AAAA",
+        });
+        assert_eq!(sound_preview(&preview), serde_json::json!({ "light": "data:image/webp;base64,AAAA" }));
+        assert_eq!(sound_preview(&serde_json::json!({ "light": big })), serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_swap_is_put_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".old-dots")).unwrap();
+        std::fs::write(root.join(".old-dots/manifest.json"), manifest("dots", 1)).unwrap();
+        // A finished swap leaves both; the live copy wins and the old one stays for swap_in to clear.
+        std::fs::create_dir_all(root.join(".old-waves")).unwrap();
+        std::fs::create_dir_all(root.join("waves")).unwrap();
+
+        recover_interrupted_swaps(root).await;
+        assert!(root.join("dots/manifest.json").exists());
+        assert!(!root.join(".old-dots").exists());
+        assert!(root.join("waves").exists());
     }
 }

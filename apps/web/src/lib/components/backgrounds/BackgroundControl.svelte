@@ -23,7 +23,27 @@
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 
+	let {
+		composer = null,
+	}: {
+		/** The composer, so on the phone the button stays above it as a draft grows. */
+		composer?: HTMLElement | null;
+	} = $props();
+
 	let open = $state(false);
+
+	// On the phone the composer is docked at the bottom and grows with a
+	// draft, so the button stands just above its top edge.
+	let composerHeight = $state(0);
+	$effect(() => {
+		if (!mobileLayout.isMobile || !composer) return;
+		const el = composer;
+		const measure = () => (composerHeight = el.getBoundingClientRect().height);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
 	let theme = $state<ThemeChoice>(getThemeChoice());
 	const themes = getAvailableThemes();
 
@@ -46,9 +66,7 @@
 
 	const caption = $derived.by(() => {
 		if (setting.kind === 'plain') return { title: 'Plain', note: 'No picture' };
-		if (setting.kind === 'default' || !now) {
-			return { title: 'No background chosen', note: style ? 'Pick a collection below' : 'See all backgrounds' };
-		}
+		if (setting.kind === 'default' || !now) return { title: 'The lake', note: 'Until you choose a background' };
 		return { title: now.title, note: now.collectionTitle };
 	});
 
@@ -60,7 +78,7 @@
 	}
 </script>
 
-<div class="corner" class:phone={mobileLayout.isMobile}>
+<div class="corner" class:phone={mobileLayout.isMobile} style:--composer-lift={composerHeight ? `${composerHeight}px` : undefined}>
 	<Popover bind:open placement="top-end" offset={10}>
 		{#snippet trigger({ toggle })}
 			<button
@@ -150,10 +168,10 @@
 		z-index: 3;
 	}
 
-	/* On the phone the composer is docked at the bottom, so the button
-	   stands above an empty composer. */
+	/* On the phone the button stands above the docked composer, by its
+	   measured height, or by an empty composer's before it is measured. */
 	.corner.phone {
-		bottom: 120px;
+		bottom: calc(var(--composer-lift, 104px) + 16px);
 	}
 
 	.corner-button {

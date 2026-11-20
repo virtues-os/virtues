@@ -134,6 +134,7 @@ pub fn routes() -> Router<AppState> {
         // apps load pictures from this server only.
         .route("/api/backgrounds", get(backgrounds_handler))
         .route("/api/backgrounds/files/*path", get(background_file_handler))
+        .route("/api/backgrounds/downloads", get(background_downloads_handler))
         .route("/api/backgrounds/install/:style", post(background_install_handler))
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.
@@ -950,6 +951,12 @@ pub async fn apply_update_handler() -> Response {
 /// and any download in progress or failed.
 pub async fn backgrounds_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::backgrounds::list(state.db.pool()).await)
+}
+
+/// GET /api/backgrounds/downloads — downloads in progress and failed, without
+/// the manifests and previews, for a picker following a download.
+pub async fn background_downloads_handler() -> Response {
+    Json(crate::api::backgrounds::downloads()).into_response()
 }
 
 /// POST /api/backgrounds/install/:style — start downloading a style from the

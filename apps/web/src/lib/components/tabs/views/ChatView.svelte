@@ -2565,7 +2565,7 @@
 						<!-- Loaded once home shows, so the control and its popover
 						     stay out of the chat home's first paint. -->
 						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
-							<BackgroundControl />
+							<BackgroundControl composer={composerEl} />
 						{/await}
 					{/if}
 
