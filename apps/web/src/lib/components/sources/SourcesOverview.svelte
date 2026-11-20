@@ -157,6 +157,32 @@
 
 	let noticeDismissed = $state(false);
 
+	// Connections the server let go after the subscription lapsed. Said once:
+	// dismissing it is remembered per viewer for that set of sources, and a
+	// reconnect removes the source from the set.
+	const RELEASED_KEY = 'sources.released-notice-dismissed';
+	let releasedDismissed = $state((() => {
+		try {
+			return typeof localStorage === 'undefined' ? '' : (localStorage.getItem(RELEASED_KEY) ?? '');
+		} catch {
+			return '';
+		}
+	})());
+	const releasedKey = $derived([...store.released].sort().join(','));
+	const releasedNotice = $derived(
+		store.released.length > 0 && releasedDismissed !== releasedKey
+			? `Your ${store.released.map((id) => store.sourceLabel(id)).join(' and ')} connections were removed when your subscription ended. Reconnect them anytime.`
+			: null
+	);
+	function dismissReleased() {
+		releasedDismissed = releasedKey;
+		try {
+			localStorage.setItem(RELEASED_KEY, releasedKey);
+		} catch {
+			// The notice comes back on the next visit; nothing else depends on it.
+		}
+	}
+
 	const notice = $derived.by(() => {
 		if (!connectReturn || noticeDismissed) return null;
 		if (connectReturn.ok) {
@@ -168,7 +194,9 @@
 			text:
 				connectReturn.error === 'connect_cancelled'
 					? `${who} wasn't connected — the flow was closed before it finished.`
-					: `Couldn't finish connecting ${who}. Nothing was connected.`
+					: connectReturn.error === 'bank_limit'
+						? 'A subscription covers 10 linked banks. Remove one, then add this bank again.'
+						: `Couldn't finish connecting ${who}. Nothing was connected.`
 		};
 	});
 
@@ -232,6 +260,14 @@
 				size="nested"
 				onclick={() => (noticeDismissed = true)}
 			/>
+		</div>
+	{/if}
+
+	{#if releasedNotice}
+		<div class="notice">
+			<Icon icon="mynaui:info-circle" width="16" />
+			<span>{releasedNotice}</span>
+			<IconButton icon="mynaui:x" label="Dismiss" size="nested" onclick={dismissReleased} />
 		</div>
 	{/if}
 

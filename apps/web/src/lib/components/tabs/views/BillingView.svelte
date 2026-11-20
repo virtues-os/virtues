@@ -139,7 +139,7 @@
 					Your balance is {formatMicrosUSD(balance)} on
 					<!-- Billing's tab label has no assistant name in it, so the default stands in. -->
 					<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', DEFAULT_ASSISTANT_NAME)}>Billing</button>,
-					which also pays for web search, places and bank data.
+					which pays for AI and web search. Bank data, places and maps are included.
 				{/if}
 				{#if byoCalls > 0}
 					Calls on your own key aren't priced here.

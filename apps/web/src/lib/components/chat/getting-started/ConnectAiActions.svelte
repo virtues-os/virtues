@@ -209,7 +209,7 @@
 					     set into a filled dark pill reads as "clicking charges
 					     me", when the click only opens a checkout. Naming the
 					     confirmation step is what actually settles that. -->
-					$29 a month. You'll confirm in your browser.
+					$29 a month, with $20 of AI included. You'll confirm in your browser.
 				{/snippet}
 				<Act variant="primary" onclick={() => subscribe()}>Subscribe</Act>
 				<Act onclick={() => open("signin")}>Sign in</Act>

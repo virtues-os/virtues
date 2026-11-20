@@ -215,6 +215,10 @@ function fromDevice(d: DeviceRow): Connection {
 class SourcesStore {
 	catalog = $state<SourceCatalogItem[]>([]);
 	connections = $state<Connection[]>([]);
+	/** Sources whose connections the server released when its subscription
+	 *  lapsed (`status_reason` `subscription_ended`) and that have no live
+	 *  connection now. The Sources page says so once. */
+	released = $state<string[]>([]);
 	loading = $state(true);
 	error = $state<string | null>(null);
 
@@ -255,6 +259,14 @@ class SourcesStore {
 			]);
 			this.catalog = catalog;
 			const catalogById = this.catalogById;
+			const live = new Set(creds.filter((c) => c.status === 'active').map((c) => c.provider));
+			this.released = [
+				...new Set(
+					creds
+						.filter((c) => c.status === 'revoked' && c.status_reason === 'subscription_ended' && !live.has(c.provider))
+						.map((c) => c.provider)
+				)
+			];
 			this.connections = [
 				// `pending` credentials are a transient pre-pairing state the server
 				// hard-deletes on cancel; they should never reach a list.

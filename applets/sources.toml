@@ -56,6 +56,9 @@ display_name = "Plaid"
 icon = "ri:bank-card-line"
 description = "Connect bank accounts via Plaid Hosted Link to sync transactions, balances, investments, and liabilities."
 auth = { kind = "via_proxy", start_path = "/plaid/start" }
+# Plaid bills a monthly fee per linked bank until it is removed, so a box
+# whose subscription has lapsed for 30 days lets its banks go.
+release_on_lapse = true
 
 # PAT, not OAuth: the GitHub OAuth proxy app is dead, and a fine-grained token
 # with read-only scopes is the better fit for a personal appliance anyway.

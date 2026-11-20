@@ -132,6 +132,41 @@ pub async fn proxy_refresh(
     read_response(resp).await
 }
 
+/// Tell the proxy the box has let go of a grant it issued, so the proxy can
+/// release what the provider bills for it (for Plaid, the linked bank). The
+/// box calls this for every via_proxy source it disconnects and does not
+/// need to know which providers act on it.
+///
+/// POSTs `{secrets}` to `{proxy}/{source_id}/revoke`. `api_key` is required
+/// by the proxy, but a lapsed subscription is fine.
+pub async fn proxy_revoke(
+    source_id: &str,
+    secrets: &serde_json::Value,
+    api_key: Option<&str>,
+) -> Result<()> {
+    let url = format!("{}/{source_id}/revoke", proxy_url());
+    let resp = with_box_key(client().post(&url), api_key)
+        .json(&serde_json::json!({ "secrets": secrets }))
+        .send()
+        .await
+        .map_err(|e| transport_error("unreachable", e))?;
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    Err(upstream_error(status.as_u16(), &body))
+}
+
+/// The `code` of a proxy error answer, such as `bank_limit` from an exchange
+/// the account's plan does not cover. `None` for transport errors and for a
+/// proxy too old to send a code.
+pub fn proxy_error_code(err: &AuthError) -> Option<String> {
+    let AuthError::Proxy(msg) = err else { return None };
+    let (_, body) = parse_upstream(msg)?;
+    serde_json::from_str::<ProxyErrorBody>(body).ok()?.code
+}
+
 /// The normalized answer, or the proxy's error as [`upstream_error`] words it.
 /// The proxy's error bodies contain messages and codes, never a token.
 async fn read_response(resp: reqwest::Response) -> Result<ProxyExchangeResponse> {
@@ -209,6 +244,14 @@ fn with_box_key(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_error_code_is_read_from_the_proxy_answer() {
+        let limit = r#"{"error":"This account already has 10 linked banks.","code":"bank_limit"}"#;
+        assert_eq!(proxy_error_code(&upstream_error(403, limit)).as_deref(), Some("bank_limit"));
+        assert_eq!(proxy_error_code(&upstream_error(400, r#"{"error":"old proxy"}"#)), None);
+        assert_eq!(proxy_error_code(&AuthError::Proxy("unreachable".into())), None);
+    }
 
     #[test]
     fn a_proxy_with_code_is_believed() {

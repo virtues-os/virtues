@@ -164,16 +164,32 @@ so $20 charged adds $19.12 of credit and a top-up never costs Virtues money.
 A top-up carries a Stripe idempotency key, and `topup_charges` records each
 credited PaymentIntent, so a retried top-up charges and credits once.
 
-### 4.3 Per-call charging
+### 4.3 What the wallet pays for
+The plan, as people read it: "$29 a month. Includes $20 of AI each month, plus
+bank data, places, maps and remote access. Extra AI is sold at cost." So the
+wallet pays for AI only: model calls and web search.
+
 The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
-SHA-256s it and resolves `device_keys` to the account (`BoxKey`). A paid route
-then needs a live wallet for that account (`BearerAuth`), checks the balance,
-appends a debit to `ledger` and decrements the projection. Routes that cost us
-nothing per owner, such as the OAuth token proxy and `/v1/usage`, need only the
-key, so they keep working through a lapse. AI cost is authoritative from Vercel
-AI Gateway's `usage.cost`; Places charges a constant per call, web search
-(`/v1/ai/search`) charges the model cost plus a per-search fee, and Unsplash
-is not charged; failed upstreams refund by appending a credit.
+SHA-256s it and resolves `device_keys` to the account (`BoxKey`).
+
+- **AI** (`/v1/ai/*`, including `/v1/ai/search`) needs a live wallet
+  (`BearerAuth`), refuses to start once the balance is spent, and settles the
+  real cost after the call (`entitlement::settle`): Vercel AI Gateway's
+  `usage.cost`, plus a per-search fee for web search.
+- **Included services** (Plaid bank data, Places, maps, Unsplash) need a live
+  wallet and are never debited, so they keep working when the month's AI
+  credit is spent and stop only when the subscription ends. Each has a
+  fair-use limit far above ordinary use: Places allows 500 lookups per
+  account per day (`PLACES_DAILY_LIMIT`), and Plaid allows 10 linked banks per
+  account (`PLAID_MAX_BANKS`, `services/virtues-api/src/banks.rs`), because
+  Plaid bills a monthly fee per linked bank. An 11th bank is removed from Plaid
+  at the exchange step and answered `bank_limit`.
+- **Free routes** (the OAuth token proxy, including `/{provider}/revoke`, and
+  `/v1/usage`) need only the key, so they keep working through a lapse. A box
+  calls `revoke` for every proxied source it disconnects; for Plaid it removes
+  the bank from Plaid, ending its fee. Thirty days after a subscription lapses,
+  the box revokes the connections of every source the catalog marks
+  `release_on_lapse` (`virtues-core/src/credentials/lapse.rs`).
 
 **402 means the account cannot spend**: `wallet_empty` (surface it, or
 auto-topup) or `wallet_expired` (no live wallet: never paid, lapsed, or swept).
