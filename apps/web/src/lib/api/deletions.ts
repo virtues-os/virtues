@@ -2,8 +2,9 @@
  * Deleting ingested records (virtues-core `api/deletions.rs`).
  *
  * A deletion is proposed in chat by the assistant's `delete_data` tool, or
- * made directly in the table viewer. Allowing one and deleting rows both need
- * the app's owner proof, so they go through {@link apiSendProven}.
+ * made directly in Query. Allowing one and deleting rows both need the app's
+ * owner proof, so they go through {@link apiSendProven}. Settings · Deleted
+ * records lists them.
  */
 import { apiGet, apiSend, apiSendProven } from './client';
 
@@ -43,6 +44,8 @@ export interface DeletionReceipt {
 	kept?: string[];
 	/** Set once you let its records be collected again. */
 	tombstones_lifted?: number;
+	/** When you did. Absent on a deletion lifted before servers recorded it. */
+	lifted_at?: string | null;
 }
 
 export interface Deletion {
@@ -65,6 +68,9 @@ const path = (id: string, rest = '') => `/deletions/${encodeURIComponent(id)}${r
 
 export const getDeletion = (id: string) => apiGet<Deletion>(path(id));
 
+/** Every deletion that ran or is running, newest first. Each comes without `targets`. */
+export const listDeletions = () => apiGet<Deletion[]>('/deletions');
+
 /** Allow it. Your server starts deleting; follow it with {@link getDeletion}. */
 export const allowDeletion = (id: string) => apiSendProven<Deletion>('POST', path(id, '/allow'));
 
@@ -73,6 +79,6 @@ export const cancelDeletion = (id: string) => apiSend<Deletion>('POST', path(id,
 /** Let a finished deletion's records be collected again. */
 export const liftTombstones = (id: string) => apiSend<{ lifted: number }>('DELETE', path(id, '/tombstones'));
 
-/** Delete rows of one data table by id, from the table viewer. */
+/** Delete rows of one data table by id, from Query. */
 export const deleteRows = (table: string, ids: string[]) =>
 	apiSendProven<DeletionReceipt>('POST', '/developer/rows/delete', { table, ids });

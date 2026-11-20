@@ -1,7 +1,7 @@
 //! Deleting ingested records (`crate::api::deletions`): the routes the chat's
-//! deletion card and the table viewer call.
+//! deletion card, Query and Settings · Deleted records call.
 //!
-//! Allowing a deletion and deleting rows in the table viewer both need the
+//! Allowing a deletion and deleting rows in Query both need the
 //! app's owner proof, as the admin applet's commands do: any process on a
 //! paired Mac reaches the server as that Mac, and only the app can sign.
 //! Reading a deletion, setting one aside and lifting its tombstones do not.
@@ -27,6 +27,7 @@ use crate::server::AppState;
 /// `route_layer` requires a resolved `AuthUser`.
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/deletions", get(list_handler))
         .route("/api/deletions/:id", get(get_handler))
         .route("/api/deletions/:id/allow", post(allow_handler))
         .route("/api/deletions/:id/cancel", post(cancel_handler))
@@ -98,6 +99,11 @@ async fn day_write_again_status_handler(Path(date): Path<String>) -> Response {
     Json(body).into_response()
 }
 
+/// GET /api/deletions — every deletion that ran or is running, newest first.
+async fn list_handler(State(state): State<AppState>) -> Response {
+    api_response(deletions::list(state.db.pool()).await)
+}
+
 /// GET /api/deletions/:id — a deletion as it stands: what it would remove
 /// while it waits, the receipt once it has run.
 async fn get_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -139,7 +145,7 @@ struct DeleteRows {
 }
 
 /// POST /api/developer/rows/delete — delete and tombstone rows of one data
-/// table, picked by hand in the table viewer.
+/// table, picked by hand in Query.
 async fn delete_rows_handler(
     State(state): State<AppState>,
     user: AuthUser,

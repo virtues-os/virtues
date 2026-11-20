@@ -29,6 +29,7 @@
 		type DeletionTarget,
 	} from "$lib/api/deletions";
 	import { formatDate } from "$lib/utils/dateUtils";
+	import { alsoRemoved, span, stillKept } from "$lib/settings/deletions";
 
 	interface Props {
 		deletionId: string;
@@ -97,51 +98,14 @@
 
 	const count = (n: number | undefined) => (n ?? 0).toLocaleString();
 
-	/** "Mar 3, 2026", or "Mar 3 to Mar 9, 2026" style spans. */
-	function span(earliest: string | null | undefined, latest: string | null | undefined): string {
-		const from = formatDate(earliest);
-		const to = formatDate(latest);
-		if (!from && !to) return "";
-		if (!to || from === to) return from;
-		if (!from) return to;
-		return `${from} to ${to}`;
-	}
-
-	/** "4 rows · Mar 3, 2026 to Mar 7, 2026". */
+	/** "4 rows · March 3 to March 7, 2026". */
 	function factsOf(target: DeletionTarget): string {
 		const rows = `${count(target.count)} ${target.count === 1 ? "row" : "rows"}`;
 		const when = span(target.earliest, target.latest);
 		return when ? `${rows} · ${when}` : rows;
 	}
-
-	/** "380 search entries, 12 links to people and places and 3 files". */
-	const alsoRemoved = $derived.by(() => {
-		const parts: string[] = [];
-		const add = (n: number | undefined, one: string, many: string) => {
-			if (n) parts.push(`${count(n)} ${n === 1 ? one : many}`);
-		};
-		add(receipt.search_entries, "search entry", "search entries");
-		add(receipt.links, "link to a person or place", "links to people and places");
-		add(receipt.files, "file", "files");
-		add(receipt.raw_records, "raw copy", "raw copies");
-		if (parts.length === 0) return "";
-		return listed(parts);
-	});
-
-	/** "a, b and c". */
-	function listed(parts: string[]): string {
-		if (parts.length < 2) return parts.join("");
-		return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-	}
-
-	/** Where copies remain after a deletion, from what its receipt says it did not reach. */
-	const stillKept = $derived.by(() => {
-		const words: Record<string, string> = {
-			backups: "in backups made before this",
-			pages_and_chats: "in pages or chats that already quoted them",
-		};
-		return listed((receipt.kept ?? []).map((k) => words[k]).filter(Boolean));
-	});
+	const removedText = $derived(alsoRemoved(receipt));
+	const keptText = $derived(stillKept(receipt));
 </script>
 
 <Card class="deletion" padding="md">
@@ -220,8 +184,8 @@
 			{:else}
 				<p class="note">Nothing matched by the time it ran, so nothing was removed.</p>
 			{/if}
-			{#if alsoRemoved}
-				<p class="note">Also removed: {alsoRemoved}.</p>
+			{#if removedText}
+				<p class="note">Also removed: {removedText}.</p>
 			{/if}
 			{#if lifted}
 				<p class="note">You let these be collected again. A source that still has them brings them back on its next sync.</p>
@@ -236,8 +200,8 @@
 					Your server found no raw copy for {count(receipt.raw_missing)} of them.
 				</p>
 			{/if}
-			{#if stillKept}
-				<p class="note">Copies stay {stillKept}.</p>
+			{#if keptText}
+				<p class="note">Copies stay {keptText}.</p>
 			{/if}
 			{#if actionError}
 				<p class="note error">{actionError}</p>

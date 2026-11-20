@@ -117,13 +117,12 @@
 		help="Chats, pages, threads and files you've deleted. Each waits 30 days, and you can bring it back until then."
 		href="/storage/trash"
 	/>
-	<SettingRow
-		id="delete-records"
-		label="Delete records"
-		help="For a record such as a purchase or a visit. Your server deletes it at once, so it doesn't wait in Recently deleted. No sync brings it back, and a backup made before keeps its copy."
-	>
-		<p class="how">Ask {assistantName}, or type <code>/delete-data</code> in a chat.</p>
-	</SettingRow>
+	<LinkRow
+		id="deleted-records"
+		label="Deleted records"
+		help="Records you deleted for good, such as a purchase or a visit. No sync brings them back."
+		href="/virtues/data/deleted"
+	/>
 </section>
 
 <section class="group">
@@ -155,13 +154,6 @@
 		margin: 6px 0 0;
 		font-size: var(--text-caption);
 		line-height: 1.45;
-		color: var(--color-foreground-muted);
-	}
-
-	.how {
-		margin: 0;
-		font-size: 15px;
-		line-height: 1.5;
 		color: var(--color-foreground-muted);
 	}
 
