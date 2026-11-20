@@ -315,6 +315,7 @@ impl StripeClient {
         customer_id: &str,
         amount_micros: i64,
         description: &str,
+        idempotency_key: &str,
     ) -> Result<String, OffSessionChargeError> {
         // Stripe takes cents, not micros. Round up to be safe.
         let cents = (amount_micros + 9_999) / 10_000;
@@ -388,6 +389,9 @@ impl StripeClient {
             .http
             .post(format!("{}/payment_intents", STRIPE_API))
             .basic_auth(&self.secret_key, Some(""))
+            // A retry with the same key gets the first PaymentIntent back
+            // instead of a second charge (see credits::topup_idempotency_key).
+            .header("Idempotency-Key", idempotency_key)
             .form(&params)
             .send()
             .await

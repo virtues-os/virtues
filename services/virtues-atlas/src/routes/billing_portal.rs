@@ -136,11 +136,14 @@ async fn resolve_active_customer(
         ));
     };
 
-    if sub_status.as_deref() != Some("active") {
+    // Any customer with a subscription gets the portal, whatever its status.
+    // A past-due owner is exactly the one who needs to update their card, and
+    // a cancelled one still needs their invoices.
+    if sub_status.is_none() {
         return Err(err(
             StatusCode::PAYMENT_REQUIRED,
-            "subscription_inactive",
-            "subscription is not active",
+            "no_subscription",
+            "no subscription on this account yet",
         ));
     }
 

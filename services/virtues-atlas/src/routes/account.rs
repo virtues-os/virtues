@@ -293,40 +293,86 @@ async fn account_checkout_done(
              there whenever you're ready, or connect your own AI instead.",
         );
     }
-    let paid = match super::claim::verify_and_claim_session(&state, &session_id).await {
+    const RETRY: &str = "Payment went through but we couldn't finish. Refresh this page to retry.";
+    match finalize_subscription_checkout(&state, &session_id).await {
+        Ok(()) | Err(FinalizeFail::AlreadyDone) => page(
+            "Subscription active ✓",
+            "Go back to the Virtues app. It notices on its own and carries on with your \
+             server's setup.",
+        ),
+        Err(FinalizeFail::Unbound) => unbound_payment_page(&session_id),
+        Err(FinalizeFail::NotPaidYet) => page(
+            "Payment not confirmed",
+            "We couldn't confirm the payment yet. If you completed checkout, wait a \
+             moment and refresh this page. Nothing is lost.",
+        ),
+        Err(FinalizeFail::MissingAccount) => page(
+            "Something went wrong",
+            "Payment went through but we couldn't find the account it was for. \
+             Email support@virtues.com and we'll sort it out.",
+        ),
+        Err(FinalizeFail::Retry) => page("Something went wrong", RETRY),
+    }
+}
+
+/// Why a subscription checkout did not finalize, in the terms its two
+/// callers (the success page and the Stripe webhook) act on.
+pub(crate) enum FinalizeFail {
+    /// The other caller already finished it.
+    AlreadyDone,
+    /// No account stamp: it needs a person (see `unbound_payment_page`).
+    Unbound,
+    /// Not paid yet (a delayed payment method), or not a paid subscription
+    /// session at all. A later event or refresh can finish it.
+    NotPaidYet,
+    /// The stamped account no longer exists. Needs a person.
+    MissingAccount,
+    /// A transient failure. The claim is released, so a refresh or Stripe's
+    /// webhook retry runs the whole thing again; every step is idempotent.
+    Retry,
+}
+
+/// Attach a paid subscription checkout to the account stamped into it:
+/// upsert the customer (no key minted here), label the account's keys and
+/// sessions with it (that is what flips `entitled` for the app's poll),
+/// upsert the subscription, and fund the first month's wallet.
+///
+/// Both the success page and `checkout.session.completed` call this, so a
+/// payer who closes the tab before the redirect is still finished. The
+/// once-only session claim decides which caller does the work. Every step
+/// must succeed or the claim is released for a retry; the wallet credit is
+/// last, so a retry never funds a month twice.
+pub(crate) async fn finalize_subscription_checkout(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(), FinalizeFail> {
+    let paid = match super::claim::verify_and_claim_session(state, session_id).await {
         Ok(p) => p,
-        Err(e) if e.code == "session_already_claimed" => {
-            // A refresh of the success page. The work is done; say so.
-            return page(
-                "Subscription active",
-                "This payment was already processed. Go back to the Virtues app — it \
-                 continues on its own.",
-            );
-        }
-        // Opened before checkouts were bound to an account. Nothing here can
-        // attach it safely, so it goes to a person. The session id is what
-        // support looks up in Stripe.
+        Err(e) if e.code == "session_already_claimed" => return Err(FinalizeFail::AlreadyDone),
         Err(e) if e.code == "unbound_session" => {
-            tracing::warn!(session_id = %session_id, "account checkout: unbound session needs support");
-            // Released so a refresh shows this page again, not "already processed".
-            super::claim::release_session_claim(&state, &session_id).await;
-            return unbound_payment_page(&session_id);
+            tracing::warn!(session_id, "subscription checkout without an account stamp needs support");
+            super::claim::release_session_claim(state, session_id).await;
+            return Err(FinalizeFail::Unbound);
+        }
+        Err(e) if matches!(e.code, "payment_not_complete" | "session_not_complete" | "wrong_mode" | "price_mismatch" | "no_customer") => {
+            tracing::info!(session_id, code = e.code, "subscription checkout not finalizable yet: {}", e.message);
+            super::claim::release_session_claim(state, session_id).await;
+            return Err(FinalizeFail::NotPaidYet);
         }
         Err(e) => {
-            tracing::warn!("account checkout finalize failed: {} {}", e.code, e.message);
-            super::claim::release_session_claim(&state, &session_id).await;
-            return page(
-                "Payment not confirmed",
-                "We couldn't confirm the payment yet. If you completed checkout, wait a \
-                 moment and refresh this page; nothing is lost.",
-            );
+            tracing::warn!(session_id, "subscription checkout verify failed: {} {}", e.code, e.message);
+            super::claim::release_session_claim(state, session_id).await;
+            return Err(FinalizeFail::Retry);
         }
+    };
+    let retry = |what: &str, e: &dyn std::fmt::Display| {
+        tracing::warn!(session_id, "subscription checkout {what} failed: {e:#}");
+        FinalizeFail::Retry
     };
 
     // The account comes from the session's stamp, written when an
-    // authenticated caller opened this checkout. It must still exist: an
-    // account deleted mid-checkout has nowhere to attach a subscription.
-    let ensured_account_id = match sqlx::query_scalar::<_, String>(
+    // authenticated caller opened this checkout. It must still exist.
+    let account_id = match sqlx::query_scalar::<_, String>(
         "SELECT account_id FROM accounts WHERE account_id = $1",
     )
     .bind(&paid.account_id)
@@ -335,86 +381,68 @@ async fn account_checkout_done(
     {
         Ok(Some(id)) => id,
         Ok(None) => {
-            tracing::warn!(account_id = %paid.account_id, "account checkout: stamped account does not exist");
-            return page(
-                "Something went wrong",
-                "Payment went through but we couldn't find the account it was for. \
-                 Email support@virtues.com and we'll sort it out.",
-            );
+            tracing::error!(session_id, account_id = %paid.account_id, "paid checkout for an account that does not exist; needs support");
+            return Err(FinalizeFail::MissingAccount);
         }
         Err(e) => {
-            tracing::warn!("account checkout account lookup failed: {e:#}");
-            super::claim::release_session_claim(&state, &session_id).await;
-            return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
+            super::claim::release_session_claim(state, session_id).await;
+            return Err(retry("account lookup", &e));
         }
     };
-    let account_id: Result<(String,), _> = sqlx::query_as(
-        r#"
-        INSERT INTO customers (stripe_customer_id, email, account_id)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, account_id = $3
-        RETURNING account_id
-        "#,
-    )
-    .bind(&paid.stripe_customer_id)
-    .bind(&paid.email)
-    .bind(&ensured_account_id)
-    .fetch_one(&state.pool)
-    .await;
-    let (account_id,) = match account_id {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("account checkout customer upsert failed: {e:#}");
-            super::claim::release_session_claim(&state, &session_id).await;
-            return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
-        }
-    };
-    // Best-effort by design: the payment is captured and the subscription row
-    // lands below regardless; a transient failure here heals on the next
-    // attach-touching call, and the warn is the operator's signal.
-    if let Err(e) =
-        attach_stripe_to_account(&state.pool, &ensured_account_id, &paid.stripe_customer_id).await
-    {
-        tracing::warn!("account checkout stripe attach failed: {e:#}");
+
+    // A second subscription on an account that already pays is a double
+    // charge to refund by hand. Finish it anyway so nothing is lost, and say so.
+    match account_is_entitled(&state.pool, &account_id).await {
+        Ok(true) => tracing::error!(session_id, account_id = %account_id, "account already had an active subscription; refund the duplicate"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("duplicate-subscription check failed: {e:#}"),
     }
-    if let Err(e) = sqlx::query(
-        r#"
-        INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end)
-        VALUES ($1, $2, 'active', $3)
-        ON CONFLICT (stripe_subscription_id)
-        DO UPDATE SET status = 'active', current_period_end = $3
-        "#,
-    )
-    .bind(&paid.stripe_subscription_id)
-    .bind(&paid.stripe_customer_id)
-    .bind(paid.period_end)
-    .execute(&state.pool)
-    .await
-    {
-        tracing::warn!("account checkout subscription upsert failed: {e:#}");
-        super::claim::release_session_claim(&state, &session_id).await;
-        return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
-    }
-    // (Session repoint rides in attach_stripe_to_account above.)
-    // First month's wallet. Best-effort: `invoice.paid` re-sets it monthly,
-    // and virtues-api's credit upserts the account row itself.
-    if let Err(e) = state
-        .virtues_api
-        .credit(&crate::virtues_api_client::Credit {
-            account_id,
-            amount_micros: state.credit.renewal_micros,
-            mode: "set",
-            reference: Some(format!("account-checkout:{session_id}")),
-        })
+
+    let steps = async {
+        sqlx::query(
+            "INSERT INTO customers (stripe_customer_id, email, account_id) VALUES ($1, $2, $3) \
+             ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, account_id = $3",
+        )
+        .bind(&paid.stripe_customer_id)
+        .bind(&paid.email)
+        .bind(&account_id)
+        .execute(&state.pool)
         .await
-    {
-        tracing::warn!("account checkout initial credit failed (invoice.paid will cover it): {e:#}");
+        .map_err(|e| retry("customer upsert", &e))?;
+        attach_stripe_to_account(&state.pool, &account_id, &paid.stripe_customer_id)
+            .await
+            .map_err(|e| retry("stripe attach", &e))?;
+        sqlx::query(
+            r#"
+            INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end)
+            VALUES ($1, $2, 'active', $3)
+            ON CONFLICT (stripe_subscription_id)
+            DO UPDATE SET status = 'active', current_period_end = $3
+            "#,
+        )
+        .bind(&paid.stripe_subscription_id)
+        .bind(&paid.stripe_customer_id)
+        .bind(paid.period_end)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| retry("subscription upsert", &e))?;
+        state
+            .virtues_api
+            .credit(&crate::virtues_api_client::Credit {
+                account_id: account_id.clone(),
+                amount_micros: state.credit.renewal_micros,
+                mode: "set",
+                reference: Some(format!("account-checkout:{session_id}")),
+            })
+            .await
+            .map_err(|e| retry("initial credit", &e))?;
+        Ok::<(), FinalizeFail>(())
     }
-    page(
-        "Subscription active ✓",
-        "Go back to the Virtues app — it notices on its own and carries on with your \
-         server's setup.",
-    )
+    .await;
+    if steps.is_err() {
+        super::claim::release_session_claim(state, session_id).await;
+    }
+    steps
 }
 
 /// A paid session atlas cannot attach on its own. Says so plainly and gives
