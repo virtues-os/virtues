@@ -191,9 +191,8 @@ Built on wave on 2026-11-20.
 
 ### Slice 5: the addresses
 
-Built on 2026-11-20 and seen in the dev app. The address module is
-committed; the rest waits, uncommitted, on `tabs/registry.ts` and
-`sidebar/modes.ts`, which hold another session's change in progress.
+Built on wave on 2026-11-20 and seen in the dev app. The tab registry's part
+is in 30abf3ef4, with another session's change to the same file.
 
 - `/sites` is the door. `/site/<name>` is a site and `/job/<name>` is one of
   your server's jobs, each with `/options` for its other side. `/virtues/jobs`
