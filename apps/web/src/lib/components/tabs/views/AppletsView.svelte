@@ -144,7 +144,7 @@
 		loading={!appletsStore.loaded && !appletsStore.error}
 		error={appletsStore.error && applets.length === 0 ? "Your server couldn't send your sites." : null}
 		emptyIcon="atlas:applets"
-		emptyMessage={'No sites yet. Ask in chat for something to look at or keep track of, and it appears here. A site is private until you share it.'}
+		emptyMessage={'No sites yet. Ask in chat for something to look at or keep track of, and it appears here.'}
 		loadingMessage="Loading sites…"
 		searchPlaceholder="Search sites"
 		onItemClick={openHome}
@@ -196,9 +196,6 @@
 		{/snippet}
 	</UniversalDataGrid>
 
-	{#if appletsStore.loaded}
-		<p class="foot">A site is private until you share it.</p>
-	{/if}
 </Page>
 
 <NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
@@ -228,11 +225,6 @@
 		color: var(--color-foreground);
 	}
 	.new-line {
-		font-size: var(--text-small);
-		color: var(--color-foreground-subtle);
-	}
-	.foot {
-		margin: 24px 0 0;
 		font-size: var(--text-small);
 		color: var(--color-foreground-subtle);
 	}
