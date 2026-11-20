@@ -12,6 +12,14 @@
 //! schedule is `is_due`; the times it reads live in `checked_at` and
 //! `changed_at` in the applet's state.
 //!
+//! When the box has handed over a push token (`push` in state, written by
+//! `virtues-core/src/scheduler/google_push.rs`), each of the owner's and
+//! shared calendars also gets a Google watch. Google then calls virtues-api
+//! when the calendar changes, the box pulls that signal, and runs this applet
+//! early with the watch's channel id in `push_channels`. A watched calendar
+//! is otherwise checked every six hours, in case a signal was lost. Watches
+//! last up to 30 days and are renewed a day before they end.
+//!
 //! Two failure modes are load-bearing here, because together they froze a real
 //! box's calendar for three days:
 //!
@@ -59,6 +67,15 @@ const IDLE_EVERY_SECS: i64 = 3_600;
 /// Runs land a few seconds after the quarter hour, not exactly on it, so a
 /// check is due slightly before its interval is up.
 const DUE_SLACK_SECS: i64 = 300;
+/// A watched calendar is still checked this often, in case a signal was lost.
+const WATCHED_EVERY_SECS: i64 = 6 * 3_600;
+/// The longest watch Google gives a calendar.
+const WATCH_TTL_SECS: i64 = 30 * 86_400;
+/// Renew a watch when less than this is left on it.
+const WATCH_RENEW_SECS: i64 = 86_400;
+/// After Google refuses a watch, wait this long before asking again.
+const WATCH_RETRY_SECS: i64 = 86_400;
+const CHANNELS_STOP: &str = "https://www.googleapis.com/calendar/v3/channels/stop";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -109,6 +126,21 @@ async fn main() -> Result<()> {
 
     let mut checked_at = int_map(&input.config, "checked_at");
     let mut changed_at = int_map(&input.config, "changed_at");
+    let push = Push::from_config(&input.config);
+    let mut watches: HashMap<String, Watch> = input
+        .config
+        .get("watches")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let mut watch_failed_at = int_map(&input.config, "watch_failed_at");
+    // Channels Google said changed, from the run's payload.
+    let woken: std::collections::HashSet<String> = input
+        .payload
+        .as_ref()
+        .and_then(|p| p.get("push_channels"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     let mut total_written = 0usize;
     let mut skipped = 0usize;
     let mut failures: Vec<String> = Vec::new();
@@ -121,7 +153,9 @@ async fn main() -> Result<()> {
 
         // A calendar seen for the first time starts out active.
         let changed = *changed_at.entry(cal_id.to_string()).or_insert(now);
-        if !is_due(cal_id, now, checked_at.get(cal_id).copied(), changed) {
+        let watch = watches.get(cal_id).filter(|w| push.is_some() && w.expires_at > now);
+        let was_woken = watch.is_some_and(|w| woken.contains(&w.id));
+        if !was_woken && !is_due(cal_id, now, checked_at.get(cal_id).copied(), changed, watch.is_some()) {
             skipped += 1;
             continue;
         }
@@ -172,13 +206,50 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Start or renew watches, so the next change is signalled.
+    if let Some(push) = &push {
+        for cal in &calendars {
+            let Some(cal_id) = cal.get("id").and_then(|v| v.as_str()) else { continue };
+            let role = cal.get("accessRole").and_then(|v| v.as_str());
+            if !wants_watch(cal_id, role) {
+                continue;
+            }
+            if watches.get(cal_id).is_some_and(|w| w.expires_at - now > WATCH_RENEW_SECS) {
+                continue;
+            }
+            if watch_failed_at.get(cal_id).is_some_and(|t| now - t < WATCH_RETRY_SECS) {
+                continue;
+            }
+            match start_watch(&client, &access_token, cal_id, push).await {
+                Ok(w) => {
+                    if let Some(old) = watches.insert(cal_id.to_string(), w) {
+                        stop_watch(&client, &access_token, &old).await;
+                    }
+                    watch_failed_at.remove(cal_id);
+                }
+                Err(e) => {
+                    tracing::warn!(calendar = cal_id, error = %e, "could not watch calendar; it stays on the schedule");
+                    watch_failed_at.insert(cal_id.to_string(), now);
+                }
+            }
+        }
+    }
+
     // Drop entries for calendars that are no longer listed.
     let listed: std::collections::HashSet<&str> =
         calendars.iter().filter_map(|c| c.get("id").and_then(|v| v.as_str())).collect();
-    for m in [&mut checked_at, &mut changed_at] {
+    for m in [&mut checked_at, &mut changed_at, &mut watch_failed_at] {
         m.retain(|k, _| listed.contains(k.as_str()));
     }
     sync_tokens.retain(|k, _| listed.contains(k.as_str()));
+    let unlisted: Vec<String> = watches.keys().filter(|k| !listed.contains(k.as_str())).cloned().collect();
+    for k in unlisted {
+        if let Some(w) = watches.remove(&k) {
+            stop_watch(&client, &access_token, &w).await;
+        }
+    }
+    input.config["watches"] = serde_json::json!(watches);
+    input.config["watch_failed_at"] = serde_json::json!(watch_failed_at);
 
     input.config["sync_tokens"] = serde_json::json!(sync_tokens);
     input.config["checked_at"] = serde_json::json!(checked_at);
@@ -212,17 +283,104 @@ async fn main() -> Result<()> {
     output_with_records(&summary, &input.config, total_written as i64)
 }
 
-/// Whether a calendar should be fetched on this run.
-fn is_due(cal_id: &str, now: i64, checked_at: Option<i64>, changed_at: i64) -> bool {
+/// Whether a calendar should be fetched on this run, when no signal asked
+/// for it.
+fn is_due(cal_id: &str, now: i64, checked_at: Option<i64>, changed_at: i64, watched: bool) -> bool {
     let Some(checked) = checked_at else { return true };
-    let every = if cal_id.ends_with("@group.v.calendar.google.com") {
+    let every = if is_published(cal_id) {
         PUBLISHED_EVERY_SECS
+    } else if watched {
+        WATCHED_EVERY_SECS
     } else if now - changed_at >= IDLE_AFTER_SECS {
         IDLE_EVERY_SECS
     } else {
         return true;
     };
     now - checked >= every - DUE_SLACK_SECS
+}
+
+fn is_published(cal_id: &str) -> bool {
+    cal_id.ends_with("@group.v.calendar.google.com")
+}
+
+/// Published calendars change too rarely to watch, and Google gives no
+/// watch on a calendar that shows only free and busy times.
+fn wants_watch(cal_id: &str, access_role: Option<&str>) -> bool {
+    !is_published(cal_id) && matches!(access_role, Some("owner" | "writer" | "reader"))
+}
+
+/// Where Google should send change signals, from the box.
+struct Push {
+    token: String,
+    address: String,
+}
+
+impl Push {
+    fn from_config(config: &Value) -> Option<Push> {
+        let p = config.get("push")?;
+        let token = p.get("token")?.as_str()?.to_string();
+        let address = p.get("address")?.as_str()?.to_string();
+        (!token.is_empty() && address.starts_with("https://")).then_some(Push { token, address })
+    }
+}
+
+/// A live Google watch on one calendar.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Watch {
+    id: String,
+    resource_id: String,
+    expires_at: i64,
+}
+
+async fn start_watch(client: &reqwest::Client, token: &str, cal_id: &str, push: &Push) -> Result<Watch> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let url = format!("{EVENTS_BASE}/{}/events/watch", urlencoding::encode(cal_id));
+    let resp: Value = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "id": id,
+            "type": "web_hook",
+            "address": push.address,
+            "token": push.token,
+            "params": { "ttl": WATCH_TTL_SECS.to_string() },
+        }))
+        .send()
+        .await
+        .context("watch request failed")?
+        .error_for_status()
+        .context("watch non-2xx")?
+        .json()
+        .await
+        .context("watch response was not JSON")?;
+    let resource_id = resp
+        .get("resourceId")
+        .and_then(|v| v.as_str())
+        .context("watch response has no resourceId")?
+        .to_string();
+    // Google gives the end as milliseconds, in a string.
+    let expires_at = resp
+        .get("expiration")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|ms| ms / 1000)
+        .context("watch response has no expiration")?;
+    Ok(Watch { id, resource_id, expires_at })
+}
+
+/// Stop a watch that was replaced. Best effort: an unstopped watch ends on
+/// its own, and its signals name a channel this applet no longer knows.
+async fn stop_watch(client: &reqwest::Client, token: &str, w: &Watch) {
+    let res = client
+        .post(CHANNELS_STOP)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "id": w.id, "resourceId": w.resource_id }))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status());
+    if let Err(e) = res {
+        tracing::debug!(error = %e, "could not stop an old calendar watch");
+    }
 }
 
 fn int_map(config: &Value, key: &str) -> HashMap<String, i64> {
@@ -443,21 +601,44 @@ mod due_tests {
 
     #[test]
     fn an_active_calendar_is_checked_every_run() {
-        assert!(is_due("me@example.com", NOW, Some(NOW - 900), NOW - 3_600));
+        assert!(is_due("me@example.com", NOW, Some(NOW - 900), NOW - 3_600, false));
     }
 
     #[test]
     fn an_idle_calendar_is_checked_hourly() {
         let week_ago = NOW - IDLE_AFTER_SECS;
-        assert!(!is_due("me@example.com", NOW, Some(NOW - 900), week_ago));
-        assert!(is_due("me@example.com", NOW, Some(NOW - 3_600), week_ago));
+        assert!(!is_due("me@example.com", NOW, Some(NOW - 900), week_ago, false));
+        assert!(is_due("me@example.com", NOW, Some(NOW - 3_600), week_ago, false));
+    }
+
+    #[test]
+    fn a_watched_calendar_is_checked_every_six_hours() {
+        assert!(!is_due("me@example.com", NOW, Some(NOW - 3_600), NOW, true));
+        assert!(is_due("me@example.com", NOW, Some(NOW - 6 * 3_600), NOW, true));
+    }
+
+    #[test]
+    fn only_calendars_with_events_to_read_are_watched() {
+        assert!(wants_watch("me@example.com", Some("owner")));
+        assert!(wants_watch("team@example.com", Some("reader")));
+        assert!(!wants_watch("busy@example.com", Some("freeBusyReader")));
+        assert!(!wants_watch("en.usa#holiday@group.v.calendar.google.com", Some("reader")));
+    }
+
+    #[test]
+    fn push_needs_a_token_and_an_https_address() {
+        let ok = serde_json::json!({ "push": { "token": "t", "address": "https://api.example.com/v1/push/google/calendar" } });
+        assert!(Push::from_config(&ok).is_some());
+        let plain = serde_json::json!({ "push": { "token": "t", "address": "http://api.example.com/x" } });
+        assert!(Push::from_config(&plain).is_none());
+        assert!(Push::from_config(&serde_json::json!({})).is_none());
     }
 
     #[test]
     fn a_published_calendar_is_checked_daily() {
         let id = "en.usa#holiday@group.v.calendar.google.com";
-        assert!(!is_due(id, NOW, Some(NOW - 3_600), NOW));
-        assert!(is_due(id, NOW, Some(NOW - 86_400 + 60), NOW));
-        assert!(is_due(id, NOW, None, NOW));
+        assert!(!is_due(id, NOW, Some(NOW - 3_600), NOW, false));
+        assert!(is_due(id, NOW, Some(NOW - 86_400 + 60), NOW, false));
+        assert!(is_due(id, NOW, None, NOW, false));
     }
 }

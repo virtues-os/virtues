@@ -28,6 +28,7 @@ model provider.
 | An applet with an `agent` prompt | whatever that applet was written to read |
 | Settings: a drafted change (Return in the search field) | what the owner typed, and the current values of the settings it may change: names, work, employer, time zone, the assistant's name and style notes, the two spending limits |
 | Settings: a sample reply ("How {name} talks to you") | the owner's display name, the assistant's name, and the style notes in the field, saved or not; the week it answers about is invented, so no record goes out |
+| A watched Google calendar changes | Google calls `api.virtues.com` with no body: a random channel id and the box's random push id that the box chose, Google's opaque resource id, and a state word. `api.virtues.com` keeps the channel id until the box collects it. No event, address or account name passes through (`services/virtues-api/src/routes/push.rs`) |
 
 Hosted path: box → `api.virtues.com` → the AI gateway → the model's provider.
 Two parties besides the provider handle the request in the clear. The provider

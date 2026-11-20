@@ -185,6 +185,8 @@ async fn main() -> Result<()> {
         // Plaid bank-data proxy (/v1/services/plaid/*): keeps the master Plaid
         // secret server-side; the box sends only per-user access_tokens.
         .merge(routes::plaid::router())
+        // Calendar change signals: Google calls in, the box pulls them.
+        .merge(routes::push::router())
         .merge(routes::ai::router())
         // Middleware. The span is at info so a failed request's log line
         // names its route; production filters out debug, where the default
