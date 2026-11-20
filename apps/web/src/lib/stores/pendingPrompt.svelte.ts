@@ -54,10 +54,12 @@ export const pendingPrompt = {
  * is one Back away, not buried behind a tab. Pass `projectId` to bind the new
  * chat to a project (grounds retrieval there).
  */
-export function askVirtues(text: string, projectId?: string | null) {
+export function askVirtues(text: string, projectId?: string | null, opts: { beside?: boolean } = {}) {
 	const trimmed = text.trim();
 	if (!trimmed) return;
 	pendingPrompt.set(trimmed);
 	pendingPrompt.setProject(projectId ?? null);
-	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+	// Beside: the chat opens in the other pane, so the page you asked from stays.
+	if (opts.beside) windowShellStore.openRouteBeside('/', 'New chat');
+	else windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 }

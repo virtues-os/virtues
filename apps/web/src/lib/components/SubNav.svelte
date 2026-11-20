@@ -21,6 +21,8 @@
 		divider = false,
 		ariaLabel = "Sections",
 		item,
+		selected,
+		onSelect,
 	}: {
 		/** The owning tab — the route lives on the pane, so sub-nav is per-pane. */
 		tabId: string;
@@ -38,6 +40,12 @@
 		ariaLabel?: string;
 		/** Optional custom item chrome (label + badge + icon). Chrome only — never content. */
 		item?: Snippet<[SubNavItem, boolean]>;
+		/**
+		 * For a room that keeps its section in the query (`?view=`) rather than
+		 * the path: the active id, and what a click does. Both or neither.
+		 */
+		selected?: string;
+		onSelect?: (id: string) => void;
 	} = $props();
 
 	// The active segment is a pure function of the route. Because the only thing we
@@ -45,6 +53,7 @@
 	// of its own room — never off to another destination.
 	const validIds = $derived(new Set(items.map((i) => i.id)));
 	const active = $derived.by(() => {
+		if (selected !== undefined) return validIds.has(selected) ? selected : defaultId;
 		if (route === base) return defaultId;
 		const rest = route.startsWith(base + "/") ? route.slice(base.length + 1) : "";
 		// Match on the FIRST segment only, so a nested route (`${base}/x/y`) still
@@ -57,6 +66,10 @@
 	});
 
 	function switchTo(id: string) {
+		if (onSelect) {
+			onSelect(id);
+			return;
+		}
 		const next = id === defaultId ? base : `${base}/${id}`;
 		if (route === next) return;
 		windowShellStore.updateTab(tabId, { route: next });
@@ -71,8 +84,9 @@
 	let ready = $state(false);
 
 	async function measure() {
-		if (!navEl) return;
 		await tick();
+		// The row can be gone by now: its room closed while fonts loaded.
+		if (!navEl) return;
 		const btn = navEl.querySelector<HTMLButtonElement>("button.is-active");
 		if (!btn) return;
 		navEl.style.setProperty("--ux", `${btn.offsetLeft}px`);

@@ -45,7 +45,7 @@ export function inNewTab(paneId?: 'left' | 'right'): Opener {
 /** Each door's list, for the menu's Go to. New chat is the menu's first row. */
 const DOOR_ROUTES: Partial<Record<DoorId, string>> = {
 	pages: '/page',
-	threads: '/threads',
+	threads: '/inbox',
 	applets: '/applets',
 	wiki: '/wiki',
 };
@@ -61,21 +61,26 @@ function dayPageRoute(daysAgo: number): string {
 }
 
 /**
- * The + menu. New things first, in the sidebar's order, then today's and
- * yesterday's pages, then the ways to reach something that exists: the
- * in-app browser (Mac only, so the caller says whether it is there) and the
- * sidebar's doors. Search has its own button in the window's corner, and a
- * temporary chat its own shortcut (⌘⇧I), so neither is offered here.
+ * Everything you can make, each with its shortcut: the sidebar's Create
+ * menu, and the first rows of the tab strip's + menu. `paneId` is where a
+ * new chat opens; `open` is where everything else does.
  */
-export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { browser: boolean }): ContextMenuItem[] {
-	const open = inNewTab(paneId);
-	const items: ContextMenuItem[] = [
+export function createMenuItems(open: Opener, paneId?: 'left' | 'right'): ContextMenuItem[] {
+	return [
 		{
 			id: 'new-chat',
 			label: 'New chat',
 			icon: 'atlas:new-chat',
 			shortcut: shortcuts.format('mod+n'),
 			action: () => void windowShellStore.newChat(paneId),
+		},
+		{
+			id: 'new-temporary-chat',
+			label: 'New temporary chat',
+			icon: 'mynaui:incognito',
+			shortcut: shortcuts.format('mod+shift+i'),
+			action: () => open('/?temporary=1', 'Temporary chat'),
+			dividerAfter: true,
 		},
 		{
 			id: 'new-page',
@@ -95,9 +100,25 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			id: 'new-thread',
 			label: 'New thread',
 			icon: 'atlas:projects',
+			shortcut: shortcuts.format('mod+shift+h'),
 			action: () => newProject(open),
-			dividerAfter: true,
 		},
+	];
+}
+
+/**
+ * The + menu. The Create menu's rows first, then today's and yesterday's
+ * pages, then the ways to reach something that exists: the in-app browser
+ * (Mac only, so the caller says whether it is there) and the sidebar's
+ * doors. Search has its own button in the window's corner, so it is not
+ * offered here.
+ */
+export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { browser: boolean }): ContextMenuItem[] {
+	const open = inNewTab(paneId);
+	const made = createMenuItems(open, paneId);
+	made[made.length - 1].dividerAfter = true;
+	const items: ContextMenuItem[] = [
+		...made,
 		{
 			id: 'today',
 			label: 'Today',

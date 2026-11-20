@@ -167,35 +167,45 @@ as the fallback.
 
 ### Grays
 
+Every gray in Light is neutral: the grounds (`--background`,
+`--surface-elevated`, `--desk`), the borders and the washes have no hue of
+their own, so the only color on a page is its ink and its accent. The inks
+keep their navy.
+
 Every gray wash mixes one pigment, `--wash-ink`, into whatever is behind it,
-so it reads on any ground. On Light the pigment is the stone of
-`--surface-elevated` taken as dark as that hue goes, so a wash over the white
-sheet is a darker stone and belongs with the sidebar. On Dark it is white.
+so it reads on any ground. On Light the pigment is a neutral near-black, so a
+wash is a plain gray like the grounds and lines. A pigment with a hue tints
+everything it touches: a warm one comes out beige on the white sheet. On Dark
+it is white.
 
 **A tinted block at rest uses `--fill-bg`** (6% on Light, 3% on Dark): a sent
-message, an open card, a chip, a key cap. On the sheet it is the same color
-as `--surface-elevated`. It is a wash, so it also shows on a stone ground,
-where the surface token would vanish. `--surface-elevated` is for a pane's
-own ground.
+message, an open card, a chip, a key cap. It is a wash, so it shows on any
+ground, where the surface token would vanish on a ground of its own gray.
+`--surface-elevated` is for a pane's own ground. On the sheet the two come
+out within a step of each other.
 
 The interaction ramp sits above the fill. Four steps, no others:
 
 | Step | Token | Mix, Light / Dark | Means |
 |---|---|---|---|
 | Rest | | 0% | nothing |
-| Hover | `--hover-bg` | 9% / 5% | the pointer is here |
-| Selected | `--active-bg` | 15% / 9% | where you are |
-| Press | `--press-bg` | 20% / 12% | held down, only while pressed |
+| Hover | `--hover-bg` | 4% / 5% | the pointer is here |
+| Selected | `--active-bg` | 7% / 9% | where you are |
+| Press | `--press-bg` | 10% / 12% | held down, only while pressed |
 
 ```specimen Ramp
 ```
 
+The steps on Light are light on purpose, so a chosen row stays quiet beside
+its text. Hover is lighter than the fill, so a block that rests on `--fill-bg`
+must not change to `--hover-bg` under the pointer: it would get lighter.
+
 **Never use a surface token for an interaction state.** `--surface-elevated`
-is a step of about 4% from the page, which is too small to see. That bug
-shipped twice: dead hovers across 39 rules, and an active tab drawn white on
-white. **Never use an interaction step for a block at rest** either: a block
-filled with `--hover-bg` sits next to one filled with the stone as a second
-gray. The scrollbar's thumb is on the same ramp at 28% on Light and 22% on
+is one fixed color, so on a ground of the same gray it is no step at all,
+where a wash is a step off whatever is behind it. That bug shipped twice:
+dead hovers across 39 rules, and an active tab drawn white on white. **Never
+use an interaction step for a block at rest** either: a block filled with
+`--hover-bg` sits next to one filled with `--fill-bg` as a second gray. The scrollbar's thumb is on the same ramp at 28% on Light and 22% on
 Dark, with no track.
 
 ### Type

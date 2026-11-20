@@ -12,9 +12,9 @@
   --vk-ink: var(--color-foreground, #1A2030);
   --vk-muted: var(--color-foreground-muted, #5E6370);
   --vk-subtle: var(--color-foreground-subtle, #878B95);
-  --vk-border: var(--color-border, #E3E1DD);
-  --vk-border-subtle: var(--color-border-subtle, #EFEEEB);
-  --vk-border-strong: var(--color-border-strong, #D4D1CC);
+  --vk-border: var(--color-border, #E1E1E1);
+  --vk-border-subtle: var(--color-border-subtle, #EEEEEE);
+  --vk-border-strong: var(--color-border-strong, #D1D1D1);
   --vk-background: var(--color-background, #FFFFFF);
   --vk-page: var(--color-page, #FFFFFF);
   --vk-highlight: var(--color-highlight, rgba(246, 222, 120, 0.55));

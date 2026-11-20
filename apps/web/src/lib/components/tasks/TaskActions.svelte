@@ -1,3 +1,18 @@
+<script lang="ts" module>
+	import { getByoKey } from '$lib/api/client';
+	import { placeOf } from '$lib/tasks/requests';
+
+	/* Where your own account runs, asked once per load: the preview remounts
+	   this for every task you point at. */
+	let byoPlaceOnce: Promise<string> | null = null;
+	function byoPlace(): Promise<string> {
+		byoPlaceOnce ??= getByoKey<{ endpoint_url?: string | null }>()
+			.then((s) => placeOf(s.endpoint_url))
+			.catch(() => 'on your own account');
+		return byoPlaceOnce;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * What can be done with a task, on its page and in the door's preview.
@@ -5,11 +20,15 @@
 	 *   A ready request   the assistant's result, then Accept and Reply.
 	 *   A request at work where it runs and what it has cost, Start or Take it
 	 *                     back, and a note for its next run.
-	 *   Your own task     Ask the assistant to do it (once, never a recurring
-	 *                     one), and Dismiss.
+	 *   Your own task     Ask the assistant (once, never a recurring one), and
+	 *                     Dismiss.
+	 *
+	 * Each is a real button: the one that moves the task forward is primary,
+	 * the rest are secondary, and Dismiss is ghost because it puts the task away.
 	 */
 	import type { Task, TaskPatch } from '$lib/api/client';
-	import { addTaskNote, getByoKey } from '$lib/api/client';
+	import { addTaskNote } from '$lib/api/client';
+	import { Button } from '$lib';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import RefCard from '$lib/components/RefCard.svelte';
 	import TaskComposer from '$lib/components/tasks/TaskComposer.svelte';
@@ -17,7 +36,7 @@
 	import { modelSlots } from '$lib/stores/modelSlots.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { isClosed } from '$lib/tasks/actions';
-	import { placeOf, requestState } from '$lib/tasks/requests';
+	import { requestState } from '$lib/tasks/requests';
 	import { recurrenceOf } from '$lib/tasks/recur';
 	import { formatMicrosUSD } from '$lib/utils/currency';
 	import { toast } from 'svelte-sonner';
@@ -27,21 +46,17 @@
 
 	const request = $derived(task.assignee === 'assistant');
 	let replying = $state(false);
-	let byoPlace = $state('on your own account');
+	let place = $state('on your own account');
 
 	onMount(() => {
 		if (!modelSlots.loaded) void modelSlots.load();
-		void getByoKey<{ endpoint_url?: string | null }>()
-			.then((s) => (byoPlace = placeOf(s.endpoint_url)))
-			.catch(() => {
-				// The line keeps its general wording.
-			});
+		void byoPlace().then((p) => (place = p));
 	});
 
 	const where = $derived.by(() => {
 		if (!task.run_model) return null;
 		const name = modelSlots.nameOf(task.run_model);
-		return task.run_route === 'byo' ? `${name} ${byoPlace}` : `${name} through Virtues`;
+		return task.run_route === 'byo' ? `${name} ${place}` : `${name} through Virtues`;
 	});
 
 	async function save(patch: TaskPatch, failure: string) {
@@ -112,8 +127,8 @@
 				/>
 			{/if}
 			<div class="buttons">
-				<button type="button" class="action strong" onclick={() => save({ status: 'done' }, "Your server couldn't close that request")}>Accept</button>
-				<button type="button" class="action" onclick={() => (replying = !replying)}>{replying ? 'Cancel reply' : 'Reply'}</button>
+				<Button onclick={() => save({ status: 'done' }, "Your server couldn't close that request")}>Accept</Button>
+				<Button variant="secondary" onclick={() => (replying = !replying)}>{replying ? 'Cancel reply' : 'Reply'}</Button>
 			</div>
 		{:else if request}
 			<p class="state">
@@ -123,10 +138,10 @@
 			</p>
 			<div class="buttons">
 				{#if task.status === 'open' && !task.next_run_at}
-					<button type="button" class="action strong" onclick={() => save({ assignee: 'assistant' }, "Your server couldn't start that")}>Start</button>
+					<Button onclick={() => save({ assignee: 'assistant' }, "Your server couldn't start that")}>Start</Button>
 				{/if}
-				<button type="button" class="action" onclick={() => save({ assignee: 'owner' }, "Your server couldn't take that back")}>Take it back</button>
-				<button type="button" class="action" onclick={dismiss}>Dismiss</button>
+				<Button variant="secondary" onclick={() => save({ assignee: 'owner' }, "Your server couldn't take that back")}>Take it back</Button>
+				<Button variant="ghost" onclick={dismiss}>Dismiss</Button>
 			</div>
 			<TaskComposer
 				label="Add a note for the assistant"
@@ -137,9 +152,15 @@
 		{:else}
 			<div class="buttons">
 				{#if !recurrenceOf(task)}
-					<button type="button" class="action" onclick={() => save({ assignee: 'assistant' }, "Your server couldn't hand that over")}>Ask the assistant to do it</button>
+					<Button
+						variant="secondary"
+						icon="mynaui:sparkles"
+						onclick={() => save({ assignee: 'assistant' }, "Your server couldn't hand that over")}
+					>
+						Ask the assistant
+					</Button>
 				{/if}
-				<button type="button" class="action" onclick={dismiss}>Dismiss</button>
+				<Button variant="ghost" onclick={dismiss}>Dismiss</Button>
 			</div>
 		{/if}
 	</div>
@@ -152,41 +173,19 @@
 		gap: 12px;
 	}
 	.result {
-		font-size: 15px;
+		font-size: var(--text-body);
 		line-height: 24px;
 		color: var(--color-foreground);
 	}
 	.state {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--text-label);
 		line-height: 20px;
 		color: var(--color-foreground-muted);
 	}
 	.buttons {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 16px;
-	}
-	.action {
-		padding: 0;
-		border: 0;
-		background: none;
-		font: inherit;
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.action:not(.strong) {
-		color: var(--color-foreground-muted);
-		font-weight: 400;
-	}
-	.action:hover {
-		color: var(--color-foreground);
-	}
-	.action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
+		gap: 8px;
 	}
 </style>

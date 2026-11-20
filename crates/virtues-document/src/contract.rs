@@ -787,7 +787,9 @@ fn guide_attrs(rule: &HtmlRule, attrs: &Ordered<AttrSpec>, skip: &[&str]) -> Vec
             continue;
         }
         let choices: Option<Vec<String>> = match (&a.allowed, a.ty) {
-            (Some(values), _) if values.len() <= 4 => Some(
+            // Five keeps a figure's kinds named; the heading's six levels are
+            // its tags, `h1` to `h6`.
+            (Some(values), _) if values.len() <= 5 => Some(
                 values
                     .iter()
                     .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
@@ -1196,7 +1198,10 @@ mod tests {
         assert!(!c.is_inline("figure"));
         assert!(c.node("figure").unwrap().spec.id);
         let figure: Vec<&str> = c.node("figure").unwrap().attrs().keys().collect();
-        assert_eq!(figure, ["kind", "text", "who", "ref", "refs", "src", "caption", "style", "time"]);
+        assert_eq!(
+            figure,
+            ["kind", "text", "who", "ref", "refs", "src", "caption", "style", "time", "chart", "sql", "data"]
+        );
         assert_eq!(c.mark_rank("veil") + 1, c.mark_rank("code"));
         assert_eq!(c.mark_rank("highlight") + 1, c.mark_rank("veil"));
         assert!(c.marks_exclude("veil", "code"));

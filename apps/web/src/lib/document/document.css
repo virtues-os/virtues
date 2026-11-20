@@ -335,6 +335,18 @@
 	margin: 20mm;
 }
 
+/* A page set on paper names its sheet (PageContent), so two pages side by
+   side each print on their own. */
+@page a4-sheet {
+	size: A4;
+	margin: 20mm;
+}
+
+@page letter-sheet {
+	size: letter;
+	margin: 20mm;
+}
+
 @media print {
 	/* The page's menus and bars (the selection toolbar, `/`, `@`, Ask AI)
 	   float inside it: whichever was open when the print began is no part

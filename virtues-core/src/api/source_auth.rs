@@ -200,15 +200,84 @@ pub async fn oauth_start_handler(
         .return_url
         .unwrap_or_else(|| "/oauth/callback".to_string());
 
-    let redirect_url = format!(
-        "{proxy}{start}?return_url={ret}&state={state}",
-        proxy = proxy_url(),
-        start = start_path,
-        ret = urlencoding::encode(&return_url),
-        state = urlencoding::encode(&signed_state),
-    );
+    // Register the connect with the proxy first, so the proxy hands the
+    // provider's tokens only to this box (`register_connect`). The browser
+    // then carries just the ticket. An unlinked box has no key to register
+    // with, and a proxy that predates `/sessions` answers 404; both fall back
+    // to the unregistered link, which the proxy accepts until it sets
+    // `OAUTH_REQUIRE_REGISTERED`.
+    let api_key = match virtues_helpers::auth::read_box_api_key(state.db.pool()).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read box api_key to register the connect");
+            None
+        }
+    };
+    let ticket = match api_key {
+        Some(key) => match register_connect(&proxy_url(), start_path, &return_url, &signed_state, &key).await {
+            Ok(ticket) => Some(ticket),
+            Err(e) => {
+                tracing::warn!(source_id = %source_id, error = %e, "could not register the connect; using an unregistered link");
+                None
+            }
+        },
+        None => None,
+    };
+    let redirect_url = match ticket {
+        Some(ticket) => format!(
+            "{proxy}{start}?ticket={ticket}",
+            proxy = proxy_url(),
+            start = start_path,
+            ticket = urlencoding::encode(&ticket),
+        ),
+        None => format!(
+            "{proxy}{start}?return_url={ret}&state={state}",
+            proxy = proxy_url(),
+            start = start_path,
+            ret = urlencoding::encode(&return_url),
+            state = urlencoding::encode(&signed_state),
+        ),
+    };
 
     (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response()
+}
+
+/// Register a connect with the OAuth proxy before the owner's browser starts
+/// it, and return the ticket the browser carries to `/start`.
+///
+/// The call is server-to-server and carries the box's key. The proxy ties the
+/// session to that key and answers `/exchange` only for it, so an exchange
+/// token that reached any other address cannot be spent there. Without this,
+/// anyone could send an owner a `/start` link naming their own address.
+async fn register_connect(
+    proxy: &str,
+    start_path: &str,
+    return_url: &str,
+    signed_state: &str,
+    api_key: &str,
+) -> anyhow::Result<String> {
+    let base = start_path
+        .strip_suffix("/start")
+        .ok_or_else(|| anyhow::anyhow!("start_path {start_path} does not end in /start"))?;
+    let resp = crate::http_client::virtues_api_client()
+        .post(format!("{proxy}{base}/sessions"))
+        .header("X-Virtues-Api-Key", api_key)
+        .timeout(std::time::Duration::from_secs(15))
+        .json(&serde_json::json!({ "return_url": return_url, "state": signed_state }))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("proxy unreachable: {}", e.without_url()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("proxy answered {status}: {body}");
+    }
+    let body: serde_json::Value = resp.json().await?;
+    body.get("ticket")
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("proxy answered without a ticket"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,6 +390,15 @@ pub async fn oauth_callback_handler(
         };
         let mut resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
             Ok(r) => r,
+            // The proxy refused the grant for a reason the owner can act on
+            // (the plan's limit on linked banks): show it as a connect that
+            // did not finish, with that reason, not as a raw error.
+            Err(e) if virtues_helpers::auth::proxy_error_code(&e).as_deref() == Some("bank_limit") => {
+                if q.sheet.as_deref() == Some("1") {
+                    return Redirect::to(CLOSE_SHEET).into_response();
+                }
+                return oauth_incomplete_response(&claims.source_id, "bank_limit", q.shell.as_deref(), q.next.as_deref());
+            }
             Err(e) => return auth_error_response(e),
         };
 
@@ -799,6 +877,11 @@ fn oauth_incomplete_response(
             (
                 format!("{source} wasn't connected"),
                 "You closed the connection flow before it finished. You can close this tab and try again from Virtues.",
+            )
+        } else if reason == "bank_limit" {
+            (
+                "You've linked the most banks a subscription covers".to_string(),
+                "A subscription covers 10 linked banks. Remove one in Sources, then add this one again.",
             )
         } else {
             (
@@ -1595,6 +1678,47 @@ mod tests {
         assert_eq!(
             virtues_helpers::auth::read_box_api_key(&pool).await.unwrap().as_deref(),
             Some("vk-second")
+        );
+    }
+
+    /// The box registers a connect with its key and the browser carries only
+    /// the ticket. A proxy without `/sessions` is an error the caller falls
+    /// back from.
+    #[tokio::test]
+    async fn register_connect_sends_the_key_and_returns_the_ticket() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let app = axum::Router::new().route(
+            "/google/sessions",
+            axum::routing::post(move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                let key = headers
+                    .get("x-virtues-api-key")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                record.lock().unwrap().push((key, body));
+                async { Json(serde_json::json!({ "ticket": "t-1", "expires_in": 300 })) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let ret = "http://192.168.1.40:7117/oauth/callback";
+        let ticket = register_connect(&proxy, "/google/start", ret, "signed", "box-key").await.unwrap();
+        assert_eq!(ticket, "t-1");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![(
+                "box-key".to_string(),
+                serde_json::json!({ "return_url": ret, "state": "signed" })
+            )]
+        );
+
+        assert!(
+            register_connect(&proxy, "/notion/start", ret, "signed", "box-key").await.is_err(),
+            "a proxy without the route answers 404"
         );
     }
 }

@@ -109,7 +109,7 @@ if (typeof window !== 'undefined') {
 	});
 }
 
-function isDarkTheme(): boolean {
+export function isDarkTheme(): boolean {
 	if (darkCache !== null) return darkCache;
 	if (typeof document === 'undefined') return false;
 	const flag = getComputedStyle(document.documentElement)

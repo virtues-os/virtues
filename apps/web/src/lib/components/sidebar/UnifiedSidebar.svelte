@@ -18,6 +18,7 @@
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { newPage, newTask } from "$lib/utils/newActions";
+	import { newProject } from "$lib/utils/projectActions";
 	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
@@ -92,6 +93,14 @@
 				label: "New task",
 				group: "Create",
 				run: handleNewTask,
+			},
+			{
+				// T reopens a closed tab, so a thread takes H.
+				id: "thread.new",
+				keys: "mod+shift+h",
+				label: "New thread",
+				group: "Create",
+				run: () => newProject((route, label) => windowShellStore.openTabFromRoute(route, { label })),
 			},
 			{
 				id: "tab.reopen",

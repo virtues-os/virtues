@@ -21,12 +21,15 @@ class TasksStore {
 	closed = $state<Task[]>([]);
 	loading = $state(false);
 	error = $state<string | null>(null);
+	/** The open tasks have arrived at least once, so an empty list is really empty. */
+	loaded = $state(false);
 	closedLoaded = $state(false);
 	async load() {
 		this.loading = true;
 		this.error = null;
 		try {
 			this.open = await listTasks('open');
+			this.loaded = true;
 			if (this.closedLoaded) this.closed = await listTasks('closed');
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'Could not load tasks';
@@ -43,6 +46,7 @@ class TasksStore {
 	async refresh() {
 		try {
 			this.open = await listTasks('open');
+			this.loaded = true;
 			if (this.closedLoaded) this.closed = await listTasks('closed');
 			this.error = null;
 		} catch {

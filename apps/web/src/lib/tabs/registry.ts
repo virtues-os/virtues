@@ -38,6 +38,7 @@ const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletVi
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
 const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
 const DesignView: ViewLoader = () => import('$lib/components/tabs/views/DesignView.svelte');
+const InboxView: ViewLoader = () => import('$lib/components/tabs/views/InboxView.svelte');
 const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView.svelte');
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
@@ -980,6 +981,26 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// INBOX: /inbox. Tasks, insights and what your server needs, with the
+	// chosen one whole beside the list. The page opens on its list; any
+	// other view is in the query (`?view=radar`, and the others InboxView
+	// names). No door opens it yet; it is reached by its address.
+	// ========================================================================
+	inbox: {
+		match: (path) => path === '/inbox',
+		parse: (_path, params) => {
+			const view = params?.get('view');
+			const query = view && ['radar', 'cards', 'graph', 'map', 'week'].includes(view) ? `?view=${view}` : '';
+			return { type: 'inbox', label: 'Inbox', icon: 'mynaui:inbox', normalizedRoute: `/inbox${query}` };
+		},
+		serialize: () => 'inbox',
+		deserialize: () => '/inbox',
+		icon: 'mynaui:inbox',
+		defaultLabel: 'Inbox',
+		component: InboxView,
+	},
+
+	// ========================================================================
 	// DESIGN: /design. The design system, agents/build/design.md rendered
 	// with live specimens. No door opens it; it is reached by its address.
 	// ========================================================================
@@ -1071,6 +1092,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'trash', // Drive trash
 		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
 		'design', // The design system: /design
+		'inbox', // /inbox
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /

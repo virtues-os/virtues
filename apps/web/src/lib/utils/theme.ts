@@ -336,9 +336,9 @@ export const themePreviewColors: Record<
 	}
 > = {
 	oxford: {
-		background: '#FDFCF9',
+		background: '#FCFCFC',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F4F3F0',
+		surfaceElevated: '#F3F3F3',
 		foreground: '#1A2030',
 		foregroundMuted: '#3E4459',
 		primary: 'var(--accent-light)'

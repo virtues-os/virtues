@@ -4,7 +4,6 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
-	import BackgroundControl from "$lib/components/backgrounds/BackgroundControl.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -40,6 +39,7 @@
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects, isFullReplace } from "$lib/components/chat/state/toolSideEffects";
+	import { showBuiltSite } from "$lib/applets/sites.svelte";
 	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
 	import { holdReadingPosition } from "$lib/components/chat/state/holdReadingPosition";
@@ -348,17 +348,20 @@
 		}
 	}
 
-	// The two tool results that reach outside the transcript — create_page
-	// opens a page beside the chat, edit_page animates one (see
-	// state/toolSideEffects for why both seed before they act).
+	// The tool results that reach outside the transcript (see
+	// state/toolSideEffects for why each seeds before it acts).
 	const tools = new ToolSideEffects();
 
 	// The tool results that act outside the transcript: auto-open a page
-	// create_page made, and run the presence animation for an edit_page. Only
+	// create_page made or a site applet setup made, and run the presence
+	// animation for an edit_page. Only
 	// for calls made during this session, not when reopening old chats — so
 	// nothing runs during the initial load (see state/toolSideEffects).
 	$effect(() => {
 		if (!chat?.messages || isLoading) return;
+		for (const site of tools.collectNewSites(chat.messages)) {
+			showBuiltSite(site.appletId, site.name);
+		}
 		for (const page of tools.collectNewPages(chat.messages)) {
 			openCreatedPage(page.pageId, page.title);
 		}
@@ -2238,6 +2241,7 @@
 													enabled={out.enabled !== false}
 													lifecycle={out.lifecycle}
 													updated={out.status === "updated"}
+													hasView={out.has_view ?? null}
 												/>
 											{/if}
 											{:else if part.type === "tool-show" && (part as any).state !== "output-error"}
@@ -2558,7 +2562,11 @@
 								{/snippet}
 							</HomeTiles>
 						</div>
-						<BackgroundControl />
+						<!-- Loaded once home shows, so the control and its popover
+						     stay out of the chat home's first paint. -->
+						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
+							<BackgroundControl />
+						{/await}
 					{/if}
 
 					{#if isEmpty && isGhost}

@@ -144,10 +144,13 @@ function followEditable(view: ViewState, editor: Editor): () => void {
 }
 
 /** Mirror the node's attributes as `data-*` on its outer element, for styling and print. */
+/** A chart figure's rows and query: kept in the node, too large to copy onto its wrapper. */
+const UNMIRRORED = new Set(['id', 'data', 'sql']);
+
 function mirrorAttrs(dom: HTMLElement, node: PmNode): void {
 	for (const [key, value] of Object.entries(node.attrs)) {
 		const name = `data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
-		if (key === 'id') continue;
+		if (UNMIRRORED.has(key)) continue;
 		if (value === null || value === undefined || value === false) dom.removeAttribute(name);
 		else dom.setAttribute(name, String(value));
 	}

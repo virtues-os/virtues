@@ -265,7 +265,7 @@
 					</ul>
 				{/if}
 				<div class="add">
-					<TextAction onclick={() => newProject(undefined, { thing_id: thing.id })}>New project</TextAction>
+					<TextAction onclick={() => newProject(undefined, { thing_id: thing.id })}>New thread</TextAction>
 				</div>
 			</section>
 

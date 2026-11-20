@@ -252,6 +252,10 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // window or its scheduled time, then goes through the Mac app.
     crate::outbox::spawn(pool.clone());
 
+    // Notes: every few minutes, record when each note your server would
+    // raise was first seen, so reading one writes nothing.
+    crate::api::notes::spawn(pool.clone());
+
 }
 
 fn spawn_scheduler(pool: sqlx::PgPool, yjs_state: yjs::YjsState) {

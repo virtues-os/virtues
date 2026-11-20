@@ -212,7 +212,7 @@
  {
   "name": "article: every figure, and fences that are no figure",
   "mode": "article",
-  "markdown": "```figure\nkind: quote\ntext: Save me a seat.\nwho: Nick\ntime: 9:12 AM\n```\n\n```figure\nkind: thread\nrefs: data_communication_message:msg_8, data_communication_message:msg_9\n```\n\n```figure\nkind: route\n```\n\n```figure\nkind: picture\nsrc: /api/drive/files/f_1/download\ncaption: Rain.\nstyle: watercolor\n```\n\n```figure\nkind: chart\n```\n\n````figure\nkind: route\n````\n"
+  "markdown": "```figure\nkind: quote\ntext: Save me a seat.\nwho: Nick\ntime: 9:12 AM\n```\n\n```figure\nkind: thread\nrefs: data_communication_message:msg_8, data_communication_message:msg_9\n```\n\n```figure\nkind: route\n```\n\n```figure\nkind: picture\nsrc: /api/drive/files/f_1/download\ncaption: Rain.\nstyle: watercolor\n```\n\n```figure\nkind: poll\n```\n\n````figure\nkind: route\n````\n"
  },
  {
   "name": "article: veils in a link, around bold, unpaired and across syntax",

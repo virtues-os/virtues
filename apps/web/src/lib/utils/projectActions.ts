@@ -16,6 +16,7 @@ import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { promptText } from '$lib/stores/dialog.svelte';
+import { newThreadDialog } from '$lib/stores/newThread.svelte';
 import { toast } from 'svelte-sonner';
 import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
@@ -25,27 +26,12 @@ import { notifyEnded, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
  * Ask for a name, make the project, and open it (in the tab you are on,
  * unless `open` says where). `under` starts it under a thing.
  */
-export async function newProject(
-	open: (route: string, label: string) => void = (route, label) => windowShellStore.openTabFromRoute(route, { label }),
+/** Open the New thread dialog; `open` shows the thread once it is made, `under` starts it under a thing. */
+export function newProject(
+	open?: (route: string, label: string) => void,
 	under?: { thing_id: string },
-): Promise<void> {
-	const name = (
-		await promptText({
-			title: 'New thread',
-			placeholder: 'Name your thread',
-			confirmLabel: 'Create',
-		})
-	)?.trim();
-	if (!name) return;
-	try {
-		const project = await projectStore.create(name, under);
-		open(`/thread/${project.id}`, project.name);
-	} catch (e) {
-		console.error('[projectActions] Failed to create project:', e);
-		toast.error("Your server couldn't create that thread", {
-			description: 'Nothing changed. Try again',
-		});
-	}
+): void {
+	newThreadDialog.open({ under: under?.thing_id ?? null, onOpen: open });
 }
 
 export function openProjects(): void {
@@ -371,9 +357,11 @@ export function projectChipMenuItems(
  * next chat to claim, as "Ask this project" does, so its first message files
  * it and grounds retrieval there.
  */
-export function newChatInProject(project: Pick<Project, 'id'>): void {
+export function newChatInProject(project: Pick<Project, 'id'>, opts: { beside?: boolean } = {}): void {
 	pendingPrompt.setProject(project.id);
-	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+	// Beside: in the other pane, so the thread's page stays in view.
+	if (opts.beside) windowShellStore.openRouteBeside('/', 'New chat');
+	else windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 }
 
 /**

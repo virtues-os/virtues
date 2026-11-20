@@ -14,6 +14,7 @@
 	import Background from "$lib/components/Background.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import NewTaskDialog from "$lib/components/tasks/NewTaskDialog.svelte";
+	import NewThreadDialog from "$lib/components/threads/NewThreadDialog.svelte";
 	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -429,6 +430,7 @@
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
 <NewTaskDialog />
+<NewThreadDialog />
 
 <!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
      is where it used to live: the sidebar doesn't render on the phone shell,

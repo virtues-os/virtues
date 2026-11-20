@@ -5,7 +5,7 @@
 # Cloud services (virtues-atlas / virtues-api) are built and deployed on the cloud server (make deploy-*).
 
 .DEFAULT_GOAL := help
-.PHONY: help init hooks commit migration dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+.PHONY: help init hooks commit migration dev dev-info dev-core dev-api _dev-api-run dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api deploy-rollback mac-app mac-dev web-test \
         iroh-ffi-mac ios-release release-staging
 
@@ -55,12 +55,20 @@ RUST_LOG ?= warn
 # it's missing we print a hint and fall back to a plain one-shot run.
 WATCH ?= 0
 CARGO_WATCH := $(shell command -v cargo-watch 2>/dev/null)
-DEV_CORE_RUN := cargo run -p virtues
+# Core runs as the binary the one `cargo build -p virtues -p virtues-applets
+# -p virtues-door` produced, not through `cargo run -p virtues`. virtues-applets
+# depends on the virtues lib, so building them together unifies features across
+# all three; `cargo run -p virtues` alone resolves a different set and compiled
+# sqlx-macros, sqlx, pgvector, virtues-helpers and virtues a second time (~20s
+# on every start, and on every WATCH restart). Deferred (`=`), so only the dev
+# targets pay for the `cargo metadata` call.
+DEV_CORE_BIN = $(shell cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/debug/virtues
+DEV_CORE_RUN = "$(DEV_CORE_BIN)"
 ifeq ($(WATCH),1)
 ifneq ($(CARGO_WATCH),)
 # Rebuild the applet binaries on every restart too, or an .rs edit under
 # applets/ restarts core against stale (or missing) siblings.
-DEV_CORE_RUN := cargo watch -x 'build -p virtues -p virtues-applets' -x 'run -p virtues'
+DEV_CORE_RUN = cargo watch -x 'build -p virtues -p virtues-applets -p virtues-door' -s '"$(DEV_CORE_BIN)"'
 endif
 endif
 
@@ -193,11 +201,17 @@ init: ## Create .env with a freshly-generated encryption key (idempotent)
 # (Ctrl-C stops both). Use `make dev-info` if you'd rather run them in separate
 # tabs for split logs. `make dev-link` prints a login URL when you need one.
 
+# Whatever already answers on :5432 counts as running (Postgres.app, a manual
+# pg_ctl). Asking `brew services` instead missed those, then started a brew
+# server that died on the taken port, every run. The idempotent statements
+# below raise NOTICEs ("already exists, skipping") on every run after the
+# first; PGOPTIONS keeps psql to warnings and errors.
+db: export PGOPTIONS := -c client_min_messages=warning
 db: ## Ensure brew postgres@$(PG_MAJOR) is installed + running, db exists with pgvector
 	@command -v brew >/dev/null || { echo "error: brew not installed — https://brew.sh"; exit 1; }
 	@brew list postgresql@$(PG_MAJOR) >/dev/null 2>&1 || { echo "→ installing postgresql@$(PG_MAJOR)"; brew install postgresql@$(PG_MAJOR); }
 	@brew list pgvector     >/dev/null 2>&1 || { echo "→ installing pgvector";     brew install pgvector;     }
-	@brew services list | grep -q "postgresql@$(PG_MAJOR).*started" || { echo "→ starting postgresql@$(PG_MAJOR)"; brew services start postgresql@$(PG_MAJOR) >/dev/null; sleep 2; }
+	@$(PG_BIN)/pg_isready -q -h localhost -p 5432 || { echo "→ starting postgresql@$(PG_MAJOR)"; brew services start postgresql@$(PG_MAJOR) >/dev/null; sleep 2; }
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
@@ -249,7 +263,7 @@ dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) +
 	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (PROD — real billing, real rows))"
 	@echo "  $(if $(VIRTUES_DEV_SKIP_SETUP),lands straight in the app (setup skipped).,walks the real Setup steps (VIRTUES_DEV_SKIP_SETUP is empty).)$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
 	@trap 'kill 0' EXIT INT TERM; \
-	$(if $(DEV_LOCAL_API),$(MAKE) dev-api & ,) \
+	$(if $(DEV_LOCAL_API),$(MAKE) _dev-api-run & ,) \
 	$(MAKE) dev-core & \
 	$(MAKE) dev-web & \
 	if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-run & fi; \
@@ -280,7 +294,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 # The dev server's page dials the box's sockets through its proxy, which
 # passes the page's Origin as sent (apps/web/vite.config.ts). The box lists
 # that origin for the page socket alone; its terminal refuses it.
-	RUST_LOG="$(RUST_LOG),noq_udp=error" \
+	@RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
 	VIRTUES_PUBLIC_ORIGINS="http://localhost:$(DEV_WEB_PORT),http://127.0.0.1:$(DEV_WEB_PORT)" \
@@ -295,10 +309,13 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	STATIC_DIR="$(CURDIR)/apps/web/build" \
 	$(DEV_CORE_RUN)
 
-dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
-	@echo "→ local virtues-api on :9002. Point dev-core at it with:"
-	@echo "    make dev-core VIRTUES_API_URL=http://localhost:9002"
-	@echo "  Real upstream spend applies (fake wallet, $$20/day + $$5/call caps)."
+dev-api: db _dev-api-run ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
+
+# `make dev` has already run `db`; going through `dev-api` ran it a second
+# time, concurrently with core's build.
+_dev-api-run:
+	@echo "→ local virtues-api on :9002. Real upstream spend applies (fake wallet, \$$20/day + \$$5/call caps)."
+	@RUST_LOG="$(RUST_LOG)" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	ENVIRONMENT=dev \
 	VIRTUES_API_DATABASE_URL=$(VIRTUES_API_DATABASE_URL) \

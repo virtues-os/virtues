@@ -473,9 +473,21 @@ pub async fn thread_week_handler(
     api_response(crate::api::thread_week::week(pool, start).await)
 }
 
-/// GET /api/notes - What your server noticed about your tasks and threads
-pub async fn notes_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::notes::notes(state.db.pool()).await)
+#[derive(Debug, serde::Deserialize)]
+pub struct NotesQuery {
+    /// `true` lists the notes set aside with "Not now" instead.
+    #[serde(default)]
+    pub set_aside: bool,
+}
+
+/// GET /api/notes - What your server noticed about your tasks and threads.
+/// `?set_aside=true` lists the ones set aside, to bring one back.
+pub async fn notes_handler(State(state): State<AppState>, Query(q): Query<NotesQuery>) -> Response {
+    if q.set_aside {
+        api_response(crate::api::notes::set_aside(state.db.pool()).await)
+    } else {
+        api_response(crate::api::notes::notes(state.db.pool()).await)
+    }
 }
 
 /// GET /api/notes/:key - One note and what it rests on

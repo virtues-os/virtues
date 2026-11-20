@@ -567,6 +567,12 @@
           "markdownDescription": "Enables the browser_login command without any pre-configured scope."
         },
         {
+          "description": "Enables the browser_login_user_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-login-user-agent",
+          "markdownDescription": "Enables the browser_login_user_agent command without any pre-configured scope."
+        },
+        {
           "description": "Enables the browser_pane_agent command without any pre-configured scope.",
           "type": "string",
           "const": "allow-browser-pane-agent",
@@ -609,10 +615,22 @@
           "markdownDescription": "Enables the check_app_update_cmd command without any pre-configured scope."
         },
         {
+          "description": "Enables the close_permission_tile command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-permission-tile",
+          "markdownDescription": "Enables the close_permission_tile command without any pre-configured scope."
+        },
+        {
           "description": "Enables the command_surface_version command without any pre-configured scope.",
           "type": "string",
           "const": "allow-command-surface-version",
           "markdownDescription": "Enables the command_surface_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the connect_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-connect-agent",
+          "markdownDescription": "Enables the connect_agent command without any pre-configured scope."
         },
         {
           "description": "Enables the diagnose_box command without any pre-configured scope.",
@@ -771,6 +789,12 @@
           "markdownDescription": "Denies the browser_login command without any pre-configured scope."
         },
         {
+          "description": "Denies the browser_login_user_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-login-user-agent",
+          "markdownDescription": "Denies the browser_login_user_agent command without any pre-configured scope."
+        },
+        {
           "description": "Denies the browser_pane_agent command without any pre-configured scope.",
           "type": "string",
           "const": "deny-browser-pane-agent",
@@ -813,10 +837,22 @@
           "markdownDescription": "Denies the check_app_update_cmd command without any pre-configured scope."
         },
         {
+          "description": "Denies the close_permission_tile command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-permission-tile",
+          "markdownDescription": "Denies the close_permission_tile command without any pre-configured scope."
+        },
+        {
           "description": "Denies the command_surface_version command without any pre-configured scope.",
           "type": "string",
           "const": "deny-command-surface-version",
           "markdownDescription": "Denies the command_surface_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the connect_agent command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-connect-agent",
+          "markdownDescription": "Denies the connect_agent command without any pre-configured scope."
         },
         {
           "description": "Denies the diagnose_box command without any pre-configured scope.",
@@ -999,6 +1035,12 @@
           "markdownDescription": "Enables the default_window_icon command without any pre-configured scope."
         },
         {
+          "description": "Enables the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-exit",
+          "markdownDescription": "Enables the exit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the fetch_data_store_identifiers command without any pre-configured scope.",
           "type": "string",
           "const": "core:app:allow-fetch-data-store-identifiers",
@@ -1087,6 +1129,12 @@
           "type": "string",
           "const": "core:app:deny-default-window-icon",
           "markdownDescription": "Denies the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-exit",
+          "markdownDescription": "Denies the exit command without any pre-configured scope."
         },
         {
           "description": "Denies the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -2349,6 +2397,12 @@
           "markdownDescription": "Enables the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-set-fullscreen-on-monitor",
+          "markdownDescription": "Enables the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:allow-set-icon",
@@ -2815,6 +2869,12 @@
           "type": "string",
           "const": "core:window:deny-set-fullscreen",
           "markdownDescription": "Denies the set_fullscreen command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-set-fullscreen-on-monitor",
+          "markdownDescription": "Denies the set_fullscreen_on_monitor command without any pre-configured scope."
         },
         {
           "description": "Denies the set_icon command without any pre-configured scope.",
@@ -3291,10 +3351,10 @@
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`",
           "type": "string",
           "const": "reach:default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`"
         },
         {
           "description": "Enables the discover command without any pre-configured scope.",
@@ -3315,58 +3375,16 @@
           "markdownDescription": "Enables the forget command without any pre-configured scope."
         },
         {
-          "description": "Enables the improv_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-claim",
-          "markdownDescription": "Enables the improv_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_disconnect command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-disconnect",
-          "markdownDescription": "Enables the improv_disconnect command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_discover command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-discover",
-          "markdownDescription": "Enables the improv_discover command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_grant command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-grant",
-          "markdownDescription": "Enables the improv_grant command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_owner_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-owner-claim",
-          "markdownDescription": "Enables the improv_owner_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_pair command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-pair",
-          "markdownDescription": "Enables the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_provision command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-provision",
-          "markdownDescription": "Enables the improv_provision command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_wifi_scan command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-wifi-scan",
-          "markdownDescription": "Enables the improv_wifi_scan command without any pre-configured scope."
-        },
-        {
           "description": "Enables the outbox_stats command without any pre-configured scope.",
           "type": "string",
           "const": "reach:allow-outbox-stats",
           "markdownDescription": "Enables the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the owner_proof_sign command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-owner-proof-sign",
+          "markdownDescription": "Enables the owner_proof_sign command without any pre-configured scope."
         },
         {
           "description": "Enables the pair command without any pre-configured scope.",
@@ -3405,34 +3423,10 @@
           "markdownDescription": "Enables the pair_handoff_create command without any pre-configured scope."
         },
         {
-          "description": "Enables the provision_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-provision-join",
-          "markdownDescription": "Enables the provision_join command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the provision_networks command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-provision-networks",
-          "markdownDescription": "Enables the provision_networks command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the provision_open command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-provision-open",
-          "markdownDescription": "Enables the provision_open command without any pre-configured scope."
-        },
-        {
           "description": "Enables the radio_stats command without any pre-configured scope.",
           "type": "string",
           "const": "reach:allow-radio-stats",
           "markdownDescription": "Enables the radio_stats command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the reach_rehome command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-reach-rehome",
-          "markdownDescription": "Enables the reach_rehome command without any pre-configured scope."
         },
         {
           "description": "Enables the reach_status command without any pre-configured scope.",
@@ -3459,58 +3453,16 @@
           "markdownDescription": "Denies the forget command without any pre-configured scope."
         },
         {
-          "description": "Denies the improv_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-claim",
-          "markdownDescription": "Denies the improv_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_disconnect command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-disconnect",
-          "markdownDescription": "Denies the improv_disconnect command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_discover command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-discover",
-          "markdownDescription": "Denies the improv_discover command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_grant command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-grant",
-          "markdownDescription": "Denies the improv_grant command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_owner_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-owner-claim",
-          "markdownDescription": "Denies the improv_owner_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_pair command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-pair",
-          "markdownDescription": "Denies the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_provision command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-provision",
-          "markdownDescription": "Denies the improv_provision command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_wifi_scan command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-wifi-scan",
-          "markdownDescription": "Denies the improv_wifi_scan command without any pre-configured scope."
-        },
-        {
           "description": "Denies the outbox_stats command without any pre-configured scope.",
           "type": "string",
           "const": "reach:deny-outbox-stats",
           "markdownDescription": "Denies the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the owner_proof_sign command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-owner-proof-sign",
+          "markdownDescription": "Denies the owner_proof_sign command without any pre-configured scope."
         },
         {
           "description": "Denies the pair command without any pre-configured scope.",
@@ -3549,34 +3501,10 @@
           "markdownDescription": "Denies the pair_handoff_create command without any pre-configured scope."
         },
         {
-          "description": "Denies the provision_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-provision-join",
-          "markdownDescription": "Denies the provision_join command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the provision_networks command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-provision-networks",
-          "markdownDescription": "Denies the provision_networks command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the provision_open command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-provision-open",
-          "markdownDescription": "Denies the provision_open command without any pre-configured scope."
-        },
-        {
           "description": "Denies the radio_stats command without any pre-configured scope.",
           "type": "string",
           "const": "reach:deny-radio-stats",
           "markdownDescription": "Denies the radio_stats command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the reach_rehome command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-reach-rehome",
-          "markdownDescription": "Denies the reach_rehome command without any pre-configured scope."
         },
         {
           "description": "Denies the reach_status command without any pre-configured scope.",

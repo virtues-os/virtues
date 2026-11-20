@@ -1,6 +1,6 @@
 {
   "$comment": "The page document contract, read by the Rust server (crates/virtues-document) and the browser editor alike. Key order is meaningful: mark order decides HTML nesting (proposals outermost, then link) and attribute order is rendering order. `version` is bumped only once documents written under it have shipped; from then on, adding a node type, a mark or an attribute needs a bump, because a client deletes from the shared document what its schema cannot read. An `int` is a whole number a JavaScript number holds exactly, at most 2^53 - 1 either side of zero; `min` and `max` narrow it. A `route` is a ref to something on the box, `/kind/id`, and never another site. A `label` names a footnote within its page: an ASCII letter or digit, then up to 63 more letters, digits, `_` or `-`. `urlSchemes` are the schemes a `url` attribute may use, checked after removing tabs and newlines and trimming control characters and spaces as a browser does; a URL without a scheme is a path on the box. A list item's `value` is its own number, as HTML's `<li value>` is: an ordered list numbers its first item `start` and each one after it one past the item before, and an item whose number is not that carries it, the items after it going on from there. Read from HTML, a first item's own number is the list's `start`, and a value that only repeats the count is dropped, as is one in a bullet list, which numbers nothing.",
-  "version": 2,
+  "version": 3,
   "fragment": "doc",
   "id": { "attr": "id", "html": "data-id" },
   "urlSchemes": ["http", "https", "mailto", "tel"],
@@ -134,7 +134,7 @@
     "figure": {
       "group": "block", "atom": true, "id": true,
       "attrs": {
-        "kind": { "type": "string", "required": true, "enum": ["quote", "thread", "route", "picture"], "html": "kind" },
+        "kind": { "type": "string", "required": true, "enum": ["quote", "thread", "route", "picture", "chart"], "html": "kind" },
         "text": { "type": "string", "default": null, "html": "text" },
         "who": { "type": "string", "default": null, "html": "who" },
         "ref": { "type": "string", "default": null, "html": "ref" },
@@ -142,7 +142,10 @@
         "src": { "type": "url", "default": null, "html": "src" },
         "caption": { "type": "string", "default": null, "html": "caption" },
         "style": { "type": "string", "default": null, "html": "data-style" },
-        "time": { "type": "string", "default": null, "html": "time" }
+        "time": { "type": "string", "default": null, "html": "time" },
+        "chart": { "type": "string", "default": null, "html": "chart" },
+        "sql": { "type": "string", "default": null, "html": "sql" },
+        "data": { "type": "string", "default": null, "html": "data-rows" }
       },
       "html": [{ "tag": "virtues-figure" }]
     },

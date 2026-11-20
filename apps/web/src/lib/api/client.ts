@@ -1192,14 +1192,17 @@ export interface NoteDetail extends Note {
 	is_muted: boolean;
 	/** The "Fewer like this" choice, in words. */
 	mute_label: string;
+	/** The home time zone its sentences are written in (IANA), for showing its times the same way. */
+	time_zone: string;
 }
 
 export function getNote(key: string): Promise<NoteDetail> {
 	return apiGet<NoteDetail>(`/notes/${encodeURIComponent(key)}`);
 }
 
-export function getNotes(): Promise<Note[]> {
-	return apiGet<Note[]>('/notes');
+/** The notes raised now, or with `setAside` the ones set aside with "Not now" whose condition still holds. */
+export function getNotes(opts?: { setAside?: boolean }): Promise<Note[]> {
+	return apiGet<Note[]>('/notes', opts?.setAside ? { set_aside: 'true' } : {});
 }
 
 /** Not now: set a note aside until its condition changes. */
@@ -1280,32 +1283,39 @@ function pairStatus(id: string): Promise<PairStatusResponse> {
 }
 
 export interface ChatImportResponse {
-	status: string;
-	summary: string;
+	/** `running` once the import has started in the background. */
+	status: 'running' | 'success' | 'skipped' | 'error' | 'budget_exceeded';
+	summary: string | null;
+	error: string | null;
 	run_id: string | null;
 }
 
 /**
- * POST /api/chat-import/upload — multipart upload of a chat export (Tier 3
- * one-time import). Parsed + ingested box-side; returns the "Imported N
- * messages" summary once the run completes.
+ * POST /api/chat-import/upload — multipart upload of a chat export: the zip
+ * Claude or ChatGPT emails, or the conversations.json inside it. The server
+ * reads which site each chat came from. Returns as soon as the import has
+ * started; follow `run_id` in `listRuns({ applet_id: 'applet_chat_import' })`
+ * for the result. `chat-import.ts` does both. `onProgress` reports the
+ * upload as a percentage; an export can be gigabytes.
  */
-export async function uploadChatImport(
+export function uploadChatImport(
 	file: File,
-	provider: string
+	onProgress?: (percent: number) => void
 ): Promise<ChatImportResponse> {
 	const form = new FormData();
-	form.append('provider', provider);
 	form.append('file', file);
-	const res = await fetch(`${API_BASE}/chat-import/upload`, {
-		method: 'POST',
-		body: form
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
-	}
-	return res.json();
+	return postFormWithProgress<ChatImportResponse>('/chat-import/upload', form, onProgress);
+}
+
+/** One chat site's history on the server: the months with messages, oldest first. */
+export interface ChatHistory {
+	provider: 'chatgpt' | 'claude' | 'gemini' | 'grok' | string;
+	months: { month: string; messages: number }[];
+}
+
+/** GET /api/chat-import/status — what has arrived from other AI chat sites, by site and month. */
+export function getChatHistory(): Promise<ChatHistory[]> {
+	return apiGet<ChatHistory[]>('/chat-import/status');
 }
 
 export interface MintCollectorResponse {
@@ -1695,26 +1705,19 @@ export function getRecord(ontology: string, recordId: string): Promise<OntologyR
 }
 
 /**
- * Upload a file to drive
- * @param path - Target folder path
- * @param file - File to upload
- * @param onProgress - Optional progress callback (0-100)
+ * POST a multipart form to `path` (under `API_BASE`), reporting upload
+ * progress as a percentage. XMLHttpRequest, because fetch reports no upload
+ * progress; it bypasses the fetch rewrite, so the box's origin is spelled
+ * out.
  */
-export async function uploadDriveFile(
+function postFormWithProgress<T>(
 	path: string,
-	file: File,
+	form: FormData,
 	onProgress?: (percent: number) => void
-): Promise<DriveFile> {
-	const formData = new FormData();
-	formData.append('file', file);
-	formData.append('path', path);
-	formData.append('filename', file.name);
-
-	// Use XMLHttpRequest for progress tracking
+): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
-		xhr.open('POST', backendUrl(`${API_BASE}/drive/upload`));
+		xhr.open('POST', backendUrl(`${API_BASE}${path}`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {
@@ -1736,8 +1739,27 @@ export async function uploadDriveFile(
 		};
 
 		xhr.onerror = () => reject(new Error('Upload failed: network error'));
-		xhr.send(formData);
+		xhr.send(form);
 	});
+}
+
+/**
+ * Upload a file to drive
+ * @param path - Target folder path
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ */
+export async function uploadDriveFile(
+	path: string,
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<DriveFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('path', path);
+	formData.append('filename', file.name);
+
+	return postFormWithProgress<DriveFile>('/drive/upload', formData, onProgress);
 }
 
 /**
@@ -1959,34 +1981,7 @@ export async function uploadMedia(
 	formData.append('file', file);
 	formData.append('filename', file.name);
 
-	// Use XMLHttpRequest for progress tracking
-	return new Promise((resolve, reject) => {
-		const xhr = new XMLHttpRequest();
-		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
-		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
-
-		xhr.upload.onprogress = (e) => {
-			if (e.lengthComputable && onProgress) {
-				onProgress(Math.round((e.loaded / e.total) * 100));
-			}
-		};
-
-		xhr.onload = () => {
-			if (xhr.status >= 200 && xhr.status < 300) {
-				resolve(JSON.parse(xhr.responseText));
-			} else {
-				try {
-					const error = JSON.parse(xhr.responseText);
-					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
-				} catch {
-					reject(new Error(`Upload failed: ${xhr.statusText}`));
-				}
-			}
-		};
-
-		xhr.onerror = () => reject(new Error('Network error during upload'));
-		xhr.send(formData);
-	});
+	return postFormWithProgress<MediaFile>('/media/upload', formData, onProgress);
 }
 
 /**
@@ -2448,6 +2443,12 @@ export interface Page {
 	contract?: number | null;
 	/** The newest contract the server reads (`GET /api/pages/:id` only). */
 	box_contract?: number;
+	/** `screen`, or a printable sheet. Absent from a server older than page layout. */
+	paper?: PagePaper;
+	/** One column or two; two is drawn only on paper. */
+	column_count?: 1 | 2;
+	/** A report's header, when it has one. */
+	masthead?: Masthead | null;
 	/**
 	 * `page` or `article` (`GET /api/pages/:id` only): an article's markdown
 	 * reads as an article, its footnotes, figures and veils included. Absent
@@ -2790,6 +2791,32 @@ export function createPage(
 /**
  * Update an existing page
  */
+export type PagePaper = 'screen' | 'a4' | 'letter';
+
+/** A report's header: the label above the title, the byline, the last day its records cover, its subjects as app routes, and its abstract. */
+export interface Masthead {
+	label?: string;
+	byline?: string;
+	/** `YYYY-MM-DD`. */
+	records_through?: string;
+	subjects?: string[];
+	abstract?: string;
+	/** Kept but not drawn: the page's Report header is off. */
+	hidden?: boolean;
+}
+
+/** How a page is laid out. What is left out keeps its value; `masthead: null` takes the header off. */
+export interface PageLayout {
+	paper?: PagePaper;
+	column_count?: 1 | 2;
+	masthead?: Masthead | null;
+}
+
+/** PUT /api/pages/:id/layout */
+export function setPageLayout(id: string, layout: PageLayout): Promise<Page> {
+	return apiSend<Page>('PUT', `/pages/${encodeURIComponent(id)}/layout`, layout);
+}
+
 export function updatePage(
 	id: string,
 	updates: {

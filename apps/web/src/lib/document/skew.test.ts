@@ -35,14 +35,18 @@ function names(fragment: Y.XmlFragment): string[] {
 
 /** The nodes and marks version 2 added, which a version 1 client would delete. */
 const SINCE_VERSION_ONE = { nodes: ['figure', 'footnote'], marks: ['veil'] };
+/** The figure attributes version 3 added for a chart, which a version 2 client would drop. */
+const SINCE_VERSION_TWO = { figure: ['chart', 'sql', 'data'] };
 
 describe('contract version skew', () => {
 	// Version 1 shipped (staging.97, mac 1.0.30): what an article holds was
 	// added under version 2, so no version 1 client binds a page holding it.
-	it('the contract is version 2, for the article’s nodes and mark', () => {
-		expect(contract.version).toBe(2);
+	// Version 2 shipped too, and the chart figure is version 3.
+	it('the contract is version 3, for the article’s nodes and mark and the chart figure', () => {
+		expect(contract.version).toBe(3);
 		for (const name of SINCE_VERSION_ONE.nodes) expect(contract.nodes[name], name).toBeDefined();
 		for (const name of SINCE_VERSION_ONE.marks) expect(contract.marks[name], name).toBeDefined();
+		for (const attr of SINCE_VERSION_TWO.figure) expect(contract.nodes.figure?.attrs?.[attr], attr).toBeDefined();
 	});
 
 	it('an old client binding the document deletes what it cannot parse', () => {

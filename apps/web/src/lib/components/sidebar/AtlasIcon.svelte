@@ -10,6 +10,7 @@
 		chats: 'mynaui:chat',
 		'new-chat': 'mynaui:chat-plus',
 		pages: 'mynaui:file-text',
+		inbox: 'mynaui:inbox',
 		// A thread is more than a container, so it is not a folder.
 		projects: 'mynaui:layers-three',
 		tasks: 'mynaui:check-square',

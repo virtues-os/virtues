@@ -21,6 +21,7 @@ export type TabType =
 	| 'thread' // Threads: the door at /threads, a thread at /thread/{id}
 	| 'task' // One task's page: /task/{id}
 	| 'insight' // One note's page: /insight/{key}
+	| 'inbox' // Tasks, insights and what your server needs, in the views InboxView names: /inbox
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'passwords' // Saved logins, in Drive: /passwords
