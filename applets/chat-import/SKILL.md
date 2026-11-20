@@ -4,5 +4,6 @@ description: "Brings a Claude, ChatGPT, or Gemini export into your history - onc
 metadata:
   invoke: none
   run: chat_import
+  limit: 1800 seconds
 ---
 

@@ -141,76 +141,114 @@ pub async fn trigger_applet_handler(
 }
 
 /// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
-/// Gemini conversation export (Tier 3 "one-time import"). The file is staged to
-/// a transient local path and the `chat_import` action is run synchronously
-/// (one-time imports are user-initiated and expected to take a moment), so the
-/// response carries the "Imported N messages" summary for the confirmation UI.
+/// Gemini conversation export: the zip the site emails, or the JSON inside
+/// it. The file streams to a transient local path, so a multi-gigabyte export
+/// never sits in memory, and the `chat_import` action starts in the
+/// background. The response is 202 with the run id; the UI follows the run in
+/// `/api/runs?applet_id=applet_chat_import` for its summary or error.
+///
+/// `provider` is optional. The action reads the site from each
+/// conversation's shape and uses the hint only for a shape it doesn't know.
 ///
 /// Mounted with a raised body limit (chat exports can exceed the 260MB default).
 pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let mut provider = "unknown".to_string();
-    let mut data: Option<axum::body::Bytes> = None;
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        match field.name().unwrap_or("") {
-            "provider" => {
-                if let Ok(t) = field.text().await {
-                    provider = t;
-                }
-            }
-            "file" => {
-                if let Ok(b) = field.bytes().await {
-                    data = Some(b);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let Some(bytes) = data else {
-        return error_response(crate::error::Error::InvalidInput(
-            "no file provided".into(),
-        ));
-    };
-
-    // Stage to a transient local path the action subprocess reads then deletes.
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.json"));
-    if let Err(e) = std::fs::write(&file_path, &bytes) {
-        return error_response(crate::error::Error::Other(format!(
-            "failed to stage upload: {e}"
-        )));
-    }
+    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.upload"));
+
+    let staged = stage_chat_import(&mut multipart, &file_path).await;
+    let provider = match staged {
+        Ok(provider) => provider,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&file_path).await;
+            return error_response(e);
+        }
+    };
 
     let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
-    let payload = serde_json::json!({
-        "file_path": file_path.to_string_lossy(),
-        "provider": provider,
-    });
-
-    match crate::applet_runner::run_applet(&deps, "applet_chat_import", "manual", Some(&payload))
-        .await
-    {
-        Ok(r) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "ok",
-                "summary": r.summary,
-                "run_id": r.run_id,
-            })),
-        )
-            .into_response(),
-        Err(e) => error_response(crate::error::Error::Other(e.to_string())),
+    let mut payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
+    if let Some(p) = provider {
+        payload["provider"] = serde_json::Value::String(p);
     }
+
+    match crate::applet_runner::run_applet_detached(
+        &deps,
+        "applet_chat_import",
+        "manual",
+        Some(&payload),
+    )
+    .await
+    {
+        Ok(result) => {
+            // A run that never started never reads the file, so it is ours to remove.
+            if !matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
+                let _ = tokio::fs::remove_file(&file_path).await;
+            }
+            run_status_response(result, "applet_chat_import")
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&file_path).await;
+            error_response(e)
+        }
+    }
+}
+
+/// Stream the upload's `file` field to `path` and return its `provider`
+/// field, if one was sent.
+async fn stage_chat_import(
+    multipart: &mut axum::extract::Multipart,
+    path: &std::path::Path,
+) -> Result<Option<String>, Error> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut provider = None;
+    let mut wrote_file = false;
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?
+    {
+        match field.name().unwrap_or("") {
+            "provider" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?;
+                provider = Some(text).filter(|t| !t.is_empty() && t != "auto");
+            }
+            "file" => {
+                let mut out = tokio::fs::File::create(path)
+                    .await
+                    .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
+                while let Some(chunk) = field
+                    .chunk()
+                    .await
+                    .map_err(|e| Error::InvalidInput(format!("the upload was cut off: {e}")))?
+                {
+                    out.write_all(&chunk)
+                        .await
+                        .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
+                }
+                out.flush()
+                    .await
+                    .map_err(|e| Error::Other(format!("failed to stage upload: {e}")))?;
+                wrote_file = true;
+            }
+            _ => {}
+        }
+    }
+    if !wrote_file {
+        return Err(Error::InvalidInput("no file provided".into()));
+    }
+    Ok(provider)
 }
 
 /// List all actions with their latest run status.

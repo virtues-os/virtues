@@ -160,6 +160,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # doing direct external HTTPS installs the ring provider via http_client() below.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 base64 = "0.22"
+# chat_import reads the export zip Claude and ChatGPT email (same build as virtues-core).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 # On-box voice-activity gate (transcription_resolution): decode m4a → mel → run
 # NVIDIA MarbleNet VAD, all pure-Rust so nothing native ships in the appliance.
