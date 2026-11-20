@@ -2,7 +2,8 @@
 //!
 //! A "prepaid arcade card" model for AI API access:
 //! - Authenticate the device bearer, look up its entitlement in Postgres
-//! - Enforce per-call cap, daily ceiling, and wallet balance on each charge
+//! - Settle each AI call against the wallet; check for a live subscription on
+//!   included services (bank data, places, maps)
 //! - Forward requests upstream (Vercel AI Gateway, Places, Unsplash)
 //!
 //! Budget state lives entirely in the `accounts` table (credited by atlas on
@@ -13,6 +14,7 @@
 //! This code is open source so users can verify we don't log their data.
 
 mod auth;
+mod banks;
 mod bearer_auth;
 mod blocklist;
 mod catalog;

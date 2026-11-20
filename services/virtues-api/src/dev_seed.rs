@@ -7,9 +7,8 @@
 //! hashes line up.
 //!
 //! Gated to `ENVIRONMENT=dev` by the caller, so it can never run in
-//! production. The metering path it unlocks is otherwise fully real — the
-//! `$20/day` ceiling and `$5/call` cap in [`crate::entitlement::charge`] still
-//! apply.
+//! production. The metering path it unlocks is otherwise fully real: AI calls
+//! settle against this wallet through [`crate::entitlement::settle`].
 
 use anyhow::Result;
 use sqlx::PgPool;
@@ -25,7 +24,7 @@ const DEV_ACCOUNT_ID: &str = "dev-local-account";
 
 /// Balance to fund the dev account with ($10 in micros). Kept small so a
 /// runaway dev loop can't burn much; re-set to this on every boot, so a
-/// restart tops it back up. The per-call cap still bounds actual spend.
+/// restart tops it back up.
 const DEV_BALANCE_MICROS: i64 = 10_000_000;
 
 /// Seed a funded account + device key for the dev api_key. Idempotent enough:

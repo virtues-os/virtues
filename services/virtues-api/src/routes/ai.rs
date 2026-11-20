@@ -1,4 +1,4 @@
-//! AI proxies via bearer-auth + entitlement::charge() (WS-6b).
+//! AI proxies via bearer-auth + entitlement::settle() (WS-6b).
 //!
 //! Migrated paths for Vercel AI Gateway upstream:
 //! - POST /v1/ai/chat/completions   (streaming + non-streaming)
@@ -10,7 +10,7 @@
 //! pivot and was removed 2026-08-24.
 //!
 //! Streaming chat (`stream: true`) hands off to `routes/streaming.rs` with
-//! an `entitlement::charge()` callback fired once the upstream emits
+//! an `entitlement::settle()` callback fired once the upstream emits
 //! `[DONE]`. The home server's agent loop (core `BearerClient::stream`)
 //! drives this path. This is the only LLM proxy — there is no legacy
 //! `/v1/chat/*` route.
@@ -115,7 +115,7 @@ async fn chat_completions(
     let affinity = session_affinity(&headers, &ent.account_id);
 
     // Streaming: hand off to streaming.rs with a charge callback that
-    // applies the resolved cost via entitlement::charge() once the
+    // applies the resolved cost via entitlement::settle() once the
     // upstream stream emits [DONE].
     if stream {
         let pool_clone = pool.clone();

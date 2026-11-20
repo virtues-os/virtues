@@ -40,6 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/:provider/callback", get(callback))
         .route("/:provider/exchange/:token", post(exchange))
         .route("/:provider/refresh", post(refresh))
+        .route("/:provider/revoke", post(revoke))
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1308,6 +1309,7 @@ fn plaid_session_lost_page() -> axum::response::Response {
 async fn exchange(
     State(state): State<Arc<AppState>>,
     Path((provider, token)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> axum::response::Response {
     if provider_cfg(&provider).is_none() {
         return err(StatusCode::NOT_FOUND, "unknown provider");
@@ -1338,6 +1340,11 @@ async fn exchange(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
         }
     }
+    if provider == "plaid" {
+        if let Some(refused) = admit_bank(&state, &headers, &claims.secrets, &claims.metadata).await {
+            return refused;
+        }
+    }
     Json(json!({
         "secrets": claims.secrets,
         "metadata": claims.metadata,
@@ -1345,6 +1352,114 @@ async fn exchange(
         "scopes": claims.scopes,
     }))
     .into_response()
+}
+
+/// Count a newly linked bank against the account's limit (`crate::banks`).
+/// `Some` is the refusal to return: the account is at the limit, and the bank
+/// has been removed from Plaid so it never bills. `None` lets the exchange
+/// finish.
+///
+/// A box that sent no key, or a key we did not issue, is not counted: every
+/// box release since v0.1.1 sends one, and a box without a live subscription
+/// cannot read bank data through `routes/plaid.rs` anyway. A failed lookup or
+/// insert also lets the bank through, because refusing would lose a bank the
+/// owner just linked over a fault of ours; it is logged.
+async fn admit_bank(
+    state: &AppState,
+    headers: &HeaderMap,
+    secrets: &Value,
+    metadata: &Value,
+) -> Option<axum::response::Response> {
+    let key = caller_api_key(headers)?;
+    let account = match resolve_box_key(&state.db, &state.blocklist, &key).await {
+        Ok(k) => k.account_id,
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(error = %e, "plaid exchange key lookup failed; bank not counted");
+            return None;
+        }
+        Err(_) => return None,
+    };
+    let Some(item_id) = metadata.get("item_id").and_then(|v| v.as_str()) else {
+        tracing::warn!("plaid exchange without an item_id; bank not counted");
+        return None;
+    };
+    match crate::banks::admit(&state.db, &account, item_id, crate::banks::max_banks()).await {
+        Ok(crate::banks::Admit::Admitted) => None,
+        Ok(crate::banks::Admit::AtLimit { max }) => {
+            let token = secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+            if !super::plaid::remove_refused(state, token).await {
+                tracing::error!("bank refused at the limit, but Plaid did not confirm removing it");
+            }
+            Some(
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": format!("This account already has {max} linked banks, the most a subscription covers."),
+                        "code": "bank_limit",
+                    })),
+                )
+                    .into_response(),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "counting a linked bank failed; bank not counted");
+            None
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /{provider}/revoke
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct RevokeBody {
+    #[serde(default)]
+    secrets: Value,
+}
+
+/// The box lets go of a grant it got through this proxy: its owner
+/// disconnected the source, or the box released it after a lapsed
+/// subscription. The box calls this for every proxied source and knows
+/// nothing about which providers need it; the provider's quirk lives here.
+///
+/// - plaid: remove the bank from Plaid, which ends its monthly fee, and free
+///   its place under the account's bank limit.
+/// - every other provider: nothing is held here, so there is nothing to do.
+///
+/// Needs only a box key we issued, not a live wallet, so a lapsed box can
+/// still clean up.
+async fn revoke(
+    State(state): State<Arc<AppState>>,
+    Path(provider): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RevokeBody>,
+) -> axum::response::Response {
+    if provider_cfg(&provider).is_none() {
+        return err(StatusCode::NOT_FOUND, "unknown provider");
+    }
+    let Some(key) = caller_api_key(&headers) else {
+        return refresh_err(StatusCode::UNAUTHORIZED, "missing_key", "box key required");
+    };
+    let account = match resolve_box_key(&state.db, &state.blocklist, &key).await {
+        Ok(k) => k.account_id,
+        Err(BearerError::Internal(e)) => {
+            tracing::error!(provider = %provider, error = %e, "oauth revoke key lookup failed");
+            return refresh_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
+        Err(e) => {
+            use virtues_helpers::error::StructuredError;
+            tracing::warn!(provider = %provider, code = e.code(), "oauth revoke refused");
+            return refresh_err(StatusCode::UNAUTHORIZED, e.code(), "box key not recognized");
+        }
+    };
+    match provider.as_str() {
+        "plaid" => {
+            let token = body.secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+            super::plaid::remove_item(&state, &account, token).await
+        }
+        _ => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

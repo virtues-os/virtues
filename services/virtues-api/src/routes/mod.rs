@@ -1,8 +1,12 @@
 //! Route handlers for virtues-api API proxy
 //!
-//! All billable API requests are proxied through virtues-api for unified budget enforcement.
+//! Every request that costs Virtues money is proxied through virtues-api. AI
+//! (`/v1/ai/*`, including web search) settles against the wallet through
+//! `entitlement::settle`. Everything else is included in the subscription and
+//! needs only a live wallet (`BearerAuth`), with fair-use limits on Places
+//! (per day) and Plaid (banks per account, `crate::banks`).
 //!
-//! Routes (all metered calls use bearer-auth + DB entitlement::charge):
+//! Routes:
 //! - /v1/ai/*            - LLM chat / completions / models
 //! - /v1/ai/search       - Web search (gateway-executed)
 //! - /v1/places/*        - Location autocomplete
