@@ -87,15 +87,15 @@
 	}
 </script>
 
-<SettingsPage title="Backup" lede="An encrypted copy of your data, on drives you keep.">
+<SettingsPage title="Backup" lede="An encrypted copy of your data, on drives you keep." back={{ route: '/virtues/system', label: 'Your server' }}>
 	{#if failed}
 		<div class="load-error" role="alert">
 			<p>Your server couldn't read its backup status.</p>
 			<Button variant="secondary" onclick={load}>Try again</Button>
 		</div>
 	{:else if status}
-		<p class="lead">{lead}</p>
-		<p class="sub">{sub}</p>
+		<p class="settings-lead">{lead}</p>
+		<p class="settings-sub">{sub}</p>
 
 		{#if status.state === 'none'}
 			<section class="group">
@@ -151,7 +151,7 @@
 			</Fold>
 		</section>
 
-		<p class="aside">
+		<p class="settings-aside">
 			The manual's <a href={GUIDE} target="_blank" rel="noopener noreferrer">Backup and restore</a> page explains what a backup
 			holds and how to check that one opens.
 		</p>
@@ -159,23 +159,6 @@
 </SettingsPage>
 
 <style>
-	.lead {
-		margin: 32px 0 0;
-		font-family: var(--font-serif);
-		font-size: 28px;
-		font-weight: 400;
-		line-height: 1.25;
-		color: var(--color-foreground);
-	}
-
-	.sub {
-		margin: 8px 0 0;
-		max-width: 60ch;
-		font-size: 14px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
 	.group {
 		padding: 24px 0 8px;
 	}
@@ -249,18 +232,6 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--color-error);
-	}
-
-	.aside {
-		margin: 32px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.aside a {
-		color: var(--color-primary);
-		text-decoration: none;
 	}
 
 	@media (max-width: 560px) {

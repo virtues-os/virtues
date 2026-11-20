@@ -27,9 +27,17 @@ describe('describeSchedule', () => {
 		expect(describeSchedule('0 0 8 * * 1,3,5')).toBe('Mondays, Wednesdays and Fridays at 8am');
 	});
 
+	it('reads monthly schedules in words', () => {
+		expect(describeSchedule('0 0 8 1 * *')).toBe('Monthly on the 1st at 8am');
+		expect(describeSchedule('0 9 25 * *')).toBe('Monthly on the 25th at 9am');
+		expect(describeSchedule('0 0 9 12 * *')).toBe('Monthly on the 12th at 9am');
+		expect(describeSchedule('0 0 9 22 * *')).toBe('Monthly on the 22nd at 9am');
+	});
+
 	it('returns the cron unchanged for syntax it does not read', () => {
 		expect(describeSchedule('0 0 8 * * 1#2')).toBe('0 0 8 * * 1#2');
-		expect(describeSchedule('0 0 8 1 * *')).toBe('0 0 8 1 * *');
+		expect(describeSchedule('0 0 8 1,15 * *')).toBe('0 0 8 1,15 * *');
+		expect(describeSchedule('0 0 8 1 6 *')).toBe('0 0 8 1 6 *');
 	});
 });
 

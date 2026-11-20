@@ -9,7 +9,7 @@
 	 * opens it beside the list, so the list stays in view.
 	 *
 	 * The table of every applet, with its days and runs, is Settings > Applets
-	 * (`ManageApplets.svelte`): checking applets is rarer than using them.
+	 * (`settings/AppletsPage.svelte`): checking applets is rarer than using them.
 	 * Built-in applets are listed there, and here only when one needs you.
 	 */
 	import type { Tab } from '$lib/tabs/types';
@@ -25,7 +25,8 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
-	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers } from '$lib/applets/palette';
+	import { actionOf, canRun, problemOf, type AppletAction } from '$lib/applets/standing';
 	import { needsYou } from '$lib/applets/days';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
@@ -58,27 +59,6 @@
 		return typeof id === 'string' && id ? id : null;
 	}
 
-	// The same grace the scheduler uses before a run counts as late.
-	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-
-	/** What went wrong, in a sentence, or null when nothing did. */
-	function problem(a: Applet): string | null {
-		if (a.enabled && !a.archived_at && a.last_run?.status === 'error') {
-			// The reason when the run gave one ("Gmail is disconnected"), which
-			// says more than when it happened.
-			const reason = a.last_run.error ? errorHeadline(a.last_run.error, 120) : null;
-			return reason ?? `Last run failed ${relativeTime(a.last_run.started_at)}`;
-		}
-		if (a.enabled && a.next_due_at && Date.now() - new Date(a.next_due_at).getTime() > OVERDUE_GRACE_MS) {
-			// Says what happened, not that something is late.
-			const last = a.last_run?.started_at;
-			if (!last) return "Hasn't run yet";
-			const since = formatRelativeTimestamp(last);
-			return `Hasn't run since ${since === 'Yesterday' ? 'yesterday' : since}`;
-		}
-		return null;
-	}
-
 	/** The row's one date: when it last ran, or that it is off. */
 	function when(a: Applet): string {
 		if (!a.enabled) return 'Off';
@@ -86,9 +66,6 @@
 		return last ? formatRelativeTimestamp(last) : 'Not run yet';
 	}
 
-	// "Run now" is refused unless the applet lists the manual trigger.
-	const canRetry = (a: Applet) => a.enabled && !a.archived_at && a.triggers.includes('manual');
-	const fixOf = (a: Applet) => (a.last_run?.status === 'error' ? runFix(a.last_run.error ?? null) : null);
 
 	const columns: Column<Applet>[] = [
 		{ key: 'name', label: 'Name' },
@@ -113,9 +90,9 @@
 		windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' });
 	}
 
-	function openFix(a: Applet) {
-		const fix = fixOf(a);
-		if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+	function act(a: Applet, action: AppletAction) {
+		if (action.kind === 'fix') windowShellStore.openTabFromRoute(action.href, { focusExisting: true });
+		else void retry(a);
 	}
 
 	function openManage() {
@@ -143,7 +120,7 @@
 		if (chatOf(a)) {
 			items.push({ id: 'chat', label: 'Open conversation', icon: 'mynaui:message', action: () => openConversation(a) });
 		}
-		if (canRetry(a)) {
+		if (canRun(a)) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
 		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
@@ -181,7 +158,7 @@
 		onRetry={() => void appletsStore.load()}
 	>
 		{#snippet listRow(a: Applet)}
-			{@const trouble = problem(a)}
+			{@const trouble = problemOf(a)}
 			<ListRow
 				title={a.name}
 				line={trouble ?? a.description ?? describeTriggers(a)}
@@ -194,12 +171,11 @@
 
 		{#snippet rowActions(a: Applet)}
 			<!-- The fix as a word: Reconnect when the sign-in lapsed, Retry when
-			     another try can work. -->
-			{#if problem(a) && fixOf(a)}
-				<TextAction onclick={() => openFix(a)}>{fixOf(a)?.label}</TextAction>
-			{:else if problem(a) && canRetry(a)}
-				<TextAction disabled={retrying === a.id} onclick={() => retry(a)}>
-					{retrying === a.id ? 'Retrying…' : 'Retry'}
+			     another try can work, Run now when a run didn't start. -->
+			{@const action = actionOf(a)}
+			{#if action}
+				<TextAction disabled={action.kind === 'run' && retrying === a.id} onclick={() => act(a, action)}>
+					{action.kind === 'run' && retrying === a.id ? 'Starting…' : action.label}
 				</TextAction>
 			{/if}
 			{#if chatOf(a)}

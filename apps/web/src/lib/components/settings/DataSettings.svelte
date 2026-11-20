@@ -140,7 +140,7 @@
 	<LinkRow id="keys" label="Keys" help="What your applets sign in with, such as an API key." href="/virtues/data/keys" />
 </section>
 
-<p class="aside">
+<p class="settings-aside">
 	The manual lists <a href={MANUAL} target="_blank" rel="noopener noreferrer">what leaves your server</a>, and when.
 </p>
 
@@ -188,15 +188,4 @@
 		color: var(--color-error);
 	}
 
-	.aside {
-		margin: 32px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.aside a {
-		color: var(--color-primary);
-		text-decoration: none;
-	}
 </style>

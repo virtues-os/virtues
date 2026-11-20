@@ -23,11 +23,11 @@
 	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
 	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
-	  Search       /virtues/search         — where search runs, and what it covers
+	  Search       /virtues/search         — whether search answers, what it covers, where it runs
 	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
-	  Applets      /virtues/applets        — every applet, built-in ones included
+	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
 	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
@@ -39,7 +39,6 @@
 -->
 
 <script lang="ts">
-	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
@@ -58,8 +57,8 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
-	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
-	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
+	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
+	import SearchPage from '$lib/components/settings/SearchPage.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -213,9 +212,6 @@
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
 
-	// The applets section lays out its own column. The other sections are
-	// SettingsPage's, which sets its own width.
-	const width = usePageWidth(() => (section === 'applets' ? 'full' : null));
 	const sub = $derived(raw.split('/')[1] ?? '');
 	const subPage = $derived(raw.split('/')[2] ?? '');
 	const role = $derived(new URLSearchParams(routeQuery).get('role') ?? undefined);
@@ -263,15 +259,9 @@
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
-			<SearchSettingsView />
+			<SearchPage />
 		{:else if section === 'applets'}
-			<!-- Padding on the scroller, the page's width inside it: the same
-			     box model as the Applets page in Home, so the two line up. -->
-			<div class="applets-settings">
-				<div class="measure" style:max-width={width.css}>
-					<ManageApplets {tab} />
-				</div>
-			</div>
+			<AppletsPage />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
@@ -310,14 +300,5 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
-	}
-
-	.applets-settings {
-		padding: 48px;
-	}
-
-	.measure {
-		width: 100%;
-		margin: 0 auto;
 	}
 </style>

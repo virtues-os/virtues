@@ -37,11 +37,11 @@ export function describeTriggers(a: Pick<Applet, 'schedule' | 'watch'>): string 
 export function describeSchedule(cron: string | null): string {
 	if (!cron) return 'On demand';
 	const fields = cron.trim().split(/\s+/);
-	let min: string, hour: string, day: string, dow: string;
+	let min: string, hour: string, day: string, month: string, dow: string;
 	if (fields.length === 6) {
-		[, min, hour, day, , dow] = fields;
+		[, min, hour, day, month, dow] = fields;
 	} else if (fields.length === 5) {
-		[min, hour, day, , dow] = fields;
+		[min, hour, day, month, dow] = fields;
 	} else {
 		return cron;
 	}
@@ -68,7 +68,18 @@ export function describeSchedule(cron: string | null): string {
 		const days = weekdaysLabel(dow);
 		if (days) return `${days} at ${at}`;
 	}
+	// Monthly: one day of the month at HH:MM
+	if (/^\d+$/.test(day) && Number(day) >= 1 && Number(day) <= 31 && month === '*' && dow === '*' && at) {
+		return `Monthly on the ${ordinal(Number(day))} at ${at}`;
+	}
 	return cron;
+}
+
+/** "1st", "2nd", "3rd", "11th", "22nd". */
+function ordinal(n: number): string {
+	const teen = n % 100 >= 11 && n % 100 <= 13;
+	const suffix = teen ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+	return `${n}${suffix}`;
 }
 
 /** "7am", "4:30am", "6pm"; null when the fields aren't a single fixed time. */

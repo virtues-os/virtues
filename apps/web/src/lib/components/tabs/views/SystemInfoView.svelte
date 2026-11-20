@@ -328,8 +328,8 @@
 	{#if !loaded}
 		<p class="quiet">Asking your server how it’s doing…</p>
 	{:else}
-		<p class="lead">{lead.sentence}</p>
-		<p class="sub">
+		<p class="settings-lead">{lead.sentence}</p>
+		<p class="settings-sub">
 			{lead.sub}
 			{#if lead.guide}
 				The manual’s <a href={lead.guide.href} target="_blank" rel="noopener noreferrer">{lead.guide.label}</a> page covers what to check.
@@ -377,7 +377,7 @@
 			<LinkRow
 				id="applets"
 				label="Applets"
-				help="What runs on a schedule, and how its last runs went."
+				help="What runs on its own, and how its last runs went."
 				href="/virtues/applets"
 				value={appletsValue(appletsNeedingYou)}
 			/>
@@ -520,28 +520,6 @@
 		font-size: 14px;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
-	}
-
-	.lead {
-		margin: 32px 0 0;
-		font-family: var(--font-serif);
-		font-size: 28px;
-		font-weight: 400;
-		line-height: 1.25;
-		color: var(--color-foreground);
-	}
-
-	.sub {
-		margin: 8px 0 0;
-		max-width: 60ch;
-		font-size: 14px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.sub a {
-		color: var(--color-primary);
-		text-decoration: none;
 	}
 
 	.lead-action {
