@@ -28,7 +28,7 @@ Checked against the code on 2026-11-20.
   Figma in November 2026, each with a `prompts.txt`:
   - The muted set: 8 collections (beach, countryside, desert, forest,
     gardens, lakes and rivers, mountains, US national parks) × 12 pictures.
-    The in-app WebP files have the bottom faded to transparent.
+    The in-app WebP files have the top faded to transparent.
   - The original set: 13 collections (the 8 above plus arctic, skies, space,
     travel, tropics) × about 12 pictures, as JPEG.
   - Each set has four folders: `new-chat-light`, `new-chat-dark`,
@@ -80,6 +80,34 @@ the app thinks about time. (Proposed, not confirmed.)
 **Keep this one.** On home, an action turns the day's rotating picture into a
 fixed setting.
 
+### The home control
+
+From the owner, 2026-11-20: in the bottom right corner of a new tab or new
+chat, a small glass button with an icon that suggests appearance. Clicking it
+opens a popover with:
+
+- **Left and right arrows** that step to the previous and next picture.
+- **Appearance:** Light, Dark, System, and Follow the day.
+- **A small collection picker** that swipes sideways through the collections
+  of the current style.
+
+Settings › Appearance keeps the full picker (styles, collections, pictures,
+Plain). The popover is the quick way in from where the picture is.
+
+Proposed details, not confirmed:
+
+- Under a rotating setting, the arrows change the picture for the rest of
+  today, and rotation resumes tomorrow. Keep this one is in the same popover.
+- Choosing a collection in the swiper sets the setting to that collection,
+  rotating.
+- **Follow the day** is a fourth appearance value beside `oxford`, `asgard`
+  and `system` (`virtues-theme` in localStorage, read before first paint in
+  `app.html` and by `lib/utils/theme.ts`). It is Light from sunrise to sunset
+  and Dark otherwise. Sun times come from the server's time zone and its last
+  known location, falling back to 07:00 and 19:00.
+- The button is the same glass as the header's corner buttons (`.lq`), with a
+  Myna icon.
+
 ### Decisions made 2026-11-20
 
 - **Both painting sets ship, as two styles.** The muted set and the original
@@ -96,21 +124,44 @@ fixed setting.
 
 ## Assets
 
-The paintings are about 400 MB as made and 108 MB as the app uses them, so
+The paintings are about 400 MB as made and 200 MB as the app uses them, so
 they stay out of git.
 
-A tool in `tools/` reads a source folder laid out as today's sets are
-(`<set>/new-chat-<theme>/<collection>/<name>.<ext>`) and writes:
+`tools/backgrounds/build.py` (built 2026-11-20) reads a source folder laid out
+as today's sets are (`<set>/new-chat-<theme>/<collection>/<name>.<ext>`) and
+the set's `prompts.txt`, and writes into an output folder:
 
-- `manifest.json` for the style: for each picture its id, title, collection,
-  and for each theme the file, its average luminance, and a focal box. The
-  luminance lets glass and the header text adjust over a bright picture. The
-  focal box keeps the subject visible where the window crops differently from
-  the phone.
-- The pairs. The tool proposes a light and dark pair inside each collection
-  from color and the prompt's words, writes them to a pairs file, and the
-  owner corrects it. The pairs file is the source the manifest reads.
-- AVIF and WebP files at two widths, with the JPEG or PNG only as source.
+- `manifest.json` for the style: each collection with its title from the
+  prompts file, and each picture with an id (its light name) and, for each
+  theme, the source name, title, file paths, average luminance, a focus box
+  and which edge fades to transparent. The luminance lets glass and the
+  header text adjust over a bright picture. The focus box is the middle of
+  the picture's edge energy, a rough guide for cropping on a phone.
+- AVIF and WebP at 1792 and 896 wide. A rerun only re-encodes a picture whose
+  source is newer.
+- `review.html`, each picture's light version over its dark one.
+
+The pairs live in `tools/backgrounds/pairs/<style>.tsv`, tracked. The tool
+proposes pairs for a collection that has none, from the words of each
+picture's title, file name and prompt (TF-IDF and an optimal matching), and
+writes them there. After that the file wins, and the tool refuses a file that
+does not use every picture exactly once. The proposals are rough: pictures
+marked "(earlier)" in the prompts file have no prompt, and words cannot see a
+composition.
+
+The two styles are built in `~/virtues-backgrounds/paintings-muted` and
+`~/virtues-backgrounds/paintings-original`. The ids are working names until
+the picker names are chosen; they become part of a stored setting, so they
+should settle before slice 2 ships.
+
+What the measurement showed:
+
+- The muted set fades to transparent at the **top** in both themes, so it
+  needs no extra mask under the header. The original set is painted edge to
+  edge and still needs `--window-scene-mask`.
+- Light pictures are far brighter than dark ones in both sets, as expected,
+  and the original light set is brighter than the muted one, which matters
+  for glass density over it.
 
 ## Delivery
 
@@ -154,15 +205,16 @@ Shaders, loops and drawn styles have three costs an image does not:
 
 Each slice replaces the old way in the same change.
 
-1. **The asset tool and the pairs.** Manifest, pairs file, encoded files, for
-   both painting styles. The owner reviews the pairs.
+1. **The asset tool and the pairs.** Built 2026-11-20 for both painting
+   styles. Left: the owner reviews the pairs in `review.html`.
 2. **One component and the setting.** A `Background` component and a
    resolver (setting → picture → file for the theme, with the daily rotation)
    replace the four places that name the lake. The setting is stored in
    `ui_preferences`. Until slice 4, styles are read from a local folder in a
    dev checkout.
-3. **The picker.** Settings › Appearance: styles, then collections, then
-   pictures, with Plain first. Keep this one on home.
+3. **The pickers.** The home control (the glass button and its popover, with
+   Follow the day), and Settings › Appearance: styles, then collections, then
+   pictures, with Plain first.
 4. **Delivery.** The box downloads, installs and serves a style. Manual page
    and the privacy boundary entry.
 5. **A second renderer.** One cheap moving style (dots or a single shader) to
@@ -174,6 +226,8 @@ Each slice replaces the old way in the same change.
 1. The names of the two painting styles in the picker.
 2. Daily rotation, as proposed above, or a different change point.
 3. Where style archives are hosted.
+4. What the home control's arrows do under a rotating setting, and how
+   Follow the day finds sunrise and sunset (both proposed above).
 
 ## When this plan is done
 
