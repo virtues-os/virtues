@@ -94,8 +94,10 @@ report running
 JOBS=$(( $(nproc) > 2 ? $(nproc) - 2 : 1 ))
 PATH="/usr/local/bin:$PATH" "$VENV/bin/python" "$HERE/cut.py" --maps-dir "$MAPS_DIR" --jobs "$JOBS" --keep 1 || fail "the cut failed"
 BUILD=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["build"])' "$MAPS_DIR/latest.json") || fail "the cut left no latest.json"
-FILES=$(find "$MAPS_DIR/$BUILD" -type f | wc -l)
-SIZE=$(du -sBG "$MAPS_DIR/$BUILD" | cut -f1)
+# The file count and size the index records, e.g. "9920 178.2 GB".
+read -r FILES SIZE < <(python3 -c 'import json, sys
+files = json.load(open(sys.argv[1]))["files"]
+print(len(files), "%.1f GB" % (sum(f["bytes"] for f in files) / 1e9))' "$MAPS_DIR/$BUILD/index.json") || fail "the cut left no index.json"
 
 PHASE=uploading
 report running
