@@ -8,8 +8,8 @@ The picture behind home is a setting. It follows you to every device, and
 each picture has a version for Light and one for Dark.
 
 1. Open **Settings › Appearance › Background**.
-2. Pick **Plain** for no picture, **The lake** for the picture Virtues
-   starts with, or a style.
+2. Pick **Plain** for no picture, or a style. Until you pick one, home shows
+   the lake that Virtues starts with.
 3. Under the style, pick **Changes daily** or one collection. Under a
    collection, pick **Changes daily** or one picture.
 
@@ -32,8 +32,8 @@ laptop load these pictures from your server.
 
 ## What your server downloads
 
-The lake is part of Virtues. Every other style is downloaded by your server
-the first time you pick it, and the card shows its size before you do.
+The lake is part of Virtues. Every style is downloaded by your server the
+first time you pick it, and the card shows its size before you do.
 
 - **What is sent:** your server asks Virtues for the list of styles at most
   once a day, when an app opens the backgrounds, and asks for a style's
@@ -49,4 +49,5 @@ the first time you pick it, and the card shows its size before you do.
   Virtues.
 
 A downloaded style stays on your server until you delete its folder. A
-server with no Virtues subscription shows the lake and Plain only.
+server with no Virtues subscription offers Plain only, and home shows the
+lake.

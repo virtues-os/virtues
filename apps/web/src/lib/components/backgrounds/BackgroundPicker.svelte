@@ -1,9 +1,10 @@
 <script lang="ts">
 	/**
-	 * Settings › Appearance › Background: Plain, the lake, or a style, then a
+	 * Settings › Appearance › Background: Plain or a style, then a
 	 * collection in it, then one picture. A choice that stops above a
 	 * picture changes picture each day (lib/backgrounds/resolve.ts). Each
-	 * card shows its pictures in the current appearance.
+	 * card shows its pictures in the current appearance. The lake is not a
+	 * choice: it is what home shows until one is made (Background.svelte).
 	 *
 	 * A style the server does not have yet follows the installed ones, with
 	 * its size. Picking it downloads it to the server, and it becomes the
@@ -50,9 +51,9 @@
 	}
 </script>
 
-{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' | 'lake' = 'one', note = '')}
+{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' = 'one', note = '')}
 	<button type="button" role="radio" class="card" class:picked aria-checked={picked} {onclick}>
-		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'} class:lake={kind === 'lake'}>
+		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'}>
 			{#each kind === 'many' ? images : images.slice(0, 1) as src (src)}
 				<img {src} alt="" loading="lazy" decoding="async" />
 			{/each}
@@ -65,7 +66,6 @@
 <div class="picker">
 	<div class="cards" role="radiogroup" aria-label="Style">
 		{@render card('Plain', setting.kind === 'plain', () => background.set('plain'), [], 'plain')}
-		{@render card('The lake', setting.kind === 'default', () => background.set(''), ['/scenes/lake.webp'], 'lake')}
 		{#each styles as s (s.style)}
 			{@render card(s.title, setting.kind === 'path' && setting.style === s.style, () => background.set(s.style), [thumb(s, firsts(s)[0])])}
 		{/each}
@@ -149,11 +149,6 @@
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
 		transition: outline-color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	/* The lake is dimmed in Dark, as home draws it (Background.svelte). */
-	.frame.lake img {
-		filter: var(--window-scene-filter);
 	}
 
 	.frame.plain {

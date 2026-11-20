@@ -37,7 +37,7 @@
 	const now = $derived(current());
 
 	// The style the swiper shows: the setting's, or the first installed one
-	// while the lake or Plain is showing.
+	// while no style is chosen.
 	const style = $derived.by(() => {
 		const styles = background.styles ?? [];
 		const name = setting.kind === 'path' ? setting.style : styles[0]?.style;
@@ -46,7 +46,9 @@
 
 	const caption = $derived.by(() => {
 		if (setting.kind === 'plain') return { title: 'Plain', note: 'No picture' };
-		if (setting.kind === 'default' || !now) return { title: 'The lake', note: 'The default picture' };
+		if (setting.kind === 'default' || !now) {
+			return { title: 'No background chosen', note: style ? 'Pick a collection below' : 'See all backgrounds' };
+		}
 		return { title: now.title, note: now.collectionTitle };
 	});
 

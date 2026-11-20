@@ -124,6 +124,10 @@ third points:
   focus on the new chat / homepage bgs". The `day-page-*` folders are not
   used. The `new-chat-*` folders are the home pictures, which on a computer is
   also the window's picture.
+- **The lake is not a choice.** The owner, after slice 4: "rm the lake as
+  an option / standalone collection thing". It stays as what home shows
+  until a background is chosen, and as the fallback when a chosen style is
+  missing.
 - **The levels are called Style › Collection.** "Theme" keeps meaning Light
   and Dark.
 
@@ -202,7 +206,7 @@ Before servers can download a style, two steps remain, both the owner's:
    from wave without asking; see `agents/build/deployment.md`.
 
 Until then a server's catalog request gets a 404 or 503, and the pickers show
-Plain, the lake and whatever is installed by hand.
+Plain and whatever is installed by hand, and home shows the lake.
 
 Each archive is about 100 MB because it holds AVIF and WebP at two widths.
 Every Apple device of the last few years shows AVIF, so dropping WebP would
@@ -256,7 +260,7 @@ Each slice replaces the old way in the same change.
    - `components/backgrounds/BackgroundControl.svelte` on home: the arrows,
      the four theme choices and the collection swiper.
    - `components/backgrounds/BackgroundPicker.svelte` under Theme in
-     Settings › Appearance: Plain, the lake and each style, then the
+     Settings › Appearance: Plain and each style, then the
      collections of the chosen style, then its pictures, with "Changes
      daily" first in each row.
    - Follow the day in `lib/utils/theme.ts`, `app.html`, the theme cards and
