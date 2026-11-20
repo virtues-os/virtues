@@ -196,6 +196,9 @@ tmp/*
 /.applet-state/
 /.publication-state/
 /.page-conversion-state/
+# Installed home background styles (api/backgrounds.rs); often a symlink to
+# the build tool's output folder, so no trailing slash.
+/.background-state
 
 # Dev-only age recipient for `virtues backup` (public half; the secret is
 # printed once and never stored). The box equivalent lives in the state root.

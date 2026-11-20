@@ -1,0 +1,787 @@
+<script lang="ts">
+	import "../../app.css";
+	import { Toaster, toast } from "svelte-sonner";
+	import "$lib/icons"; // Pre-load all icons
+	import { UnifiedSidebar } from "$lib/components/sidebar";
+	import { SplitContainer } from "$lib/components/tabs";
+	import WindowHeader from "$lib/components/tabs/WindowHeader.svelte";
+	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import { listenForWebLinks } from "$lib/utils/webLinks";
+	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
+	import { search } from "$lib/stores/search.svelte";
+	import Background from "$lib/components/Background.svelte";
+	import DialogHost from "$lib/components/DialogHost.svelte";
+	import NewTaskDialog from "$lib/components/tasks/NewTaskDialog.svelte";
+	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
+	import { FloatingContent } from "$lib/floating";
+	import IconPicker from "$lib/components/IconPicker.svelte";
+	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
+	import { linkEditor } from "$lib/stores/linkEditor.svelte";
+	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { isTemporaryRoute } from "$lib/components/chat/state/chatRoute";
+	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { identityOf } from "$lib/refs/identity.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
+	import { installRevalidate } from "$lib/stores/revalidate";
+	import { subscriptionStore } from "$lib/stores/subscription.svelte";
+	import { setupStateStore } from "$lib/stores/setupState.svelte";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
+	import { appOpening } from "$lib/stores/appOpening";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import Icon from "$lib/components/Icon.svelte";
+	import { onMount, onDestroy } from "svelte";
+	import { createAIContext } from "@ai-sdk/svelte";
+	import { initTheme } from "$lib/utils/theme";
+	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
+	import type { Snippet } from "svelte";
+
+	import { installClientHeader, setShellAppVersion } from "$lib/build";
+	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { modifierHint } from "$lib/stores/modifierHint.svelte";
+	import { prefetchConverter } from "$lib/document/converter";
+	import { nothingToLose as reloadLosesNothing } from "$lib/tauri/quietReload";
+	import { reloadApp } from "$lib/reload";
+
+	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
+	const BUILD_COMMIT: string = __BUILD_COMMIT__;
+
+	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
+	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
+	installClientHeader();
+
+	// Then enrich it with the native shell's own release (`app=1.0.23`) once
+	// the bridge answers. The bundle identity above mirrors the box for a
+	// paired desktop, so without this field the Devices page cannot say which
+	// APP a device runs — the confusion the version audit traced. Resolves to
+	// null in a plain browser; header simply stays app-less there.
+	void shellIdentity().then((s) => {
+		if (s?.appVersion) setShellAppVersion(s.appVersion);
+	});
+
+	// A place that takes a drag claims it by cancelling its own dragover and
+	// choosing its own dropEffect. Everywhere else the cursor says no: this
+	// listener runs last, and for an unclaimed drag it sets `none`, which the
+	// browser treats as a refused drop, so a file let go outside every zone is
+	// not opened in the window. The root layout swallows a stray `drop` as a
+	// second guard. Hoisted to component scope so onDestroy can remove it.
+	function refuseUnclaimedDrag(e: DragEvent) {
+		if (e.defaultPrevented) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+	}
+
+	// Foreground OTA check — hoisted to component scope so onDestroy can remove
+	// it. `onMount` is async here, so a returned cleanup would never run.
+	function checkForNewUi() {
+		if (!document.hidden) {
+			void otaCheckNow();
+			return;
+		}
+		// Hidden: if the shell has staged a newer UI since this page loaded,
+		// reload now, while nobody is looking, and the next time the app is
+		// shown it is the new one. One rule on the phone and the Mac (a Mac is
+		// almost never relaunched; closing its window only hides it). Only in
+		// the app itself: Setup and the recovery screens hold state a reload
+		// would lose, like an open Bluetooth link. agents/record/local-ui.md.
+		void bundleUpdateReady().then((ready) => {
+			if (ready && document.hidden && nothingToLose()) reloadApp();
+		});
+	}
+
+	/**
+	 * Would a reload now cost anything that isn't saved? The staged UI waits
+	 * for the next time the app is hidden with nothing at stake
+	 * (`quietReload.ts` says what counts, a page's file on its way among it).
+	 */
+	function nothingToLose(): boolean {
+		const tabs = windowShellStore.panes.flatMap((p) => p.tabs);
+		const showing = windowShellStore.panes.map((p) => p.tabs.find((t) => t.id === p.activeTabId)?.route ?? "");
+		return reloadLosesNothing({
+			temporaryChat: tabs.some((t) => isTemporaryRoute(t.route)),
+			replying: chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted"),
+			focused: document.activeElement,
+		});
+	}
+
+	// Get session expiry from page data
+	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
+	const { data, children }: { data: any; children: Snippet } = $props();
+	let sessionExpiryTimer: ReturnType<typeof setInterval> | null = null;
+	let warningShown = false;
+
+	// Create AI context for synchronized state across Chat instances
+	createAIContext();
+
+	// Track initialization state
+	let initialized = $state(false);
+
+	// THE APP OPENING (2026-09-23). Armed by Setup's close just before
+	// it hands a new owner into the app; read once, on this first render, so
+	// the class is there from the first frame. The ∴ at the left of the header
+	// beats — premise, premise, therefore, the same figure the cold open drew
+	// — and the panel and the pane settle in. Every other mount opens plainly.
+	let opening = $state(appOpening.consume());
+	$effect(() => {
+		if (!opening) return;
+		const t = setTimeout(() => (opening = false), 3000);
+		return () => clearTimeout(t);
+	});
+
+
+	// Full-screen focus mode: hide all app chrome (sidebar, tab bars, frame)
+	// by toggling a body class that app.css keys off. Driven by the same
+	// pageDisplay.focusMode that the editor's dim/typewriter mode uses.
+	$effect(() => {
+		document.body.classList.toggle("focus-mode", pageDisplay.focusMode);
+		return () => document.body.classList.remove("focus-mode");
+	});
+
+	// A link to the web opens in the Browser tab or the default browser, in
+	// the app on a computer (`webLinks.ts`).
+	onMount(() => listenForWebLinks());
+
+	// Glass catches the light where the pointer is: the glass under it keeps
+	// the pointer's place in --lq-x and --lq-y, which its glint is drawn at
+	// (`.lq`, app.css). One listener for the whole window.
+	//
+	// Only glass that draws a glint (a button), and at most once a frame:
+	// measuring the glass on every pointer event, right after the last write,
+	// forced a style and layout pass per event over the blurred shell. The
+	// box is read inside the frame, before the write, so a frame lays out at
+	// most once.
+	onMount(() => {
+		// The ∴ beside the Mac app's window buttons draws its glass on a layer
+		// inside it (HeaderMark), so it is named here; the layer inherits the
+		// place from the button.
+		const GLINTS = ':is(button, [role="button"]).lq, .header-mark.standalone';
+		let glass: HTMLElement | null = null;
+		let x = 0;
+		let y = 0;
+		let frame = 0;
+		const draw = () => {
+			frame = 0;
+			if (!glass?.isConnected) return;
+			const box = glass.getBoundingClientRect();
+			glass.style.setProperty("--lq-x", `${Math.round(x - box.left)}px`);
+			glass.style.setProperty("--lq-y", `${Math.round(y - box.top)}px`);
+		};
+		const follow = (e: PointerEvent) => {
+			glass = (e.target as Element | null)?.closest?.<HTMLElement>(GLINTS) ?? null;
+			if (!glass) return;
+			x = e.clientX;
+			y = e.clientY;
+			frame ||= requestAnimationFrame(draw);
+		};
+		document.addEventListener("pointermove", follow, { passive: true });
+		return () => {
+			document.removeEventListener("pointermove", follow);
+			cancelAnimationFrame(frame);
+		};
+	});
+
+	// Load chat sessions, workspaces, and initialize theme on mount
+	onMount(async () => {
+		// Boot-ok (confirming this bundle rendered) lives in the ROOT layout,
+		// so Setup and the recovery screens confirm too.
+
+		// Ask the shell to look for newer UI whenever we come back to the
+		// foreground. The shell also checks at launch, but this app is not
+		// relaunched often — the mic session keeps it alive for days — so
+		// without this a phone could sit on a stale bundle indefinitely. The
+		// check is cheap when there is nothing new (one small GET) and never
+		// swaps the bundle underneath the running page; anything it applies
+		// takes effect at the next page load, which `checkForNewUi` triggers
+		// while the app is hidden. Registers the COMPONENT-SCOPE
+		// function above — an identical inner copy used to shadow it here, so
+		// onDestroy removed a function that was never registered and the
+		// listener leaked per layout mount (audit, minor).
+		document.addEventListener("visibilitychange", checkForNewUi);
+
+		document.addEventListener("dragover", refuseUnclaimedDrag);
+
+		// Collapse sidebar for new users (first-time onboarding)
+		if (data?.onboardingStatus === 'new') {
+			sidebarState.collapsed = true;
+		}
+
+		// Load global data, and reload it whenever the app comes back into view.
+		chatSessions.load();
+		pinsStore.load();
+		projectStore.load();
+		installRevalidate();
+		initTheme();
+		// The page editor's markdown converter, fetched while the app is idle
+		// so a block page rarely waits on it (lib/document/converter.ts).
+		prefetchConverter();
+
+		// Initialize workspace store (loads workspaces, tree, and tabs)
+		await windowShellStore.init();
+
+		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
+		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
+		const urlPath = $page.url.pathname;
+		const rightParam = $page.url.searchParams.get("right");
+		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
+		// only ?right= belongs to the shell itself.
+		const routeParams = new URLSearchParams($page.url.searchParams);
+		routeParams.delete("right");
+		const routeWithParams =
+			routeParams.size > 0 ? `${urlPath}?${routeParams}` : urlPath;
+		windowShellStore.handleDeepLink(routeWithParams, rightParam);
+
+		// Enable URL sync for future navigation
+		windowShellStore.initUrlSync();
+
+		// Mark as initialized
+		initialized = true;
+
+		// Window-level shortcuts. These live here rather than in the sidebar
+		// because they're about panes and tabs, and the sidebar isn't mounted on
+		// the phone shell.
+		//
+		// ⌘1-⌘9 address *tabs*, browser-style: leftmost tab is 1, counting
+		// across both panes left-to-right. Activating a tab focuses its pane,
+		// so pane switching falls out for free. Tab cycling takes ⌘⇧[ / ⌘⇧],
+		// which is the browser convention and collides with nothing.
+		shortcuts.register(
+			...Array.from({ length: 9 }, (_, i) => ({
+				id: `tab.focus-${i + 1}`,
+				keys: `mod+${i + 1}`,
+				label: `Go to tab ${i + 1}`,
+				group: "Window",
+				run: () => windowShellStore.activateTabByOrdinal(i + 1),
+			})),
+			{
+				id: "tab.next",
+				keys: "mod+shift+]",
+				label: "Next tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(1),
+			},
+			{
+				id: "tab.previous",
+				keys: "mod+shift+[",
+				label: "Previous tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(-1),
+			},
+		);
+
+		// Hold-⌘ reveals the per-tab ⌘N badges.
+		modifierHint.start();
+
+		// Start polling for subscription status
+		subscriptionStore.start();
+
+		// Start polling for setup/onboarding state (next-wins checklist,
+		// remote-access flip toast). Stops itself once everything is done.
+		setupStateStore.start();
+		// Getting started's derived state: the sidebar card, the lock, the
+		// room. Polls while anything is open, stops itself at graduation.
+		gettingStarted.start();
+
+		// Post-update toast: show once per session if the server was updated
+		if (typeof sessionStorage !== "undefined") {
+			const lastSeenCommit = sessionStorage.getItem(
+				"virtues_last_commit",
+			);
+			if (
+				BUILD_COMMIT !== "dev" &&
+				lastSeenCommit &&
+				lastSeenCommit !== BUILD_COMMIT
+			) {
+				toast.info("Virtues has been updated", {
+					description: BUILD_COMMIT.slice(0, 7),
+					duration: 8000,
+					action: {
+						label: "Details",
+						onClick: () =>
+							// Software, not the old catch-all Box — this toast is
+							// about a version having changed, and that page is now
+							// the one place that says which versions are in play.
+							windowShellStore.openTabFromRoute("/virtues/software", {
+								label: "Settings",
+								preferEmptyPane: true,
+							}),
+					},
+				});
+			}
+			sessionStorage.setItem("virtues_last_commit", BUILD_COMMIT);
+		}
+
+		// NOTE: home_timezone (the box's location) is server-sourced and NOT
+		// browser-tracked — see agents/record/timezone-model.md. The browser's zone is sent
+		// per-request via ?tz= for the live "today" view (getDaySources), so there
+		// is no profile write-through here.
+
+		// Set up session expiry warning
+		if (data?.sessionExpires) {
+			const checkSessionExpiry = () => {
+				const expires = new Date(data.sessionExpires).getTime();
+				const now = Date.now();
+				const timeLeft = expires - now;
+				const oneHour = 60 * 60 * 1000;
+
+				// Show warning when less than 1 hour remaining
+				if (timeLeft > 0 && timeLeft < oneHour && !warningShown) {
+					warningShown = true;
+					const minutesLeft = Math.round(timeLeft / 60000);
+					toast.warning(`Session expires in ${minutesLeft} minutes`, {
+						description:
+							"Your session ends soon. Save your work.",
+						duration: 30000,
+					});
+				}
+
+				// If session has expired, redirect to login
+				if (timeLeft <= 0) {
+					toast.error("Session expired", {
+						description: "Please log in again.",
+					});
+					goto("/pair");
+				}
+			};
+
+			// Check immediately and then every 5 minutes
+			checkSessionExpiry();
+			sessionExpiryTimer = setInterval(checkSessionExpiry, 5 * 60 * 1000);
+		}
+	});
+
+	onDestroy(() => {
+		document.removeEventListener("visibilitychange", checkForNewUi);
+		document.removeEventListener("dragover", refuseUnclaimedDrag);
+		if (sessionExpiryTimer) {
+			clearInterval(sessionExpiryTimer);
+		}
+		windowShellStore.destroyUrlSync();
+		subscriptionStore.stop();
+		setupStateStore.stop();
+		gettingStarted.stop();
+
+		// (workspace switching keyboard shortcuts removed — single workspace now)
+	});
+
+	// Remote-access flip toast: the verdict flipped to reachable mid-session.
+	// Session-only by design (no persistence) — the flag is consumed so it
+	// fires exactly once per flip; first-load is suppressed by the store.
+	$effect(() => {
+		if (setupStateStore.remoteAccessFlipped) {
+			setupStateStore.remoteAccessFlipped = false;
+			toast.success("Your server is now reachable from anywhere", {
+				description: setupStateStore.remoteAccess?.detail,
+			});
+		}
+	});
+
+	// No subscription toasts here. There is no trial — the countdown and
+	// "trial has ended" toasts that lived here fired on statuses the box never
+	// emits, and their copy sold a product that does not exist. The offer is
+	// made where it is honest: the metered 402 itself names the door
+	// (virtues_api::client::payment_required_message), and Settings → Billing
+	// carries the standing.
+
+	// The window's title is the active tab's thing, by its name now
+	// (refs/identity): the browser tab, the history menu and the OS window
+	// switcher all read it, and it said nothing at all before.
+	const windowTitle = $derived.by(() => {
+		const tab = windowShellStore.activeTab;
+		if (!tab) return "Virtues";
+		return `${identityOf(tab.route, { title: tab.label }).title} · Virtues`;
+	});
+</script>
+
+<svelte:head>
+	<title>{windowTitle}</title>
+</svelte:head>
+
+<!-- Top-center everywhere, as onboarding and auth already are. On desktop the
+     offset drops the toast just below the chrome row (tab bar + pane toolbar),
+     so it reads as falling out of the chrome rather than sitting on it. On the
+     phone the offset clears the notch/Dynamic Island instead. -->
+<Toaster
+	position="top-center"
+	offset="calc(var(--chrome-row-h, 60px) + 8px)"
+	mobileOffset="max(16px, env(safe-area-inset-top))"
+	toastOptions={{
+		style: `
+			background: var(--surface);
+			color: var(--foreground);
+			border: 1px solid var(--border);
+			font-family: var(--font-sans);
+		`,
+		class: "themed-toast",
+	}}
+/>
+
+<!-- Global Context Menu Provider -->
+<ContextMenuProvider />
+<TooltipLayer />
+
+<!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
+<DialogHost />
+<NewTaskDialog />
+
+<!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
+     is where it used to live: the sidebar doesn't render on the phone shell,
+     so the app's only way to find anything didn't exist there. -->
+<SearchModal open={search.open} onClose={() => search.hide()} />
+
+<div
+	class="app-shell flex flex-col h-screen w-full bg-surface-elevated"
+	class:desk={!mobileLayout.isMobile}
+	class:mobile-shell={mobileLayout.isMobile}
+	class:opening
+>
+	<!-- The painting along the bottom of the whole window, behind the
+	     sidebar and the panes alike. It does not move between pages: the
+	     glass floats over it and the paper covers it. -->
+	{#if !mobileLayout.isMobile}
+		<div class="window-scene" aria-hidden="true">
+			<Background position="70% 100%" />
+		</div>
+	{/if}
+
+	<!-- One row across the whole window: the ∴ over the sidebar, each pane's
+	     tabs over its pane, and search and Settings in the corner. -->
+	{#if !mobileLayout.isMobile}
+		<WindowHeader />
+	{/if}
+
+	<div class="flex flex-1 min-h-0 w-full">
+	<!-- Desktop sidebar — hidden on the mobile (bottom-tab) shell -->
+	{#if !mobileLayout.isMobile}
+		<UnifiedSidebar />
+	{/if}
+
+	<!-- Main Content -->
+	<!-- On the desktop `main` is only the desk: each pane draws its own card
+	     (SplitContainer), so one card can divide into two and merge back.
+	     On the phone `main` is the page itself. -->
+	<main
+		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
+		class:split-desk={!mobileLayout.isMobile}
+		class:is-mobile={mobileLayout.isMobile}
+	>
+		{#if initialized}
+			{#if mobileLayout.isMobile}
+				<!-- One window, no panes, no tabs — and only the visible view
+				     is mounted. -->
+				<MobileShell />
+			{:else}
+				<!-- SplitContainer handles both split and mono modes -->
+				<SplitContainer />
+			{/if}
+		{/if}
+	</main>
+	</div>
+</div>
+
+<!-- The phone's first-run stream setup lived here as its own screen. Setup's
+     Connections step asks for this phone's streams now, and This device turns
+     on the rest, so a second "Set up Virtues" after Setup asked again with a
+     different list (2026-09-27). -->
+
+<!-- Focus mode: floating exit affordance (chrome is hidden via body.focus-mode) -->
+{#if pageDisplay.focusMode}
+	<button
+		class="focus-exit"
+		onclick={() => pageDisplay.toggleFocus()}
+		title="Exit focus mode (⌘⇧F)"
+		aria-label="Exit focus mode"
+	>
+		<Icon icon="mynaui:minimize" width="18" />
+	</button>
+{/if}
+
+<!-- Global icon picker.
+     A popover, not a modal: the in-page and toolbar pickers have always been
+     popovers, and the same panel arriving centred and dimming the document —
+     to ask about one 16px glyph — read as a different, heavier feature. It
+     hangs off wherever it was summoned from (a right-click point, a button
+     rect); with no anchor it falls back to the middle of the window. -->
+{#if iconPickerStore.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => iconPickerStore.hide()}></div>
+	<FloatingContent
+		anchor={iconPickerStore.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<IconPicker
+				value={iconPickerStore.currentValue}
+				onSelect={(icon) => iconPickerStore.select(icon)}
+				close={() => iconPickerStore.hide()}
+				color={iconPickerStore.currentColor}
+				label={iconPickerStore.label}
+				fallback={iconPickerStore.fallback}
+				onColorSelect={iconPickerStore.colorEnabled
+					? (c) => iconPickerStore.selectColor(c)
+					: undefined}
+			/>
+		{/snippet}
+	</FloatingContent>
+{/if}
+
+<!-- Global link editor.
+     Links render as links now, whether or not the caret is on them, so the raw
+     `[label](url)` is never on screen to be corrected in place. This is where a
+     label or a URL gets fixed instead. Anchored to the link it was opened from,
+     same as the icon picker above. -->
+{#if linkEditor.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => linkEditor.hide()}></div>
+	<FloatingContent
+		anchor={linkEditor.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<LinkEditorPopover />
+		{/snippet}
+	</FloatingContent>
+{/if}
+
+<!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
+{#if false}
+	{@render children()}
+{/if}
+
+<style>
+	/* Named only while the app opens from Setup, so the opening can leave
+	   it unanimated (app.css). A named element cuts off what glass inside
+	   it can see behind it, and the home cards are glass over the window's
+	   painting, so the name is never left on. */
+	:global(html.app-opening) main {
+		view-transition-name: main-content;
+	}
+
+	/* ── the app opening ───────────────────────────────────────────────
+	   See `opening` in the script. Times are from the first frame of the
+	   shell; the view transition is fading it in over the first ~0.6s, so
+	   the mark's beat starts while the letter is still going. */
+	.app-shell.opening :global(.header-mark .mark-dot.left) {
+		animation: opening-premise 560ms ease-out 220ms both;
+	}
+	.app-shell.opening :global(.header-mark .mark-dot.right) {
+		animation: opening-premise 560ms ease-out 360ms both;
+	}
+	.app-shell.opening :global(.header-mark .mark-dot.apex) {
+		animation: opening-conclude 820ms ease-out 500ms both;
+	}
+	.app-shell.opening :global(.sidebar-column) {
+		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
+	}
+	.app-shell.opening main {
+		animation: opening-pane 760ms cubic-bezier(0.2, 0.7, 0.2, 1) 880ms both;
+	}
+
+	@keyframes opening-premise {
+		0% { transform: scale(0); }
+		55% { transform: scale(1.3); }
+		100% { transform: scale(1); }
+	}
+	@keyframes opening-conclude {
+		0% { transform: scale(0); }
+		45% { transform: scale(1.4); }
+		75% { transform: scale(0.94); }
+		100% { transform: scale(1); }
+	}
+	@keyframes opening-panel {
+		from {
+			opacity: 0;
+			transform: translateX(-14px);
+		}
+	}
+	@keyframes opening-pane {
+		from {
+			opacity: 0;
+			transform: translateY(12px) scale(0.99);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.app-shell.opening :global(*),
+		.app-shell.opening main {
+			animation: none !important;
+		}
+	}
+
+	/* The pane meets the sidebar edge to edge, so opening and closing the
+	   sidebar only moves it: the aside's width animates and the pane has no
+	   margin. */
+	main:not(.is-mobile) {
+		transition:
+			border-color var(--motion-state) var(--ease-premium),
+			background-color var(--motion-state) var(--ease-premium);
+	}
+
+	/* Mobile shell: edge-to-edge (viewport-fit=cover), so the shell itself pads
+	   for the status bar / Dynamic Island, and reserves the bottom-tab bar's
+	   height so scrollable content ends above it (the bar is position:fixed).
+	   The padded zones show the themed shell background instead of the bare
+	   native window. */
+	/* The bottom reservation is whichever is taller: the tab bar (plus the home
+	   indicator), or the keyboard. They are never both owed — the bar hides
+	   while the keyboard is up, and the home indicator is behind the keyboard
+	   anyway — so `max()` is the whole rule. `--keyboard-inset` is 0 until
+	   `stores/keyboard.svelte.ts` measures otherwise, which makes this
+	   identical to what it was on every surface without a keyboard.
+
+	   This is also what lifts the composer: the chat input sits in normal flow
+	   at the bottom of its view, so shrinking main's content box moves it up
+	   with the keyboard. No component needs to know it happened. */
+	/* No reservation for the tab bar here, deliberately. The bar is glass, and
+	   glass with nothing behind it is just a grey rectangle — reserving the
+	   space meant the view stopped exactly where the bar began, so there was
+	   never any content underneath to blur, which is the entire effect. The
+	   view now runs to the bottom of the screen and its own scroller carries
+	   the bottom padding instead (see Page.svelte), so the last row is still
+	   reachable but everything above it passes behind the glass on its way up.
+
+	   The keyboard inset stays: that one is not decoration, it is the
+	   difference between seeing what you are typing and not. */
+	main.is-mobile {
+		padding-top: env(safe-area-inset-top);
+		/* The inset ANIMATES: stores/keyboard.svelte.ts drives the custom
+		   property frame-by-frame on the keyboard's own clock (the native
+		   bridge hands it UIKit's duration before the keys move). Deliberately
+		   not a CSS transition here — a transition keyed on a var()-derived
+		   value simply never ran in testing, the padding sat at its old value
+		   for the whole duration. The rAF writes are the transition. */
+		padding-bottom: var(--keyboard-inset, 0px);
+	}
+
+	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the
+	   WKWebView scroll the *document* — which drags the position:fixed bottom bar
+	   and the top tab strip out of view. Fixed + inset:0 takes the shell out of
+	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
+	   the document has nothing to scroll; only the view's own inner scroller
+	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
+	/* The desk: the window's ground, with the painting along its bottom.
+	   Its own stacking context, so the painting can sit under everything in
+	   the shell without going under the desk. The phone keeps its own
+	   ground. */
+	.app-shell.desk {
+		position: relative;
+		isolation: isolate;
+		background-color: var(--desk);
+	}
+
+	.window-scene {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: -1;
+		width: 100%;
+		height: 52%;
+		pointer-events: none;
+		user-select: none;
+		-webkit-mask-image: var(--window-scene-mask);
+		mask-image: var(--window-scene-mask);
+		/* When the window opens the painting settles into place out of a
+		   slight zoom and haze, once. */
+		transform-origin: 70% 100%;
+		animation: scene-settle 1100ms var(--ease-premium) both;
+	}
+
+	@keyframes scene-settle {
+		from {
+			opacity: 0;
+			transform: scale(1.03);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.window-scene {
+			animation: none;
+		}
+	}
+
+	/* Each pane draws its own paper (SplitContainer), so `main` is only the
+	   window they stand on. The panes stand the window's air in from its
+	   right and bottom edges. */
+	main.split-desk {
+		background-color: transparent;
+		padding: 0 var(--window-air) var(--window-air) 0;
+	}
+
+	.app-shell.mobile-shell {
+		position: fixed;
+		inset: 0;
+		height: auto;
+		width: auto;
+		overflow: hidden;
+		overscroll-behavior: none;
+	}
+
+	/* Focus-mode exit button — appears top-right when chrome is hidden. */
+	.focus-exit {
+		position: fixed;
+		top: max(1rem, env(safe-area-inset-top));
+		right: max(1rem, env(safe-area-inset-right));
+		z-index: var(--z-modal);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: var(--radius-lg);
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0.4;
+		transition:
+			opacity 0.18s ease,
+			color 0.15s ease,
+			background-color 0.15s ease;
+	}
+
+	.focus-exit:hover {
+		opacity: 1;
+		color: var(--color-foreground);
+		background: var(--hover-bg);
+	}
+
+	/* Invisible, not dim. The picker is a popover — the page behind it stays
+	   readable and in context — but a click outside still has to dismiss it,
+	   and a transparent full-screen catcher is how that works without every
+	   caller wiring up click-outside itself. */
+	.icon-picker-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: var(--z-popover, 1000);
+		background: transparent;
+	}
+
+	/* Chrome only. The picker sizes and scrolls itself (360px, its own
+	   max-height, its own overflow) — a second width and a second scroller out
+	   here would fight it and produce two scrollbars. */
+	:global(.icon-picker-floating) {
+		z-index: calc(var(--z-popover, 1000) + 1);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-xl);
+		box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+	}
+</style>

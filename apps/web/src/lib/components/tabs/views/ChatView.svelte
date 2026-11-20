@@ -3,6 +3,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
+	import Background from "$lib/components/Background.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -2542,13 +2543,9 @@
 						     page, so home draws it here. It yields to staged
 						     attachments, whose chips grow upward from the composer. -->
 						{#if mobileLayout.isMobile}
-							<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
-							     macOS (174 KB), the JPEG last (508 KB). -->
-							<picture>
-								<source srcset="/scenes/lake.avif" type="image/avif" />
-								<source srcset="/scenes/lake.webp" type="image/webp" />
-								<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" transition:fade={{ duration: 500 }} />
-							</picture>
+							<div class="home-scene" aria-hidden="true" transition:fade={{ duration: 500 }}>
+								<Background position="70% 100%" />
+							</div>
 						{/if}
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />
@@ -2854,11 +2851,8 @@
 		bottom: 0;
 		width: 100%;
 		height: min(42%, 380px);
-		object-fit: cover;
-		object-position: 70% 100%;
 		z-index: 0;
 		pointer-events: none;
-		filter: var(--window-scene-filter);
 		-webkit-mask-image: var(--window-scene-mask);
 		mask-image: var(--window-scene-mask);
 	}

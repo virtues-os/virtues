@@ -59,6 +59,7 @@ pub mod circumstances;
 pub mod coverage;
 pub mod narrative_draft;
 pub mod block_move;
+pub mod backgrounds;
 pub mod bookmarks;
 pub mod page_convert;
 pub mod page_reads;

@@ -5,13 +5,13 @@
 	 * the one shadow a floating layer carries. The Glass setting changes the glass
 	 * here as it does in the shell.
 	 */
+	import Background from "$lib/components/Background.svelte";
 </script>
 
 <div class="stage">
-	<picture>
-		<source srcset="/scenes/lake.webp" type="image/webp" />
-		<img src="/scenes/lake.jpg" alt="" aria-hidden="true" />
-	</picture>
+	<div class="scene" aria-hidden="true">
+		<Background />
+	</div>
 	<div class="row">
 		<button type="button" class="control lq">Glass</button>
 		<div class="card lq">
@@ -38,14 +38,9 @@
 		padding: 24px;
 		min-height: 220px;
 	}
-	picture img {
+	.scene {
 		position: absolute;
 		inset: 0;
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		object-position: bottom;
-		filter: var(--window-scene-filter);
 	}
 	.row {
 		position: relative;

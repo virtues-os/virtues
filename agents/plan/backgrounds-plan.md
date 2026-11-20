@@ -206,12 +206,21 @@ Shaders, loops and drawn styles have three costs an image does not:
 Each slice replaces the old way in the same change.
 
 1. **The asset tool and the pairs.** Built 2026-11-20 for both painting
-   styles. Left: the owner reviews the pairs in `review.html`.
-2. **One component and the setting.** A `Background` component and a
-   resolver (setting → picture → file for the theme, with the daily rotation)
-   replace the four places that name the lake. The setting is stored in
-   `ui_preferences`. Until slice 4, styles are read from a local folder in a
-   dev checkout.
+   styles. The owner accepted the proposed pairs ("good enough").
+2. **One component and the setting.** Built 2026-11-20:
+   - The server lists installed styles at `GET /api/backgrounds` and serves
+     their pictures at `GET /api/backgrounds/files/<style>/…`
+     (`api/backgrounds.rs`, routes in `server/api/settings.rs`). Styles live
+     in `/var/lib/virtues/backgrounds` on a server and `.background-state/`
+     in a dev checkout, which can be a symlink to the build tool's output.
+   - `lib/backgrounds/resolve.ts` turns the setting into today's picture;
+     `lib/stores/background.svelte.ts` holds the setting
+     (`ui_preferences.background`, cached in localStorage with the day's
+     picture so the first frame does not flash the lake);
+     `components/Background.svelte` draws it and replaces the four places
+     that named the lake. Only the lake is dimmed in Dark now; a style's
+     picture has its own dark version.
+   - The default stays the lake until a picker exists to change it.
 3. **The pickers.** The home control (the glass button and its popover, with
    Follow the day), and Settings › Appearance: styles, then collections, then
    pictures, with Plain first.

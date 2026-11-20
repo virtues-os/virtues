@@ -126,6 +126,10 @@ pub fn routes() -> Router<AppState> {
         )
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(unsplash_search_handler))
+        // Home backgrounds: the installed styles and their pictures
+        // (api/backgrounds.rs). The apps load pictures from this server only.
+        .route("/api/backgrounds", get(backgrounds_handler))
+        .route("/api/backgrounds/files/*path", get(background_file_handler))
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
@@ -858,5 +862,26 @@ pub async fn apply_update_handler() -> Response {
     match crate::api::updates::apply() {
         Ok(body) => (StatusCode::ACCEPTED, Json(body)).into_response(),
         Err(e) => api_response::<crate::api::updates::ApplyResponse>(Err(e)),
+    }
+}
+
+/// GET /api/backgrounds — every installed style's manifest.
+pub async fn backgrounds_handler() -> Response {
+    api_response(crate::api::backgrounds::list().await)
+}
+
+/// GET /api/backgrounds/files/*path — one picture of an installed style.
+/// Cached for a day: a rebuild of a style can rewrite a file in place.
+pub async fn background_file_handler(Path(path): Path<String>) -> Response {
+    match crate::api::backgrounds::file(&path).await {
+        Ok(file) => (
+            [
+                (axum::http::header::CONTENT_TYPE, file.content_type),
+                (axum::http::header::CACHE_CONTROL, "private, max-age=86400"),
+            ],
+            file.bytes,
+        )
+            .into_response(),
+        Err(e) => error_response(e),
     }
 }
