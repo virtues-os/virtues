@@ -205,11 +205,11 @@
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
 				{#snippet foot()}
-					<!-- The price belongs in view but not on the button: "$20/mo"
+					<!-- The price belongs in view but not on the button: "$29/mo"
 					     set into a filled dark pill reads as "clicking charges
 					     me", when the click only opens a checkout. Naming the
 					     confirmation step is what actually settles that. -->
-					$20 a month. You'll confirm in your browser.
+					$29 a month. You'll confirm in your browser.
 				{/snippet}
 				<Act variant="primary" onclick={() => subscribe()}>Subscribe</Act>
 				<Act onclick={() => open("signin")}>Sign in</Act>

@@ -3,8 +3,12 @@
 //! Two device-facing endpoints, both authed via the device `api_key`:
 //!
 //! - `POST /credits/auto-topup` — box hit a 402 with `wallet_empty`. We
-//!   charge the saved card $10 off-session, then credit the account's wallet
-//!   in virtues-api (`/internal/credit` mode `add`).
+//!   charge the saved card off-session (`AUTO_TOPUP_MICROS`, default $20),
+//!   then credit the account's wallet in virtues-api (`/internal/credit` mode
+//!   `add`).
+//!
+//! The wallet gets the charge minus the card fee ([`credit_after_fee`]), so
+//! a top-up never costs Virtues money and usage can stay at cost.
 //! - `POST /credits/topup { amount_micros }` — user explicitly tapped
 //!   "Add credit" with a chosen amount in `$10–$50`. Same flow.
 //!
@@ -222,11 +226,12 @@ async fn do_topup(
             .into_response();
     }
 
+    let credited = credit_after_fee(amount_micros, &state.credit);
     if let Err(e) = state
         .virtues_api
         .credit(&Credit {
             account_id: account_id.to_string(),
-            amount_micros,
+            amount_micros: credited,
             mode: "add",
             reference: Some(format!("topup:{pi_id}")),
         })
@@ -266,9 +271,19 @@ async fn do_topup(
 
     (
         StatusCode::OK,
-        Json(json!({ "ok": true, "amount_micros": amount_micros })),
+        Json(json!({ "ok": true, "amount_micros": amount_micros, "credited_micros": credited })),
     )
         .into_response()
+}
+
+/// The wallet credit for a top-up of `amount_micros`: the amount Stripe
+/// charges (whole cents, rounded up as `charge_off_session` does) minus the
+/// card fee, rounded to the cent the way Stripe rounds it. $20 → $19.12.
+pub(crate) fn credit_after_fee(amount_micros: i64, policy: &crate::routes::CreditPolicy) -> i64 {
+    let cents = (amount_micros + 9_999) / 10_000;
+    let fee_cents = (cents * policy.card_fee_basis_points + 5_000) / 10_000
+        + policy.card_fee_fixed_micros / 10_000;
+    ((cents - fee_cents).max(0)) * 10_000
 }
 
 /// Resolve an api_key → (active customer id, account id). Errors on unknown
@@ -462,6 +477,22 @@ fn sha256(data: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{release_monthly_cap, reserve_monthly_cap, topup_idempotency_key};
+
+    #[test]
+    fn top_up_credit_is_the_charge_minus_the_card_fee() {
+        let policy = crate::routes::CreditPolicy {
+            renewal_micros: 20_000_000,
+            card_fee_basis_points: 290,
+            card_fee_fixed_micros: 300_000,
+            auto_topup_micros: 20_000_000,
+            topup_min_micros: 10_000_000,
+            topup_max_micros: 50_000_000,
+        };
+        assert_eq!(super::credit_after_fee(20_000_000, &policy), 19_120_000);
+        assert_eq!(super::credit_after_fee(10_000_000, &policy), 9_410_000);
+        assert_eq!(super::credit_after_fee(50_000_000, &policy), 48_250_000);
+        assert_eq!(super::credit_after_fee(100_000, &policy), 0, "never negative");
+    }
 
     #[test]
     fn retries_inside_ten_minutes_share_a_key() {

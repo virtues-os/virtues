@@ -2,7 +2,9 @@
 //!
 //! Deletes dead rows:
 //!   - long-expired wallets (a lapsed subscription's wallet expires at the
-//!     cohort boundary; kept a short grace, then reclaimed). Its `ledger` rows
+//!     cohort boundary; kept a short grace, then reclaimed). A wallet still
+//!     holding top-up credit is kept: that credit was paid for, and it is
+//!     spendable again when the owner re-subscribes. Its `ledger` rows
 //!     go with it. The box keys stay: they belong to the account, and they are
 //!     what keeps the free routes, such as the OAuth token proxy, working.
 //!   - expired blocklist entries (TTL'd cooldowns; restart snapshot only).
@@ -28,7 +30,8 @@ async fn run_once(pool: &PgPool) {
     // Long-expired wallets, past grace. Ledger rows cascade (the history stays
     // available to the owner until the subscription lapses + grace).
     match sqlx::query(&format!(
-        "DELETE FROM wallets WHERE expires_at < now() - interval '{WALLET_GRACE_DAYS} days'"
+        "DELETE FROM wallets WHERE expires_at < now() - interval '{WALLET_GRACE_DAYS} days' \
+         AND LEAST(topup_micros, GREATEST(balance_micros, 0)) <= 0"
     ))
     .execute(pool)
     .await
@@ -59,6 +62,26 @@ async fn run_once(pool: &PgPool) {
 mod tests {
     use super::*;
     use crate::entitlement::{self, CreditMode};
+
+    /// A lapsed wallet that still holds top-up credit is kept: that credit
+    /// was paid for, and a renewal makes it spendable again.
+    #[sqlx::test]
+    async fn sweep_keeps_a_wallet_with_topup_credit(pool: PgPool) {
+        entitlement::credit(&pool, "acct-kept", 20_000_000, CreditMode::Set, None).await.unwrap();
+        entitlement::credit(&pool, "acct-kept", 9_410_000, CreditMode::Add, None).await.unwrap();
+        sqlx::query("UPDATE wallets SET expires_at = now() - interval '8 days' WHERE account_id = 'acct-kept'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        run_once(&pool).await;
+        let w = entitlement::get_wallet(&pool, "acct-kept").await.unwrap().expect("kept");
+        assert_eq!(w.topup_micros, 9_410_000);
+
+        entitlement::credit(&pool, "acct-kept", 20_000_000, CreditMode::Set, None).await.unwrap();
+        let w = entitlement::get_wallet(&pool, "acct-kept").await.unwrap().unwrap();
+        assert_eq!((w.balance_micros, w.topup_micros), (29_410_000, 9_410_000));
+    }
 
     /// Sweeping a lapsed wallet takes its ledger and leaves the box key, so
     /// the box still authenticates, and the owner's next payment brings the

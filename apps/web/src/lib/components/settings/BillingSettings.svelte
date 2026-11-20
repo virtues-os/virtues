@@ -240,6 +240,9 @@
 	type Usage = {
 		balance_micros: number;
 		month_to_date_micros: number;
+		/** The part of the balance that is top-up credit, kept at renewal.
+		    Absent from older servers. */
+		topup_micros?: number;
 		expires_at: string | null;
 		error?: string;
 		/** No Virtues account is connected, so there is no balance to read. */
@@ -286,6 +289,9 @@
 		usage
 			? [
 					renewsLabel ? `Your monthly credit renews ${renewsLabel}.` : '',
+					usage.topup_micros && usage.topup_micros > 0
+						? `${formatMicrosPrecise(usage.topup_micros)} of it is top-up credit, which stays when your monthly credit renews.`
+						: '',
 					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI, web search, places and bank data.`,
 				]
 					.filter(Boolean)
@@ -326,7 +332,7 @@
 	{#if isSubscribed}
 		<SettingRow id="subscription" label="Plan" help={planHelp}>
 			<div class="plan">
-				<span class="plan-name">Virtues, $20 a month</span>
+				<span class="plan-name">Virtues, $29 a month</span>
 				<Button variant="secondary" onclick={openBillingPortal} loading={portalLoading}>Manage in Stripe</Button>
 			</div>
 		</SettingRow>
@@ -340,12 +346,12 @@
 		<SettingRow
 			id="subscription"
 			label="Plan"
-			help="None yet. One subscription covers hosted AI, web search, places and bank data for $20 a month. Your own AI provider covers the first on its own."
+			help="None yet. One subscription covers hosted AI, web search, places and bank data for $29 a month. Your own AI provider covers the first on its own."
 		>
 			{#if subscribeWaiting}
 				<span class="waiting">Waiting for checkout…</span>
 			{:else}
-				<Button variant="secondary" onclick={openSubscribe} loading={subscribeLoading}>Subscribe, $20 a month</Button>
+				<Button variant="secondary" onclick={openSubscribe} loading={subscribeLoading}>Subscribe, $29 a month</Button>
 			{/if}
 		</SettingRow>
 		{#if subscribeError}
@@ -406,7 +412,7 @@
 			id="auto-top-up"
 			label="Auto top-up"
 			help={autoTopup.enabled
-				? 'Adds $10 when your balance runs out, charged to the card on your subscription.'
+				? 'When your balance runs out, charges $20 to the card on your subscription and adds $19.12 of credit. The difference is the card fee.'
 				: 'Off. AI stops when your balance runs out, until your monthly credit renews.'}
 		>
 			<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />

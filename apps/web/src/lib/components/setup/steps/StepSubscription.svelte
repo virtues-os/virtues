@@ -311,7 +311,7 @@
 					<span class="radio" aria-hidden="true"></span>
 				</span>
 				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
-				<span class="price"><span class="amount">$20</span> a month</span>
+				<span class="price"><span class="amount">$29</span> a month</span>
 			</button>
 			<button
 				type="button"

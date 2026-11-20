@@ -32,8 +32,12 @@ pub struct Config {
     /// Env: `VIRTUES_RELAY_URL`.
     pub relay_url: String,
 
-    /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
+    /// Monthly allotment (micros USD) granted at each renewal. Default $20.
     pub renewal_micros: i64,
+    /// Card fee taken out of top-up credit: basis points of the charge plus
+    /// a fixed amount. Defaults 290 and $0.30, Stripe's standard card rate.
+    pub card_fee_basis_points: i64,
+    pub card_fee_fixed_micros: i64,
     /// Auto-top-up amount (micros USD). Default $20 (user-settable).
     pub auto_topup_micros: i64,
     /// Manual top-up min/max range (micros USD). Defaults $10–$50.
@@ -118,18 +122,19 @@ impl Config {
         let relay_url = std::env::var("VIRTUES_RELAY_URL").unwrap_or_default();
 
         // Wallet economics — linked prepaid model.
-        //   * Monthly renewal credit: $20 (overwrites wallet to the full
-        //     subscription value — "all credit, no haircut"). Margin comes
-        //     entirely from the 20% universal markup: a fully-burned $20 wallet
-        //     is $20/1.2 = $16.67 of real upstream cost, so usage is always
-        //     margin-positive and the per-user floor is ~$2-3 (much higher for
-        //     anyone who doesn't burn the whole wallet). See entitlement.rs::
-        //     apply_markup.
+        //   * Monthly allotment: $20, reset at each renewal. The margin is the
+        //     subscription price minus the allotment; usage is billed at cost
+        //     (virtues-api entitlement.rs, markup 0).
+        //   * Top-ups are credited net of the card fee, so a top-up never costs
+        //     Virtues money and usage stays at cost. Top-up credit survives
+        //     renewals (virtues-api migration 0014).
         //   * Auto-top-up: $20 default (user-settable), fires when wallet hits 0.
         //   * Manual top-up: $10–$50 user choice (atlas validates band).
         //   * Top-ups (add) are bounded by monthly_cap_micros — the Cursor-style
         //     user-settable MONTHLY ceiling that replaces the old daily cap.
         let renewal_micros = env_i64("RENEWAL_MICROS", 20_000_000);
+        let card_fee_basis_points = env_i64("CARD_FEE_BASIS_POINTS", 290);
+        let card_fee_fixed_micros = env_i64("CARD_FEE_FIXED_MICROS", 300_000);
         let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 20_000_000); // $20 default
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);
@@ -194,6 +199,8 @@ impl Config {
             public_url,
             relay_url,
             renewal_micros,
+            card_fee_basis_points,
+            card_fee_fixed_micros,
             auto_topup_micros,
             topup_min_micros,
             topup_max_micros,

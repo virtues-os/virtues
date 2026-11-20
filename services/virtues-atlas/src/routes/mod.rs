@@ -21,9 +21,13 @@ mod webhooks;
 /// Credit/pricing amounts (renewal + top-up bands).
 #[derive(Clone, Copy)]
 pub struct CreditPolicy {
-    /// Monthly renewal credit. Default $20. Env: RENEWAL_MICROS.
+    /// Monthly allotment. Default $20. Env: RENEWAL_MICROS.
     pub renewal_micros: i64,
-    /// Auto-top-up amount (fixed). Default $10. Env: AUTO_TOPUP_MICROS.
+    /// Card fee taken out of top-up credit. Defaults 290 bp + $0.30.
+    /// Env: CARD_FEE_BASIS_POINTS, CARD_FEE_FIXED_MICROS.
+    pub card_fee_basis_points: i64,
+    pub card_fee_fixed_micros: i64,
+    /// Auto-top-up amount (fixed). Default $20. Env: AUTO_TOPUP_MICROS.
     pub auto_topup_micros: i64,
     /// Manual top-up minimum. Default $10. Env: TOPUP_MIN_MICROS.
     pub topup_min_micros: i64,

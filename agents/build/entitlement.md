@@ -148,8 +148,21 @@ Re-linking rotates the api_key and re-points the device at the **same**
 There is no client-side renewal dance. Renewal is a **Stripe webhook** to Atlas,
 which SETs the month's allotment on the wallet via `POST /internal/credit`.
 Top-ups are a card charge through Atlas (`POST /credits/topup`, and
-`POST /credits/auto-topup` for the standing arrangement), which credits the same
-way. The box is not involved and holds no refresh token.
+`POST /credits/auto-topup` for the standing arrangement), which ADDs to the
+wallet. The box is not involved and holds no refresh token.
+
+A wallet holds two kinds of credit (virtues-api migration 0014). The
+**monthly allotment** ($20, `RENEWAL_MICROS`) is spent first and reset at each
+renewal; unused allotment does not carry over. **Top-up credit** is spent only
+after the allotment and is kept at renewal. `balance_micros` is the total and
+`topup_micros` is the top-up part.
+
+Usage is billed at cost (`USAGE_MARKUP_BASIS_POINTS`, default 0). The margin
+is the subscription price minus the allotment. A top-up is credited net of
+the card fee (`CARD_FEE_BASIS_POINTS` 290 and `CARD_FEE_FIXED_MICROS` $0.30),
+so $20 charged adds $19.12 of credit and a top-up never costs Virtues money.
+A top-up carries a Stripe idempotency key, and `topup_charges` records each
+credited PaymentIntent, so a retried top-up charges and credits once.
 
 ### 4.3 Per-call charging
 The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
