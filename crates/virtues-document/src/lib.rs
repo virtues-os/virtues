@@ -706,10 +706,12 @@ mod tests {
 
     /// Version 1 shipped (staging.97, mac 1.0.30), and a client deletes
     /// from the shared document what its schema cannot read: the article's
-    /// footnote, figure and veil are version 2.
+    /// footnote, figure and veil are version 2. Version 2 shipped too, so
+    /// the chart figure (its kind and its `chart`, `sql` and `data`) is
+    /// version 3.
     #[test]
-    fn the_contract_is_version_two() {
-        assert_eq!(contract().version, 2);
+    fn the_contract_is_version_three() {
+        assert_eq!(contract().version, 3);
     }
 
     #[test]
@@ -721,7 +723,7 @@ mod tests {
              <hr> <img src alt width> <audio src data-name></audio> <video src data-name></video> \
              <virtues-file src data-name></virtues-file> <table> <tr> <th colspan rowspan align=\"left|center|right\"> \
              <td colspan rowspan align=\"left|center|right\"> <virtues-applet ref height></virtues-applet> \
-             <virtues-figure kind=\"quote|thread|route|picture\" text who ref refs src caption data-style time></virtues-figure>\n\
+             <virtues-figure kind=\"quote|thread|route|picture|chart\" text who ref refs src caption data-style time chart sql data-rows></virtues-figure>\n\
              Inline: <br> <virtues-mention to label></virtues-mention> <virtues-footnote label note></virtues-footnote>\n\
              Marks: <a href> <strong> <em> <u> <s> <mark> <virtues-veil> <code>"
         );

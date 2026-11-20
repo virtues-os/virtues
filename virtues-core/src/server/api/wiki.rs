@@ -26,6 +26,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/timeline/recorded", get(timeline_recorded_handler))
         // The chat sky: one local day as moments, for the empty new chat
         .route("/api/sky/day/:date", get(sky_day_handler))
+        .route("/api/sky/week/:date", get(sky_week_handler))
+        .route("/api/sky/moment/:date", get(sky_moment_handler))
+        .route("/api/sky/context/:date", get(sky_context_handler))
         // "Help Virtues out": the places the map can't name, and their answers
         .route("/api/timeline/places/review", get(place_review_handler))
         .route("/api/timeline/places/:id/answer", post(place_answer_handler))
@@ -1396,6 +1399,41 @@ pub async fn timeline_day_handler(State(state): State<AppState>, Path(date): Pat
 pub async fn sky_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(d) => api_response(crate::api::sky::get_day(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkyMomentQuery {
+    /// The moment's id in the day (`event:…`, `visit:…`).
+    pub id: String,
+}
+
+/// One moment of a local day and what happened inside it.
+pub async fn sky_moment_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(q): Query<SkyMomentQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::sky::get_moment(state.db.pool(), d, &q.id).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// The projects, pages and chats a local day's moments belong to.
+pub async fn sky_context_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::sky::get_context(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// The Monday-to-Sunday week holding a local day (`YYYY-MM-DD`), each day as
+/// the chat sky draws it.
+pub async fn sky_week_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::sky::get_week(state.db.pool(), d).await),
         Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
 }

@@ -8,7 +8,7 @@
 	 * wait, and accepting or dismissing is how they leave.
 	 *
 	 * A machine note always carries its sources, and that is the whole reason
-	 * the design works: a note saying "Sarah may have moved — group thread, Jul
+	 * the design works: a note saying "Sarah may have moved — group conversation, Jul
 	 * 12" is useful EVEN WHEN WRONG, because the link makes it checkable in
 	 * seconds. So the citations are rendered as part of the note, not tucked
 	 * behind a disclosure — reading a note and checking it should be one motion.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineDayPoint } from "$lib/wiki/api";
 import { cleanTrack, dropSpikes, flagHoles, HOLE_MIN_M, HOLE_MIN_MS, metres, splitTrack, toFixes } from "./track";
-import { gapVerdict, quietDay, stepDay, when } from "./day";
+import { stepDay } from "./day";
 
 // A fixed spot (open ocean, so no real place) and a way to step north by metres.
 const LAT = 0;
@@ -109,40 +109,6 @@ describe("splitTrack", () => {
 	});
 	it("draws nothing for a single fix", () => {
 		expect(splitTrack(track(at(0)))).toEqual({ runs: [], bridges: [] });
-	});
-});
-
-describe("the empty day, in the prototype's words", () => {
-	it("gives gapWhy's three verdicts", () => {
-		expect(gapVerdict({ fixes: 0, talk: false, steps: false })).toBe("Nothing recorded");
-		expect(gapVerdict({ fixes: 0, talk: true, steps: true })).toBe("Phone on, mic active");
-		expect(gapVerdict({ fixes: 0, talk: false, steps: true })).toBe("Phone on but idle");
-		expect(gapVerdict({ fixes: 3, talk: false, steps: false })).toBe("Phone on but idle");
-	});
-	it("says an instant on the day's own clock", () => {
-		const t = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago (CDT)
-		expect(when(t, false, "America/Chicago")).toBe("Jun 3 · 6:00 PM");
-		expect(when(t, true, "America/Chicago")).toBe("6:00 PM");
-		// The same instant on a Los Angeles day reads two hours earlier.
-		expect(when(t, true, "America/Los_Angeles")).toBe("4:00 PM");
-		expect(when(Date.parse("2026-01-02T06:05:00Z"), false, "America/Chicago")).toBe("Jan 2 · 12:05 AM");
-	});
-	it("says no location was recorded, and leaves where you were to the reader", () => {
-		const left = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago
-		const home = { title: "Home", s: left - 3_600_000, e: left };
-		expect(quietDay(left, home, "America/Chicago", { talk: true, steps: true })).toEqual({
-			title: "No location recorded",
-			lines: ["Last measured at Home, Jun 3 · 6:00 PM", "Phone on, mic active"],
-		});
-		// The last fix came after the stay, on the road: no place is named.
-		expect(quietDay(left + 1_800_000, home, "America/Chicago", null).lines).toEqual(["Last measured Jun 3 · 6:30 PM"]);
-		expect(quietDay(null, null, "America/Chicago", { talk: false, steps: false })).toEqual({
-			title: "No location recorded",
-			lines: ["Nothing recorded"],
-		});
-	});
-	it("gives no verdict when the day's voice or steps didn't load", () => {
-		expect(quietDay(null, null, "America/Chicago", null).lines).toEqual([]);
 	});
 });
 

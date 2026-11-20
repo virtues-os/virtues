@@ -4,7 +4,7 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json,
     Router,
 };
@@ -62,6 +62,7 @@ where
         .route("/api/pages/:id/append", post(append_page_handler))
         // The page's markdown from its live document, either format.
         .route("/api/pages/:id/markdown", get(get_page_markdown_handler))
+        .route("/api/pages/:id/layout", put(set_page_layout_handler))
         // Page Versions API
         .route(
             "/api/pages/:id/versions",
@@ -195,6 +196,16 @@ pub async fn update_page_handler(
     Json(request): Json<crate::api::pages::UpdatePageRequest>,
 ) -> Response {
     api_response(crate::api::pages::update_page(&pool, &id, request).await)
+}
+
+/// PUT /api/pages/:id/layout - How a page is laid out: its paper, columns
+/// and masthead. What the request leaves out keeps its value.
+pub async fn set_page_layout_handler(
+    State(pool): State<PgPool>,
+    Path(id): Path<String>,
+    Json(layout): Json<crate::api::pages::PageLayout>,
+) -> Response {
+    api_response(crate::api::pages::set_layout(&pool, &id, &layout).await)
 }
 
 /// DELETE /api/pages/:id - Delete a page

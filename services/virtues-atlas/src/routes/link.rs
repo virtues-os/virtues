@@ -1014,8 +1014,8 @@ async fn begin_login(
     // click is the proof of the address, and minting at send would let anyone
     // holding one device_code create a permanent accounts row for every email
     // they can type (the per-email send cap bounds mail rate, not distinct
-    // addresses). No customer resolution here either — the key mirror derives
-    // its customer from `accounts` at mint time.
+    // addresses). No customer resolution here either: mint_box_key derives the
+    // key's customer from `accounts`.
     let token = random_hex(32);
     let token_hash = sha256(token.as_bytes());
     let expires_at = Utc::now() + Duration::minutes(LOGIN_TTL_MINUTES);
@@ -1258,9 +1258,8 @@ enum AttachOutcome {
 
 /// Attach an in-flight device_link to an account: mint a fresh api_key,
 /// register it with virtues-api, rotate the stored hash, flip the link to
-/// ready for the box's poll. A free account attaches identically (0017); the
-/// legacy key mirror derives its customer from `accounts` inside
-/// `mint_box_key`.
+/// ready for the box's poll. A free account attaches identically (0017);
+/// `mint_box_key` derives the key's customer from `accounts`.
 ///
 /// Re-link recovery semantics: the caller has already verified control of the
 /// email (magic-link click or OTP session), so no Stripe call. We re-point to
@@ -1270,9 +1269,9 @@ enum AttachOutcome {
 /// ## Why the link is CLAIMED before anything is rotated
 ///
 /// `register_device` DELETEs the key with this label (and the account's
-/// legacy unlabeled key) and inserts the new one, and rotating
-/// `customers.api_key_hash` retires the old hash for atlas's own
-/// billing-auth. Both are destructive to a box already holding that key. The link flip used to be LAST — so a lost race (the code
+/// legacy unlabeled key) and inserts the new one, and `mint_box_key` does the
+/// same in `box_key`. Both are destructive to a box already holding that key.
+/// The link flip used to be LAST — so a lost race (the code
 /// rotated, or the magic-link door and this one both fired) rotated the
 /// account key and then flipped ZERO rows, leaving an existing box holding a
 /// key neither virtues-api nor atlas would accept any more. Permanent, silent.
@@ -1280,13 +1279,13 @@ enum AttachOutcome {
 /// race is ordinary, not exotic.
 ///
 /// So we CLAIM the row first — an atomic `pending → linking` guarded on
-/// expiry — and only touch virtues-api and `customers` once the claim is ours.
+/// expiry — and only touch virtues-api and `box_key` once the claim is ours.
 /// A lost race now costs nothing. `linking` reads as "keep polling" to the box
 /// (its poll handler maps every unknown status to pending), and no other door
 /// can re-claim it (both flip `WHERE status = 'pending'`).
 ///
 /// Register-before-rotate still holds inside the claim: register the new key
-/// with virtues-api FIRST, then rotate `customers.api_key_hash`. If register
+/// with virtues-api FIRST, then record it in `box_key`. If register
 /// fails, nothing in virtues-api changed and we release the claim back to
 /// pending so a retry (or the other door) can proceed cleanly.
 async fn attach_link_to_account(

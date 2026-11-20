@@ -64,9 +64,9 @@ The setting is one path, and it can stop at any depth:
 | Setting | What you see |
 |---|---|
 | `plain` | No picture. The desk only. |
-| `paintings` | A picture from any collection in the style, changing daily |
-| `paintings/forest` | A picture from Forest, changing daily |
-| `paintings/forest/birch-grove` | That picture, always |
+| `watercolors` | A picture from any collection in the style, changing daily |
+| `watercolors/forest` | A picture from Forest, changing daily |
+| `watercolors/forest/birch-grove` | That picture, always |
 
 When the setting points at something that is not installed or no longer
 exists, the app falls back to the lake.
@@ -114,8 +114,9 @@ third points:
 
 ### Decisions made 2026-11-20
 
-- **Both painting sets ship, as two styles.** The muted set and the original
-  set. Their names in the picker are open.
+- **Both painting sets ship, as two styles.** The muted set is Watercolors
+  (`watercolors`) and the original set is Oil paintings (`oil-paintings`),
+  the owner's choice of names and ids on 2026-11-20.
 - **Light and dark are paired now, night versions later.** Each collection's
   12 light pictures are matched with its 12 dark ones by curation. Later, each
   light painting gets a night version of the same place.
@@ -123,6 +124,10 @@ third points:
   focus on the new chat / homepage bgs". The `day-page-*` folders are not
   used. The `new-chat-*` folders are the home pictures, which on a computer is
   also the window's picture.
+- **The lake is not a choice.** The owner, after slice 4: "rm the lake as
+  an option / standalone collection thing". It stays as what home shows
+  until a background is chosen, and as the fallback when a chosen style is
+  missing.
 - **The levels are called Style › Collection.** "Theme" keeps meaning Light
   and Dark.
 
@@ -153,10 +158,9 @@ does not use every picture exactly once. The proposals are rough: pictures
 marked "(earlier)" in the prompts file have no prompt, and words cannot see a
 composition.
 
-The two styles are built in `~/virtues-backgrounds/paintings-muted` and
-`~/virtues-backgrounds/paintings-original`. The ids are working names until
-the picker names are chosen; they become part of a stored setting, so they
-should settle before slice 2 ships.
+The two styles are built in `~/virtues-backgrounds/watercolors` and
+`~/virtues-backgrounds/oil-paintings`. A style's id is part of every stored
+setting that names it, so renaming one after release breaks those settings.
 
 What the measurement showed:
 
@@ -171,15 +175,48 @@ What the measurement showed:
 
 The lake stays bundled in `static/scenes/` as the default and the fallback.
 Every other style is a versioned archive that the box downloads once when you
-turn the style on, installs into its state root (`/var/lib/virtues/`, beside
-the applet state), and serves to its own apps. The apps never fetch a picture
-from anywhere but the box.
+pick the style, installs into its state root (`/var/lib/virtues/backgrounds`),
+and serves to its own apps. The apps never fetch a picture from anywhere but
+the box. Built in slice 4; the manual page is
+[docs/use/backgrounds.md](../../docs/use/backgrounds.md) and the entry is in
+[privacy-boundary.md](../build/privacy-boundary.md).
 
-The download carries no personal data, but it is a request that leaves the
-server, so it gets a line in the manual and in
-[privacy-boundary.md](../build/privacy-boundary.md) in the slice that adds it.
+- `tools/backgrounds/package.py` writes `catalog.json` and one
+  `<style>-<sha12>.tar` per style. The catalog carries each style's size,
+  sha256 and a small preview per appearance.
+- The archives live in the maps bucket under `backgrounds/`, the owner's
+  choice of "the OVH bucket" on 2026-11-20. `deploy/maps/prune.sh` deletes
+  only eight-digit build folders, so it leaves them alone. virtues-api serves
+  them at `/v1/backgrounds/catalog.json` and `/v1/backgrounds/<archive>`
+  with a subscriber's bearer, reading the bucket with its maps key, and logs
+  nothing (`services/virtues-api/src/routes/backgrounds.rs`).
+- The box (`virtues-core/src/api/backgrounds.rs`) caches the catalog for a
+  day (a failed fetch waits an hour before the next), never makes a listing
+  wait for it, lists styles it does not have as `available`, and on
+  `POST /api/backgrounds/install/<style>` downloads the archive, checks its
+  size and sha256, unpacks it with no links into a staging folder, checks the
+  manifest and swaps it in. A style it downloaded whose archive the catalog
+  has replaced is updated the same way, the old copy serving until the swap.
+  A picker follows a download through `GET /api/backgrounds/downloads`.
+  `VIRTUES_BACKGROUNDS_SOURCE` points a box at a
+  self-hosted copy of the same layout. Download and unpack are shared with
+  the map files (`virtues-core/src/downloads.rs`).
 
-Where the archives are hosted is open.
+Published 2026-11-20 at the owner's go-ahead: both archives and
+`catalog.json` are in the bucket under `backgrounds/` (uploaded with the maps
+writer key, archives first, sizes checked), and virtues-api runs the route
+from wave at 4a8e8d82b. Without a key both routes answer 401, and the API's
+read key reads the files. A download through the live API with a real
+subscriber key has not been tried yet. Servers get the download with the
+next release that carries slice 4.
+
+To publish a new or rebuilt style: run `package.py` over every style, upload
+the new archives, then `catalog.json` last. An archive no catalog names any
+more can be deleted after a day, once servers have refreshed their catalog.
+
+Each archive is about 100 MB because it holds AVIF and WebP at two widths.
+Every Apple device of the last few years shows AVIF, so dropping WebP would
+roughly halve it; not decided.
 
 ## Moving styles
 
@@ -191,6 +228,17 @@ Shaders, loops and drawn styles have three costs an image does not:
 - Under `prefers-reduced-motion`, a moving style shows one still frame.
 - A moving style pauses when the window is hidden and drops its frame rate
   when nothing on screen is changing.
+
+Dots, the first, was built in slice 5 (the owner's pick of "drifting dots"
+over a shader). It ships in the app (`lib/backgrounds/builtin.ts`), so it
+needs no download, and its pictures are parameters, not files: three
+collections (Current, Swell, Rain) of two pictures each. The resolver's
+types split `ImageStyle` and `DotsStyle`, and the store lists built-in
+styles before the server's. `components/backgrounds/DotsField.svelte`
+draws at most 20 frames a second in the theme's ink, stops while the
+window is hidden, and holds one frame under Reduce motion; the pickers'
+thumbnails are stills of the same drawing (`lib/backgrounds/dots.ts`). It
+does not yet lower its frame rate when nothing else on screen moves.
 
 ## What each persona gets
 
@@ -229,32 +277,30 @@ Each slice replaces the old way in the same change.
    - `components/backgrounds/BackgroundControl.svelte` on home: the arrows,
      the four theme choices and the collection swiper.
    - `components/backgrounds/BackgroundPicker.svelte` under Theme in
-     Settings › Appearance: Plain, the lake and each style, then the
+     Settings › Appearance: Plain and each style, then the
      collections of the chosen style, then its pictures, with "Changes
      daily" first in each row.
    - Follow the day in `lib/utils/theme.ts`, `app.html`, the theme cards and
      the settings agent's list of themes.
    - Each style's manifest carries its name in the pickers (`title`, from
-     `build.py --title`). The names are working names: "Muted paintings"
-     and "Paintings".
-4. **Delivery.** The box downloads, installs and serves a style. Manual page
-   and the privacy boundary entry.
-5. **A second renderer.** One cheap moving style (dots or a single shader) to
-   check the renderer split before more image styles are added.
+     `build.py --title`): Watercolors and Oil paintings.
+4. **Delivery.** Built 2026-11-20 (see Delivery above): the packaging tool,
+   the virtues-api route, the box's catalog, download and install, the
+   download state on the Settings cards, the manual page and the privacy
+   boundary entry. Tested end to end against a local copy of the catalog.
+   Archives uploaded and the API route deployed on 2026-11-20.
+5. **A second renderer.** Built 2026-11-20: Dots (see Moving styles).
 6. **Night versions** of the paintings, replacing the curated pairs.
 
 ## Open decisions
 
-1. The names of the two painting styles in the picker. Working names are
-   "Muted paintings" and "Paintings", and the ids `paintings-muted` and
-   `paintings-original` are what a saved setting stores.
-2. Daily rotation, as proposed above, or a different change point.
-3. Where style archives are hosted.
-4. What the home control's arrows do under a rotating setting, and how
+1. Daily rotation, as proposed above, or a different change point.
+2. Whether archives drop WebP and carry AVIF only.
+3. What the home control's arrows do under a rotating setting, and how
    Follow the day finds sunrise and sunset (both built as proposed above).
 
 ## When this plan is done
 
-Delete it when slice 4 ships. What stays is a manual page on backgrounds, the
-privacy boundary entry, and a paragraph under Materials in
+Delete it when slices 5 and 6 ship. What stays is the manual page on
+backgrounds, the privacy boundary entry, and a paragraph under Materials in
 [design.md](../build/design.md) replacing the one that names the lake.

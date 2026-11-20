@@ -47,13 +47,12 @@ async fn entitlement(
 ) -> axum::response::Response {
     let token_hash = sha256(body.api_key.as_bytes());
 
-    let customer_id = match super::claim::key_owner(&state.pool, &token_hash[..]).await {
-        Ok(super::claim::KeyOwner::Customer(cid)) => Some(cid),
-        // Valid key, no Stripe customer behind it. This is the answer the door
-        // exists for, so it is a 200 with `subscribed: false` — not the 402
-        // the billing doors use, which the box would have to read as an error.
-        Ok(super::claim::KeyOwner::FreeAccount) => None,
-        Ok(super::claim::KeyOwner::Unknown) => {
+    // A valid key with no subscription behind it is the answer this door
+    // exists for, so it is a 200 with `subscribed: false`, not the 402 the
+    // billing doors use, which the box would have to read as an error.
+    let account_id = match super::claim::account_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
             return err(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
@@ -69,8 +68,9 @@ async fn entitlement(
     // A read error is a 500, never `subscribed: false`. The box renders this
     // answer as the owner's standing, so a blipped query must not read as
     // "your subscription is gone" — the box holds its last known answer
-    // instead (virtues-core/src/api/subscription.rs).
-    let subscribed = match super::account::is_entitled(&state, customer_id.as_deref()).await {
+    // instead (virtues-core/src/api/subscription.rs). Entitlement is read
+    // per account, the same way checkout reads it.
+    let subscribed = match super::account::account_is_entitled(&state.pool, &account_id).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("entitlement check failed: {e:#}");
@@ -84,12 +84,17 @@ async fn entitlement(
 
     // A failed email read is logged and sent as null. The email is a label,
     // and the subscription answer above must still reach the box.
-    let email = super::claim::account_email_by_key_hash(&state.pool, &token_hash[..])
+    let email: Option<String> = match sqlx::query_scalar("SELECT email FROM accounts WHERE account_id = $1")
+        .bind(&account_id)
+        .fetch_optional(&state.pool)
         .await
-        .unwrap_or_else(|e| {
+    {
+        Ok(e) => e,
+        Err(e) => {
             tracing::warn!("entitlement email lookup failed: {e:#}");
             None
-        });
+        }
+    };
 
     (
         StatusCode::OK,

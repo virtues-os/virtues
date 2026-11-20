@@ -219,6 +219,13 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 /// key needs the app's owner proof (`api::owner_proof`), and this route asks
 /// for none.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
+    revoke_credential_because(db, credential_id, "user_revoked").await
+}
+
+/// [`revoke_credential`] with the reason stored in `status_reason`:
+/// `user_revoked` when the owner disconnects, `subscription_ended` when the
+/// box releases a source after its subscription lapsed (`credentials::lapse`).
+pub async fn revoke_credential_because(db: &PgPool, credential_id: &str, reason: &str) -> Result<()> {
     // A Google sign-in made through virtues-api keeps its grant there. Read
     // which connection it is before the row is emptied, and remove it there
     // once the row is revoked.
@@ -229,11 +236,15 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     .fetch_optional(db)
     .await?
     .flatten();
+    // A grant the OAuth proxy issued may be one the provider bills for while
+    // it exists (a linked bank). Read it before the row is emptied so the
+    // proxy can release it below.
+    let proxy_grant = proxied_grant(db, credential_id).await?;
     let emptied = crate::credentials::emptied_secrets()?;
     let affected = sqlx::query(
         r#"UPDATE credentials
               SET status = 'revoked',
-                  status_reason = 'user_revoked',
+                  status_reason = $4,
                   secrets_ciphertext = $2,
                   expires_at = NULL,
                   next_refresh_at = NULL
@@ -242,6 +253,7 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     .bind(credential_id)
     .bind(&emptied)
     .bind(&INTERNAL_SOURCE_IDS[..])
+    .bind(reason)
     .execute(db)
     .await?
     .rows_affected();
@@ -271,8 +283,54 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
             tracing::warn!(credential_id, error = %e, "revoked here, but virtues-api did not remove the Google connection");
         }
     }
+    if let Some((source_id, secrets)) = proxy_grant {
+        // The proxy releases only for a box key it issued, so an unlinked box
+        // has nothing to ask for.
+        match virtues_helpers::auth::read_box_api_key(db).await {
+            Ok(Some(api_key)) => {
+                if let Err(e) = virtues_helpers::auth::proxy_revoke(&source_id, &secrets, Some(&api_key)).await {
+                    tracing::warn!(credential_id, source_id, error = %e, "revoked here, but the OAuth proxy did not release the grant");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(credential_id, error = %e, "could not read box api_key; the OAuth proxy was not asked to release the grant"),
+        }
+    }
 
     Ok(())
+}
+
+/// The source id and decrypted secrets of an active via_proxy credential, for
+/// [`revoke_credential`] to hand back to the proxy. `None` for any other kind
+/// of source, or a row with no secrets left. Catalog-driven: which providers
+/// act on a revoke is the proxy's concern, not the box's.
+///
+/// Secrets that cannot be decrypted are logged and give `None`: the
+/// disconnect itself must still go through, and only the proxy's release is
+/// skipped. A database error is returned.
+async fn proxied_grant(db: &PgPool, credential_id: &str) -> Result<Option<(String, serde_json::Value)>> {
+    use crate::applet_templates::{lookup_source, SourceAuth};
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT key, secrets_ciphertext FROM credentials WHERE id = $1 AND kind = 'source' AND status = 'active'",
+    )
+    .bind(credential_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((source_id, sealed)) = row else { return Ok(None) };
+    if !matches!(lookup_source(&source_id).map(|s| s.auth), Some(SourceAuth::ViaProxy { .. })) || sealed.is_empty() {
+        return Ok(None);
+    }
+    let opened = crate::crypto::TokenEncryptor::from_env()
+        .map_err(|e| e.to_string())
+        .and_then(|enc| enc.decrypt(&sealed).map_err(|e| e.to_string()))
+        .and_then(|plain| serde_json::from_str::<serde_json::Value>(&plain).map_err(|e| e.to_string()));
+    match opened {
+        Ok(secrets) => Ok(Some((source_id, secrets))),
+        Err(e) => {
+            tracing::warn!(credential_id, source_id, error = %e, "could not read the grant; the OAuth proxy will not be asked to release it");
+            Ok(None)
+        }
+    }
 }
 
 /// Hard-delete a credential row. Only safe for `pending` rows that never

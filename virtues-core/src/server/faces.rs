@@ -638,10 +638,10 @@ pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables 
    kept under the name applets already use. */
 :root {
   --color-surface: #ffffff;
-  --color-surface-elevated: #f4f3f0;
+  --color-surface-elevated: #f3f3f3;
   --color-foreground: #1a2030;
   --color-foreground-subtle: #626779;
-  --color-border: #e3e1dd;
+  --color-border: #e1e1e1;
   --color-accent: #1d4572;
   --color-primary: #1d4572;
   --color-success: #2e6b43;

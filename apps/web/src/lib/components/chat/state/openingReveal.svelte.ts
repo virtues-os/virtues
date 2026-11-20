@@ -6,7 +6,7 @@
  * table builds as it goes — in order, with a breath between them; the plate
  * waits for its heading. `null` = nothing revealing, everything shown.
  *
- * Only ever started by the press of Start (the store's flag): a thread reloaded
+ * Only ever started by the press of Start (the store's flag): a chat reloaded
  * with the opening already in it shows it whole, as it should.
  */
 
@@ -33,7 +33,7 @@ export class OpeningRevealController {
 		return ((m?.parts?.[0] as { text?: string } | undefined)?.text ?? "");
 	}
 
-	/** Is the opening plate in this thread at all? */
+	/** Is the opening plate in this chat at all? */
 	hasOpening(): boolean {
 		return this.#messages().some((m) => m.id === GS_INTERVIEW_OPENING_ID);
 	}

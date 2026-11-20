@@ -141,8 +141,8 @@
 	// provider's own words instead.
 	const COPY: Record<Kind, { title: string; sentence: string | null }> = {
 		wallet_empty: {
-			title: "Out of credits",
-			sentence: "Add credits to keep going. Your monthly allotment refreshes on renewal.",
+			title: "Out of AI credit",
+			sentence: "Add credits to keep going, or wait for your $20 of monthly AI to renew.",
 		},
 		card_declined: {
 			title: "Card declined",

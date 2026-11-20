@@ -6953,10 +6953,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtues-improv"
-version = "0.1.0"
-
-[[package]]
 name = "virtues-iroh"
 version = "0.1.0"
 dependencies = [
@@ -6991,7 +6987,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "virtues-improv",
  "virtues-iroh",
 ]
 

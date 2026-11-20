@@ -22,10 +22,10 @@ that file. Your corrections in the file win on every later run.
 The images are large and stay out of git. Only this script and the pairs
 files are tracked. See agents/plan/backgrounds-plan.md.
 
-    python3 tools/backgrounds/build.py --style paintings-muted --title "Muted paintings" \\
+    python3 tools/backgrounds/build.py --style watercolors --title "Watercolors" \\
         --source ~/Desktop/muted-paintings/in-app \\
         --prompts ~/Desktop/muted-paintings/prompts.txt \\
-        --out ~/virtues-backgrounds/paintings-muted
+        --out ~/virtues-backgrounds/watercolors
 """
 
 from __future__ import annotations
@@ -417,6 +417,14 @@ def main() -> None:
         write_pairs(pairs_path, args.style, pairs, scores)
         print(f"wrote {pairs_path}")
 
+    # Every id becomes part of a stored setting, which the apps read only in
+    # this shape (lib/backgrounds/resolve.ts); any other name would make the
+    # setting read as the default.
+    names = [args.style, *(col for t in THEMES for col in found[t]), *(n for t in THEMES for c in found[t].values() for n in c)]
+    bad = sorted({n for n in names if not re.fullmatch(r"[a-z0-9-]{1,64}", n)})
+    if bad:
+        sys.exit("names must be lowercase letters, digits and hyphens, at most 64 characters: " + ", ".join(bad))
+
     jobs = [
         (str(path), str(out), col, theme, name)
         for theme in THEMES
@@ -441,6 +449,16 @@ def main() -> None:
                 pic[theme] = {"source": name, "title": e.get("title") or fallback_title(name), **measured[(theme, col, name)]}
             pictures.append(pic)
         collections.append({"id": col, "title": col_titles.get(col) or fallback_title(col), "pictures": pictures})
+
+    narrow = [
+        f"{c['id']}/{p['id']} ({theme})"
+        for c in collections
+        for p in c["pictures"]
+        for theme in THEMES
+        if not p[theme]["files"]["webp"]
+    ]
+    if narrow:
+        sys.exit(f"narrower than {min(WIDTHS)} px, so no file was made: " + ", ".join(narrow))
 
     manifest = {"version": 1, "style": args.style, "title": args.title, "renderer": "image", "collections": collections}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")

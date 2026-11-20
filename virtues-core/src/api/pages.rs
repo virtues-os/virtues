@@ -177,11 +177,117 @@ pub struct Page {
     /// How the page's text is held, which decides how it is edited.
     #[sqlx(try_from = "String")]
     pub format: PageFormat,
+    /// `screen`, or a sheet to print on: `a4` or `letter`.
+    pub paper: String,
+    /// One column or two. Two is drawn only on paper with room for it.
+    pub column_count: i16,
+    /// A report's header, drawn above the page's text when set.
+    pub masthead: Option<sqlx::types::Json<Masthead>>,
+}
+
+/// A report's header: the label above the title ("Insight report"), who
+/// wrote it, the last day its records cover, what it is about as app routes,
+/// and its abstract. Every field is optional; what is missing is not drawn.
+/// `hidden` keeps it without drawing it, so turning the header off and on
+/// again loses nothing a writer put in it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Masthead {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records_through: Option<chrono::NaiveDate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<String>,
+    #[serde(default, rename = "abstract", skip_serializing_if = "Option::is_none")]
+    pub abstract_text: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+}
+
+/// How a page is laid out. Every field is optional: what is absent keeps
+/// its current value, and `masthead: null` takes the header off.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PageLayout {
+    #[serde(default)]
+    pub paper: Option<String>,
+    #[serde(default)]
+    pub column_count: Option<i16>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub masthead: Option<Option<Masthead>>,
+}
+
+const PAPERS: [&str; 3] = ["screen", "a4", "letter"];
+const MAX_LABEL_CHARS: usize = 60;
+const MAX_BYLINE_CHARS: usize = 160;
+const MAX_ABSTRACT_CHARS: usize = 2_000;
+const MAX_SUBJECTS: usize = 8;
+const MAX_SUBJECT_CHARS: usize = 200;
+
+impl PageLayout {
+    /// Refuse a layout the page cannot draw, with a sentence for what to fix.
+    pub fn check(&self) -> Result<()> {
+        if let Some(paper) = &self.paper {
+            if !PAPERS.contains(&paper.as_str()) {
+                return Err(Error::InvalidInput(format!("paper is one of screen, a4 or letter, not \"{paper}\"")));
+            }
+        }
+        if let Some(n) = self.column_count {
+            if !(1..=2).contains(&n) {
+                return Err(Error::InvalidInput(format!("column_count is 1 or 2, not {n}")));
+            }
+        }
+        if let Some(Some(m)) = &self.masthead {
+            let long = |field: &str, value: &Option<String>, max: usize| match value {
+                Some(v) if v.chars().count() > max => {
+                    Err(Error::InvalidInput(format!("the masthead's {field} is longer than {max} characters")))
+                }
+                _ => Ok(()),
+            };
+            long("label", &m.label, MAX_LABEL_CHARS)?;
+            long("byline", &m.byline, MAX_BYLINE_CHARS)?;
+            long("abstract", &m.abstract_text, MAX_ABSTRACT_CHARS)?;
+            if m.subjects.len() > MAX_SUBJECTS {
+                return Err(Error::InvalidInput(format!("a masthead names at most {MAX_SUBJECTS} subjects")));
+            }
+            if let Some(bad) = m.subjects.iter().find(|s| s.len() > MAX_SUBJECT_CHARS || !virtues_document::contract::is_route(s)) {
+                return Err(Error::InvalidInput(format!("a masthead subject is an app route like /thread/…, not \"{bad}\"")));
+            }
+            let mut seen = std::collections::HashSet::new();
+            if let Some(twice) = m.subjects.iter().find(|s| !seen.insert(s.as_str())) {
+                return Err(Error::InvalidInput(format!("the masthead names \"{twice}\" twice")));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Set how a page is laid out: its paper, its columns and its masthead.
+pub async fn set_layout(pool: &PgPool, id: &str, layout: &PageLayout) -> Result<Page> {
+    layout.check()?;
+    let masthead_given = layout.masthead.is_some();
+    let masthead = layout.masthead.clone().flatten().map(sqlx::types::Json);
+    sqlx::query_as::<_, Page>(&format!(
+        "UPDATE app_pages \
+         SET paper = COALESCE($2, paper), column_count = COALESCE($3, column_count), \
+             masthead = CASE WHEN $4 THEN $5 ELSE masthead END \
+         WHERE id = $1 AND deleted_at IS NULL \
+         RETURNING {PAGE_COLUMNS}"
+    ))
+    .bind(id)
+    .bind(&layout.paper)
+    .bind(layout.column_count)
+    .bind(masthead_given)
+    .bind(masthead)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Page not found: {id}")))
 }
 
 /// The columns every query returning a `Page` selects.
 const PAGE_COLUMNS: &str =
-    "id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at, format";
+    "id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at, format, paper, column_count, masthead";
 
 /// A page as created, with what converting its markdown into blocks changed
 /// on the way in (a tree page only; never present for markdown).
@@ -2079,6 +2185,52 @@ mod tests {
         .await
         .unwrap()
         .id
+    }
+
+    /// A page starts on the screen in one column with no masthead. Its
+    /// layout is set in parts (what a request leaves out keeps its value),
+    /// `masthead: null` takes the header off, and a layout the page cannot
+    /// draw is refused with nothing written.
+    #[sqlx::test]
+    async fn a_page_keeps_its_layout(pool: PgPool) {
+        let page = create_page(&pool, request("Text.\n")).await.unwrap();
+        assert_eq!((page.paper.as_str(), page.column_count, page.masthead.is_none()), ("screen", 1, true));
+
+        let report = Masthead {
+            label: Some("Insight report".into()),
+            byline: Some("Written by your server".into()),
+            records_through: Some("2030-01-08".parse().unwrap()),
+            subjects: vec!["/thread/nb_hall".into()],
+            abstract_text: Some("A short abstract.".into()),
+            hidden: false,
+        };
+        let laid = set_layout(
+            &pool,
+            &page.id,
+            &PageLayout { paper: Some("a4".into()), column_count: Some(2), masthead: Some(Some(report.clone())) },
+        )
+        .await
+        .unwrap();
+        assert_eq!((laid.paper.as_str(), laid.column_count), ("a4", 2));
+        assert_eq!(laid.masthead.map(|m| m.0), Some(report.clone()));
+
+        let kept = set_layout(&pool, &page.id, &PageLayout { column_count: Some(1), ..Default::default() }).await.unwrap();
+        assert_eq!((kept.paper.as_str(), kept.column_count), ("a4", 1));
+        assert!(kept.masthead.is_some());
+        let off = set_layout(&pool, &page.id, &PageLayout { masthead: Some(None), ..Default::default() }).await.unwrap();
+        assert!(off.masthead.is_none());
+
+        for bad in [
+            PageLayout { paper: Some("legal".into()), ..Default::default() },
+            PageLayout { column_count: Some(3), ..Default::default() },
+            PageLayout {
+                masthead: Some(Some(Masthead { subjects: vec!["thread".into()], ..Default::default() })),
+                ..Default::default()
+            },
+        ] {
+            assert!(set_layout(&pool, &page.id, &bad).await.is_err(), "{bad:?}");
+        }
+        assert_eq!(get_page(&pool, &page.id).await.unwrap().paper, "a4");
     }
 
     /// Two writers cutting a version of one page at once both read the same

@@ -189,11 +189,61 @@ Built on wave on 2026-11-20.
   `assistant.rs`, and `face` against `view` in `server/faces.rs`. Server
   error messages still say "applet".
 
-### Slice 5: code names (only if D3 says so)
+### Slice 5: the addresses
 
-Renaming `app_actions`, the `applet` tool, `applet_*` schemas, the CLI verb
-and the folder is a large sweep with migrations and a release-order trap for
-the CLI. Do it only if D3 calls for it, as its own plan.
+Built on wave on 2026-11-20 and seen in the dev app. The tab registry's part
+is in 30abf3ef4, with another session's change to the same file.
+
+- `/sites` is the door. `/site/<name>` is a site and `/job/<name>` is one of
+  your server's jobs, each with `/options` for its other side. `/virtues/jobs`
+  is the Jobs page. The name is the server's id without its prefix
+  (`applets/routes.ts`).
+- Every earlier address still opens and takes today's form: `/applets`,
+  `/applet/<id>`, `/applet/<id>/view`, `?panel=info`, `/actions`, and
+  `/virtues/applets`. They are in pins, saved tabs and links the assistant
+  wrote.
+- One component draws a site's page now. `AppletView.svelte` is gone, and
+  `AppletDetailView` draws the view full page when the site has one.
+- The tab says "Site" or "Job", the crumb says "Sites", and the switch on a
+  job's page reads "Job / Options".
+- Left: a shipped applet with a view (the dot cloud) is addressed as a job,
+  because the address is chosen from the id alone.
+
+### The Jobs page
+
+Built on wave on 2026-11-20 and seen in the dev app, from boards 4 and 5 of
+the design canvas.
+
+- The page lists jobs by what they are for. "Keeps your accounts and devices
+  current" has one row per connected account or device, with its jobs inside
+  when it has several. "Builds and keeps your record" has the server's own
+  jobs that start themselves. Nothing in the data says which jobs protect
+  your record, so backups are in that second group and there is no third.
+- A job that needs you stays in its place. The button that fixes it is under
+  the opening sentence, for up to two jobs.
+- A row is one line: its name, what it does, when it runs and when it last
+  ran. It opens in place (`JobOpen.svelte`) to the full sentence, "Run now",
+  the "Run it" switch, the hosts its last runs reached, and its last runs in
+  words. Its full history is on its own page.
+- The server's applets that nothing starts (the ones you start from chat)
+  are folded under "Runs only when asked". What you set up is in Sites; one
+  of yours that needs you is named in a sentence that links there.
+- Not seen with real data: the accounts group, since the dev database has no
+  connected account, and the "Reaches" line, since no run there reached a
+  host.
+
+### Slice 6: names nobody sees
+
+Not started, and each needs a decision (D8, D9).
+
+- Web code: components, stores and file names (111 files).
+- Server routes (`/api/applets/...`, `/face/...`) and the assistant's tool
+  names: add the new names and keep the old ones, because installed Mac and
+  iPhone apps call the old routes and saved chats hold the old tool names.
+- Server code, the repo's `applets/` folder, the CLI verb.
+- The database (`app_applets` and five more tables), stored ids
+  (`applet_user__...`) and the per-site Postgres schemas. This is the only
+  part that can lose data or break a rollback.
 
 ## Decisions
 
@@ -202,7 +252,9 @@ the CLI. Do it only if D3 calls for it, as its own plan.
 | D1 | The noun for a made view | **Decided 2026-11-20: "Sites".** "Artifacts" was the other candidate. It is jargon, it covers documents in Claude and so collides with Pages, and it reads as a static leftover when a site keeps tables and refreshes. "Site" can suggest the public web, so the copy says a site is private until you share it. |
 | D7 | The name for what your server runs for itself | **Decided 2026-11-20: "Jobs".** "Upkeep" was offered and refused. "Daemons" is wrong, because nothing stays running between runs. |
 | D2 | Where scheduled work lives | **Decided 2026-11-20: in Sites.** Each one is a site, and how it runs is in that site's options. There is no "Runs for you" list in Settings. |
-| D3 | Rename in code too? | No. People never see the word, and the sweep costs migrations and a CLI release. Revisit only if the word confuses contributors. |
+| D3 | Rename in code too? | Reopened by the owner on 2026-11-20 ("it still says applets in the route and page and copy and everywhere, probably db too"). The addresses are done in slice 5. The rest is slice 6 and waits on D8 and D9. |
+| D8 | What the code calls the one thing that is a site or a job | Open. One table holds both, so it cannot be `app_sites`. Split it into two tables, give it a new neutral name, or keep `applet` where nobody sees it. |
+| D9 | Do stored ids and schemas change? | Open. They are in pins, page embeds and SQL that sites and chats wrote, on servers people use. Pick: leave them. |
 | D4 | Is something with no view a site? | Yes, since D2. It gets the server's default view of what it made. |
 | D5 | Reopening "Applet" as FINAL (decided 2026-07-19) | The owner reopened it on 2026-11-20 by asking for this plan. This plan changes only what people see. |
 | D6 | Is "agent" a word people see? | **Decided 2026-11-20: no.** The owner wants fewer words, so people are not overwhelmed. A person can still set up work that stays on from chat (it wakes on new data, a message or a time). It is a site like any other, with its own options. Sites is the only new noun. |

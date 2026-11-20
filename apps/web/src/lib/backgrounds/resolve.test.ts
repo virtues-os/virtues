@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, narrowest, parseSetting, pickForDay, pool, srcset, stepFrom, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, isDots, parseSetting, pickForDay, pool, srcset, type StyleManifest, type Variant } from './resolve';
+import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
 	return {
@@ -61,7 +62,8 @@ describe('pool', () => {
 	});
 
 	it('finds the picture an address names', () => {
-		expect(find(styles, { style: 'paintings', collection: 'beach', picture: 'cove' })?.dark.source).toBe('cove-night');
+		const cove = find(styles, { style: 'paintings', collection: 'beach', picture: 'cove' });
+		expect(cove && !isDots(cove) ? cove.dark.source : undefined).toBe('cove-night');
 	});
 });
 
@@ -121,5 +123,35 @@ describe('stepFrom', () => {
 describe('narrowest', () => {
 	it('picks the smallest WebP', () => {
 		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.webp');
+	});
+});
+
+describe('pickForDay across cycles', () => {
+	it('never shows one picture two days running, and shows each once per cycle', () => {
+		for (const n of [2, 3, 5, 12]) {
+			const items = Array.from({ length: n }, (_, i) => i);
+			for (const key of ['a', 'paintings', 'paintings/forest']) {
+				let previous: number | undefined;
+				for (let day = 20_000; day < 20_000 + n * 40; day++) {
+					const pick = pickForDay(items, key, day);
+					expect(pick).not.toBe(previous);
+					previous = pick;
+				}
+				const start = Math.ceil(20_000 / n) * n;
+				const cycle = new Set(Array.from({ length: n }, (_, i) => pickForDay(items, key, start + i)));
+				expect(cycle.size).toBe(n);
+			}
+		}
+	});
+});
+
+describe('the built-in dots style', () => {
+	it('resolves like an installed style, alongside one', async () => {
+		const { DOTS } = await import('./builtin');
+		const all: StyleManifest[] = [DOTS, ...styles];
+		expect(pool(all, parseSetting('dots')).length).toBe(DOTS.collections.reduce((n, c) => n + c.pictures.length, 0));
+		const tide = find(all, { style: 'dots', collection: 'swell', picture: 'tide' });
+		expect(tide && isDots(tide) ? tide.dots.motion : undefined).toBe('swell');
+		expect(pool(all, parseSetting('paintings/forest')).length).toBe(3);
 	});
 });

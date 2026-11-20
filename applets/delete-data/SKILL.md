@@ -21,7 +21,7 @@ Find the rows:
 - A stretch of time: each table's `occurred_at` or `started_at`. Dates in a condition are in the owner's time zone.
 - Everything from one source: `source_provider`.
 - Count before you propose: run `SELECT count(*)` with the condition you will send, per table. Read a few rows only when you need them to be sure the condition is right. The chat keeps what your queries return, so do not select the text of what is about to be deleted when a count answers the question.
-- Include the tables that hold the same thing in another shape: a place's visits (`data_location_visit`) and the location points inside them (`data_location_point`), a message thread and its emails if they asked for both.
+- Include the tables that hold the same thing in another shape: a place's visits (`data_location_visit`) and the location points inside them (`data_location_point`), a conversation and its emails if they asked for both.
 - Three kinds of row follow on their own and need no target: a recording's transcript and a transcript's recording, a bank account's transactions and holdings, and audio sessions, which are rebuilt from what is left.
 
 Propose it, once:

@@ -1,5 +1,5 @@
 <!--
-	The integrations step, inline in the thread. A short table of the sources
+	The integrations step, inline in the chat. A short table of the sources
 	that pay off first, each with one line of what it holds and one button.
 	Connecting happens in a modal over the room or, for OAuth, in the
 	browser — never on a page beside it: the whole setup is this one

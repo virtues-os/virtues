@@ -1,6 +1,30 @@
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { createLogger, defineConfig, loadEnv, type Logger, type Plugin } from 'vite';
+
+/**
+ * `make dev` starts this server beside virtues-core, which is still compiling
+ * for a while after Vite is ready, so every request an open tab made in that
+ * window logged "http proxy error" with a full ECONNREFUSED stack: two dozen
+ * at a time, again on every retry. A refused connection only means the box is
+ * not up yet, so it gets one line, at most every 30s. The browser still gets
+ * its 502, and every other proxy error still logs in full.
+ */
+function quietBackendDown(target: string): Logger {
+	const logger = createLogger();
+	const error = logger.error;
+	let saidAt = 0;
+	logger.error = (msg, options) => {
+		if ((options?.error as NodeJS.ErrnoException | undefined)?.code !== 'ECONNREFUSED') {
+			error(msg, options);
+			return;
+		}
+		if (Date.now() - saidAt < 30_000) return;
+		saidAt = Date.now();
+		logger.warn(`backend ${target} not up yet; proxied requests get 502 until it is`, { timestamp: true });
+	};
+	return logger;
+}
 
 /**
  * KaTeX's stylesheet names each of its fonts three times (woff2, woff, ttf),
@@ -36,6 +60,7 @@ export default defineConfig(({ mode }) => {
 
 	return {
 		envDir: '../..', // Load .env from project root
+		customLogger: quietBackendDown(env.BACKEND_URL || 'http://localhost:8000'),
 		plugins: [katexWoff2Only(), tailwindcss(), sveltekit()],
 		define: {
 			// Build identity, baked at build time — mirrors the box's build.rs.

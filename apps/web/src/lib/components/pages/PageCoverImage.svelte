@@ -2,16 +2,21 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
 	import { PAGE_WIDTH_CSS, type PageWidthChoice } from "$lib/stores/pageWidth.svelte";
+	import type { PagePaper } from "$lib/api/client";
 
 	interface Props {
 		coverUrl: string;
 		/** The page's width, so the cover is as wide as the text under it. */
 		width: PageWidthChoice;
+		/** On paper the text is the printed sheet, so the cover is too. */
+		paper?: PagePaper;
 		onChangeCover: () => void;
 		onRemoveCover: () => void;
 	}
 
-	let { coverUrl, width, onChangeCover, onRemoveCover }: Props = $props();
+	let { coverUrl, width, paper = "screen", onChangeCover, onRemoveCover }: Props = $props();
+
+	const sheet = $derived(width === "sheet" || paper !== "screen");
 
 	let coverHover = $state(false);
 </script>
@@ -19,8 +24,9 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	class="cover-image-wrapper"
-	class:width-sheet={width === "sheet"}
-	style:max-width={width === "sheet" ? undefined : PAGE_WIDTH_CSS[width]}
+	class:width-sheet={sheet}
+	class:paper-letter={paper === "letter"}
+	style:max-width={sheet ? undefined : PAGE_WIDTH_CSS[width]}
 	onmouseenter={() => (coverHover = true)}
 	onmouseleave={() => (coverHover = false)}
 >
@@ -62,9 +68,14 @@
 		transition: max-width 0.2s ease-out;
 	}
 
-	/* As wide as the A4 sheet below it (`.page-inner.width-sheet`). */
+	/* As wide as the A4 sheet below it (`.page-inner.width-sheet`), or the
+	   US Letter one on Letter paper. */
 	.cover-image-wrapper.width-sheet {
 		max-width: 210mm;
+	}
+
+	.cover-image-wrapper.width-sheet.paper-letter {
+		max-width: 8.5in;
 	}
 
 	.cover-image {

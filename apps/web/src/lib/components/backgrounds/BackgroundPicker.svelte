@@ -1,27 +1,48 @@
 <script lang="ts">
 	/**
-	 * Settings › Appearance › Background: Plain, the lake, or a style, then a
+	 * Settings › Appearance › Background: Plain or a style, then a
 	 * collection in it, then one picture. A choice that stops above a
 	 * picture changes picture each day (lib/backgrounds/resolve.ts). Each
-	 * card shows its pictures in the current appearance.
+	 * card shows its pictures in the current appearance. The lake is not a
+	 * choice: it is what home shows until one is made (Background.svelte).
+	 *
+	 * A style the server does not have yet follows the installed ones, with
+	 * its size. Picking it downloads it to the server, and it becomes the
+	 * setting once it is installed (download in lib/backgrounds/controls.ts).
 	 */
 	import { onMount } from 'svelte';
 	import { background } from '$lib/stores/background.svelte';
-	import { parseSetting, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
+	import { parseSetting, pictureTitle, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
+	import { download, megabytes, thumbnail } from '$lib/backgrounds/controls';
+	import type { AvailableStyle } from '$lib/backgrounds/resolve';
+
+	/** How often, and how many times, the picker asks again while the server fetches its catalog. */
+	const CATALOG_POLL_MS = 1500;
+	const CATALOG_POLLS = 20;
 
 	onMount(() => {
 		background.start();
-		void background.ensureStyles();
+		let stopped = false;
+		void (async () => {
+			// Fresh on every visit: styles the server learned of since the app
+			// loaded, and a first catalog the server is still fetching.
+			await background.refresh();
+			for (let i = 0; i < CATALOG_POLLS && background.catalogPending && !stopped; i++) {
+				await new Promise((resolve) => setTimeout(resolve, CATALOG_POLL_MS));
+				if (!stopped) await background.refresh();
+			}
+		})();
+		return () => (stopped = true);
 	});
 
 	const setting = $derived(parseSetting(background.setting));
-	const styles = $derived(background.styles ?? []);
+	const styles = $derived(background.allStyles);
 	const style = $derived(setting.kind === 'path' ? (styles.find((s) => s.style === setting.style) ?? null) : null);
 	const collection = $derived(
 		style && setting.kind === 'path' && setting.collection ? (style.collections.find((c) => c.id === setting.collection) ?? null) : null,
 	);
 
-	const thumb = (s: StyleManifest, p: Picture) => background.thumbnail(s.style, p);
+	const thumb = (s: StyleManifest, p: Picture) => thumbnail(s.style, p);
 
 	/** Up to four pictures for a card that stands for many. */
 	function mosaic(s: StyleManifest, pictures: Picture[]): string[] {
@@ -29,25 +50,42 @@
 	}
 
 	const firsts = (s: StyleManifest) => s.collections.map((c) => c.pictures[0]).filter(Boolean);
+
+	/** What a style not on the server says under its name. */
+	function downloadNote(a: AvailableStyle): string {
+		const p = background.installing[a.style];
+		if (p) return `Downloading, ${Math.floor((100 * p.received_bytes) / Math.max(1, p.total_bytes))}%`;
+		if (background.failed[a.style]) return background.failed[a.style];
+		return `${megabytes(a.bytes)} to download`;
+	}
+
+	function startDownload(style: string) {
+		if (background.installing[style]) return;
+		download(style).catch((error) => console.warn('Background download did not start:', error));
+	}
 </script>
 
-{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' | 'lake' = 'one')}
+{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' = 'one', note = '')}
 	<button type="button" role="radio" class="card" class:picked aria-checked={picked} {onclick}>
-		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'} class:lake={kind === 'lake'}>
+		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'}>
 			{#each kind === 'many' ? images : images.slice(0, 1) as src (src)}
 				<img {src} alt="" loading="lazy" decoding="async" />
 			{/each}
 		</span>
 		<span class="name">{label}</span>
+		{#if note}<span class="note">{note}</span>{/if}
 	</button>
 {/snippet}
 
 <div class="picker">
 	<div class="cards" role="radiogroup" aria-label="Style">
 		{@render card('Plain', setting.kind === 'plain', () => background.set('plain'), [], 'plain')}
-		{@render card('The lake', setting.kind === 'default', () => background.set(''), ['/scenes/lake.webp'], 'lake')}
 		{#each styles as s (s.style)}
 			{@render card(s.title, setting.kind === 'path' && setting.style === s.style, () => background.set(s.style), [thumb(s, firsts(s)[0])])}
+		{/each}
+		{#each background.available as a (a.style)}
+			{@const preview = a.preview[background.appearance] ?? a.preview.light}
+			{@render card(a.title, false, () => startDownload(a.style), preview ? [preview] : [], 'one', downloadNote(a))}
 		{/each}
 	</div>
 
@@ -73,7 +111,7 @@
 			)}
 			{#each collection.pictures as p (p.id)}
 				{@render card(
-					p[background.appearance].title,
+					pictureTitle(p, background.appearance),
 					setting.kind === 'path' && setting.picture === p.id,
 					() => background.set(`${style.style}/${collection.id}/${p.id}`),
 					[thumb(style, p)],
@@ -127,11 +165,6 @@
 		transition: outline-color var(--motion-hover-out) var(--ease-premium);
 	}
 
-	/* The lake is dimmed in Dark, as home draws it (Background.svelte). */
-	.frame.lake img {
-		filter: var(--window-scene-filter);
-	}
-
 	.frame.plain {
 		background: var(--desk);
 	}
@@ -170,6 +203,13 @@
 
 	.card.picked .name {
 		color: var(--color-foreground);
+	}
+
+	.note {
+		margin-top: -4px;
+		font-size: var(--text-caption);
+		line-height: 1.3;
+		color: var(--color-foreground-muted);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

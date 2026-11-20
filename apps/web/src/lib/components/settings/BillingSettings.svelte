@@ -337,7 +337,7 @@
 					usage.topup_micros && usage.topup_micros > 0
 						? `${formatMicrosPrecise(usage.topup_micros)} of it is top-up credit, which stays when your monthly credit renews.`
 						: '',
-					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI, web search, places and bank data.`,
+					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI and web search.`,
 				]
 					.filter(Boolean)
 					.join(' ')
@@ -346,7 +346,7 @@
 	const planHelp = $derived(
 		[
 			renewsLabel ? `Renews ${renewsLabel}.` : '',
-			'Covers hosted AI, web search, places and bank data.',
+			'Includes $20 of AI each month, plus bank data, places, maps and remote access. Extra AI is sold at cost.',
 			subscriptionStore.email ? `Billed to ${subscriptionStore.email}.` : '',
 		]
 			.filter(Boolean)
@@ -391,7 +391,7 @@
 		<SettingRow
 			id="subscription"
 			label="Plan"
-			help="None yet. One subscription covers hosted AI, web search, places and bank data for $29 a month. Your own AI provider covers the first on its own."
+			help="None yet. $29 a month. Includes $20 of AI each month, plus bank data, places, maps and remote access. Extra AI is sold at cost."
 		>
 			{#if subscribeWaiting}
 				<span class="waiting">Waiting for checkout…</span>

@@ -11,7 +11,8 @@
 	 * (`settings/AppletsPage.svelte`).
 	 */
 	import type { Tab } from '$lib/tabs/types';
-	import { Button, Page } from '$lib';
+	import { Page } from '$lib';
+	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
@@ -19,7 +20,7 @@
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
 	import SiteCard from '$lib/components/applets/SiteCard.svelte';
-	import { siteHome } from '$lib/applets/sites.svelte';
+	import { homeRoute } from '$lib/applets/routes';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
@@ -51,6 +52,13 @@
 		)
 	);
 
+	// The first place in the grid makes a new one. A site is made by asking in
+	// a chat, so this opens the sheet that starts that chat. It sits with the
+	// sites, where the next one will appear, and not in the tab's toolbar.
+	const NEW = 'new';
+	const newSite = { id: NEW, name: 'New site', description: 'Ask for one in a chat', enabled: true, config: {}, triggers: [] } as unknown as Applet;
+	const items = $derived(appletsStore.loaded ? [newSite, ...applets] : applets);
+
 	function chatOf(a: Applet): string | null {
 		const id = a.config?.chat_id;
 		return typeof id === 'string' && id ? id : null;
@@ -71,7 +79,11 @@
 	];
 
 	function openHome(a: Applet) {
-		windowShellStore.openTabFromRoute(siteHome(a), { label: a.name, focusExisting: true });
+		if (a.id === NEW) {
+			newSheetOpen = true;
+			return;
+		}
+		windowShellStore.openTabFromRoute(homeRoute(a.id), { label: a.name, focusExisting: true });
 	}
 
 	function openConversation(a: Applet) {
@@ -100,6 +112,7 @@
 
 	function rowMenu(a: Applet, e: MouseEvent) {
 		e.preventDefault();
+		if (a.id === NEW) return;
 		const items: ContextMenuItem[] = [
 			{ id: 'home', label: 'Open site', icon: 'atlas:applets', action: () => openHome(a) },
 		];
@@ -109,22 +122,18 @@
 		if (canRun(a)) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
-		items.push(pinMenuItem({ url: siteHome(a), label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 </script>
 
 <Page title="Sites" maxWidth="full">
-	{#snippet actions()}
-		<Button variant="primary" icon="mynaui:plus" onclick={() => (newSheetOpen = true)}>New site</Button>
-	{/snippet}
-
 	{#if err}
 		<p class="error-msg">{err}</p>
 	{/if}
 
 	<UniversalDataGrid
-		items={applets}
+		{items}
 		{columns}
 		entityType="sites"
 		viewModes={['grid', 'list']}
@@ -135,7 +144,7 @@
 		loading={!appletsStore.loaded && !appletsStore.error}
 		error={appletsStore.error && applets.length === 0 ? "Your server couldn't send your sites." : null}
 		emptyIcon="atlas:applets"
-		emptyMessage={'No sites yet. Ask in chat for something to look at or keep track of, and it appears here. A site is private until you share it.'}
+		emptyMessage={'No sites yet. Ask in chat for something to look at or keep track of, and it appears here.'}
 		loadingMessage="Loading sites…"
 		searchPlaceholder="Search sites"
 		onItemClick={openHome}
@@ -143,7 +152,15 @@
 		onRetry={() => void appletsStore.load()}
 	>
 		{#snippet card(a: Applet)}
-			<SiteCard site={a} />
+			{#if a.id === NEW}
+				<div class="new-site">
+					<div class="plus" aria-hidden="true"><Icon icon="mynaui:plus" width="20" /></div>
+					<span class="new-name">New site</span>
+					<span class="new-line">Ask for something to look at or keep track of</span>
+				</div>
+			{:else}
+				<SiteCard site={a} />
+			{/if}
 		{/snippet}
 
 		{#snippet listRow(a: Applet)}
@@ -152,9 +169,11 @@
 				title={a.name}
 				line={trouble ?? a.description ?? describeTriggers(a)}
 				problem={!!trouble}
-				note={when(a)}
+				note={a.id === NEW ? '' : when(a)}
 			>
-				{#snippet lead()}<AtlasIcon name={appletGlyph(a)} size={16} bare />{/snippet}
+				{#snippet lead()}
+					{#if a.id === NEW}<Icon icon="mynaui:plus" width="16" />{:else}<AtlasIcon name={appletGlyph(a)} size={16} bare />{/if}
+				{/snippet}
 			</ListRow>
 		{/snippet}
 
@@ -177,16 +196,35 @@
 		{/snippet}
 	</UniversalDataGrid>
 
-	{#if applets.length > 0}
-		<p class="foot">Ask in chat for something to look at or keep track of, and it appears here. A site is private until you share it.</p>
-	{/if}
 </Page>
 
 <NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
-	.foot {
-		margin: 24px 0 0;
+	/* The same shape as a site's card, so it reads as the next place in the grid. */
+	.new-site {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 100%;
+		text-align: left;
+	}
+	.plus {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		aspect-ratio: 8 / 5;
+		margin-bottom: 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		color: var(--color-foreground-subtle);
+	}
+	.new-name {
+		font-size: var(--text-label);
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+	.new-line {
 		font-size: var(--text-small);
 		color: var(--color-foreground-subtle);
 	}

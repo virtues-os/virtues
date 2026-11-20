@@ -1,101 +1,131 @@
 <script lang="ts">
 	/**
-	 * New task: a title, notes, and the facts a task carries (its home, what
-	 * else it is about, its due day, who it is for), then Create. A date at
-	 * the end of the title, like "fri" or "tomorrow 5pm", sets the due day.
-	 * ⌘Return creates; "Create more" keeps the dialog open for the next one.
+	 * New task, on the frame New thread shares: where it will live, a title,
+	 * a description, then chips for its home, due day, who it is for and what
+	 * else it is about. A date at the end of the title, like "fri" or
+	 * "tomorrow 5pm", sets the due day.
+	 *
+	 * Closing keeps the draft. The next open picks it up again; once it is
+	 * empty, the next open starts fresh with the opener's home.
 	 */
-	import type { Task, TaskPatch } from '$lib/api/client';
-	import Modal from '$lib/components/Modal.svelte';
-	import Popover from '$lib/floating/primitives/Popover.svelte';
+	import type { TaskLink } from '$lib/api/client';
+	import CreateDialog from '$lib/components/create/CreateDialog.svelte';
+	import CreateChip from '$lib/components/create/CreateChip.svelte';
 	import DuePicker from '$lib/components/tasks/DuePicker.svelte';
-	import TaskHome from '$lib/components/tasks/TaskHome.svelte';
-	import TaskAlsoAbout from '$lib/components/tasks/TaskAlsoAbout.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { Button } from '$lib';
+	import HomeMenu from '$lib/components/tasks/HomeMenu.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import RefPicker from '$lib/components/RefPicker.svelte';
 	import { newTaskDialog } from '$lib/stores/newTask.svelte';
+	import { projectStore } from '$lib/stores/project.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { dueLabel, parseDue } from '$lib/tasks/due';
-	import { homePatch } from '$lib/tasks/homes';
-	import { isAppleKeyboard } from '$lib/utils/platform';
+	import { homePatch, linkFromUrl, sameLink, subjectIcon, subjectName } from '$lib/tasks/homes';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 	import { toast } from 'svelte-sonner';
+	import { untrack } from 'svelte';
 
-	/** The task being written, shaped like a task so the pickers can edit it. */
-	function blank(): Task {
-		return {
-			...(homePatch(newTaskDialog.home) as Partial<Task>),
-			id: 'draft',
-			title: '',
-			notes: null,
-			assignee: 'owner',
-			status: 'open',
-			due_on: null,
-			due_at: null,
-			thread_id: newTaskDialog.home?.kind === 'thread' ? newTaskDialog.home.id : null,
-			also_about: [],
-			origin: 'owner',
-			source_url: null,
-			sort_order: 0,
-			closed_at: null,
-			created_at: '',
-			updated_at: '',
-			result: null,
-			result_url: null,
-			chat_id: null,
-			next_run_at: null,
-			attempts: 0,
-		} as Task;
+	interface Draft {
+		title: string;
+		notes: string;
+		home: TaskLink | null;
+		due: { on: string; at: string | null } | null;
+		assignee: 'owner' | 'assistant';
+		also: TaskLink[];
 	}
 
-	let draft = $state<Task>(blank());
+	function blank(home: TaskLink | null): Draft {
+		return { title: '', notes: '', home, due: null, assignee: 'owner', also: [] };
+	}
+
+	let draft = $state<Draft>(blank(null));
 	let saving = $state(false);
 	let more = $state(false);
-	let dueOpen = $state(false);
-	let titleInput: HTMLInputElement | undefined = $state();
+	let dialog = $state<ReturnType<typeof CreateDialog> | null>(null);
 
-	// A fresh task each time the dialog opens, with the opener's home.
+	// On each open, an empty draft takes the opener's home; one with words
+	// in it is kept. Only the opening is tracked, not the draft itself.
 	$effect(() => {
-		if (newTaskDialog.isOpen) {
-			draft = blank();
-			requestAnimationFrame(() => titleInput?.focus());
-		}
+		if (!newTaskDialog.isOpen) return;
+		untrack(() => {
+			if (!draft.title.trim() && !draft.notes.trim()) draft = blank(newTaskDialog.home);
+		});
 	});
 
 	/** The date typed at the end of the title, when there is one. */
 	const typed = $derived(parseDue(draft.title));
 	const due = $derived(
-		draft.due_on ? { on: draft.due_on, at: draft.due_at } : typed.due_on ? { on: typed.due_on, at: typed.due_at } : null,
+		draft.due ?? (typed.due_on ? { on: typed.due_on, at: typed.due_at } : null),
 	);
-	const createKeys = isAppleKeyboard ? '⌘Return' : 'Ctrl+Enter';
+	/** The title without a typed date, unless a date was picked instead. */
+	const cleanTitle = $derived((draft.due ? draft.title : typed.title).trim());
 
-	function edit(patch: TaskPatch) {
-		draft = { ...draft, ...patch } as Task;
+	const homeThread = $derived(
+		draft.home?.kind === 'thread' ? projectStore.projects.find((p) => p.id === draft.home!.id) : undefined,
+	);
+
+	// ── home ─────────────────────────────────────────────────────────────
+	let homeOpen = $state(false);
+
+	function pickHome(link: TaskLink | null) {
+		draft.home = link;
+		draft.also = draft.also.filter((l) => !sameLink(l, link));
+		homeOpen = false;
 	}
 
+	// ── searches (a person, place or org as home; anything as also-about) ──
+	let search = $state<{ for: 'home' | 'also'; at: { x: number; y: number } } | null>(null);
+	let homeChipEl = $state<HTMLElement | null>(null);
+	let alsoChipEl = $state<HTMLElement | null>(null);
+
+	/** Open a search under its chip, never at the pointer, so the keyboard gets it in the right place too. */
+	function searchUnder(el: HTMLElement | null, kind: 'home' | 'also') {
+		const r = el?.getBoundingClientRect();
+		search = { for: kind, at: { x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 } };
+	}
+
+	function found(entity: { url: string }) {
+		const kind = search?.for;
+		search = null;
+		const link = linkFromUrl(entity.url);
+		if (!link) return;
+		if (kind === 'home') pickHome(link);
+		else if (!draft.also.some((l) => sameLink(l, link)) && !sameLink(link, draft.home)) draft.also = [...draft.also, link];
+	}
+
+	// ── create ───────────────────────────────────────────────────────────
 	async function create() {
-		const title = (draft.due_on ? draft.title.trim() : typed.title).trim();
+		const title = cleanTitle;
 		if (!title || saving) return;
 		saving = true;
 		try {
-			await tasksStore.create({
+			const made = await tasksStore.create({
 				title,
-				notes: draft.notes?.trim() || null,
+				notes: draft.notes.trim() || null,
 				assignee: draft.assignee,
 				due_on: due?.on ?? null,
 				due_at: due?.at ?? null,
-				thread_id: draft.thread_id,
-				thing_id: draft.thing_id ?? null,
-				person_id: draft.person_id ?? null,
-				place_id: draft.place_id ?? null,
-				org_id: draft.org_id ?? null,
-				also_about: draft.also_about ?? [],
+				...homePatch(draft.home),
+				also_about: draft.also,
+			});
+			const where = draft.home ? subjectName(draft.home) : null;
+			toast(where ? `Task added to ${where}` : 'Task added', {
+				action: made
+					? {
+							label: 'Open',
+							onClick: () => windowShellStore.openTabFromRoute(`/task/${made.id}`, { label: made.title, focusExisting: true }),
+						}
+					: undefined,
 			});
 			if (more) {
-				const keep = { home: newTaskDialog.home };
-				draft = blank();
-				newTaskDialog.home = keep.home;
-				titleInput?.focus();
+				// The chips carry over to the next one; the words do not.
+				draft = { ...draft, title: '', notes: '', due: null };
+				dialog?.focusTitle();
 			} else {
+				draft = blank(null);
 				newTaskDialog.close();
 			}
 		} catch (e) {
@@ -106,202 +136,152 @@
 			saving = false;
 		}
 	}
-
-	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-			e.preventDefault();
-			void create();
-		}
-	}
 </script>
 
-<Modal open={newTaskDialog.isOpen} onClose={() => newTaskDialog.close()} title="New task" width="lg">
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="body" onkeydown={onKeydown}>
-		<input
-			bind:this={titleInput}
-			class="title"
-			placeholder="What needs doing?"
-			aria-label="Title"
-			bind:value={draft.title}
-			onkeydown={(e) => {
-				if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
-					e.preventDefault();
-					void create();
-				}
-			}}
-		/>
-		<textarea
-			class="notes"
-			placeholder="Description"
-			aria-label="Description"
-			rows="3"
-			value={draft.notes ?? ''}
-			oninput={(e) => edit({ notes: e.currentTarget.value })}
-		></textarea>
+<CreateDialog
+	bind:this={dialog}
+	open={newTaskDialog.isOpen}
+	onClose={() => newTaskDialog.close()}
+	label="New task"
+	bind:title={draft.title}
+	titlePlaceholder="What do you need to do?"
+	bind:body={draft.notes}
+	bodyPlaceholder="Add a description"
+	bind:more
+	canCreate={!!cleanTitle}
+	{saving}
+	createLabel="Create task"
+	onCreate={create}
+>
+	{#snippet crumb()}
+		{#if homeThread}
+			<ProjectGlyph project={homeThread} size={14} tinted />
+		{:else}
+			<Icon icon={draft.home ? subjectIcon(draft.home.kind) : 'mynaui:circle'} width="14" />
+		{/if}
+		<span class="crumb-home">{draft.home ? subjectName(draft.home) : 'No home'}</span>
+		<Icon icon="mynaui:chevron-right" width="12" />
+		<span>New task</span>
+	{/snippet}
 
-		<div class="facts">
-			<span class="fact-cell">
-				<Icon icon="atlas:projects" width="14" />
-				<TaskHome task={draft} onSave={edit} plain />
-			</span>
-			<span class="fact-cell">
-				<Icon icon="mynaui:calendar" width="14" />
-				<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
-					{#snippet trigger({ toggle })}
-						<button type="button" class="fact" onclick={toggle} aria-haspopup="dialog">
-							{due ? dueLabel(due.on, due.at) : 'No date'}
-						</button>
-					{/snippet}
-					{#snippet children({ close })}
-						<DuePicker
-							due_on={due?.on ?? null}
-							due_at={due?.at ?? null}
-							onPick={(on, at) => {
-								edit({ due_on: on, due_at: at });
+	{#snippet chips()}
+		<span class="chip-anchor" bind:this={homeChipEl}>
+			<CreateChip
+				bind:open={homeOpen}
+				icon={homeThread ? homeThread.icon || THREAD_ICON : draft.home ? subjectIcon(draft.home.kind) : 'atlas:projects'}
+				color={homeThread ? projectColor(homeThread) : null}
+				label={draft.home ? subjectName(draft.home) : 'No home'}
+				quiet={!draft.home}
+			>
+				{#snippet menu()}
+					<HomeMenu
+						value={draft.home}
+						onPick={pickHome}
+						onSearch={() => {
+							homeOpen = false;
+							searchUnder(homeChipEl, 'home');
+						}}
+					/>
+				{/snippet}
+			</CreateChip>
+		</span>
+
+		<CreateChip icon="mynaui:calendar" label={due ? dueLabel(due.on, due.at) : 'No date'} quiet={!due} surface={false}>
+			{#snippet menu({ close })}
+				<DuePicker
+					due_on={due?.on ?? null}
+					due_at={due?.at ?? null}
+					onPick={(on, at) => {
+						draft.due = on ? { on, at } : null;
+						close();
+					}}
+				/>
+			{/snippet}
+		</CreateChip>
+
+		<CreateChip
+			icon={draft.assignee === 'assistant' ? 'mynaui:sparkles' : 'mynaui:user'}
+			label={draft.assignee === 'assistant' ? 'For the assistant' : 'For you'}
+		>
+			{#snippet menu({ close })}
+				<MenuItem
+					role="menuitemradio"
+					icon="mynaui:user"
+					checked={draft.assignee === 'owner'}
+					label="You"
+					onclick={() => {
+						draft.assignee = 'owner';
+						close();
+					}}
+				/>
+				<MenuItem
+					role="menuitemradio"
+					icon="mynaui:sparkles"
+					checked={draft.assignee === 'assistant'}
+					label="The assistant"
+					description="It works on the task in the background and brings you the result."
+					onclick={() => {
+						draft.assignee = 'assistant';
+						close();
+					}}
+				/>
+			{/snippet}
+		</CreateChip>
+
+		<span class="chip-anchor" bind:this={alsoChipEl}>
+			{#if draft.also.length === 0}
+				<CreateChip icon="mynaui:link" label="Also about" quiet onclick={() => searchUnder(alsoChipEl, 'also')} />
+			{:else}
+				<CreateChip icon="mynaui:link" label={`Also about ${draft.also.map((l) => subjectName(l)).join(', ')}`}>
+					{#snippet menu({ close })}
+						{#each draft.also as link (link.kind + link.id)}
+							<MenuItem
+								role="menuitemcheckbox"
+								icon={subjectIcon(link.kind)}
+								checked
+								label={subjectName(link)}
+								onclick={() => (draft.also = draft.also.filter((l) => !sameLink(l, link)))}
+							/>
+						{/each}
+						<MenuItem
+							icon="mynaui:plus"
+							label="Add…"
+							onclick={() => {
 								close();
+								searchUnder(alsoChipEl, 'also');
 							}}
 						/>
 					{/snippet}
-				</Popover>
-			</span>
-			<span class="fact-cell">
-				<Icon icon="mynaui:user" width="14" />
-				<button
-					type="button"
-					class="fact"
-					aria-pressed={draft.assignee === 'assistant'}
-					onclick={() => edit({ assignee: draft.assignee === 'assistant' ? 'owner' : 'assistant' })}
-					title="The assistant works a task it is given in the background"
-				>
-					{draft.assignee === 'assistant' ? 'For the assistant' : 'For you'}
-				</button>
-			</span>
-		</div>
-		<div class="also">
-			<span class="also-label">Also about</span>
-			<TaskAlsoAbout task={draft} onSave={edit} plain />
-		</div>
-	</div>
-
-	{#snippet footer()}
-		<div class="foot">
-			<label class="more">
-				<input type="checkbox" bind:checked={more} />
-				Create more
-			</label>
-			<span class="hint">{createKeys}</span>
-			<Button variant="ghost" onclick={() => newTaskDialog.close()}>Cancel</Button>
-			<Button variant="primary" loading={saving} disabled={!draft.title.trim()} onclick={create}>
-				Create task
-			</Button>
-		</div>
+				</CreateChip>
+			{/if}
+		</span>
 	{/snippet}
-</Modal>
+</CreateDialog>
+
+{#if search}
+	<RefPicker
+		mode="single"
+		position={search.at}
+		placeholder={search.for === 'home' ? 'Find a person, place or organization…' : 'Find a thread, person, place, organization or thing…'}
+		filter={(e) => {
+			const link = linkFromUrl(e.url);
+			if (!link) return false;
+			return search?.for === 'home' ? link.kind === 'person' || link.kind === 'place' || link.kind === 'org' : true;
+		}}
+		onSelect={found}
+		onClose={() => (search = null)}
+	/>
+{/if}
 
 <style>
-	.body {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.title {
-		width: 100%;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		font-family: var(--font-serif);
-		font-size: var(--md-h2-size);
-		line-height: 32px;
+	.crumb-home {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		color: var(--color-foreground);
 	}
-	.title:focus {
-		outline: none;
-	}
-	.title::placeholder,
-	.notes::placeholder {
-		color: var(--color-foreground-subtle);
-	}
-	.notes {
-		width: 100%;
-		min-height: 72px;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		font: inherit;
-		font-size: 15px;
-		line-height: 24px;
-		color: var(--color-foreground);
-		resize: vertical;
-	}
-	.notes:focus {
-		outline: none;
-	}
-	.facts {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px 24px;
-		padding-top: 12px;
-		border-top: 1px solid var(--color-border);
-	}
-	.fact-cell {
+	.chip-anchor {
 		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		color: var(--color-foreground-muted);
-	}
-	.fact {
-		padding: 0 4px;
-		margin: 0 -4px;
-		border: 0;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.fact:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.also {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px 12px;
-	}
-	.also-label {
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	.foot {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		width: 100%;
-	}
-	.more {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		margin-right: auto;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.more input {
-		margin: 0;
-		accent-color: var(--color-primary);
-	}
-	.hint {
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.fact {
-			transition: none;
-		}
 	}
 </style>

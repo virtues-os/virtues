@@ -10,7 +10,7 @@
  * converter's (`paste.ts`).
  *
  * `messageMarkdown` writes the chat composer's document the same way, rule
- * for rule, but for the text: a message is shown in the thread as it was
+ * for rule, but for the text: a message is shown in the chat as it was
  * typed, so its words are written as they are, never escaped.
  */
 
@@ -922,7 +922,7 @@ export function toMarkdown(blocks: Fragment | PmNode[]): string {
  * text as typed (`literal`). Its structure is markdown's (a list's markers,
  * a fence, a quote's `> `, marks' delimiters, `[label](url)`, a mention's
  * `[@label](route)`), and its words are the person's own, `snake_case` and
- * `2 * 3` included, since the thread shows a message as written. A line
+ * `2 * 3` included, since the chat shows a message as written. A line
  * break is a new line; paragraphs are a blank line apart.
  */
 export function messageMarkdown(blocks: Fragment | PmNode[]): string {

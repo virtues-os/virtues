@@ -167,7 +167,7 @@
 		memory: 'Memory',
 		circumstances: 'Circumstances',
 		coverage: 'Coverage',
-		active_project: 'Project',
+		active_project: 'Thread',
 		scoped: 'Scoped to the thread',
 		compacted_conversation: 'Earlier conversation, summarized',
 		applet: 'Slash command',

@@ -82,7 +82,7 @@
 		padding: 16px;
 		border: 0;
 		border-radius: var(--radius-md);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 		font: inherit;
 		text-align: left;
 		color: var(--color-foreground);
@@ -97,7 +97,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 13px;
+		font-size: var(--text-small);
 		line-height: 20px;
 		color: var(--color-foreground-muted);
 	}
@@ -106,7 +106,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 	.quiet {
-		font-size: 14px;
+		font-size: var(--text-label);
 		color: var(--color-foreground-muted);
 	}
 	.link {
@@ -119,7 +119,7 @@
 		border-radius: var(--radius-md);
 		background: transparent;
 		font: inherit;
-		font-size: 15px;
+		font-size: var(--text-label);
 		color: var(--color-foreground);
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);

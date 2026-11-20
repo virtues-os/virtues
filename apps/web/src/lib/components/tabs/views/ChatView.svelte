@@ -4,7 +4,6 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
-	import BackgroundControl from "$lib/components/backgrounds/BackgroundControl.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -40,6 +39,7 @@
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects, isFullReplace } from "$lib/components/chat/state/toolSideEffects";
+	import { showBuiltSite } from "$lib/applets/sites.svelte";
 	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
 	import { holdReadingPosition } from "$lib/components/chat/state/holdReadingPosition";
@@ -348,17 +348,20 @@
 		}
 	}
 
-	// The two tool results that reach outside the transcript — create_page
-	// opens a page beside the chat, edit_page animates one (see
-	// state/toolSideEffects for why both seed before they act).
+	// The tool results that reach outside the transcript (see
+	// state/toolSideEffects for why each seeds before it acts).
 	const tools = new ToolSideEffects();
 
 	// The tool results that act outside the transcript: auto-open a page
-	// create_page made, and run the presence animation for an edit_page. Only
+	// create_page made or a site applet setup made, and run the presence
+	// animation for an edit_page. Only
 	// for calls made during this session, not when reopening old chats — so
 	// nothing runs during the initial load (see state/toolSideEffects).
 	$effect(() => {
 		if (!chat?.messages || isLoading) return;
+		for (const site of tools.collectNewSites(chat.messages)) {
+			showBuiltSite(site.appletId, site.name);
+		}
 		for (const page of tools.collectNewPages(chat.messages)) {
 			openCreatedPage(page.pageId, page.title);
 		}
@@ -414,7 +417,7 @@
 
 	/** Re-read the stored transcript. Used after a compaction, and after the
 	 *  getting-started room speaks (its lines are appended server-side, so
-	 *  the thread has to be re-read to show them). */
+	 *  the chat has to be re-read to show them). */
 	async function reloadMessages() {
 		if (!conversationId) return;
 		try {
@@ -1027,7 +1030,7 @@
 		}
 		return out;
 	});
-	/** The interview's opening plate is in this thread — mid-thread here,
+	/** The interview's opening plate is in this chat — mid-chat here,
 	 *  not first as in the old standalone room — so the container must not
 	 *  clip paint at its edge. Without this the plate lost both ends. */
 	const roomHoldsPlate = $derived(uniqueMessages.some((m) => m.id === GS_INTERVIEW_OPENING_ID));
@@ -1222,7 +1225,7 @@
 	 *  store's 30-second poll — so the ending sat unread while the person
 	 *  typed their next message over the top of it. Asking on `ready` closes
 	 *  that window: the answer moves the walk signature, and the effect below
-	 *  re-reads the thread with the new lines in it. */
+	 *  re-reads the chat with the new lines in it. */
 	let lastTurnStatus: string | null = null;
 	$effect(() => {
 		const status = chat.status;
@@ -1244,7 +1247,7 @@
 	});
 	onDestroy(() => reveal.stop());
 
-	/** The room speaks server-side, so when its state moves the thread has
+	/** The room speaks server-side, so when its state moves the chat has
 	 *  new lines in it. Re-read on any change of the walk — the step
 	 *  statuses and the interview's start are the whole of it. */
 	let lastWalk: string | null = null;
@@ -1989,7 +1992,7 @@
 						     ("Stop for now") once the interview is underway,
 						     which is the one beat with no controls of its own.
 						     Nothing else lives up here — progress is numbered in
-						     the thread, on the axis the eye is already reading
+						     the chat, on the axis the eye is already reading
 						     along. -->
 						<GettingStartedDoor />
 					{/if}
@@ -2161,7 +2164,7 @@
 												     the tool. See after this loop. -->
 											{:else if part.type === "tool-write_it_up" && inRoom && (part as any).state === "output-available" && (part as any).output?.document_page_id}
 												<!-- In the getting-started room the interview closes inline
-												     and the thread goes on: the two doors, here — and the
+												     and the chat goes on: the two doors, here — and the
 												     plate with them. The close ANSWERS THE OPENING, which
 												     was a lifeline of a fictional life at the top of the
 												     interview; this is the same drawing made of their own
@@ -2238,6 +2241,7 @@
 													enabled={out.enabled !== false}
 													lifecycle={out.lifecycle}
 													updated={out.status === "updated"}
+													hasView={out.has_view ?? null}
 												/>
 											{/if}
 											{:else if part.type === "tool-show" && (part as any).state !== "output-error"}
@@ -2443,7 +2447,7 @@
 							{#if inRoom}
 								<!-- The step's controls, right under what the room
 								     just said: pinned above the composer they sat a
-								     screen away from it on a short thread. -->
+								     screen away from it on a short chat. -->
 								<RoomControls />
 							{/if}
 							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
@@ -2558,7 +2562,11 @@
 								{/snippet}
 							</HomeTiles>
 						</div>
-						<BackgroundControl />
+						<!-- Loaded once home shows, so the control and its popover
+						     stay out of the chat home's first paint. -->
+						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
+							<BackgroundControl composer={composerEl} />
+						{/await}
 					{/if}
 
 					{#if isEmpty && isGhost}

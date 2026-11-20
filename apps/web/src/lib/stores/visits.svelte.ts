@@ -23,6 +23,7 @@
  */
 import { getFrecency, getRecentVisits, recordVisit, type VisitKind } from '$lib/api/client';
 import { parseRef } from '$lib/utils/refRoutes';
+import { readAddress } from '$lib/applets/routes';
 
 /** How long a route has to stay active before it is a visit. */
 const DWELL_MS = 3000;
@@ -33,8 +34,8 @@ const FRECENCY_TTL_MS = 60_000;
 
 /** Visits are kept for chats, pages and projects (⌘K ranks these) and applets (Recent shows them). */
 function parseVisit(route: string): { kind: VisitKind; id: string } | null {
-	const applet = route.match(/^\/applet\/(applet_[^/?#]+)/);
-	if (applet) return { kind: 'applet', id: applet[1] };
+	const address = readAddress(route);
+	if (address) return { kind: 'applet', id: address.id };
 	const ref = parseRef(route);
 	if (ref && (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'thread')) {
 		return { kind: ref.kind, id: ref.id };

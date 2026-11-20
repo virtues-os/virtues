@@ -113,11 +113,11 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		width: 15rem;
-		padding: 0.625rem;
+		padding: 8px;
 		background: var(--color-background);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
-		font-size: 0.8125rem;
+		font-size: var(--text-small);
 	}
 	.phrase {
 		width: 100%;
@@ -145,8 +145,8 @@
 	.step {
 		background: none;
 		border: none;
-		padding: 0 0.375rem;
-		font-size: 1rem;
+		padding: 0 4px;
+		font-size: var(--text-body);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 	}
@@ -158,7 +158,7 @@
 	}
 	.weekday {
 		color: var(--color-foreground-subtle);
-		font-size: 0.6875rem;
+		font-size: var(--text-caption);
 	}
 	.day {
 		aspect-ratio: 1;

@@ -25,6 +25,9 @@
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
+	import type { Tab } from '$lib/tabs/types';
+
+	let { tab }: { tab: Tab } = $props();
 
 	const store = sourcesStore;
 
@@ -138,24 +141,48 @@
 		return stamps.reduce((a, b) => (a > b ? a : b));
 	});
 
-	// The OAuth callback returns as `?connected=<id>` or `?source=<id>&error=…`.
-	// Nothing read either, so a round trip through a provider ended in silence
-	// whichever way it went. Read once at mount and strip, so a refresh cannot
-	// replay a stale verdict.
+	// The OAuth callback returns as `?connected=<id>` or `?source=<id>&error=…`,
+	// which the tab registry keeps on this tab's route. Read once at mount, then
+	// point the tab at bare `/sources` so a refresh cannot replay a stale notice.
 	const connectReturn = (() => {
-		if (typeof window === 'undefined') return null;
-		const p = new URLSearchParams(window.location.search);
+		const q = tab.route.indexOf('?');
+		if (q < 0) return null;
+		const p = new URLSearchParams(tab.route.slice(q));
 		const ok = p.get('connected');
 		const error = p.get('error');
 		const source = p.get('source');
 		if (!ok && !error) return null;
-		for (const k of ['connected', 'error', 'source']) p.delete(k);
-		const qs = p.toString();
-		window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+		windowShellStore.updateTab(tab.id, { route: '/sources' });
 		return { ok, error, source };
 	})();
 
 	let noticeDismissed = $state(false);
+
+	// Connections the server let go after the subscription lapsed. Said once:
+	// dismissing it is remembered per viewer for that set of sources, and a
+	// reconnect removes the source from the set.
+	const RELEASED_KEY = 'sources.released-notice-dismissed';
+	let releasedDismissed = $state((() => {
+		try {
+			return typeof localStorage === 'undefined' ? '' : (localStorage.getItem(RELEASED_KEY) ?? '');
+		} catch {
+			return '';
+		}
+	})());
+	const releasedKey = $derived([...store.released].sort().join(','));
+	const releasedNotice = $derived(
+		store.released.length > 0 && releasedDismissed !== releasedKey
+			? `Your ${store.released.map((id) => store.sourceLabel(id)).join(' and ')} connections were removed when your subscription ended. Reconnect them anytime.`
+			: null
+	);
+	function dismissReleased() {
+		releasedDismissed = releasedKey;
+		try {
+			localStorage.setItem(RELEASED_KEY, releasedKey);
+		} catch {
+			// The notice comes back on the next visit; nothing else depends on it.
+		}
+	}
 
 	const notice = $derived.by(() => {
 		if (!connectReturn || noticeDismissed) return null;
@@ -168,7 +195,9 @@
 			text:
 				connectReturn.error === 'connect_cancelled'
 					? `${who} wasn't connected — the flow was closed before it finished.`
-					: `Couldn't finish connecting ${who}. Nothing was connected.`
+					: connectReturn.error === 'bank_limit'
+						? 'A subscription covers 10 linked banks. Remove one, then add this bank again.'
+						: `Couldn't finish connecting ${who}. Nothing was connected.`
 		};
 	});
 
@@ -232,6 +261,14 @@
 				size="nested"
 				onclick={() => (noticeDismissed = true)}
 			/>
+		</div>
+	{/if}
+
+	{#if releasedNotice}
+		<div class="notice">
+			<Icon icon="mynaui:info-circle" width="16" />
+			<span>{releasedNotice}</span>
+			<IconButton icon="mynaui:x" label="Dismiss" size="nested" onclick={dismissReleased} />
 		</div>
 	{/if}
 

@@ -8,7 +8,11 @@
 		open?: boolean;
 		onClose: () => void;
 		title?: string;
-		width?: "sm" | "md" | "lg";
+		width?: "sm" | "md" | "lg" | "xl";
+		/** The contents draw their own frame: no header, footer or padding. */
+		bare?: boolean;
+		/** The dialog's name for a screen reader, when there is no `title`. */
+		label?: string;
 		children: Snippet;
 		footer?: Snippet;
 	}
@@ -18,6 +22,8 @@
 		onClose,
 		title,
 		width = "md",
+		bare = false,
+		label,
 		children,
 		footer,
 	}: Props = $props();
@@ -49,7 +55,9 @@
 	$effect(() => {
 		if (open) {
 			const handler = (e: KeyboardEvent) => {
-				if (e.key === "Escape") {
+				// A picker open inside the dialog takes the Escape first and
+				// marks it handled; only the next one closes the dialog.
+				if (e.key === "Escape" && !e.defaultPrevented) {
 					e.preventDefault();
 					onClose();
 				}
@@ -63,14 +71,15 @@
 		sm: "max-w-sm",
 		md: "max-w-md",
 		lg: "max-w-lg",
+		xl: "max-w-xl",
 	}[width]);
 </script>
 
 {#if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal out:fade>
-		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:holdFocus out:floatOut>
-			{#if title}
+		<div class="modal {widthClass}" class:bare role="dialog" aria-modal="true" aria-label={title ?? label} tabindex="-1" use:holdFocus out:floatOut>
+			{#if title && !bare}
 				<div class="modal-header">
 					<h2 class="modal-title">{title}</h2>
 					<button class="close-btn" onclick={onClose} aria-label="Close">
@@ -83,7 +92,7 @@
 				{@render children()}
 			</div>
 
-			{#if footer}
+			{#if footer && !bare}
 				<div class="modal-footer">
 					{@render footer()}
 				</div>
@@ -123,7 +132,7 @@
 		color: var(--foreground);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-xl);
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--shadow-float);
 		overflow: hidden;
 		/* It settles down into place and, closing (floatOut), shrinks back
 		   toward its top edge as it fades. */
@@ -145,6 +154,8 @@
 	.max-w-sm { max-width: 360px; }
 	.max-w-md { max-width: 480px; }
 	.max-w-lg { max-width: 600px; }
+	.max-w-xl { max-width: 640px; }
+	.bare .modal-body { padding: 0; }
 
 	@keyframes modal-slide-in {
 		from {

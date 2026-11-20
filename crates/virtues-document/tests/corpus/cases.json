@@ -185,7 +185,7 @@
   { "name": "veil in a cell", "html": "<table><tr><th><p>Where</p></th></tr><tr><td><p><virtues-veil>the Blue Kettle</virtues-veil></p></td></tr></table>" },
   { "name": "REFUSE footnote label with a space", "html": "<p>x<virtues-footnote label=\"a b\"></virtues-footnote></p>" },
   { "name": "REFUSE footnote holding text", "html": "<p>x<virtues-footnote label=\"ev-1\">words</virtues-footnote></p>" },
-  { "name": "REFUSE figure of no kind the contract names", "html": "<virtues-figure kind=\"chart\"></virtues-figure>" },
+  { "name": "REFUSE figure of no kind the contract names", "html": "<virtues-figure kind=\"poll\"></virtues-figure>" },
   { "name": "REFUSE veil inside code", "html": "<p><code><virtues-veil>x</virtues-veil></code></p>" },
   { "name": "one label, two sources", "html": "<p>You ate with Nick.<virtues-footnote label=\"ev-2\" note=\"Message · 12:10 PM · data_communication_message:m_1\"></virtues-footnote></p><p>You swam at noon.<virtues-footnote label=\"ev-2\" note=\"Location · 9:30 AM\"></virtues-footnote><virtues-footnote label=\"ev-6\" note=\"Chat · 1:00 PM\"></virtues-footnote></p><p>Later.<virtues-footnote label=\"ev-2\" note=\"Location · 9:30 AM\"></virtues-footnote></p>" },
   { "name": "lists of one kind side by side", "html": "<ul><li><p>a</p></li></ul><ul><li><p>b</p></li></ul><ul><li><p>c</p></li></ul><ol><li><p>one</p></li></ol><ol start=\"4\"><li><p>four</p></li></ol><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><p>done</p></li></ul><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"false\"><p>open</p></li></ul>" },

@@ -53,6 +53,8 @@
 		icon,
 		type = "button",
 		onclick,
+		tip,
+		tipKey,
 		class: className = "",
 		children,
 	}: {
@@ -64,6 +66,10 @@
 		icon?: string;
 		type?: "button" | "submit" | "reset";
 		onclick?: (e: MouseEvent) => void;
+		/** Shown on hover (TooltipLayer), for what the label leaves out, such as its shortcut. */
+		tip?: string;
+		/** The tip's shortcut, as TooltipLayer formats it: "c", "shift+c", "mod+n". */
+		tipKey?: string;
 		class?: string;
 		children: Snippet;
 	} = $props();
@@ -76,6 +82,8 @@
 	data-loading={loading ? "true" : undefined}
 	disabled={disabled || loading}
 	aria-busy={loading || undefined}
+	data-tip={tip}
+	data-tip-key={tipKey}
 	{onclick}
 >
 	<!-- The label stays in the box while loading — hidden with `opacity`, not

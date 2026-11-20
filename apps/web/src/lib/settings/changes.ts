@@ -102,7 +102,7 @@ export function changeRowId(change: SettingsChange): number | null {
 /** Words for the stored values of the settings the agent can draft
  *  (`api/settings_draft.rs`). */
 const VALUE_WORDS: Record<string, Record<string, string>> = {
-	theme: { oxford: 'Light', asgard: 'Dark', system: 'Match system' },
+	theme: { oxford: 'Light', asgard: 'Dark', system: 'Match system', day: 'Follow the day' },
 	glass: { none: 'None', low: 'Low', medium: 'Medium', high: 'High' },
 	'text-size': { s: 'Small', m: 'Medium', l: 'Large' },
 	'reading-font': { sans: 'Sans serif', serif: 'Serif', mono: 'Monospace' },

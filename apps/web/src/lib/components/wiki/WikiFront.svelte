@@ -257,7 +257,6 @@
 						{/each}
 					</div>
 					<div class="more-row">
-						<button type="button" class="more" onclick={() => go('/timeline', 'Timeline')}>Timeline →</button>
 						<button type="button" class="more" onclick={() => go('/wiki/years', 'Years')}>Years →</button>
 					</div>
 				</section>

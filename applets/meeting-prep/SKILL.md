@@ -15,7 +15,7 @@ Read the event: its time, place, attendees and description. For each attendee, r
 Write a brief:
 - The meeting: when, where, and who, in one line.
 - Each person: one or two lines on where things stand with them.
-- Open threads: commitments and questions still unresolved, with who owes what.
+- Still open: commitments and questions still unresolved, with who owes what.
 - What to bring up: the two or three things most worth raising, given the above.
 
 Speak to them as "you". Link every claim to its record. If you find nothing for an attendee, say that instead of guessing. Keep it under 300 words.

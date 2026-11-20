@@ -1332,7 +1332,7 @@ export interface PersonGlossApi {
 	/** Their picture as stored, usually a box path; none draws initials. A server older than this field leaves it out. */
 	picture?: string | null;
 	first_message_on: string | null;
-	/** Whether that first message was in a group thread. */
+	/** Whether that first message was in a group conversation. */
 	first_message_in_group: boolean | null;
 	last_message_before_on: string | null;
 	/** The days just before `date` that `days_in_window` counts over. */

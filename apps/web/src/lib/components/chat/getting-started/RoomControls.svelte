@@ -34,7 +34,7 @@
      done, which made a MOMENT into furniture: it never went away, and every
      message sent afterwards slid in above it — ask "what's next?" and your own
      question appears over the top of your life. The plate belongs beside the
-     close that produced it, inline in the thread, and ChatView renders it
+     close that produced it, inline in the chat, and ChatView renders it
      there with the two doors. The permanent way back is the Chapters door on
      that card. -->
 {#if step && !interviewUnderway}

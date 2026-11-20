@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { actionOf, appletLine, appletsLead, groupApplets, problemOf, troubleOf } from './standing';
+import { actionOf, appletLine, appletsLead, groupJobs, problemOf, troubleOf } from './standing';
 
 const NOW = new Date('2026-10-06T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -98,24 +98,29 @@ describe('appletLine', () => {
 	});
 });
 
-describe('groupApplets', () => {
-	it('lists what needs you on its own, and the rest by who made it', () => {
-		const groups = groupApplets(
+describe('groupJobs', () => {
+	it('lists the server\'s own jobs, gathers an account\'s jobs under it, and leaves yours to Sites', () => {
+		const groups = groupJobs(
 			[
 				applet({ id: 'a', name: 'Rent reminder' }),
 				applet({ id: 'b', name: 'Garden watering', ...failedRun('timed out') }),
-				applet({ id: 'c', name: 'Backup', origin: 'system' }),
-				applet({ id: 'd', name: 'Calendar sync', origin: 'source' }),
-				applet({ id: 'e', name: 'Heart rate dashboard', origin: 'ai' }),
-				applet({ id: 'f', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
+				applet({ id: 'c', name: 'Backup', origin: 'system', schedule: '0 0 4 * * *' }),
+				applet({ id: 'd', name: 'Mail sync', origin: 'source', credential_id: 'cred_1', schedule: '0 */15 * * * *' }),
+				applet({ id: 'e', name: 'Calendar sync', origin: 'source', credential_id: 'cred_1', ...failedRun('timed out') }),
+				applet({ id: 'f', name: 'Phone', origin: 'source', device_id: 'dev_1' }),
+				applet({ id: 'g', name: 'Trip planner', origin: 'system', schedule: null }),
+				applet({ id: 'h', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
 			],
 			NOW,
 		);
-		expect(groups.needsYou.map((a) => a.id)).toEqual(['b']);
-		expect(groups.yours.map((a) => a.id)).toEqual(['e', 'a']);
+		expect(groups.accounts.map((g) => [g.kind, g.id, g.jobs.map((a) => a.id)])).toEqual([
+			['credential', 'cred_1', ['e', 'd']],
+			['device', 'dev_1', ['f']],
+		]);
 		expect(groups.server.map((a) => a.id)).toEqual(['c']);
-		expect(groups.connected.map((a) => a.id)).toEqual(['d']);
-		expect(groups.finished.map((a) => a.id)).toEqual(['f']);
+		expect(groups.whenAsked.map((a) => a.id)).toEqual(['g']);
+		expect(groups.finished.map((a) => a.id)).toEqual(['h']);
+		expect(groups.yoursNeedingYou.map((a) => a.id)).toEqual(['b']);
 	});
 });
 

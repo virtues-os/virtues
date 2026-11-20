@@ -64,9 +64,11 @@
 
 	const current = $derived(notes.length ? notes[at % notes.length] : null);
 
+	// A server note leaves the store when set aside and comes back with its
+	// Undo, so only the others are hidden here.
 	function notNow(n: Note) {
 		n.dismiss?.();
-		hidden = [...hidden, n.key];
+		if (!n.key.startsWith('note:')) hidden = [...hidden, n.key];
 	}
 
 </script>

@@ -10,14 +10,21 @@
 //! new note. "Fewer like this" (`app_note_mutes`) stops a kind of note for the
 //! threads it names. What happened to a note is kept in `app_note_events` for
 //! its page. Every rule here needs no model to find. The sentence is fixed
-//! wording for now.
+//! wording for now. The owner reads them as "insights", so that is the word
+//! in every sentence they see.
+//!
+//! Reading writes nothing. When a note was raised is recorded by a loop
+//! every few minutes (`spawn`), and by "Not now" and "Fewer like this" for a
+//! note the loop has not seen yet.
 //!
 //! The rules:
 //!
 //! - Two calendar events in the coming week, filed in different threads,
 //!   overlap.
-//! - An open task in a thread is due within three days, and no calendar time
-//!   is set aside for that thread before the end of its day.
+//! - An open task in a thread is due within the next three days, from
+//!   tomorrow, and no calendar time is set aside for that thread before the
+//!   end of its day. On the day itself it is not raised: by then there is
+//!   little time left to set aside, and a note on the day reads as an alarm.
 
 use std::collections::HashSet;
 
@@ -32,6 +39,8 @@ use crate::error::Result;
 const CLASH_DAYS: i64 = 7;
 /// How soon a task's day has to be for a missing block of time to matter.
 const UNPLANNED_DAYS: i64 = 3;
+/// How often the loop records newly raised notes.
+const RECORD_EVERY_SECS: u64 = 5 * 60;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Note {
@@ -83,6 +92,9 @@ pub struct NoteDetail {
     pub is_muted: bool,
     /// The "Fewer like this" choice, in words.
     pub mute_label: String,
+    /// The home time zone the sentences are written in (IANA), so the page
+    /// shows the same times as its sentence wherever it is read.
+    pub time_zone: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -122,6 +134,56 @@ pub async fn notes_at(pool: &PgPool, now: DateTime<Utc>) -> Result<Vec<Note>> {
     Ok(seen.notes.into_iter().filter(|n| !seen.dismissed.contains(&n.key) && !seen.muted.contains(&mute_scope(n))).collect())
 }
 
+/// The notes set aside with "Not now" whose condition still holds, so the
+/// owner can find one again and bring it back.
+pub async fn set_aside(pool: &PgPool) -> Result<Vec<Note>> {
+    set_aside_at(pool, Utc::now()).await
+}
+
+pub async fn set_aside_at(pool: &PgPool, now: DateTime<Utc>) -> Result<Vec<Note>> {
+    let seen = every_note(pool, now).await?;
+    Ok(seen.notes.into_iter().filter(|n| seen.dismissed.contains(&n.key) && !seen.muted.contains(&mute_scope(n))).collect())
+}
+
+/// Record when each note that holds now was first seen. Returns how many
+/// were new.
+pub async fn record_raised_at(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
+    let seen = every_note(pool, now).await?;
+    let keys: Vec<&str> = seen.notes.iter().map(|n| n.key.as_str()).collect();
+    raise(pool, &keys, now).await
+}
+
+async fn raise<'e, E: sqlx::PgExecutor<'e>>(executor: E, keys: &[&str], now: DateTime<Utc>) -> Result<u64> {
+    let done = sqlx::query(
+        "INSERT INTO app_note_events (key, kind, occurred_at)
+         SELECT k, 'raised', $2 FROM unnest($1::text[]) AS k
+         ON CONFLICT (key) WHERE kind = 'raised' DO NOTHING",
+    )
+    .bind(keys)
+    .bind(now)
+    .execute(executor)
+    .await?;
+    Ok(done.rows_affected())
+}
+
+/// Records newly raised notes every few minutes, so their pages can say when
+/// each was raised without a read writing anything.
+pub fn spawn(pool: PgPool) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(RECORD_EVERY_SECS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            match record_raised_at(&pool, Utc::now()).await {
+                Ok(0) => {}
+                Ok(n) => tracing::debug!(n, "notes: recorded newly raised"),
+                Err(e) => tracing::warn!(error = %e, "notes: recording raised notes failed"),
+            }
+        }
+    });
+}
+
 /// Every note whose condition holds, with which are set aside and which
 /// kinds are muted.
 struct Seen {
@@ -129,6 +191,7 @@ struct Seen {
     dismissed: HashSet<String>,
     muted: HashSet<(String, String)>,
     tz: Option<chrono_tz::Tz>,
+    zone: String,
 }
 
 async fn every_note(pool: &PgPool, now: DateTime<Utc>) -> Result<Seen> {
@@ -139,25 +202,18 @@ async fn every_note(pool: &PgPool, now: DateTime<Utc>) -> Result<Seen> {
     let mut notes = clashes(pool, now, tz).await?;
     notes.extend(unplanned(pool, now, today, &zone).await?);
 
-    // The first read that finds a note is when it was raised.
-    let keys: Vec<&str> = notes.iter().map(|n| n.key.as_str()).collect();
-    sqlx::query(
-        "INSERT INTO app_note_events (key, kind, occurred_at)
-         SELECT k, 'raised', $2 FROM unnest($1::text[]) AS k
-         ON CONFLICT (key) WHERE kind = 'raised' DO NOTHING",
-    )
-    .bind(&keys)
-    .bind(now)
-    .execute(pool)
-    .await?;
-
     let dismissed: Vec<String> = sqlx::query_scalar("SELECT key FROM app_note_dismissals")
         .fetch_all(pool)
         .await?;
     let muted: Vec<(String, String)> = sqlx::query_as("SELECT rule, scope FROM app_note_mutes")
         .fetch_all(pool)
         .await?;
-    Ok(Seen { notes, dismissed: dismissed.into_iter().collect(), muted: muted.into_iter().collect(), tz })
+    // The page is told the zone the sentences were written in: the stored
+    // one when it names a real zone, else UTC, as the sentences fell back.
+    // absent-ok: `tz` is an Option read earlier, not a query result; no
+    // stored zone means UTC.
+    let zone = tz.map(|t| t.name().to_string()).unwrap_or_else(|| "UTC".into());
+    Ok(Seen { notes, dismissed: dismissed.into_iter().collect(), muted: muted.into_iter().collect(), tz, zone })
 }
 
 /// The kind of note and the threads it names, which "Fewer like this" keys
@@ -173,7 +229,7 @@ async fn find(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<(Note, See
     let mut seen = every_note(pool, now).await?;
     let at = seen.notes.iter().position(|n| n.key == key).ok_or_else(|| {
         crate::error::Error::NotFound(
-            "This note has gone: what it was about has changed or its moment has passed.".into(),
+            "This insight has gone: what it was about has changed or its moment has passed.".into(),
         )
     })?;
     Ok((seen.notes.swap_remove(at), seen))
@@ -216,13 +272,13 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
         events.sort_by_key(|e| e.started_at);
         let remedy = match events.as_slice() {
             [first, second] => format!(
-                "If {} started on {}, when {} ends, the two would no longer overlap and this note would leave. \
+                "If {} started on {}, when {} ends, the two would no longer overlap and this insight would leave. \
                  Your server reads your calendar but doesn't change it, so make that change in your calendar app.",
                 second.title,
                 at_label(first.ended_at, seen.tz),
                 first.title
             ),
-            _ => "Move one of the two entries so they no longer overlap, and this note leaves.".into(),
+            _ => "Move one of the two entries so they no longer overlap, and this insight leaves.".into(),
         };
         let mute_label = match events.as_slice() {
             [first, second] => format!(
@@ -245,6 +301,7 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
             history,
             is_muted,
             mute_label,
+            time_zone: seen.zone.clone(),
         });
     }
     let task_id = parts.next().unwrap_or_default().to_string();
@@ -259,7 +316,7 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
     let thread = task.as_ref().map_or("its thread".to_string(), |t| t.thread_name.clone());
     let why = format!("It is due soon, and nothing on your calendar is filed in {thread} between now and then.");
     let remedy = format!(
-        "Put time for {thread} on your calendar before then and file it in that thread, and this note leaves."
+        "Put time for {thread} on your calendar before then and file it in that thread, and this insight leaves."
     );
     Ok(NoteDetail {
         why,
@@ -275,12 +332,23 @@ pub async fn note_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<Not
         history,
         is_muted,
         mute_label: format!("Don't raise these for {thread}"),
+        time_zone: seen.zone,
     })
 }
 
 /// Set a note aside. Its condition changing makes a new note, which shows.
 pub async fn dismiss(pool: &PgPool, key: &str) -> Result<()> {
+    dismiss_at(pool, key, Utc::now()).await
+}
+
+pub async fn dismiss_at(pool: &PgPool, key: &str, now: DateTime<Utc>) -> Result<()> {
+    // A note set aside before the loop saw it was raised now, at the latest.
+    // A key for a note that no longer holds gets no such line.
+    let holds = every_note(pool, now).await?.notes.iter().any(|n| n.key == key);
     let mut tx = pool.begin().await?;
+    if holds {
+        raise(&mut *tx, &[key], now).await?;
+    }
     let added = sqlx::query("INSERT INTO app_note_dismissals (key) VALUES ($1) ON CONFLICT (key) DO NOTHING")
         .bind(key)
         .execute(&mut *tx)
@@ -318,6 +386,7 @@ pub async fn set_muted(pool: &PgPool, key: &str, muted: bool) -> Result<()> {
 
 pub async fn set_muted_at(pool: &PgPool, key: &str, muted: bool, now: DateTime<Utc>) -> Result<()> {
     let (note, _) = find(pool, key, now).await?;
+    raise(pool, &[key], now).await?;
     let (rule, scope) = mute_scope(&note);
     if muted {
         sqlx::query("INSERT INTO app_note_mutes (rule, scope) VALUES ($1, $2) ON CONFLICT DO NOTHING")
@@ -338,10 +407,9 @@ fn at_label(at: DateTime<Utc>, tz: Option<chrono_tz::Tz>) -> String {
     }
 }
 
+/// A task's day, in words, from tomorrow on: a note is never raised for today.
 fn day_name(day: NaiveDate, today: NaiveDate) -> String {
-    if day == today {
-        "today".into()
-    } else if day == today + Duration::days(1) {
+    if day == today + Duration::days(1) {
         "tomorrow".into()
     } else {
         day.format("%A").to_string()
@@ -404,7 +472,7 @@ async fn unplanned(pool: &PgPool, now: DateTime<Utc>, today: NaiveDate, zone: &s
            AND t.due_on BETWEEN $1 AND $2
          ORDER BY t.due_on, t.sort_order",
     )
-    .bind(today)
+    .bind(today + Duration::days(1))
     .bind(today + Duration::days(UNPLANNED_DAYS))
     .fetch_all(pool)
     .await?;
@@ -498,6 +566,7 @@ mod tests {
             &pool,
             vec![
                 task("File the receipts", "nb_tax", "2030-01-10"),
+                task("Call the bank", "nb_tax", "2030-01-09"),
                 task("Buy tape", "nb_hall", "2030-01-12"),
                 task("Book the ferry", "nb_tax", "2030-02-01"),
             ],
@@ -507,15 +576,20 @@ mod tests {
         .await
         .unwrap();
 
+        // Reading writes nothing; the loop records when each was raised.
         let found = notes_at(&pool, now).await.unwrap();
+        let raised: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_note_events").fetch_one(&pool).await.unwrap();
+        assert_eq!(raised, 0);
+        assert_eq!(record_raised_at(&pool, now).await.unwrap(), found.len() as u64);
+        assert_eq!(record_raised_at(&pool, now).await.unwrap(), 0);
         let clash = found.iter().find(|n| n.kind == "clash").expect("a clash");
         assert_eq!(clash.subjects, ["/thread/nb_hall", "/thread/nb_trip"]);
         assert_eq!(clash.action_route, "/day/day_2030-01-12");
         assert!(clash.text.contains("Second coat") && clash.text.contains("Call with the agent"), "{}", clash.text);
 
         // Receipts are due tomorrow with nothing set aside for Tax paperwork.
-        // Buy tape has the second coat set aside before its day, and the
-        // ferry is too far off.
+        // Buy tape has the second coat set aside before its day, the ferry is
+        // too far off, and the bank call is due today, which is too late.
         let unplanned: Vec<&Note> = found.iter().filter(|n| n.kind == "unplanned").collect();
         assert_eq!(unplanned.len(), 1);
         assert_eq!(unplanned[0].about, "File the receipts");
@@ -524,8 +598,11 @@ mod tests {
         dismiss(&pool, &clash.key).await.unwrap();
         dismiss(&pool, &clash.key).await.unwrap();
         assert!(notes_at(&pool, now).await.unwrap().iter().all(|n| n.kind != "clash"));
+        // A set-aside note is listed on its own, to bring it back.
+        assert_eq!(set_aside_at(&pool, now).await.unwrap().iter().map(|n| n.key.as_str()).collect::<Vec<_>>(), [clash.key.as_str()]);
         restore(&pool, &clash.key).await.unwrap();
         assert!(notes_at(&pool, now).await.unwrap().iter().any(|n| n.kind == "clash"));
+        assert!(set_aside_at(&pool, now).await.unwrap().is_empty());
 
         // Its page has both events, in order, with their threads, and still
         // opens once it is set aside.
@@ -542,6 +619,7 @@ mod tests {
         // back twice. Asking twice to set it aside writes one line.
         let detail = note_at(&pool, &clash.key, now).await.unwrap();
         assert_eq!(detail.raised_at, Some(now));
+        assert!(!detail.time_zone.is_empty());
         let kinds: Vec<&str> = detail.history.iter().map(|h| h.kind.as_str()).collect();
         assert_eq!(kinds, ["raised", "set_aside", "brought_back", "set_aside", "brought_back"]);
         assert!(detail.remedy.starts_with("If Call with the agent started on Saturday at 1:00 PM, when Second coat ends"), "{}", detail.remedy);
@@ -559,5 +637,38 @@ mod tests {
         // its page says so.
         assert!(notes_at(&pool, at("2030-01-13T00:00:00Z")).await.unwrap().iter().all(|n| n.kind != "clash"));
         assert!(note_at(&pool, &clash.key, at("2030-01-13T00:00:00Z")).await.is_err());
+    }
+
+    /// A note set aside or muted before the loop has seen it is recorded as
+    /// raised then, ahead of the set-aside line; a key for no note gets no
+    /// line; and the page is told the home zone, or UTC when the stored one
+    /// names no zone.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn raised_is_recorded_by_writes_and_the_zone_is_real(pool: PgPool) {
+        sqlx::query("INSERT INTO app_threads (id, name) VALUES ('nb_a', 'Garden plan'), ('nb_b', 'Book club')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let now = at("2030-01-09T12:00:00Z");
+        event(&pool, "ev_a", "Plant bulbs", "2030-01-11T15:00:00Z", "2030-01-11T17:00:00Z", "nb_a").await;
+        event(&pool, "ev_b", "Read chapter two", "2030-01-11T16:00:00Z", "2030-01-11T16:30:00Z", "nb_b").await;
+        let key = notes_at(&pool, now).await.unwrap()[0].key.clone();
+
+        dismiss_at(&pool, &key, now).await.unwrap();
+        let detail = note_at(&pool, &key, now).await.unwrap();
+        assert_eq!(detail.raised_at, Some(now));
+        assert_eq!(detail.history.iter().map(|h| h.kind.as_str()).collect::<Vec<_>>(), ["raised", "set_aside"]);
+
+        dismiss_at(&pool, "clash:ev_gone:ev_none", now).await.unwrap();
+        let stray: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_note_events WHERE key = 'clash:ev_gone:ev_none' AND kind = 'raised'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stray, 0);
+
+        sqlx::query("UPDATE app_user_profile SET home_timezone = 'America/Chicago'").execute(&pool).await.unwrap();
+        assert_eq!(note_at(&pool, &key, now).await.unwrap().time_zone, "America/Chicago");
+        sqlx::query("UPDATE app_user_profile SET home_timezone = 'Not a zone'").execute(&pool).await.unwrap();
+        assert_eq!(note_at(&pool, &key, now).await.unwrap().time_zone, "UTC");
     }
 }

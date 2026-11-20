@@ -196,26 +196,15 @@ pub(crate) async fn release_session_claim(state: &AppState, session_id: &str) {
 /// Resolve an api_key hash → owning `stripe_customer_id`, per-box keys first.
 ///
 /// THE one lookup behind every key-authenticated atlas endpoint (credits,
-/// billing portal, settings) — it used to live as four hand-copied
-/// `WHERE api_key_hash = $1` queries, which is exactly how a schema change
-/// misses a door. `box_key` (authoritative, one row per live box) wins over
-/// the legacy `customers.api_key_hash` mirror; the `pri` ordering makes that
-/// preference explicit rather than an accident of UNION order.
+/// billing portal, settings), so a schema change cannot miss a door.
+/// `box_key` holds one row per live box key.
 pub(crate) async fn customer_id_by_key_hash(
     pool: &sqlx::PgPool,
     key_hash: &[u8],
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
-        r#"
-        SELECT stripe_customer_id FROM (
-            SELECT stripe_customer_id, 0 AS pri FROM box_key   WHERE api_key_hash = $1
-            UNION ALL
-            SELECT stripe_customer_id, 1 AS pri FROM customers WHERE api_key_hash = $1
-        ) t
-        WHERE stripe_customer_id IS NOT NULL
-        ORDER BY pri
-        LIMIT 1
-        "#,
+        "SELECT stripe_customer_id FROM box_key \
+         WHERE api_key_hash = $1 AND stripe_customer_id IS NOT NULL",
     )
     .bind(key_hash)
     .fetch_optional(pool)
@@ -253,42 +242,17 @@ pub(crate) async fn key_owner(
 /// Resolve an api_key hash → owning `account_id` — identity without billing
 /// (agents/record/open-relay.md). The sibling of [`customer_id_by_key_hash`] for
 /// doors that need to know WHO, not whether they pay: relay config, endpoint
-/// registration. `box_key.account_id` is authoritative; the legacy
-/// `customers.api_key_hash` mirror covers keys minted before 0017.
+/// registration.
 pub(crate) async fn account_id_by_key_hash(
     pool: &sqlx::PgPool,
     key_hash: &[u8],
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
-        r#"
-        SELECT account_id FROM (
-            SELECT account_id, 0 AS pri FROM box_key
-             WHERE api_key_hash = $1 AND account_id IS NOT NULL
-            UNION ALL
-            SELECT account_id, 1 AS pri FROM customers WHERE api_key_hash = $1
-        ) t
-        ORDER BY pri
-        LIMIT 1
-        "#,
+        "SELECT account_id FROM box_key WHERE api_key_hash = $1 AND account_id IS NOT NULL",
     )
     .bind(key_hash)
     .fetch_optional(pool)
     .await
-}
-
-/// The email the account behind this key signed in with. `None` when the key
-/// resolves to no account, or the account has no email row.
-pub(crate) async fn account_email_by_key_hash(
-    pool: &sqlx::PgPool,
-    key_hash: &[u8],
-) -> Result<Option<String>, sqlx::Error> {
-    let Some(account_id) = account_id_by_key_hash(pool, key_hash).await? else {
-        return Ok(None);
-    };
-    sqlx::query_scalar("SELECT email FROM accounts WHERE account_id = $1")
-        .bind(&account_id)
-        .fetch_optional(pool)
-        .await
 }
 
 /// The label a new box key is scoped by: the endpoint id the box reported,
@@ -315,18 +279,13 @@ pub(crate) fn key_label(endpoint_id: Option<&str>) -> String {
 /// the same rule to a `box_id`, so the two systems never disagree about
 /// which keys are alive.
 ///
-/// Also mirrors the hash into `customers.api_key_hash` (most-recent-key
-/// semantics, when the account has a Stripe customer) so a rolled-back atlas
-/// binary keeps authenticating.
-///
 /// Rotation scope is the ACCOUNT (0017): a free account's box has no
 /// `stripe_customer_id`, and two customers sharing an email collapsed into
 /// one account at backfill — so scoping deletes by customer would miss keys.
 ///
-/// The mirror customer is DERIVED here from `accounts`, never passed in: a
-/// session frozen before payment carries no customer, so threading the
-/// session's value through would silently skip the mirror for everyone who
-/// signed in free and paid later — the exact cohort 0017 creates.
+/// The key's customer is derived here from `accounts`, never passed in: a
+/// session frozen before payment carries no customer, so a passed-in value
+/// would leave keys unlabeled for everyone who signed in free and paid later.
 pub(crate) async fn mint_box_key(
     pool: &sqlx::PgPool,
     account_id: &str,
@@ -366,13 +325,6 @@ pub(crate) async fn mint_box_key(
     .bind(label)
     .execute(&mut *tx)
     .await?;
-    if let Some(cid) = stripe_customer_id {
-        sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-            .bind(cid)
-            .bind(api_key_hash)
-            .execute(&mut *tx)
-            .await?;
-    }
     tx.commit().await
 }
 

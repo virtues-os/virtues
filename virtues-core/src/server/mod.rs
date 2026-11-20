@@ -232,6 +232,11 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // covers and drop the ones it no longer does. See `crate::maps::sync`.
     crate::maps::sync::spawn(pool.clone());
 
+    // Billed connections: daily, check the subscription, and 30 days after
+    // it lapses let go of connections the provider bills for (linked banks).
+    // See `crate::credentials::lapse`.
+    crate::credentials::lapse::spawn(pool.clone());
+
     // The day's picture: daily, paint one day of the last week when the
     // week's pages hold no picture yet. See `crate::api::day_picture`.
     crate::api::day_picture::spawn(
@@ -251,6 +256,10 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // Messages the assistant sends as the owner: each waits out its undo
     // window or its scheduled time, then goes through the Mac app.
     crate::outbox::spawn(pool.clone());
+
+    // Notes: every few minutes, record when each note your server would
+    // raise was first seen, so reading one writes nothing.
+    crate::api::notes::spawn(pool.clone());
 
 }
 

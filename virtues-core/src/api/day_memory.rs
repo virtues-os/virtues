@@ -142,7 +142,7 @@ pub async fn for_writer(
     skip: &[NaiveDate],
 ) -> Result<String> {
     /// The people whose history is pulled. A day's record names everyone in
-    /// every group thread it touched; past the first few, their earlier days
+    /// every group conversation it touched; past the first few, their earlier days
     /// are other people's news.
     const PEOPLE: i64 = 6;
     /// Earlier days per person: enough to carry a story across a gap, few

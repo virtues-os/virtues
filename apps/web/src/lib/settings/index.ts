@@ -132,7 +132,7 @@ export const SETTINGS: readonly Setting[] = [
 	// Your server
 	{ id: 'server-health', title: 'Your server', section: 'server', kind: 'page', words: ['status', 'system', 'storage', 'disk', 'memory', 'cpu', 'health', 'temperature'], route: '/virtues/system' },
 	{ id: 'search-runs-on', title: 'Where search runs', section: 'server', kind: 'page', words: ['search', 'accelerator', 'npu', 'cpu', 'index'], route: '/virtues/search' },
-	{ id: 'applets', title: 'Applets', section: 'server', kind: 'page', words: ['scheduled', 'background', 'jobs', 'runs', 'failed'], route: '/virtues/applets' },
+	{ id: 'jobs', title: 'Jobs', section: 'server', kind: 'page', words: ['scheduled', 'background', 'applets', 'syncs', 'runs', 'failed'], route: '/virtues/jobs' },
 
 	// Updates
 	{ id: 'updates', title: 'Check for updates', section: 'updates', kind: 'action', words: ['update', 'version', 'upgrade', 'release', 'install'], route: '/virtues/updates' },

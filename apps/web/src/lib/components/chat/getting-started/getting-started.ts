@@ -5,7 +5,7 @@
  * (see chat_handler) and refuses to delete or retitle it. THE ROOM'S OWN
  * LINES ARE REAL TURNS: the server appends each one once, in order, marked
  * by `subject` (see getting_started.rs `narrate`), so the client places
- * nothing and the thread cannot repeat itself. Until 2026-09-14 the client
+ * nothing and the chat cannot repeat itself. Until 2026-09-14 the client
  * re-rendered those lines from state on every change, which asked a
  * question again underneath the answer to it.
  *
@@ -49,7 +49,7 @@ function opening(id: string, text: string) {
 }
 
 /**
- * Put the interview's opening in the thread at the instant the interview
+ * Put the interview's opening in the chat at the instant the interview
  * began: after the setup turns, before the interview's own. Stored turns
  * carry `createdAt`; a turn still streaming has none and is after the
  * boundary by construction. Safe to run repeatedly, and it does nothing

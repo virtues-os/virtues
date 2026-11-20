@@ -28,7 +28,7 @@
 	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
-	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
+	  Jobs         /virtues/jobs           — what runs on its own, and how its last runs went
 	  Terminal     /virtues/developer/terminal — a shell on your server, from Your server or ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
@@ -187,7 +187,7 @@
 		| 'system'
 		| 'search'
 		| 'devices'
-		| 'applets'
+		| 'jobs'
 		| 'developer';
 
 	const SECTIONS = [
@@ -201,7 +201,7 @@
 		'system',
 		'search',
 		'devices',
-		'applets',
+		'jobs',
 		'developer',
 	];
 
@@ -210,7 +210,8 @@
 	// The query (`?role=` on the model list) is not part of the path.
 	const routePath = $derived(tab.route.split('?')[0]);
 	const routeQuery = $derived(tab.route.split('?')[1] ?? '');
-	const raw = $derived(routePath.replace(/^\/virtues\/?/, ''));
+	// The Jobs page was at /virtues/applets, and a saved tab may still say so.
+	const raw = $derived(routePath.replace(/^\/virtues\/?/, '').replace(/^applets(?=\/|$)/, 'jobs'));
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
@@ -270,7 +271,7 @@
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
 			<SearchPage />
-		{:else if section === 'applets'}
+		{:else if section === 'jobs'}
 			<AppletsPage />
 		{:else if section === 'devices'}
 			{#if !sub}

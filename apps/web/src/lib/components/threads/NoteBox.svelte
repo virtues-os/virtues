@@ -4,14 +4,15 @@
 
 	/** Open a note's own page, where it says why your server raised it. */
 	export function openInsight(n: Note) {
-		windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: n.text, focusExisting: true });
+		windowShellStore.openTabFromRoute(`/insight/${encodeURIComponent(n.key)}`, { label: `Insight about ${n.about}`, focusExisting: true });
 	}
 </script>
 
 <script lang="ts">
 	/**
-	 * A note on a task or a thread, in a preview or on the item's page: the
-	 * sentence, its one action, "Why this?" and "Not now".
+	 * A note on a task's or a thread's page: the sentence, its one action,
+	 * "Why this?" and "Not now". The Threads door's preview shows a note as one line instead
+	 * (PreviewNote).
 	 */
 	import { Button } from '$lib';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -41,13 +42,13 @@
 	.note {
 		padding: 12px 16px;
 		border-radius: var(--radius-md);
-		background: var(--hover-bg);
+		background: var(--fill-bg);
 	}
 	.note-text {
 		display: flex;
 		gap: 12px;
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--text-label);
 		line-height: 20px;
 		color: var(--color-foreground);
 	}

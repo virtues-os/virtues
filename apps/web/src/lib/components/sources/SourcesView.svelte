@@ -54,7 +54,7 @@
 	// catalog" keeps the dispatch synchronous — a source that is no longer
 	// installed still needs a page, precisely so its leftover connections can be
 	// found and removed.
-	const seg = $derived(tab.route.replace(/^\/sources\/?/, '').split('/')[0]);
+	const seg = $derived(tab.route.split('?')[0].replace(/^\/sources\/?/, '').split('/')[0]);
 
 	const section = $derived.by(() => {
 		if (seg === '') return 'overview';
@@ -100,7 +100,7 @@
 		{:else if section === 'source'}
 			<SourceDetail sourceId={seg} />
 		{:else}
-			<SourcesOverview />
+			<SourcesOverview {tab} />
 		{/if}
 	</div>
 	{/if}

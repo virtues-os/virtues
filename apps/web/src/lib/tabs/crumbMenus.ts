@@ -9,6 +9,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import type { Crumb, CrumbMenu } from '$lib/tabs/crumbs';
 import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recents.svelte';
 import { appletsStore } from '$lib/stores/applets.svelte';
+import { homeRoute } from '$lib/applets/routes';
 import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 import { search } from '$lib/stores/search.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -25,7 +26,7 @@ const GLYPH: Record<RecentKind, string> = {
 /** The list kinds: the noun for "All …" and the palette scope. */
 const LISTS = {
 	pages: { kind: 'page', noun: 'pages' },
-	applets: { kind: 'applet', noun: 'applets' },
+	applets: { kind: 'applet', noun: 'sites' },
 } as const;
 
 export function crumbMenuItems(
@@ -67,8 +68,8 @@ export function crumbMenuItems(
 						id: a.id,
 						label: a.name,
 						icon: GLYPH.applet,
-						checked: `/applet/${a.id}` === current,
-						action: () => open(`/applet/${a.id}`),
+						checked: homeRoute(a.id) === current,
+						action: () => open(homeRoute(a.id)),
 					}),
 				)
 			: recentRows({ pinned: true })

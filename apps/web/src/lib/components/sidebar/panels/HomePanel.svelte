@@ -8,13 +8,12 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Pages, Projects, Applets, Wiki. The verb,
+	 *   doors     Create, Inbox, Pages, Applets, Wiki. The verb,
 	 *             then the places. Each place is one row that opens its
 	 *             overview; none of them lists its contents here. Search is
 	 *             not a door: it is the ⌘K palette, reached from anywhere.
-	 *             Pages and Projects carry a `+` on hover: the word is the
-	 *             list, the plus is the new one. Tasks live on the Projects
-	 *             page, above the projects.
+	 *             Pages carries a `+` on hover: the word is the list, the
+	 *             plus is the new one. Tasks and threads are in the Inbox.
 	 *   Pinned    what the user chose to keep, in their own order: a chat, a
 	 *             page, a project, an applet, a task, anything with a url.
 	 *             Everything you want one click away lives here, so the doors
@@ -70,14 +69,13 @@
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
-	import { newPage as makePage } from '$lib/utils/newActions';
+	import { newPage as makePage, createMenuItems } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import {
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
-		newProject,
 		openProjects,
 		projectRowMenuItems,
 		projectMemberUrl,
@@ -467,8 +465,28 @@
 
 	// ── doors ──────────────────────────────────────────────────────────────
 
-	function newChat() {
-		windowShellStore.newChat();
+	/**
+	 * The Create door opens a menu of everything you can make, each with its
+	 * shortcut, under the row (beside it when the sidebar is a rail). Things
+	 * open in the tab you are on, as the shortcuts do.
+	 */
+	let createRow = $state<HTMLElement | null>(null);
+	// Lit while its menu is up, as a pressed button stays down.
+	let createShown = $state(false);
+	const createOpen = $derived(createShown && contextMenu.visible);
+	$effect(() => {
+		if (!contextMenu.visible) createShown = false;
+	});
+	function openCreateMenu() {
+		const row = createRow;
+		if (!row) return;
+		const r = row.getBoundingClientRect();
+		contextMenu.show(
+			{ x: r.left, y: r.bottom },
+			createMenuItems((route, label) => windowShellStore.openTabFromRoute(route, { label })),
+			{ anchor: { x: r.left, y: r.top, width: r.width, height: r.height }, placement: railed ? 'right-start' : 'bottom-start' },
+		);
+		createShown = true;
 	}
 
 	function openPages() {
@@ -481,14 +499,12 @@
 		await makePage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
-	async function addProject(e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		await newProject();
+	function openInbox() {
+		windowShellStore.openTabFromRoute('/inbox', { label: 'Inbox', focusExisting: true });
 	}
 
 	function openApplets() {
-		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
+		windowShellStore.openTabFromRoute('/sites', { label: 'Sites', focusExisting: true });
 	}
 
 	function openWiki() {
@@ -500,15 +516,15 @@
 	}
 
 	/**
-	 * What each door does. Pages and Projects carry a + on hover: the word
-	 * is the list, the plus is a new one. Projects never shows a count: the
+	 * What each door does. Pages carries a + on hover: the word
+	 * is the list, the plus is a new one. The Inbox never shows a count: the
 	 * tasks on its page do not nag from the sidebar. The Wiki and Storage open
 	 * their front pages, whose links reach their sections.
 	 */
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
-		'new-chat': { open: newChat },
+		'new-chat': { open: openCreateMenu },
 		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
-		threads: { open: openProjects, add: { label: 'New thread', run: addProject } },
+		threads: { open: openInbox },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
 		storage: { open: openStorage },
@@ -983,6 +999,8 @@
 		     door carries its tree with it. -->
 		<div class="door-slot" animate:rowFlip>
 		<!-- A div, not a button, so a door's + can be a real button inside it. -->
+		<!-- The role is a link or, for Create, a button; svelte-check cannot read it. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div
 			class="panel-row panel-door drop-slot"
 			class:panel-row-has-actions={!!act.add && !railed}
@@ -990,7 +1008,9 @@
 			class:drop-after={doorLine === doors.length && index === doors.length - 1}
 			class:dragging={draggingDoorId === door.id}
 			class:stale-hover={staleHover}
-			role="link"
+			class:open={door.id === 'new-chat' && createOpen}
+			role={door.id === 'new-chat' ? 'button' : 'link'}
+			aria-haspopup={door.id === 'new-chat' ? 'menu' : undefined}
 			tabindex="0"
 			data-tip={railed ? door.label : undefined}
 			data-tip-side="right"
@@ -1038,6 +1058,11 @@
 				}
 			}}
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
+			{@attach (el) => {
+				if (door.id !== 'new-chat') return;
+				createRow = el;
+				return () => (createRow = null);
+			}}
 		>
 			<AtlasIcon name={door.glyph} size={ROW_GLYPH_PX} bare fillable />
 			<span class="panel-row-text">{door.label}</span>

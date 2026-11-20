@@ -69,12 +69,7 @@ pub fn connection_id(metadata: &Value) -> Option<&str> {
 
 /// This box's Virtues key: the dev override, else the linked key.
 async fn box_key(pool: &PgPool) -> Result<String> {
-    if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
-        if !key.is_empty() {
-            return Ok(key);
-        }
-    }
-    crate::virtues_api::renew::read_api_key(pool)
+    crate::virtues_api::box_key(pool)
         .await?
         .ok_or_else(|| anyhow!("this server is not linked to a Virtues account"))
 }

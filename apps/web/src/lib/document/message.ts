@@ -6,7 +6,7 @@
  * message is a ProseMirror document of the contract's own nodes. What the
  * server gets is markdown, written by the page's export in its message mode
  * (`messageMarkdown` in `markdown.ts`): structure as markdown, words as
- * typed, since the thread shows a message as it was written
+ * typed, since the chat shows a message as it was written
  * (`UserMessage.svelte`). Markdown is read by the page's converter
  * (`converter.ts`), as a paste: each line a line, a raw tag that is no HTML
  * kept as text. There is no second parser or serializer here.
@@ -22,7 +22,7 @@ import { contractExtensions, type ContractPart } from './schema';
 /**
  * What a message holds: paragraphs, lists, a quote, code, line breaks,
  * mentions, and the marks typed in a line. No headings, tables, media,
- * applets or to-dos: the thread shows a message as typed, so `# ` and
+ * applets or to-dos: the chat shows a message as typed, so `# ` and
  * `- [ ] ` stay the text they are.
  */
 export const MESSAGE: ContractPart = {
@@ -128,7 +128,7 @@ const TRAILING_EMPTY_MARKER = /\n\s*(?:[-*+]|\d+[.)])(?:\s+\[[ xX]\])?\s*$/;
 
 /**
  * What is sent for a message's markdown. A mention is written `[@Label](url)`
- * so a draft reads back as one; the thread and the model have always seen
+ * so a draft reads back as one; the chat and the model have always seen
  * `[Label](url)`, so the `@` comes off. A trailing empty list item is
  * dropped: on a phone Return continues the list, so the last keystroke
  * before Send leaves one. A fence left open is closed.

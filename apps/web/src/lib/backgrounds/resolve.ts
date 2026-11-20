@@ -2,8 +2,8 @@
  * The background setting, resolved to a picture.
  *
  * A setting is one path that can stop at any depth: `plain`, a style
- * (`paintings-muted`), a collection in it (`paintings-muted/forest`), or one
- * picture (`paintings-muted/forest/birch-grove`). The empty setting is the
+ * (`watercolors`), a collection in it (`watercolors/forest`), or one
+ * picture (`watercolors/forest/birch-grove`). The empty setting is the
  * default, the bundled lake. A path that stops above a picture rotates daily
  * through every picture under it, shuffled, with no repeat until each has
  * shown. Light and Dark are versions of a picture, never part of the path.
@@ -28,25 +28,88 @@ export interface Variant {
 	files: { avif: Record<string, string>; webp: Record<string, string> };
 }
 
-export interface Picture {
+/** A picture of an image style: one file set per appearance. */
+export interface ImagePicture {
 	id: string;
 	light: Variant;
 	dark: Variant;
 }
 
-export interface Collection {
+/**
+ * A picture of the dots style: how the field moves. The app draws it on a
+ * canvas in the current theme's ink (components/backgrounds/DotsField.svelte),
+ * so one picture serves Light and Dark.
+ */
+export interface DotsPicture {
 	id: string;
 	title: string;
-	pictures: Picture[];
+	dots: DotsParams;
 }
 
-export interface StyleManifest {
+export interface DotsParams {
+	/** How the field moves: drifting on a slow current, swelling in and out, or falling. */
+	motion: 'drift' | 'swell' | 'rain';
+	/** Space between dots on the grid, in CSS pixels. */
+	gap: number;
+	/** Dot radius, in CSS pixels. */
+	radius: number;
+	/** How far a dot wanders from its place, in CSS pixels. */
+	reach: number;
+	/** Seconds for one slow cycle of the motion. */
+	period: number;
+}
+
+export type Picture = ImagePicture | DotsPicture;
+
+export function isDots(p: Picture): p is DotsPicture {
+	return 'dots' in p;
+}
+
+/** A picture's name in the current appearance. */
+export function pictureTitle(p: Picture, appearance: Appearance): string {
+	return isDots(p) ? p.title : p[appearance].title;
+}
+
+export interface Collection<P extends Picture = Picture> {
+	id: string;
+	title: string;
+	pictures: P[];
+}
+
+interface StyleBase {
 	version: 1;
 	style: string;
 	/** The style's name in the pickers. */
 	title: string;
+}
+
+/** A style of pictures, installed on the server (tools/backgrounds/build.py). */
+export interface ImageStyle extends StyleBase {
 	renderer: 'image';
-	collections: Collection[];
+	collections: Collection<ImagePicture>[];
+}
+
+/** A style drawn by the app itself, shipped with it (lib/backgrounds/builtin.ts). */
+export interface DotsStyle extends StyleBase {
+	renderer: 'dots';
+	collections: Collection<DotsPicture>[];
+}
+
+export type StyleManifest = ImageStyle | DotsStyle;
+
+/** A style the server can download (GET /api/backgrounds, `available`). */
+export interface AvailableStyle {
+	style: string;
+	title: string;
+	bytes: number;
+	/** A small picture per appearance, as `data:` URLs. */
+	preview: Partial<Record<Appearance, string>>;
+}
+
+/** A download in progress (GET /api/backgrounds, `installing`). */
+export interface DownloadProgress {
+	received_bytes: number;
+	total_bytes: number;
 }
 
 export interface Address {
@@ -124,23 +187,33 @@ function random(seed: number): () => number {
 	};
 }
 
-/**
- * The picture for a day. Days are grouped into cycles as long as the pool;
- * each cycle walks its own shuffle of the pool, so a picture shows once per
- * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
- * pictures do not walk in step.
- */
-export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
-	const n = items.length;
-	if (n === 0) return undefined;
-	if (n === 1) return items[0];
-	const cycle = Math.floor(day / n);
-	const order = items.map((_, i) => i);
+/** The order a cycle walks the pool in: a shuffle seeded by the setting and the cycle. */
+function cycleOrder(n: number, key: string, cycle: number): number[] {
+	const order = Array.from({ length: n }, (_, i) => i);
 	const next = random(hash(`${key}:${cycle}`));
 	for (let i = n - 1; i > 0; i--) {
 		const j = Math.floor(next() * (i + 1));
 		[order[i], order[j]] = [order[j], order[i]];
 	}
+	return order;
+}
+
+/**
+ * The picture for a day. Days are grouped into cycles as long as the pool;
+ * each cycle walks its own shuffle of the pool, so a picture shows once per
+ * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
+ * pictures do not walk in step. A cycle never opens with the picture the one
+ * before it ended on, so no picture shows two days running.
+ */
+export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
+	const n = items.length;
+	if (n === 0) return undefined;
+	if (n === 1) return items[0];
+	// Two pictures can only alternate without a repeat.
+	if (n === 2) return items[(((day + hash(key)) % 2) + 2) % 2];
+	const cycle = Math.floor(day / n);
+	const order = cycleOrder(n, key, cycle);
+	if (order[0] === cycleOrder(n, key, cycle - 1)[n - 1]) [order[0], order[1]] = [order[1], order[0]];
 	return items[order[((day % n) + n) % n]];
 }
 
@@ -159,20 +232,3 @@ export function widest(v: Variant, url: (rel: string) => string): string {
 	return url(rel);
 }
 
-/** The narrowest WebP, for a thumbnail. */
-export function narrowest(v: Variant, url: (rel: string) => string): string {
-	const [, rel] = Object.entries(v.files.webp).sort((a, b) => Number(a[0]) - Number(b[0]))[0];
-	return url(rel);
-}
-
-/**
- * The picture before or after `current` in `items`, wrapping at either end.
- * From a picture that is not in `items`, the first or the last.
- */
-export function stepFrom(items: Address[], current: string, dir: 1 | -1): Address | undefined {
-	const n = items.length;
-	if (n === 0) return undefined;
-	const i = items.findIndex((a) => formatAddress(a) === current);
-	if (i < 0) return dir === 1 ? items[0] : items[n - 1];
-	return items[(i + dir + n) % n];
-}

@@ -10,31 +10,35 @@
 	 *   Done      folded: accepted requests, finished and dismissed tasks.
 	 *
 	 * A row is a ring, the title, the icons of what else the task is about,
-	 * its home, and its due day. Pointing at a row tells the page (`onHover`),
-	 * a click picks it (`onPick`: the Threads door shows it in its preview)
-	 * or, where nothing picks, opens the task's page; Enter and a double-click
-	 * open the page. Everything else about a task (notes, history, requests'
-	 * results and replies) is on its page and in the preview.
+	 * its home, and its due day. The home's name opens the home. Pointing at
+	 * a row tells the page (`onHover`), a click picks it (`onPick`: the
+	 * Threads door's Tasks view shows it in its preview) or, where nothing
+	 * picks, opens the task's page; Enter and a double-click open the page.
+	 * Notes, history and a request's result are on the task's page.
 	 *
 	 * One list, three places. The Threads door shows every task; a thread's
-	 * page shows the tasks whose home it is (`projectId`); a thing's page the
-	 * tasks under it (`thingId`). A new task opens the New task dialog, with
-	 * that home when the list has one. A row leaves out its home's name on
-	 * that home's own page. No counts and no red: the list never nags.
+	 * page shows the tasks whose home it is and the ones also about it
+	 * (`projectId`); a thing's page the same for a thing (`thingId`). A new
+	 * task opens the New task dialog, with that home when the list has one. A
+	 * row leaves out its home's name on that home's own page. No counts and
+	 * no red: the list never nags.
 	 */
-	import type { Task } from "$lib/api/client";
+	import type { ProjectSummary, Task } from "$lib/api/client";
+	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { newTaskDialog } from "$lib/stores/newTask.svelte";
+	import { newThreadDialog } from "$lib/stores/newThread.svelte";
+	import { dialogStore } from "$lib/stores/dialog.svelte";
 	import { notesStore } from "$lib/stores/notes.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import TaskCheck from "$lib/components/tasks/TaskCheck.svelte";
 	import { TextAction } from "$lib";
 	import { isClosed, toggleTaskDone } from "$lib/tasks/actions";
 	import { dueGroup, dueLabel, isoDay, type DueGroup } from "$lib/tasks/due";
-	import { homeOf, subjectIcon, subjectName } from "$lib/tasks/homes";
+	import { homeOf, subjectIcon, subjectName, subjectUrl } from "$lib/tasks/homes";
 	import { isRequest, requestState } from "$lib/tasks/requests";
 	import { toast } from "svelte-sonner";
 	import { onMount, tick } from "svelte";
@@ -50,6 +54,8 @@
 		shownId = null,
 		pinnedId = null,
 		limit = null,
+		stacked = false,
+		groupBy = "day",
 		keys = true,
 		onPick,
 		onHover,
@@ -72,15 +78,21 @@
 		pinnedId?: string | null;
 		/** Only the first this many open tasks, in one group, with no Done fold. */
 		limit?: number | null;
+		/** Two lines a row, the title alone on the first: for a narrow list beside a reader. */
+		stacked?: boolean;
+		/** To-dos under their due day, or under their home with its glyph. */
+		groupBy?: "day" | "thread";
 		/** J, K, Enter, X and C. Off where the page has its own keys. */
 		keys?: boolean;
 		onPick?: (t: Task) => void;
 		onHover?: (t: Task | null) => void;
 	} = $props();
 
+	/** On a thread's or thing's page: the tasks it is home to, and the ones also about it. */
 	function inScope(t: Task): boolean {
-		if (projectId) return t.thread_id === projectId;
-		if (thingId) return t.thing_id === thingId;
+		const also = (kind: "thread" | "thing", id: string) => (t.also_about ?? []).some((l) => l.kind === kind && l.id === id);
+		if (projectId) return t.thread_id === projectId || also("thread", projectId);
+		if (thingId) return t.thing_id === thingId || also("thing", thingId);
 		return true;
 	}
 
@@ -131,7 +143,9 @@
 					b.created_at.localeCompare(a.created_at),
 			);
 	});
-	const todoGroups = $derived.by(() => {
+	type TodoGroup = { id: string; label: string | null; thread?: ProjectSummary; tasks: Task[] };
+	const todoGroups = $derived.by<TodoGroup[]>(() => {
+		if (groupBy === "thread") return byHome(todos);
 		const scopedList = !!projectId || !!thingId;
 		if (scopedList && todos.length <= GROUP_FROM) return [{ id: "all", label: null as string | null, tasks: todos }];
 		const now = new Date();
@@ -152,24 +166,35 @@
 	const order = $derived(limit ? firstFew.map((t) => t.id) : [
 		...ready.map((t) => t.id),
 		...working.map((t) => t.id),
-		...todos.map((t) => t.id),
+		...todoGroups.flatMap((g) => g.tasks.map((t) => t.id)),
 		...(doneOpen ? closed.map((t) => t.id) : []),
 	]);
 
-	const projectName = $derived.by(() => {
-		const names = new Map<string, string>();
-		for (const p of [...projectStore.projects, ...projectStore.archived]) names.set(p.id, p.name);
-		return names;
+	const threadsById = $derived.by(() => {
+		const byId = new Map<string, ProjectSummary>();
+		for (const p of [...projectStore.projects, ...projectStore.archived]) byId.set(p.id, p);
+		return byId;
 	});
 
-	/** The task's home for its row, left out on that home's own page. */
-	function rowHome(t: Task): { icon: string; name: string } | null {
+	/**
+	 * The task's home for its row, left out on that home's own page. A thread
+	 * wears its own glyph and color, as it does in the week and the sidebar.
+	 */
+	function rowHome(t: Task): { url: string; icon: string; name: string; thread: ProjectSummary | null } | null {
 		if (projectId && t.thread_id === projectId) return null;
 		if (thingId && t.thing_id === thingId) return null;
+		// Grouped by home, the heading already names it.
+		if (groupBy === "thread") return null;
 		const home = homeOf(t);
 		if (!home) return null;
-		const name = home.kind === "thread" ? (projectName.get(home.id) ?? subjectName(home)) : subjectName(home);
-		return { icon: subjectIcon(home.kind), name };
+		const thread = home.kind === "thread" ? (threadsById.get(home.id) ?? null) : null;
+		return { url: subjectUrl(home), icon: subjectIcon(home.kind), name: thread?.name ?? subjectName(home), thread };
+	}
+
+	/** The home's name opens the home, beside the list. */
+	function openHome(url: string, name: string, e: MouseEvent) {
+		e.stopPropagation();
+		windowShellStore.openTabFromRoute(url, { label: name, focusExisting: true });
 	}
 
 	function dayText(t: Task): string {
@@ -211,6 +236,38 @@
 	// ── picking and opening ─────────────────────────────────────────────────
 
 	let focused = $state<string | null>(null);
+
+	/**
+	 * To-dos under their home: each home in the order of its soonest task,
+	 * then the tasks with no home. A thread's heading wears its glyph.
+	 */
+	function byHome(list: Task[]): TodoGroup[] {
+		const groups = new Map<string, TodoGroup>();
+		const none: Task[] = [];
+		for (const t of list) {
+			const home = homeOf(t);
+			if (!home) {
+				none.push(t);
+				continue;
+			}
+			const id = `${home.kind}:${home.id}`;
+			let g = groups.get(id);
+			if (!g) {
+				const thread = home.kind === "thread" ? threadsById.get(home.id) : undefined;
+				g = { id, label: thread?.name || subjectName(home), thread, tasks: [] };
+				groups.set(id, g);
+			}
+			g.tasks.push(t);
+		}
+		const out = [...groups.values()];
+		if (none.length) out.push({ id: "none", label: "No home", tasks: none });
+		return out;
+	}
+
+	/** The one row Tab reaches: the focused one, else the chosen one, else the first. */
+	const tabStop = $derived(
+		focused && order.includes(focused) ? focused : pinnedId && order.includes(pinnedId) ? pinnedId : (order[0] ?? null),
+	);
 
 	function openPage(t: Task) {
 		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
@@ -263,7 +320,10 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
-		if (!active || !keys || e.defaultPrevented || typing(e.target) || e.altKey || newTaskDialog.isOpen) return;
+		if (!active || !keys || e.defaultPrevented || typing(e.target) || e.altKey) return;
+		if (newTaskDialog.isOpen || newThreadDialog.isOpen || dialogStore.pending) return;
+		// Enter and x on a focused button or link are that control's.
+		if ((e.key === "Enter" || e.key === "x") && e.target instanceof Element && e.target.closest('button, a, [role="dialog"]')) return;
 		const mod = e.metaKey || e.ctrlKey;
 		const t = focused ? tasksStore.find(focused) : undefined;
 		if (!mod && (e.key === "j" || e.key === "ArrowDown")) {
@@ -272,6 +332,12 @@
 		} else if (!mod && (e.key === "k" || e.key === "ArrowUp")) {
 			e.preventDefault();
 			move(-1);
+		} else if (e.key === "Escape" && focused) {
+			// Let go of the row: the page's own Escape then lets go of its choice.
+			focused = null;
+			if (document.activeElement instanceof HTMLElement && document.activeElement.closest(".task-list")) {
+				document.activeElement.blur();
+			}
 		} else if (!mod && e.key === "c" && !readonly) {
 			e.preventDefault();
 			newTask();
@@ -309,34 +375,49 @@
 		</div>
 	{/if}
 
-	{#if isEmpty && emptyText}
-		<p class="quiet">{emptyText}</p>
+	<!-- Until the tasks arrive, and when the server fails, an empty list
+	     says so instead of "no tasks". -->
+	{#if isEmpty}
+		{#if tasksStore.error}
+			<p class="quiet">
+				Your server couldn't load your tasks. <TextAction inline onclick={() => void tasksStore.load()}>Try again</TextAction>
+			</p>
+		{:else if !tasksStore.loaded}
+			<ul class="rows" aria-hidden="true">
+				{#each [0, 1, 2] as i (i)}<li class="row placeholder"></li>{/each}
+			</ul>
+		{:else if emptyText}
+			<p class="quiet">{emptyText}</p>
+		{/if}
 	{/if}
 
 	{#if limit}
-		<ul class="rows">
+		<ul class="rows" role="listbox" aria-label="Tasks">
 			{#each firstFew as t (t.id)}{@render row(t)}{/each}
 		</ul>
 	{:else}
 	{#if ready.length > 0}
 		<h3 class="group-label">Ready for you</h3>
-		<ul class="rows">
+		<ul class="rows" role="listbox" aria-label="Tasks">
 			{#each ready as t (t.id)}{@render row(t)}{/each}
 		</ul>
 	{/if}
 
 	{#if working.length > 0}
 		<h3 class="group-label">With the assistant</h3>
-		<ul class="rows">
+		<ul class="rows" role="listbox" aria-label="Tasks">
 			{#each working as t (t.id)}{@render row(t)}{/each}
 		</ul>
 	{/if}
 
 	{#each todoGroups as group (group.id)}
 		{#if group.label}
-			<h3 class="group-label">{group.label}</h3>
+			<h3 class="group-label" class:home-label={!!group.thread}>
+				{#if group.thread}<ProjectGlyph project={group.thread} size={14} tinted />{/if}
+				{group.label}
+			</h3>
 		{/if}
-		<ul class="rows">
+		<ul class="rows" role="listbox" aria-label="Tasks">
 			{#each group.tasks as t (t.id)}{@render row(t)}{/each}
 		</ul>
 	{/each}
@@ -349,7 +430,7 @@
 		{#if closed.length === 0 && tasksStore.closedLoaded}
 			<p class="quiet">Accepted requests and finished to-dos show up here.</p>
 		{/if}
-		<ul class="rows">
+		<ul class="rows" role="listbox" aria-label="Tasks">
 			{#each closed as t (t.id)}{@render row(t)}{/each}
 		</ul>
 	{/if}
@@ -362,12 +443,15 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<li
 		class="row"
+		role="option"
+		aria-selected={t.id === pinnedId}
+		class:stacked
 		class:closed={isClosed(t)}
 		class:shown={t.id === shownId}
 		class:pinned={t.id === pinnedId}
 		class:focused={t.id === focused}
 		data-task-id={t.id}
-		tabindex="-1"
+		tabindex={t.id === tabStop ? 0 : -1}
 		onmouseenter={() => onHover?.(t)}
 		onfocus={() => (focused = t.id)}
 		onclick={() => pick(t)}
@@ -384,22 +468,39 @@
 			{:else}
 				<TaskCheck
 					done={t.status === "done"}
-					label={isClosed(t) ? `Reopen ${t.title}` : `Complete ${t.title}`}
+					label={isClosed(t) ? `Mark ${t.title} not done` : `Complete ${t.title}`}
 					onclick={() => void toggleTaskDone(t)}
 				/>
 			{/if}
 		</span>
-		<span class="title">{t.title}</span>
-		{#if notesStore.about(`/task/${t.id}`).length}
-			<span class="noticed" role="img" aria-label="Your server noticed something"></span>
-		{/if}
+		<span class="title-wrap">
+			<span class="title">{t.title}</span>
+			{#if notesStore.about(`/task/${t.id}`).length}
+				<span class="noticed" role="img" aria-label="Your server noticed something"></span>
+			{/if}
+		</span>
 		<span class="spacer"></span>
+		<span class="meta">
 		{#each (t.also_about ?? []).slice(0, 3) as link (link.kind + link.id)}
 			<span class="also" title={subjectName(link)}><Icon icon={subjectIcon(link.kind)} width="14" /></span>
 		{/each}
 		{#if home}
-			<span class="home"><Icon icon={home.icon} width="14" /><span class="home-name">{home.name}</span></span>
+			<button
+				type="button"
+				class="home"
+				data-tip={`Open ${home.name}`}
+				onclick={(e) => openHome(home.url, home.name, e)}
+				ondblclick={(e) => e.stopPropagation()}
+			>
+				{#if home.thread}
+					<ProjectGlyph project={home.thread} size={14} tinted />
+				{:else}
+					<Icon icon={home.icon} width="14" />
+				{/if}
+				<span class="home-name">{home.name}</span>
+			</button>
 		{/if}
+		</span>
 		<span class="due">{dayText(t)}</span>
 	</li>
 {/snippet}
@@ -414,16 +515,21 @@
 	}
 	.quiet {
 		margin: 8px 0 0;
-		font-size: 15px;
+		font-size: var(--text-label);
 		line-height: 24px;
 		color: var(--color-foreground-muted);
 	}
 	.group-label {
 		margin: 16px 0 4px;
-		font-size: 13px;
+		font-size: var(--text-small);
 		line-height: 16px;
 		font-weight: 400;
 		color: var(--color-foreground-muted);
+	}
+	.group-label.home-label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.rows {
 		list-style: none;
@@ -450,9 +556,15 @@
 	.row.pinned {
 		background: var(--active-bg);
 	}
-	.row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	/* Where a row will be while the tasks load. */
+	.row.placeholder {
+		margin: 4px 0;
+		height: 32px;
+		background: var(--fill-bg);
+		cursor: default;
+	}
+	.row.placeholder:hover {
+		background: var(--fill-bg);
 	}
 	.check {
 		display: inline-flex;
@@ -468,13 +580,68 @@
 	.mark.working {
 		color: var(--color-primary);
 	}
+	.title-wrap {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 0;
+	}
 	.title {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 14px;
+		font-size: var(--text-label);
 		color: var(--color-foreground);
+	}
+	/* In one line the meta's parts sit in the row's own flex. */
+	.meta {
+		display: contents;
+	}
+	/* Two lines: the check and title, the date at the end, then what else it
+	   is about and its home under the title. */
+	.row.stacked {
+		display: grid;
+		grid-template-columns: 18px minmax(0, 1fr) auto;
+		grid-template-areas:
+			'check title due'
+			'. meta meta';
+		align-items: center;
+		column-gap: 12px;
+		row-gap: 4px;
+		height: auto;
+		min-height: 52px;
+		padding: 8px 12px;
+	}
+	.row.stacked .check {
+		grid-area: check;
+	}
+	.row.stacked .title-wrap {
+		grid-area: title;
+	}
+	.row.stacked .due {
+		grid-area: due;
+		width: auto;
+	}
+	.row.stacked .spacer {
+		display: none;
+	}
+	.row.stacked .meta {
+		grid-area: meta;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.row.stacked .meta:empty {
+		display: none;
+	}
+	.row.stacked .home {
+		max-width: 100%;
+		height: 20px;
+	}
+	.row.stacked .home-name {
+		font-size: var(--text-small);
 	}
 	.row.closed .title {
 		color: var(--color-foreground-muted);
@@ -500,22 +667,39 @@
 		align-items: center;
 		gap: 8px;
 		flex: none;
-		max-width: 200px;
+		max-width: 180px;
+		height: 24px;
+		margin: 0 -4px;
+		padding: 0 4px;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		font: inherit;
 		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
+	.home:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.home:hover .home-name {
+		color: var(--color-foreground);
+	}
+
 	.home-name {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		font-family: var(--font-serif-ui);
-		font-size: 14px;
+		font-size: var(--text-label);
 		color: var(--color-foreground-muted);
 	}
 	.due {
 		flex: none;
 		width: 80px;
 		text-align: right;
-		font-size: 12px;
+		font-size: var(--text-caption);
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
@@ -530,17 +714,12 @@
 		border: 0;
 		background: none;
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--text-small);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 	}
 	.fold:hover {
 		color: var(--color-foreground);
-	}
-	.fold:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.row {

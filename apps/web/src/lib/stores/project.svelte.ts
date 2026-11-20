@@ -9,6 +9,7 @@
  * Tab/window/URL concerns live in `window-shell.svelte.ts`, not here.
  */
 
+import { toast } from 'svelte-sonner';
 import {
 	listProjects,
 	getProject,
@@ -146,17 +147,46 @@ export class ProjectStore {
 		return this.details.get(id);
 	}
 
-	/** POST /api/threads — create, refresh the list, return the new Project. */
+	/**
+	 * POST /api/threads — create, refresh the list, return the new Project.
+	 * Why it exists, the backlog and automatic adding are not part of the
+	 * create request, so a second request sets them when they are given.
+	 */
 	async create(
 		name: string,
-		opts?: { icon?: string | null; accent_color?: string | null; thing_id?: string | null },
+		opts?: {
+			icon?: string | null;
+			accent_color?: string | null;
+			thing_id?: string | null;
+			instructions?: string | null;
+			is_backlog?: boolean;
+			is_adding_automatic?: boolean;
+		},
 	): Promise<Project> {
-		const project = await createProject({
+		let project = await createProject({
 			name,
 			icon: opts?.icon,
 			accent_color: opts?.accent_color,
 			thing_id: opts?.thing_id,
 		});
+		const rest = {
+			...(opts?.instructions ? { instructions: opts.instructions } : {}),
+			...(opts?.is_backlog ? { is_backlog: true } : {}),
+			...(opts?.is_adding_automatic ? { is_adding_automatic: true } : {}),
+		};
+		// The thread exists once the first call succeeds. If the rest fails it
+		// is still returned, and the toast says what did not save, so a retry
+		// does not make a second thread.
+		if (Object.keys(rest).length > 0) {
+			try {
+				project = await updateProject(project.id, rest);
+			} catch (e) {
+				console.error('[projectStore] the new thread was made but its settings did not save:', e);
+				toast.error(`"${name}" was created, but its other settings didn't save`, {
+					description: 'Open it to set them again',
+				});
+			}
+		}
 		await this.load();
 		return project;
 	}

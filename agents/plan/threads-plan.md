@@ -214,14 +214,17 @@ and a drop that worked stays where it landed.
 Each opens from a row and has the same frame: the path ("Threads / Chapter
 four"), the main column, and a side column of properties.
 
-- **A thread's page.** Its icon and name, where it stands in one sentence
-  ("Drafted by your server" with Edit), any note with "Why this?", its tasks,
-  and the thread as a vertical line: dates on the left, a typed node for each
-  record, solid down to a dotted Today mark, dashed after it, undated tasks
-  last. The side column holds status, started, the thing it sits under, this
-  week in small dots, Adding (Manual or Automatic), and Materials: the chats, pages and files
-  added to it, with Add and a place to drop them. "Finish the thread" and "Drop
-  it" end it.
+- **A thread's page.** Its tile, name and brief, where it stands in one
+  sentence with Edit, any note with "Why this?", the Ask box, and the thread
+  as a vertical line: the day you started it, everything added to it and the
+  tasks you finished, down to a dotted Today mark, then dashed on to what is
+  due or planned, with undated tasks last. Tasks are ticked off on the line,
+  and an open task due today or earlier sits just above Today. "New task" and
+  "Add" head the line, and anything dropped on the page is added. The side
+  column holds the properties as rows (status, Adding, the thing it sits
+  under, who it is with), this week as bars, and what is up next. Status has
+  four values, Active, Backlog, Finished and Dropped, so ending and reopening
+  go through it; an ended thread also says so once, with Reopen.
 - **A task's page.** Its ring and title, why it exists in one sentence, any
   note, "Where it came from" (the source record, with a voicemail's player and
   transcript), the owner's notes, and its history from `app_task_events`, each

@@ -88,29 +88,64 @@ export function appletLine(a: Applet, now = Date.now()): string {
 	return `${when}. Hasn't run yet.`;
 }
 
-export interface AppletGroups {
-	needsYou: Applet[];
-	/** Made by you or by your assistant. */
-	yours: Applet[];
-	/** Shipped with the server. */
-	server: Applet[];
-	/** Came with an account or a device you connected. */
-	connected: Applet[];
-	/** One-time applets that already ran. */
-	finished: Applet[];
+/** Whether you set it up. Those are sites, and the Sites door lists them. */
+const isYours = (a: Applet) => a.origin === 'user' || a.origin === 'ai';
+
+/** Whether it starts on its own: on a schedule, or when new data arrives. */
+const startsItself = (a: Applet) => !!a.schedule || !!a.watch;
+
+/** The jobs one connected account or device brought with it. */
+export interface AccountJobs {
+	kind: 'credential' | 'device';
+	/** The credential's or the device's id. */
+	id: string;
+	jobs: Applet[];
 }
 
-/** The groups Settings · Applets lists, each sorted by name. An applet that needs you is listed there only. */
-export function groupApplets(applets: Applet[], now = Date.now()): AppletGroups {
+export interface JobGroups {
+	/** One entry per connected account or device, in the order first met. */
+	accounts: AccountJobs[];
+	/** The server's own jobs that start themselves. */
+	server: Applet[];
+	/** The server's own that run only when asked: nothing starts them. */
+	whenAsked: Applet[];
+	/** One-time ones that already ran, yours included. */
+	finished: Applet[];
+	/** Sites of yours that need you. They are listed in Sites, not here. */
+	yoursNeedingYou: Applet[];
+}
+
+/** Everything on the Jobs page that is the server's and still runs. */
+export function livingJobs(applets: Applet[]): Applet[] {
+	return applets.filter((a) => !a.archived_at && !isYours(a));
+}
+
+/**
+ * The groups the Jobs page lists, each sorted by name. A job that needs you
+ * stays in its group, so the list keeps its order when something breaks.
+ */
+export function groupJobs(applets: Applet[], now = Date.now()): JobGroups {
 	const byName = (list: Applet[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
-	const living = applets.filter((a) => !a.archived_at);
-	const rest = living.filter((a) => !needsYou(a, now));
+	const jobs = byName(livingJobs(applets));
+	const accounts: AccountJobs[] = [];
+	const own: Applet[] = [];
+	for (const a of jobs) {
+		const id = a.credential_id ?? a.device_id;
+		if (!id) {
+			own.push(a);
+			continue;
+		}
+		const kind = a.credential_id ? 'credential' : 'device';
+		const group = accounts.find((g) => g.kind === kind && g.id === id);
+		if (group) group.jobs.push(a);
+		else accounts.push({ kind, id, jobs: [a] });
+	}
 	return {
-		needsYou: byName(living.filter((a) => needsYou(a, now))),
-		yours: byName(rest.filter((a) => a.origin === 'user' || a.origin === 'ai')),
-		server: byName(rest.filter((a) => a.origin === 'system')),
-		connected: byName(rest.filter((a) => a.origin === 'source')),
+		accounts,
+		server: own.filter(startsItself),
+		whenAsked: own.filter((a) => !startsItself(a)),
 		finished: byName(applets.filter((a) => a.archived_at)),
+		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && needsYou(a, now))),
 	};
 }
 
@@ -130,7 +165,7 @@ function clause(a: Applet, trouble: Trouble, now: number): string {
 	}
 }
 
-/** The sentence Settings · Applets opens with, and the one under it. */
+/** The sentence the Jobs page opens with, and the one under it. */
 export function appletsLead(applets: Applet[], now = Date.now()): { sentence: string; sub: string } {
 	const living = applets.filter((a) => !a.archived_at);
 	const needing = living
@@ -167,5 +202,5 @@ export function appletsLead(applets: Applet[], now = Date.now()): { sentence: st
 		};
 	}
 
-	return { sentence: 'Some of what your server runs needs you.', sub: `Each one under Needs you says what happened.${others}` };
+	return { sentence: 'Some of what your server runs needs you.', sub: `Each one below says what happened.${others}` };
 }

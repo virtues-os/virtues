@@ -10,6 +10,7 @@
 	import { Popover } from '$lib/floating';
 	import { background } from '$lib/stores/background.svelte';
 	import { parseSetting } from '$lib/backgrounds/resolve';
+	import { current, isRotating, keep, step, thumbnail } from '$lib/backgrounds/controls';
 	import {
 		getAvailableThemes,
 		getThemeChoice,
@@ -22,7 +23,27 @@
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 
+	let {
+		composer = null,
+	}: {
+		/** The composer, so on the phone the button stays above it as a draft grows. */
+		composer?: HTMLElement | null;
+	} = $props();
+
 	let open = $state(false);
+
+	// On the phone the composer is docked at the bottom and grows with a
+	// draft, so the button stands just above its top edge.
+	let composerHeight = $state(0);
+	$effect(() => {
+		if (!mobileLayout.isMobile || !composer) return;
+		const el = composer;
+		const measure = () => (composerHeight = el.getBoundingClientRect().height);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
 	let theme = $state<ThemeChoice>(getThemeChoice());
 	const themes = getAvailableThemes();
 
@@ -33,22 +54,23 @@
 	});
 
 	const setting = $derived(parseSetting(background.setting));
+	const now = $derived(current());
 
 	// The style the swiper shows: the setting's, or the first installed one
-	// while the lake or Plain is showing.
+	// while no style is chosen.
 	const style = $derived.by(() => {
-		const styles = background.styles ?? [];
+		const styles = background.allStyles;
 		const name = setting.kind === 'path' ? setting.style : styles[0]?.style;
 		return styles.find((s) => s.style === name) ?? null;
 	});
 
 	const caption = $derived.by(() => {
 		if (setting.kind === 'plain') return { title: 'Plain', note: 'No picture' };
-		if (setting.kind === 'default' || !background.current) return { title: 'The lake', note: 'The default picture' };
-		return { title: background.current.title, note: background.current.collectionTitle };
+		if (setting.kind === 'default' || !now) return { title: 'The lake', note: 'Until you choose a background' };
+		return { title: now.title, note: now.collectionTitle };
 	});
 
-	const canStep = $derived(setting.kind === 'path' && !!background.current);
+	const canStep = $derived(setting.kind === 'path' && !!now);
 
 	function chooseTheme(next: ThemeChoice) {
 		theme = next;
@@ -56,7 +78,7 @@
 	}
 </script>
 
-<div class="corner" class:phone={mobileLayout.isMobile}>
+<div class="corner" class:phone={mobileLayout.isMobile} style:--composer-lift={composerHeight ? `${composerHeight}px` : undefined}>
 	<Popover bind:open placement="top-end" offset={10}>
 		{#snippet trigger({ toggle })}
 			<button
@@ -73,19 +95,19 @@
 		{#snippet children()}
 			<div class="panel" role="dialog" aria-label="Background and appearance">
 				<div class="now">
-					<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => background.step(-1)}>
+					<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => step(-1)}>
 						<Icon icon="mynaui:chevron-left" width="16" />
 					</button>
 					<div class="caption">
 						<span class="title">{caption.title}</span>
 						<span class="note">{caption.note}</span>
 					</div>
-					<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => background.step(1)}>
+					<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => step(1)}>
 						<Icon icon="mynaui:chevron-right" width="16" />
 					</button>
 				</div>
-				{#if background.rotating && background.current}
-					<button type="button" class="keep" onclick={() => background.keep()}>Keep this picture</button>
+				{#if isRotating() && now}
+					<button type="button" class="keep" onclick={() => keep()}>Keep this picture</button>
 				{/if}
 
 				<div class="themes" role="radiogroup" aria-label="Appearance">
@@ -116,7 +138,7 @@
 								aria-checked={picked}
 								onclick={() => background.set(`${style.style}/${c.id}`)}
 							>
-								<img src={background.thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
+								<img src={thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
 								<span>{c.title}</span>
 							</button>
 						{/each}
@@ -146,10 +168,10 @@
 		z-index: 3;
 	}
 
-	/* On the phone the composer is docked at the bottom, so the button
-	   stands above an empty composer. */
+	/* On the phone the button stands above the docked composer, by its
+	   measured height, or by an empty composer's before it is measured. */
 	.corner.phone {
-		bottom: 120px;
+		bottom: calc(var(--composer-lift, 104px) + 16px);
 	}
 
 	.corner-button {

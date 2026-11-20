@@ -54,7 +54,7 @@
 <section>
 	<h2 class="settings-label">The introduction</h2>
 	<p class="sub">
-		Walks you through setup again: your names, your connected accounts and your subscription. Any step you set aside comes
+		Walks you through setup again: your names, your devices, your other AI chats and your subscription. Any step you set aside comes
 		back, and nothing is deleted.
 	</p>
 	{#if error}

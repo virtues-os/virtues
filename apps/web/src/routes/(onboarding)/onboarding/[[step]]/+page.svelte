@@ -57,6 +57,7 @@
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
+	import StepChats from "$lib/components/setup/steps/StepChats.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { openApp } from "$lib/stores/appOpening";
 	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
@@ -529,6 +530,8 @@
 						<StepNames onnext={() => advance("names")} />
 					{:else if step === "connections"}
 						<StepConnections onnext={() => advance("connections")} />
+					{:else if step === "chats"}
+						<StepChats onnext={() => advance("chats")} />
 					{/if}
 				</div>
 			{/key}
