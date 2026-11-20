@@ -6,7 +6,7 @@
 	like. Deliberately quiet: something to find, not something offered.
 
 	IT GAINS A WORD DURING THE INTERVIEW, and only then. Every other step has
-	its own controls standing under the thread — "Not now" among them — but
+	its own controls standing under the chat — "Not now" among them — but
 	`RoomControls` renders nothing once the interview is underway, by design:
 	the interview is one composer and no furniture. That left this glyph as
 	the only exit from the longest thing in the room, unlabeled, at the
@@ -14,7 +14,7 @@
 	So the label appears where the need is, rather than a second control
 	surface appearing under the conversation to say what this already does.
 
-	It is not "write it up". Stopping keeps the place — the thread is the
+	It is not "write it up". Stopping keeps the place — the chat is the
 	transcript, `interview_started_at` is fixed, and the reply count is read
 	from the database — so coming back tomorrow resumes rather than restarts.
 	Closing is the interviewer's own business and stays in the conversation,

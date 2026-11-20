@@ -454,7 +454,7 @@ export function createComposer(o: ComposerOptions): Composer {
 				nodes: { mention: { selectable: true, addNodeView: () => svelteNodeView(MentionNode, 'span') } },
 				marks: {
 					// A link is made by `[label](url)` typed or pasted, never by
-					// typing an address: the thread shows a message as typed.
+					// typing an address: the chat shows a message as typed.
 					link: {
 						addOptions() {
 							return { ...this.parent?.(), autolink: false, linkOnPaste: false };

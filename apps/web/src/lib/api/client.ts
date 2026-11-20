@@ -343,7 +343,7 @@ export interface AppletRun {
 	trigger: AppletTrigger;
 	result_summary: string | null;
 	/** What the user said, for `message` runs. This plus `result_summary` is
-	 *  the exchange — the conversation lives on the run, not in a thread. */
+	 *  the exchange — the conversation lives on the run, not in a chat. */
 	message: string | null;
 	/** What this run spent with the model, in micros-USD — summed from the
 	 *  gateway's authoritative per-call figures. Zero for runs that called no

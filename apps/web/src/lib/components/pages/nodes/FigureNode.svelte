@@ -5,7 +5,7 @@
 	page asks the server for no figure's record.
 
 	- quote: the words, with who said them and when;
-	- thread: a line saying it is messages from one thread;
+	- thread: a line saying it is messages from one conversation;
 	- route: a line saying the day page draws it;
 	- picture: the picture, through `backendUrl`, and its caption.
 	- chart: a report's figure, drawn from the rows your server kept with it
@@ -94,7 +94,7 @@
 			</figcaption>
 		{/if}
 	{:else if kind === "thread"}
-		<figcaption>Messages from one thread, shown on the day page</figcaption>
+		<figcaption>Messages from one conversation, shown on the day page</figcaption>
 	{:else if kind === "route"}
 		<figcaption>The day's route, drawn on the day page</figcaption>
 	{:else if kind === "chart"}

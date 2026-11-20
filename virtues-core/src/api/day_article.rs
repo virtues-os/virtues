@@ -55,7 +55,7 @@ const CONVERSATION_GAP_MIN: i64 = 10;
 /// A silence in the recording longer than this is worth telling the scout, so
 /// the day's shape says where the record goes quiet.
 const GAP_MINUTES: i64 = 30;
-/// A group thread where the owner sent fewer than this is shown as a count, not
+/// A group conversation where the owner sent fewer than this is shown as a count, not
 /// as its chatter.
 const LURK_THRESHOLD: usize = 3;
 /// Message bodies are cut here; the writer needs what a message was about.

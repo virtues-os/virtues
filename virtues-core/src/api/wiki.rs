@@ -306,7 +306,7 @@ pub struct PersonGloss {
     /// none; the card draws initials then.
     pub picture: Option<String>,
     pub first_message_on: Option<NaiveDate>,
-    /// Whether that first message was in a group thread.
+    /// Whether that first message was in a group conversation.
     pub first_message_in_group: Option<bool>,
     pub last_message_before_on: Option<NaiveDate>,
     /// The window `days_in_window` counts over: the days just before `date`.

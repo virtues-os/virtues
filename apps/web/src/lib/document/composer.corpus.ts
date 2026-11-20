@@ -1,6 +1,6 @@
 /**
  * Messages typed into the chat composer, a step at a time, and what the
- * composer sends for each: the wire format the server, the thread
+ * composer sends for each: the wire format the server, the chat
  * (`UserMessage.svelte`) and the model read. `sent` is what the CodeMirror
  * composer sent for the same keys, measured by driving it before it was
  * replaced on 2026-10-20; `composer.test.ts` holds the block-editor

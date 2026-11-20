@@ -55,7 +55,7 @@
 		 *  the moments it matches. */
 		mentionQuery?: string | null;
 		/** One row: (+), the field, then the buttons. Used once a chat has
-		 *  messages, where the composer is docked under the thread. The card
+		 *  messages, where the composer is docked under the chat. The card
 		 *  goes back to two rows as soon as the text wraps. */
 		inline?: boolean;
 	} = $props();
@@ -856,7 +856,7 @@
 
 
 	/* The field around the message as typed. The text itself is prose.css's
-	   (`prose prose--compact`), so it reads as it will in the thread. */
+	   (`prose prose--compact`), so it reads as it will in the chat. */
 	.chat-input :global(.composer-field) {
 		padding: 0.125rem 0.25rem;
 		outline: none;

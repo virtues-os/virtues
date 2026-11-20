@@ -73,9 +73,9 @@ class GettingStartedStore {
 
 	/**
 	 * Set by `startInterview` and consumed by the room once the opening is
-	 * in the thread: the opening is authored, not streamed, so the room
+	 * in the chat: the opening is authored, not streamed, so the room
 	 * reveals it the way a turn arrives — but only on the press of Start,
-	 * never on a reload of a thread that already holds it.
+	 * never on a reload of a chat that already holds it.
 	 */
 	revealOpening = $state(false);
 
