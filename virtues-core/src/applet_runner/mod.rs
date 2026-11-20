@@ -521,6 +521,12 @@ async fn execute_prepared_inner(
             Err(e) => {
                 let msg = e.to_string();
                 tracing::error!(applet_id, error = %msg, "subprocess phase failed");
+                // A Google sign-in made through virtues-api can end where
+                // this box cannot see it. Ask once, on a failure, so the
+                // credential says so and the owner is asked to reconnect.
+                if let Some(creds) = &credentials {
+                    crate::api::google_api::mark_if_ended(&deps.db, creds).await;
+                }
                 return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
@@ -828,6 +834,19 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
         metadata_value
     } else {
         serde_json::json!({})
+    };
+
+    // A Google sign-in made through virtues-api holds no Google token. Its
+    // applets get this box's Virtues key and the address that stands in for
+    // Google's hosts instead (`api::google_api`).
+    let secrets = if source_id == "google" {
+        match crate::api::google_api::applet_secrets(db, &metadata).await {
+            Ok(Some(routed)) => routed,
+            Ok(None) => secrets,
+            Err(e) => return Err(Error::Other(format!("could not route credential {credential_id}: {e}"))),
+        }
+    } else {
+        secrets
     };
 
     Ok(serde_json::json!({

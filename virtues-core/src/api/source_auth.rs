@@ -170,6 +170,29 @@ pub async fn oauth_start_handler(
         Err(e) => return auth_error_response(e),
     };
 
+    // Google: when virtues-api offers its own sign-in, use it. The browser
+    // comes back to the same callback, marked `via=api`, and the credential
+    // then holds no Google token (`api::google_api`). Otherwise the direct
+    // sign-in below runs, as it does for every other source.
+    if source_id == "google" {
+        if let Some(return_url) = req.return_url.as_deref().filter(|u| u.starts_with("http")) {
+            let sep = if return_url.contains('?') { '&' } else { '?' };
+            let redirect_uri = format!("{return_url}{sep}via=api&state={}", urlencoding::encode(&signed_state));
+            let reconnecting = match &req.credential_id {
+                Some(id) => match api_connection_of(state.db.pool(), id).await {
+                    Ok(connection) => connection,
+                    Err(e) => return auth_error_response(e.into()),
+                },
+                None => None,
+            };
+            if let Some(redirect_url) =
+                super::google_api::sign_in_link(state.db.pool(), &redirect_uri, reconnecting.as_deref()).await
+            {
+                return (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response();
+            }
+        }
+    }
+
     // Default return_url: the caller's instance hits its own /oauth/callback.
     // The proxy round-trips it; we don't enforce it server-side because the
     // signed state is what authenticates the callback.
@@ -225,6 +248,11 @@ pub struct OauthCallbackQuery {
     /// Local paths only — anything else falls back to `/sources`.
     #[serde(default)]
     pub next: Option<String>,
+    /// `"api"` when the sign-in was made through virtues-api
+    /// (`api::google_api`): there is no exchange token, and the box asks
+    /// virtues-api what was connected.
+    #[serde(default)]
+    pub via: Option<String>,
 }
 
 /// Accept only a same-origin absolute path: starts with exactly one `/`
@@ -248,61 +276,69 @@ pub async fn oauth_callback_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    // 1b. The provider leg didn't produce a token. Cancelling is a normal thing
-    //     to do, so hand the user back the same way a success does — no
-    //     credential is written and nothing is logged as a fault.
-    let exchange_token = match (&q.exchange_token, &q.error) {
-        (Some(t), _) if !t.is_empty() => t.clone(),
-        (_, reason) => {
-            let code = reason.as_deref().unwrap_or("no_exchange_token");
-            tracing::info!(
-                source_id = %claims.source_id,
-                reason = %code,
-                "oauth callback returned without an exchange token"
-            );
-            if q.sheet.as_deref() == Some("1") {
-                return Redirect::to(CLOSE_SHEET).into_response();
+    if q.via.as_deref() == Some("api") && claims.source_id == "google" {
+        // The sign-in went through virtues-api. Store what it connected; a
+        // sign-in the owner backed out of connected nothing, which is fine.
+        if let Err(e) = store_api_connections(pool, claims.existing_credential_id.as_deref()).await {
+            return auth_error_response(e);
+        }
+    } else {
+        // 1b. The provider leg didn't produce a token. Cancelling is a normal thing
+        //     to do, so hand the user back the same way a success does — no
+        //     credential is written and nothing is logged as a fault.
+        let exchange_token = match (&q.exchange_token, &q.error) {
+            (Some(t), _) if !t.is_empty() => t.clone(),
+            (_, reason) => {
+                let code = reason.as_deref().unwrap_or("no_exchange_token");
+                tracing::info!(
+                    source_id = %claims.source_id,
+                    reason = %code,
+                    "oauth callback returned without an exchange token"
+                );
+                if q.sheet.as_deref() == Some("1") {
+                    return Redirect::to(CLOSE_SHEET).into_response();
+                }
+                return oauth_incomplete_response(
+                    &claims.source_id,
+                    code,
+                    q.shell.as_deref(),
+                    q.next.as_deref(),
+                );
             }
-            return oauth_incomplete_response(
-                &claims.source_id,
-                code,
-                q.shell.as_deref(),
-                q.next.as_deref(),
-            );
+        };
+
+        // 2. POST the exchange token to the proxy; receive normalized
+        //    {secrets, metadata, expires_in, scopes}. The box identifies itself
+        //    with its Virtues key when it has one — an unlinked box is a normal
+        //    caller here (connecting a source needs no account), so absence is
+        //    fine; a vault that cannot be read is logged, not treated as absence.
+        let api_key = match virtues_helpers::auth::read_box_api_key(pool).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read box api_key for proxy exchange");
+                None
+            }
+        };
+        let mut resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
+            Ok(r) => r,
+            Err(e) => return auth_error_response(e),
+        };
+
+        // 3. Ask the provider which account the grant is for, when the grant
+        //    does not say, so the next step can tell accounts apart.
+        name_the_account(&claims.source_id, &mut resp).await;
+
+        // 4. Seal the grant: into the row being reconnected, or a new one.
+        if let Err(e) = store_grant(
+            pool,
+            &claims.source_id,
+            claims.existing_credential_id.as_deref(),
+            &resp,
+        )
+        .await
+        {
+            return auth_error_response(e);
         }
-    };
-
-    // 2. POST the exchange token to the proxy; receive normalized
-    //    {secrets, metadata, expires_in, scopes}. The box identifies itself
-    //    with its Virtues key when it has one — an unlinked box is a normal
-    //    caller here (connecting a source needs no account), so absence is
-    //    fine; a vault that cannot be read is logged, not treated as absence.
-    let api_key = match virtues_helpers::auth::read_box_api_key(pool).await {
-        Ok(k) => k,
-        Err(e) => {
-            tracing::warn!(error = %e, "could not read box api_key for proxy exchange");
-            None
-        }
-    };
-    let mut resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
-        Ok(r) => r,
-        Err(e) => return auth_error_response(e),
-    };
-
-    // 3. Ask the provider which account the grant is for, when the grant
-    //    does not say, so the next step can tell accounts apart.
-    name_the_account(&claims.source_id, &mut resp).await;
-
-    // 4. Seal the grant: into the row being reconnected, or a new one.
-    if let Err(e) = store_grant(
-        pool,
-        &claims.source_id,
-        claims.existing_credential_id.as_deref(),
-        &resp,
-    )
-    .await
-    {
-        return auth_error_response(e);
     }
 
     // 5. Reconcile so per-credential fan-out picks up.
@@ -332,6 +368,87 @@ pub async fn oauth_callback_handler(
         HeaderValue::from_str(&location).unwrap_or(HeaderValue::from_static("/")),
     );
     (StatusCode::FOUND, headers).into_response()
+}
+
+/// The virtues-api connection behind a Google credential, if it has one.
+async fn api_connection_of(pool: &PgPool, credential_id: &str) -> sqlx::Result<Option<String>> {
+    let metadata: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1 AND kind = 'source' AND key = 'google'")
+            .bind(credential_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(metadata.as_ref().and_then(super::google_api::connection_id).map(String::from))
+}
+
+/// Store what a Google sign-in through virtues-api connected, and return how
+/// many credentials it added or repaired.
+///
+/// virtues-api lists this account's connections. One no credential names yet
+/// is new: it becomes a credential that holds no Google token, only the
+/// connection's id in its metadata. A reconnect repairs the row it started
+/// from when the address matches, exactly as a direct sign-in does, and a
+/// fresh sign-in for an address that already has a credential repairs that
+/// one. Either way a credential that held Google's own tokens moves over
+/// with its applets and sync cursors. A connection a credential already names is marked active
+/// again, which is what reconnecting one that had ended asks for.
+async fn store_api_connections(pool: &PgPool, reconnecting: Option<&str>) -> virtues_helpers::auth::Result<usize> {
+    let connections = super::google_api::connections(pool).await.map_err(|e| AuthError::Proxy(e.to_string()))?;
+    store_connections(pool, reconnecting, &connections).await
+}
+
+/// [`store_api_connections`], given what virtues-api listed.
+async fn store_connections(
+    pool: &PgPool,
+    reconnecting: Option<&str>,
+    connections: &[super::google_api::Connection],
+) -> virtues_helpers::auth::Result<usize> {
+    let known: Vec<(String, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, metadata->>'api_connection_id', status, metadata->>'email' FROM credentials \
+          WHERE kind = 'source' AND key = 'google' AND status <> 'revoked'",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut stored = 0;
+    for c in connections.iter().filter(|c| c.status.as_deref() == Some("active")) {
+        let holder = known.iter().find(|(_, conn, _, _)| conn.as_deref() == Some(c.id.as_str()));
+        // A credential for the same address that holds Google's own tokens:
+        // the owner has signed this account in again, so it moves over
+        // rather than gaining a twin that syncs the same mail twice.
+        let same_address = || {
+            let email = c.email.as_deref()?;
+            known
+                .iter()
+                .find(|(_, conn, _, e)| conn.is_none() && e.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(email)))
+                .map(|(id, _, _, _)| id.as_str())
+        };
+        let target = match holder {
+            // Already stored and working: nothing to do.
+            Some((_, _, status, _)) if status == "active" => continue,
+            Some((id, _, _, _)) => Some(id.as_str()),
+            None => reconnecting.or_else(same_address),
+        };
+        // The repair compares addresses exactly. Where the row's address is
+        // this one in other letter case, keep the row's spelling.
+        let email = target
+            .and_then(|id| known.iter().find(|(k, _, _, _)| k == id))
+            .and_then(|(_, _, _, e)| e.as_deref())
+            .filter(|e| c.email.as_deref().is_some_and(|new| new.eq_ignore_ascii_case(e)))
+            .or(c.email.as_deref());
+        let grant = ProxyExchangeResponse {
+            // No Google token is kept here; virtues-api reaches Google.
+            secrets: serde_json::json!({}),
+            metadata: serde_json::json!({
+                "email": email,
+                super::google_api::CONNECTION_KEY: c.id,
+                "granted_scopes": c.scope,
+            }),
+            expires_in: None,
+            scopes: None,
+        };
+        store_grant(pool, "google", target, &grant).await?;
+        stored += 1;
+    }
+    Ok(stored)
 }
 
 /// Store the grant the proxy exchanged and return its credential id. A
@@ -939,6 +1056,78 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+    }
+
+    fn api_connection(id: &str, email: &str, status: &str) -> crate::api::google_api::Connection {
+        crate::api::google_api::Connection {
+            id: id.into(),
+            email: Some(email.into()),
+            status: Some(status.into()),
+            scope: Some("gmail.modify calendar.events".into()),
+        }
+    }
+
+    async fn api_row(pool: &PgPool, id: &str) -> (String, Option<String>, bool) {
+        sqlx::query_as("SELECT status, metadata->>'api_connection_id', expires_at IS NULL FROM credentials WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A sign-in through virtues-api becomes a credential with no Google
+    /// token in it, and storing the same list again adds nothing.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_from_virtues_api_becomes_a_credential_once(pool: PgPool) {
+        ensure_test_key();
+        let listed = [api_connection("c-1", "nick@example.com", "active"), api_connection("c-2", "david@example.com", "needs_reauth")];
+        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 1, "only the active one");
+        assert_eq!(source_rows(&pool, "google").await, 1);
+        let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-1".to_string()), true));
+        let secrets = read_credential_secrets(&pool, &id).await.unwrap();
+        assert!(secrets.get("access_token").is_none(), "no Google token is kept: {secrets}");
+
+        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 0);
+        assert_eq!(source_rows(&pool, "google").await, 1);
+    }
+
+    /// Signing in again to an address that already has a credential holding
+    /// Google's own tokens moves that credential over, id and all, so its
+    /// applets and cursors carry on. Another address gets its own row.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_direct_credential_for_the_same_address_moves_over(pool: PgPool) {
+        ensure_test_key();
+        let direct = store_grant(&pool, "google", None, &email_grant("at-direct", Some("nick@example.com"))).await.unwrap();
+        let listed = [api_connection("c-1", "Nick@Example.com", "active"), api_connection("c-2", "david@example.com", "active")];
+        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 2);
+        assert_eq!(source_rows(&pool, "google").await, 2);
+        assert_eq!(api_row(&pool, &direct).await, ("active".to_string(), Some("c-1".to_string()), true));
+        let secrets = read_credential_secrets(&pool, &direct).await.unwrap();
+        assert!(secrets.get("access_token").is_none(), "the old Google token is gone: {secrets}");
+    }
+
+    /// Reconnecting a connection whose sign-in had ended marks its
+    /// credential active again without adding one.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reconnecting_an_ended_connection_revives_its_credential(pool: PgPool) {
+        ensure_test_key();
+        let listed = [api_connection("c-1", "nick@example.com", "active")];
+        store_connections(&pool, None, &listed).await.unwrap();
+        let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        mark_credential_status(&pool, &id, CredentialStatus::ReauthRequired, Some("the Google sign-in ended"))
+            .await
+            .unwrap();
+
+        assert_eq!(store_connections(&pool, Some(&id), &listed).await.unwrap(), 1);
+        assert_eq!(source_rows(&pool, "google").await, 1);
+        assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-1".to_string()), true));
     }
 
     #[sqlx::test(migrations = "./migrations")]

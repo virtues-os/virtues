@@ -49,8 +49,13 @@ use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output_with_records, read_input};
 
 const ACTION: &str = "google_calendar_sync";
-const CAL_LIST: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
-const EVENTS_BASE: &str = "https://www.googleapis.com/calendar/v3/calendars";
+/// Calendar's API root for this run, up to and including `calendar/v3`:
+/// Google's own host, or virtues-api standing in for it. Set once in `main`.
+static CALENDAR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn calendar_api() -> &'static str {
+    CALENDAR.get().map(String::as_str).unwrap_or("https://www.googleapis.com/calendar/v3")
+}
 const PAGE_SIZE: u32 = 250;
 const MAX_PAGES: u32 = 20;
 /// How far back a full sync reaches. Only applies when there is no usable
@@ -79,7 +84,6 @@ const WATCH_TTL_SECS: i64 = 30 * 86_400;
 const WATCH_RENEW_SECS: i64 = 86_400;
 /// After Google refuses a watch, wait this long before asking again.
 const WATCH_RETRY_SECS: i64 = 86_400;
-const CHANNELS_STOP: &str = "https://www.googleapis.com/calendar/v3/channels/stop";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -90,6 +94,7 @@ async fn main() -> Result<()> {
 
     let access_token = virtues_applets::secret(&input, "access_token")?
         .to_string();
+    let _ = CALENDAR.set(virtues_applets::google_hosts(&input).calendar);
 
     let storage = lake::storage_from_env()?;
     // Must be the shared client, not `reqwest::Client::new()`: reqwest here is
@@ -338,7 +343,7 @@ struct Watch {
 
 async fn start_watch(client: &reqwest::Client, token: &str, cal_id: &str, push: &Push) -> Result<Watch> {
     let id = uuid::Uuid::new_v4().to_string();
-    let url = format!("{EVENTS_BASE}/{}/events/watch", urlencoding::encode(cal_id));
+    let url = format!("{}/calendars/{}/events/watch", calendar_api(), urlencoding::encode(cal_id));
     let resp: Value = client
         .post(&url)
         .bearer_auth(token)
@@ -376,7 +381,7 @@ async fn start_watch(client: &reqwest::Client, token: &str, cal_id: &str, push: 
 /// its own, and its signals name a channel this applet no longer knows.
 async fn stop_watch(client: &reqwest::Client, token: &str, w: &Watch) {
     let res = client
-        .post(CHANNELS_STOP)
+        .post(format!("{}/channels/stop", calendar_api()))
         .bearer_auth(token)
         .json(&serde_json::json!({ "id": w.id, "resourceId": w.resource_id }))
         .send()
@@ -397,7 +402,7 @@ fn int_map(config: &Value, key: &str) -> HashMap<String, i64> {
 
 async fn list_calendars(client: &reqwest::Client, token: &str) -> Result<Vec<Value>> {
     let resp: Value = client
-        .get(CAL_LIST)
+        .get(format!("{}/users/me/calendarList", calendar_api()))
         .bearer_auth(token)
         .send()
         .await
@@ -474,7 +479,8 @@ async fn sync_pages(
     let mut seen_keys: Vec<String> = Vec::new();
     let mut ran_out_of_pages = true;
     let url = format!(
-        "{EVENTS_BASE}/{}/events",
+        "{}/calendars/{}/events",
+        calendar_api(),
         urlencoding::encode(calendar_id)
     );
 

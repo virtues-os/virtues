@@ -14,6 +14,7 @@ pub mod auth;
 pub mod billing_state;
 pub mod box_status;
 pub mod devices;
+pub mod google_api;
 pub mod pair;
 pub mod passwords;
 pub mod settings_byo;
