@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
-	 * Light, Dark or Match system (design.md, "Themes"). Each card is a
-	 * small window in its theme's colors; Match system shows Light on its
-	 * left half and Dark on its right.
+	 * Light, Dark, Match system or Follow the day (design.md, "Themes").
+	 * Each card is a small window in its theme's colors; Match system shows
+	 * Light on its left half and Dark on its right, and Follow the day shows
+	 * Light above Dark, like a horizon.
 	 */
 	import {
 		getAvailableThemes,
@@ -56,10 +57,10 @@
 			onclick={() => select(choice)}
 		>
 			<span class="frame">
-				{#if choice === 'system'}
+				{#if choice === 'system' || choice === 'day'}
 					<span class="split">
 						{@render preview('oxford')}
-						<span class="right">{@render preview('asgard')}</span>
+						<span class={choice === 'day' ? 'lower' : 'right'}>{@render preview('asgard')}</span>
 					</span>
 				{:else}
 					{@render preview(choice)}
@@ -73,9 +74,9 @@
 <style>
 	.choices {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 16px;
-		max-width: 32rem;
+		max-width: 40rem;
 	}
 
 	.choice {
@@ -163,10 +164,15 @@
 		display: block;
 	}
 
-	.right {
+	.right,
+	.lower {
 		position: absolute;
 		inset: 0;
 		clip-path: inset(0 0 0 50%);
+	}
+
+	.lower {
+		clip-path: inset(50% 0 0 0);
 	}
 
 	.name {

@@ -12,6 +12,7 @@
 	import { onMount } from 'svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
+	import BackgroundPicker from '$lib/components/backgrounds/BackgroundPicker.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
 	import StyleNotesSettings from '$lib/components/StyleNotesSettings.svelte';
 	import RulesSettings from '$lib/components/RulesSettings.svelte';
@@ -135,8 +136,11 @@
 				<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/billing', spoken)}>Billing</button>.
 			</p>
 		{:else if id === 'appearance'}
-			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device. It follows you to every device." block>
+			<SettingRow id="theme" label={title('theme')} help="Light, dark, the same as your device, or light from sunrise to sunset. It follows you to every device." block>
 				<ThemePicker value={theme} onchange={chooseTheme} />
+			</SettingRow>
+			<SettingRow id="background" label={title('background')} help="The picture behind home. A style or a collection shows a different picture each day." block>
+				<BackgroundPicker />
 			</SettingRow>
 			<SettingRow id="accent" label={title('accent')} help="The color of links, selections and the main button on each page." block>
 				<AccentPicker value={accent} onchange={(next) => (accent = next)} />

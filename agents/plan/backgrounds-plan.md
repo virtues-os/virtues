@@ -94,19 +94,23 @@ opens a popover with:
 Settings › Appearance keeps the full picker (styles, collections, pictures,
 Plain). The popover is the quick way in from where the picture is.
 
-Proposed details, not confirmed:
+Built in slice 3 as proposed. The owner has not confirmed the first and
+third points:
 
 - Under a rotating setting, the arrows change the picture for the rest of
-  today, and rotation resumes tomorrow. Keep this one is in the same popover.
+  today (`ui_preferences.background_today`), and rotation resumes the next
+  day. Under one picture they change the setting to its neighbor in the
+  collection. "Keep this picture" is in the same popover.
 - Choosing a collection in the swiper sets the setting to that collection,
   rotating.
-- **Follow the day** is a fourth appearance value beside `oxford`, `asgard`
-  and `system` (`virtues-theme` in localStorage, read before first paint in
-  `app.html` and by `lib/utils/theme.ts`). It is Light from sunrise to sunset
-  and Dark otherwise. Sun times come from the server's time zone and its last
-  known location, falling back to 07:00 and 19:00.
-- The button is the same glass as the header's corner buttons (`.lq`), with a
-  Myna icon.
+- **Follow the day** is a fourth theme choice, `day`, beside `oxford`,
+  `asgard` and `system`. It is Light from sunrise to sunset and Dark
+  otherwise. Sun times come from today's forecast on the server
+  (`GET /api/weather/current`, made for its last known location), cached as
+  `virtues-sun` so `app.html` paints the right theme on the first frame, and
+  fall back to 07:00 and 19:00.
+- The button is the same glass as the header's corner buttons (`.lq`), with
+  the Myna image icon. On the phone it stands above the docked composer.
 
 ### Decisions made 2026-11-20
 
@@ -221,9 +225,18 @@ Each slice replaces the old way in the same change.
      that named the lake. Only the lake is dimmed in Dark now; a style's
      picture has its own dark version.
    - The default stays the lake until a picker exists to change it.
-3. **The pickers.** The home control (the glass button and its popover, with
-   Follow the day), and Settings › Appearance: styles, then collections, then
-   pictures, with Plain first.
+3. **The pickers.** Built 2026-11-20:
+   - `components/backgrounds/BackgroundControl.svelte` on home: the arrows,
+     the four theme choices and the collection swiper.
+   - `components/backgrounds/BackgroundPicker.svelte` under Theme in
+     Settings › Appearance: Plain, the lake and each style, then the
+     collections of the chosen style, then its pictures, with "Changes
+     daily" first in each row.
+   - Follow the day in `lib/utils/theme.ts`, `app.html`, the theme cards and
+     the settings agent's list of themes.
+   - Each style's manifest carries its name in the pickers (`title`, from
+     `build.py --title`). The names are working names: "Muted paintings"
+     and "Paintings".
 4. **Delivery.** The box downloads, installs and serves a style. Manual page
    and the privacy boundary entry.
 5. **A second renderer.** One cheap moving style (dots or a single shader) to
@@ -232,11 +245,13 @@ Each slice replaces the old way in the same change.
 
 ## Open decisions
 
-1. The names of the two painting styles in the picker.
+1. The names of the two painting styles in the picker. Working names are
+   "Muted paintings" and "Paintings", and the ids `paintings-muted` and
+   `paintings-original` are what a saved setting stores.
 2. Daily rotation, as proposed above, or a different change point.
 3. Where style archives are hosted.
 4. What the home control's arrows do under a rotating setting, and how
-   Follow the day finds sunrise and sunset (both proposed above).
+   Follow the day finds sunrise and sunset (both built as proposed above).
 
 ## When this plan is done
 

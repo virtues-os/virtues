@@ -4,6 +4,7 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
+	import BackgroundControl from "$lib/components/backgrounds/BackgroundControl.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -2557,6 +2558,7 @@
 								{/snippet}
 							</HomeTiles>
 						</div>
+						<BackgroundControl />
 					{/if}
 
 					{#if isEmpty && isGhost}

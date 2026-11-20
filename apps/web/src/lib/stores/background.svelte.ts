@@ -6,6 +6,11 @@
  * every device shows the same picture, and cached in localStorage with the
  * day's resolved picture so the first frame paints it without waiting on the
  * network. The rules for a setting are in lib/backgrounds/resolve.ts.
+ *
+ * Under a rotating setting the home control's arrows choose another picture
+ * for the rest of the day (`ui_preferences.background_today`), and rotation
+ * resumes the next day. Under one picture they change the setting to its
+ * neighbor in the collection.
  */
 
 import { backendUrl } from '$lib/config/backend';
@@ -15,11 +20,14 @@ import {
 	dayNumber,
 	find,
 	formatAddress,
+	narrowest,
 	parseSetting,
 	pickForDay,
 	pool,
 	srcset,
+	stepFrom,
 	widest,
+	type Address,
 	type Appearance,
 	type Picture,
 	type StyleManifest,
@@ -33,6 +41,18 @@ export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
 	| { kind: 'picture'; key: string; avif: string; webp: string; src: string; title: string };
+
+/** Another picture for one day of a rotating setting. */
+interface DayChoice {
+	setting: string;
+	day: number;
+	address: string;
+}
+
+function isDayChoice(v: unknown): v is DayChoice {
+	const o = v as DayChoice | null;
+	return !!o && typeof o.setting === 'string' && typeof o.day === 'number' && typeof o.address === 'string';
+}
 
 interface CachedPicture {
 	setting: string;
@@ -81,6 +101,7 @@ class BackgroundStore {
 	styles = $state<StyleManifest[] | null>(null);
 	appearance = $state<Appearance>(appearance());
 	day = $state(dayNumber(new Date()));
+	dayChoice = $state<DayChoice | null>(null);
 	#cached = typeof window === 'undefined' ? null : readCachedPicture();
 	#started = false;
 
@@ -93,10 +114,34 @@ class BackgroundStore {
 			const c = this.#cached;
 			return c && c.setting === this.setting && c.day === this.day ? { address: c.address, picture: c.picture } : null;
 		}
-		const address = pickForDay(pool(this.styles, setting), this.setting, this.day);
+		const items = this.pool;
+		const choice = this.dayChoice;
+		const chosen =
+			choice && choice.setting === this.setting && choice.day === this.day
+				? items.find((a) => formatAddress(a) === choice.address)
+				: undefined;
+		const address = chosen ?? pickForDay(items, this.setting, this.day);
 		if (!address) return null;
 		const picture = find(this.styles, address);
 		return picture ? { address: formatAddress(address), picture } : null;
+	});
+
+	/** Every picture the setting covers, once the styles are loaded. */
+	readonly pool = $derived.by((): Address[] => (this.styles ? pool(this.styles, parseSetting(this.setting)) : []));
+
+	/** Whether the setting changes picture each day. */
+	readonly rotating = $derived.by(() => {
+		const s = parseSetting(this.setting);
+		return s.kind === 'path' && !s.picture;
+	});
+
+	/** Today's picture with the names of its style and collection, for the home control. */
+	readonly current = $derived.by(() => {
+		const today = this.today;
+		if (!today || !this.styles) return null;
+		const [style, collection] = today.address.split('/');
+		const c = this.styles.find((s) => s.style === style)?.collections.find((x) => x.id === collection);
+		return { address: today.address, style, collection, collectionTitle: c?.title ?? collection, title: today.picture[this.appearance].title };
 	});
 
 	readonly shown = $derived.by((): Shown => {
@@ -135,14 +180,21 @@ class BackgroundStore {
 
 	async #load(): Promise<void> {
 		try {
-			const profile = await getAssistantProfile<{ ui_preferences?: { background?: unknown } }>();
+			const profile = await getAssistantProfile<{ ui_preferences?: { background?: unknown; background_today?: unknown } }>();
 			const stored = profile.ui_preferences?.background;
+			const choice = profile.ui_preferences?.background_today;
+			this.dayChoice = isDayChoice(choice) ? choice : null;
 			this.#remember(typeof stored === 'string' ? stored : '');
 		} catch (error) {
 			// No server yet (setup) or unreachable: keep the cached setting.
 			console.warn('Background setting not loaded:', error);
 		}
 		if (parseSetting(this.setting).kind === 'path') await this.#loadStyles();
+	}
+
+	/** Load the installed styles if they are not loaded yet, for the pickers. */
+	async ensureStyles(): Promise<void> {
+		if (this.styles === null) await this.#loadStyles();
 	}
 
 	async #loadStyles(): Promise<void> {
@@ -181,6 +233,40 @@ class BackgroundStore {
 			if (this.styles) this.#cacheToday();
 			this.#scheduleMidnight();
 		}, next.getTime() - now.getTime());
+	}
+
+	/**
+	 * The previous or next picture. Under a rotating setting it is today's
+	 * picture until midnight; under one picture it becomes the setting.
+	 */
+	async step(dir: 1 | -1): Promise<void> {
+		await this.ensureStyles();
+		const current = this.today?.address ?? '';
+		if (this.rotating) {
+			const next = stepFrom(this.pool, current, dir);
+			if (!next) return;
+			const choice: DayChoice = { setting: this.setting, day: this.day, address: formatAddress(next) };
+			this.dayChoice = choice;
+			this.#cacheToday();
+			await updateUiPreferences({ background_today: choice });
+			return;
+		}
+		const setting = parseSetting(this.setting);
+		if (setting.kind !== 'path' || !this.styles) return;
+		const siblings = pool(this.styles, { kind: 'path', style: setting.style, collection: setting.collection });
+		const next = stepFrom(siblings, current, dir);
+		if (next) await this.set(formatAddress(next));
+	}
+
+	/** Keep today's picture: the setting becomes that one picture. */
+	async keep(): Promise<void> {
+		const address = this.today?.address;
+		if (address) await this.set(address);
+	}
+
+	/** A small picture for a thumbnail, in the current appearance. */
+	thumbnail(style: string, picture: Picture): string {
+		return narrowest(picture[this.appearance], fileUrl(style));
 	}
 
 	/** Change the setting and save it to the server. */

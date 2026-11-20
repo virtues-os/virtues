@@ -22,7 +22,7 @@ that file. Your corrections in the file win on every later run.
 The images are large and stay out of git. Only this script and the pairs
 files are tracked. See agents/plan/backgrounds-plan.md.
 
-    python3 tools/backgrounds/build.py --style paintings-muted \\
+    python3 tools/backgrounds/build.py --style paintings-muted --title "Muted paintings" \\
         --source ~/Desktop/muted-paintings/in-app \\
         --prompts ~/Desktop/muted-paintings/prompts.txt \\
         --out ~/virtues-backgrounds/paintings-muted
@@ -384,6 +384,7 @@ proposal's word similarity; "set by hand" means the pair came from the file as y
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--style", required=True, help="style id, as it appears in the setting path")
+    ap.add_argument("--title", required=True, help="the style's name in the pickers")
     ap.add_argument("--source", required=True, type=Path)
     ap.add_argument("--prompts", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
@@ -441,7 +442,7 @@ def main() -> None:
             pictures.append(pic)
         collections.append({"id": col, "title": col_titles.get(col) or fallback_title(col), "pictures": pictures})
 
-    manifest = {"version": 1, "style": args.style, "renderer": "image", "collections": collections}
+    manifest = {"version": 1, "style": args.style, "title": args.title, "renderer": "image", "collections": collections}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     write_review(out, args.style, manifest, scores)
     print(f"wrote {out / 'manifest.json'} and {out / 'review.html'}: {len(collections)} collections, "

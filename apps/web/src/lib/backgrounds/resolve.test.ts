@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, parseSetting, pickForDay, pool, srcset, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, narrowest, parseSetting, pickForDay, pool, srcset, stepFrom, type StyleManifest, type Variant } from './resolve';
 
 function variant(name: string): Variant {
 	return {
@@ -21,6 +21,7 @@ const styles: StyleManifest[] = [
 	{
 		version: 1,
 		style: 'paintings',
+		title: 'Paintings',
 		renderer: 'image',
 		collections: [
 			{ id: 'forest', title: 'Forest', pictures: ['oak', 'birch', 'pine'].map((id) => ({ id, light: variant(id), dark: variant(`${id}-night`) })) },
@@ -98,5 +99,27 @@ describe('dayNumber', () => {
 describe('srcset', () => {
 	it('lists widths narrowest first', () => {
 		expect(srcset(variant('oak'), 'avif', (r) => `/f/${r}`)).toBe('/f/c/light/oak-896.avif 896w, /f/c/light/oak-1792.avif 1792w');
+	});
+});
+
+describe('stepFrom', () => {
+	const forest = pool(styles, parseSetting('paintings/forest'));
+
+	it('steps forward and back, wrapping at the ends', () => {
+		expect(stepFrom(forest, 'paintings/forest/oak', 1)?.picture).toBe('birch');
+		expect(stepFrom(forest, 'paintings/forest/pine', 1)?.picture).toBe('oak');
+		expect(stepFrom(forest, 'paintings/forest/oak', -1)?.picture).toBe('pine');
+	});
+
+	it('starts at an end from a picture outside the pool', () => {
+		expect(stepFrom(forest, 'paintings/beach/dune', 1)?.picture).toBe('oak');
+		expect(stepFrom(forest, 'paintings/beach/dune', -1)?.picture).toBe('pine');
+		expect(stepFrom([], 'paintings/forest/oak', 1)).toBeUndefined();
+	});
+});
+
+describe('narrowest', () => {
+	it('picks the smallest WebP', () => {
+		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.webp');
 	});
 });
