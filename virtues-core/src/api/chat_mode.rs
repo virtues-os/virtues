@@ -489,11 +489,16 @@ pub(crate) mod tests {
             // One tool whatever is connected; the services' own tools go to
             // its worker, never into this list.
             ("connections", &["connection"], 900),
+            // Gmail and Google Calendar through the owner's Google sign-in
+            // (`tools/google.rs`). Just above their size when they shipped on
+            // 2026-11-19.
+            ("google", &["email_archive", "email_label", "email_draft", "calendar_event"], 4_400),
             // Drawn inside the reply. The charts and their columns are in the
             // charts skill, which the model loads before drawing; this is the
             // core rules and the purposes. Raised 500 on 2026-11-18 for the
-            // purposes and the pointer to the skill.
-            ("show", &["show"], 2_400),
+            // purposes and the pointer to the skill, and 650 on 2026-11-19 for
+            // the next-step card (`chart: "choices"`).
+            ("show", &["show"], 3_050),
             // The most-used tool, and its table block is generated from the
             // catalog (sql_catalog::prompt_block), so a new table or a longer
             // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
@@ -517,11 +522,12 @@ pub(crate) mod tests {
         // four shipped chat applets; the applets a box adds grow it toward
         // that group's ceiling, which this test cannot see. Rose 750 on
         // 2026-11-18 for show's purposes and the charts skill's line in
-        // `use_applet`, and 700 more the same day for delete_data and the
-        // delete-data skill's line. The rest sit just above their 2026-09-29
-        // size.
+        // `use_applet`, and 700 more the same day for
+        // delete_data and the delete-data skill's line. Rose 4,900 on
+        // 2026-11-19 for the Gmail and Calendar tools and the next-step
+        // card. The rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 24_800),
+            ("chat", 29_700),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -532,17 +538,18 @@ pub(crate) mod tests {
             // tool alone, so it follows that group's ceiling.
             ("admin", 9_150),
             // Each mode with sql_query rose 150 on 2026-11-17 with that
-            // group, and deep research 100 more on 2026-11-16.
-            ("clarity-review", 7_150),
-            ("deep-research", 13_500),
+            // group, and deep research 100 more on 2026-11-16. Each mode with
+            // create_page rose 150 more on 2026-11-18 for its `layout`.
+            ("clarity-review", 7_300),
+            ("deep-research", 13_650),
             // sql_query, search and delete_data. Just above its size when it
             // shipped on 2026-11-18.
             ("delete-data", 9_200),
             ("meeting-prep", 8_550),
             ("morning-brief", 8_850),
             ("new-applet", 3_150),
-            ("trip-planner", 9_150),
-            ("weekly-review", 8_850),
+            ("trip-planner", 9_300),
+            ("weekly-review", 9_000),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
