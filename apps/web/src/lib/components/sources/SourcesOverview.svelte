@@ -25,6 +25,9 @@
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
+	import type { Tab } from '$lib/tabs/types';
+
+	let { tab }: { tab: Tab } = $props();
 
 	const store = sourcesStore;
 
@@ -138,20 +141,18 @@
 		return stamps.reduce((a, b) => (a > b ? a : b));
 	});
 
-	// The OAuth callback returns as `?connected=<id>` or `?source=<id>&error=…`.
-	// Nothing read either, so a round trip through a provider ended in silence
-	// whichever way it went. Read once at mount and strip, so a refresh cannot
-	// replay a stale verdict.
+	// The OAuth callback returns as `?connected=<id>` or `?source=<id>&error=…`,
+	// which the tab registry keeps on this tab's route. Read once at mount, then
+	// point the tab at bare `/sources` so a refresh cannot replay a stale notice.
 	const connectReturn = (() => {
-		if (typeof window === 'undefined') return null;
-		const p = new URLSearchParams(window.location.search);
+		const q = tab.route.indexOf('?');
+		if (q < 0) return null;
+		const p = new URLSearchParams(tab.route.slice(q));
 		const ok = p.get('connected');
 		const error = p.get('error');
 		const source = p.get('source');
 		if (!ok && !error) return null;
-		for (const k of ['connected', 'error', 'source']) p.delete(k);
-		const qs = p.toString();
-		window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+		windowShellStore.updateTab(tab.id, { route: '/sources' });
 		return { ok, error, source };
 	})();
 

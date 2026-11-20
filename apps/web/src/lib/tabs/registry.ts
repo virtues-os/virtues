@@ -662,13 +662,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	source: {
 		match: (path) =>
 			path === '/sources' || path === '/source' || /^\/sources\/[^/]+$/.test(path),
-		parse: (path) => {
+		parse: (path, params) => {
 			if (path === '/sources' || path === '/source') {
+				// The OAuth callback lands here as `?connected=<id>` or
+				// `?source=<id>&error=<reason>`. Keep those on the tab route so
+				// the Overview can say how the connect went; it strips them once
+				// read, so a refresh does not repeat the notice.
+				const kept = new URLSearchParams();
+				for (const k of ['connected', 'source', 'error']) {
+					const v = params?.get(k);
+					if (v) kept.set(k, v);
+				}
+				const query = kept.size > 0 ? `?${kept}` : '';
 				return {
 					type: 'source',
 					label: 'Sources',
 					icon: 'mynaui:database',
-					normalizedRoute: '/sources',
+					normalizedRoute: `/sources${query}`,
 				};
 			}
 			const m = path.match(/^\/sources\/([^/]+)$/);
