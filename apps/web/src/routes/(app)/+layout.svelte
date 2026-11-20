@@ -723,9 +723,19 @@
 		-webkit-mask-image: var(--window-scene-mask);
 		mask-image: var(--window-scene-mask);
 		/* When the window opens the painting settles into place out of a
-		   slight zoom and haze, once. */
+		   slight zoom and haze, once. The fill is backwards only, so once it
+		   settles the opacity below can transition. */
 		transform-origin: 70% 100%;
-		animation: scene-settle 1100ms var(--ease-premium) both;
+		animation: scene-settle 1100ms var(--ease-premium) backwards;
+		/* Behind a page or a chat the painting fades to the strength set in
+		   Settings · Appearance (stores/pageBackground), and comes back in
+		   full when a pane shows home. */
+		opacity: var(--page-scene-opacity, 0.5);
+		transition: opacity 700ms var(--ease-premium);
+	}
+
+	.app-shell:has(:global(.tab-slot[data-active] .page-container.home)) .window-scene {
+		opacity: 1;
 	}
 
 	@keyframes scene-settle {
@@ -738,6 +748,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.window-scene {
 			animation: none;
+			transition: none;
 		}
 	}
 

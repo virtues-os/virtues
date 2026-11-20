@@ -1,11 +1,12 @@
 <script lang="ts">
 	/**
 	 * Appearance after the theme and accent, under "On this device": Glass
-	 * (stores/glass), reading font and text size, which are the page display
-	 * settings a page's Aa menu also sets (stores/pageDisplay), and Reduce
-	 * motion (stores/motion). All four are kept in this browser, so a phone
-	 * and a Mac can differ; the theme and accent above are saved to your
-	 * profile and follow you.
+	 * (stores/glass), the background behind pages (stores/pageBackground),
+	 * reading font and text size, which are the page display settings a
+	 * page's Aa menu also sets (stores/pageDisplay), and Reduce motion
+	 * (stores/motion). All five are kept in this browser, so a phone and a
+	 * Mac can differ; the theme and accent above are saved to your profile
+	 * and follow you.
 	 */
 	import SettingRow from './SettingRow.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
@@ -13,6 +14,8 @@
 	import { pageDisplay, type FontMode, type TextSize } from '$lib/stores/pageDisplay.svelte';
 	import { motion } from '$lib/stores/motion.svelte';
 	import { glass, type GlassLevel } from '$lib/stores/glass.svelte';
+	import { pageBackground } from '$lib/stores/pageBackground.svelte';
+	import Slider from './Slider.svelte';
 	import { titleOf, findSetting } from '$lib/settings';
 
 	let { assistantName }: { assistantName: string } = $props();
@@ -52,6 +55,10 @@
 
 	<SettingRow id="glass" label={title('glass')} help="How much of the background picture shows through the sidebar and tabs. None makes them solid.">
 		<Segmented id="glass-choice" label={title('glass')} value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
+	</SettingRow>
+
+	<SettingRow id="page-background" label={title('page-background')} help="How strongly the background picture shows behind a page or a chat. Home always shows it in full.">
+		<Slider value={pageBackground.percent} label={title('page-background')} onchange={(v) => pageBackground.set(v)} />
 	</SettingRow>
 
 	<SettingRow id="reading-font" label={title('reading-font')} help="The typeface your pages are set in.">

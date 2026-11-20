@@ -54,6 +54,9 @@
 					// Settings · Appearance · Glass (stores/glass.svelte.ts).
 					var g = localStorage.getItem("virtues-glass");
 					if (g) document.documentElement.setAttribute("data-glass", g);
+					// Settings · Appearance · Background on pages (stores/pageBackground.svelte.ts).
+					var pb = localStorage.getItem("virtues-page-background");
+					if (pb !== null && pb !== "" && !isNaN(pb)) document.documentElement.style.setProperty("--page-scene-opacity", String(Number(pb) / 100));
 					// Under Match system or Follow the day the cached page colour
 					// may be the other theme's, if the device or the hour
 					// switched since, so paint the one this frame resolves to.
