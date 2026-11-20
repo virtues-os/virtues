@@ -15,13 +15,19 @@ An applet today is "a process the box runs, described by one file"
 a prompt, tables, a view, or any subset of them. It is a good runtime, but
 people can't picture it.
 
-Counted in `applets/` on 2026-11-20:
+Counted in `applets/` on 2026-11-20 (39 shipped applets; each Rust job has a
+`SKILL.md` folder and a source folder, so the directory count is higher).
+Applets a person made in chat live in the state root and are not counted.
 
 | Kind | How many | Examples | What a person thinks it is |
 |---|---|---|---|
-| `SKILL.md` prompt, scheduled or a `/` command | 36 | morning-brief, meeting-prep, deep-research | "something it does for me" |
-| Rust job (`main.rs`) | about 25 | google-gmail-sync, embedding-index, backup-volumes | nothing; they never asked for it |
-| Has a `view.html` | 1 | dot-cloud | "a thing it made for me" |
+| Rust job (`run: <binary>`) | 26 | google-gmail-sync, embedding-index, backup-volumes | nothing; they never asked for it |
+| Prompt with no trigger, started from chat | 11 | morning-brief, meeting-prep, deep-research | "something the assistant knows how to do" |
+| Prompt on a schedule | 1 | morning-examen | "something it does for me" |
+| View with no prompt | 1 | dot-cloud | "a thing it made for me" |
+
+The 11 chat prompts are skills: the assistant loads them, or you pick one from
+the `/` menu. They already have a home there and need no door or Settings row.
 
 The view is the case people can point at and the one ChatGPT Sites and Claude
 artifacts have made familiar: you ask in chat, a page appears, you keep it.
