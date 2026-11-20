@@ -35,6 +35,17 @@ const HISTORY_PAGE_SIZE: u32 = 500;
 /// current page and saves that page's position, so the next run resumes there.
 const MAX_FETCHES: usize = 500;
 const SKIPPED_LABELS: [&str; 3] = ["DRAFT", "SPAM", "TRASH"];
+/// Full-message fetches in flight at once. One at a time, a first sync of a
+/// busy mailbox could not finish inside the applet's time limit when each
+/// fetch takes about a second, as it does for a sign-in made through
+/// virtues-api, and it then started over on every run. Four stays under the
+/// 50 requests per 10 seconds such a sign-in is allowed, and under Gmail's
+/// own per-user quota when the box calls Google directly.
+const FETCHES_AT_ONCE: usize = 4;
+/// How many times one fetch waits out a "too many requests" answer.
+const RATE_LIMIT_TRIES: u32 = 4;
+/// The longest single wait, whatever `Retry-After` says.
+const MAX_RATE_LIMIT_WAIT_SECS: u64 = 15;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -136,14 +147,13 @@ impl Sync<'_> {
             }
             let changes = Changes::from_records(&records);
 
-            let mut messages = Vec::with_capacity(changes.added.len());
-            for id in &changes.added {
-                // Deleted between the change and this run: nothing to fetch.
-                let Some(m) = self.fetch_message(id).await? else { continue };
-                if let Some(ts) = internal_secs(&m) {
+            // A message deleted between the change and this run is not in
+            // what comes back.
+            let messages = self.fetch_messages(&changes.added).await?;
+            for m in &messages {
+                if let Some(ts) = internal_secs(m) {
                     latest_ts = latest_ts.max(ts);
                 }
-                messages.push(m);
             }
             fetched += messages.len();
             if !messages.is_empty() {
@@ -238,16 +248,12 @@ impl Sync<'_> {
                 break;
             }
 
-            let mut messages = Vec::with_capacity(ids.len());
-            for id in ids {
-                let Some(m) = self.fetch_message(&id).await? else { continue };
-                if has_skipped_label(m.get("labelIds")) {
-                    continue;
-                }
-                if let Some(ts) = internal_secs(&m) {
+            let mut messages = self.fetch_messages(&ids).await?;
+            messages.retain(|m| !has_skipped_label(m.get("labelIds")));
+            for m in &messages {
+                if let Some(ts) = internal_secs(m) {
                     latest_ts = latest_ts.max(ts);
                 }
-                messages.push(m);
             }
 
             // Raw Gmail message objects, exactly as the API returned them —
@@ -288,18 +294,53 @@ impl Sync<'_> {
             .context("gmail profile non-JSON")
     }
 
-    /// One message in full. `None` when Gmail no longer has it.
-    async fn fetch_message(&self, id: &str) -> Result<Option<Value>> {
-        let resp = self
-            .client
-            .get(format!("{}/messages/{id}", self.gmail))
-            .bearer_auth(self.token)
+    /// These messages in full, in the order asked for. One Gmail no longer
+    /// has is left out.
+    async fn fetch_messages(&self, ids: &[String]) -> Result<Vec<Value>> {
+        fetch_messages(self.client, self.token, self.gmail, ids).await
+    }
+}
+
+/// Fetch messages [`FETCHES_AT_ONCE`] at a time and return them in the order
+/// asked for.
+async fn fetch_messages(client: &reqwest::Client, token: &str, gmail: &str, ids: &[String]) -> Result<Vec<Value>> {
+    let mut out = Vec::with_capacity(ids.len());
+    for wave in ids.chunks(FETCHES_AT_ONCE) {
+        let mut set = tokio::task::JoinSet::new();
+        for (i, id) in wave.iter().enumerate() {
+            set.spawn(fetch_message(client.clone(), token.to_string(), format!("{gmail}/messages/{id}"), i));
+        }
+        let mut got: Vec<(usize, Value)> = Vec::with_capacity(wave.len());
+        while let Some(joined) = set.join_next().await {
+            if let (i, Some(m)) = joined.context("a gmail fetch stopped")?? {
+                got.push((i, m));
+            }
+        }
+        got.sort_by_key(|(i, _)| *i);
+        out.extend(got.into_iter().map(|(_, m)| m));
+    }
+    Ok(out)
+}
+
+/// One message in full, with the place it was asked for. `None` when Gmail no
+/// longer has it. A "too many requests" answer is waited out and tried again.
+async fn fetch_message(client: reqwest::Client, token: String, url: String, at: usize) -> Result<(usize, Option<Value>)> {
+    let mut tries = 0;
+    loop {
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
             .query(&[("format", "full")])
             .send()
             .await
             .context("gmail get failed")?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+            return Ok((at, None));
+        }
+        tries += 1;
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && tries < RATE_LIMIT_TRIES {
+            tokio::time::sleep(rate_limit_wait(resp.headers().get(reqwest::header::RETRY_AFTER))).await;
+            continue;
         }
         let m = resp
             .error_for_status()
@@ -307,8 +348,20 @@ impl Sync<'_> {
             .json()
             .await
             .context("gmail get non-JSON")?;
-        Ok(Some(m))
+        return Ok((at, Some(m)));
     }
+}
+
+/// How long to wait after "too many requests": what `Retry-After` asks for in
+/// seconds, within [`MAX_RATE_LIMIT_WAIT_SECS`], or two seconds when it says
+/// nothing usable.
+fn rate_limit_wait(retry_after: Option<&reqwest::header::HeaderValue>) -> std::time::Duration {
+    let secs = retry_after
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(2)
+        .clamp(1, MAX_RATE_LIMIT_WAIT_SECS);
+    std::time::Duration::from_secs(secs)
 }
 
 /// What one page of history asks us to do, after folding repeats: a message
@@ -404,6 +457,79 @@ fn status_is(err: &anyhow::Error, status: reqwest::StatusCode) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A stand-in for Gmail: every message takes `delay` to answer, `gone`
+    /// is a 404, and `busy` answers "too many requests" the first time.
+    async fn slow_gmail(delay: std::time::Duration, gone: &'static str, busy: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let refused = refused.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let path = request.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let id = path.rsplit('/').next().unwrap_or("").split('?').next().unwrap_or("").to_string();
+                    tokio::time::sleep(delay).await;
+                    let (status, extra, body) = if id == gone {
+                        ("404 Not Found", String::new(), "{}".to_string())
+                    } else if id == busy && !refused.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        ("429 Too Many Requests", "Retry-After: 1\r\n".to_string(), "{}".to_string())
+                    } else {
+                        ("200 OK", String::new(), format!("{{\"id\":\"{id}\"}}"))
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn messages_are_fetched_several_at_once_and_come_back_in_order() {
+        let delay = std::time::Duration::from_millis(250);
+        let base = slow_gmail(delay, "gone", "none").await;
+        let client = reqwest::Client::new();
+        let ids: Vec<String> = ["a", "b", "gone", "c", "d", "e", "f", "g"].iter().map(|s| s.to_string()).collect();
+
+        let started = std::time::Instant::now();
+        let got = fetch_messages(&client, "token", &base, &ids).await.unwrap();
+        let took = started.elapsed();
+
+        let order: Vec<&str> = got.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(order, ["a", "b", "c", "d", "e", "f", "g"], "in the order asked for, without the one that is gone");
+        // Eight fetches one at a time would take eight delays; two waves take two.
+        assert!(took < delay * 5, "took {took:?}, which is not several at once");
+    }
+
+    #[tokio::test]
+    async fn a_fetch_waits_out_too_many_requests_and_tries_again() {
+        let base = slow_gmail(std::time::Duration::from_millis(10), "none", "b").await;
+        let client = reqwest::Client::new();
+        let ids: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        let got = fetch_messages(&client, "token", &base, &ids).await.unwrap();
+        let order: Vec<&str> = got.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(order, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_rate_limit_wait_follows_retry_after_within_bounds() {
+        let header = |v: &'static str| reqwest::header::HeaderValue::from_static(v);
+        assert_eq!(rate_limit_wait(Some(&header("5"))).as_secs(), 5);
+        assert_eq!(rate_limit_wait(Some(&header("600"))).as_secs(), MAX_RATE_LIMIT_WAIT_SECS);
+        assert_eq!(rate_limit_wait(Some(&header("0"))).as_secs(), 1);
+        assert_eq!(rate_limit_wait(Some(&header("Wed, 21 Oct 2026 07:28:00 GMT"))).as_secs(), 2);
+        assert_eq!(rate_limit_wait(None).as_secs(), 2);
+    }
 
     #[test]
     fn history_folds_repeats_and_drops_what_was_deleted() {
