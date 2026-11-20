@@ -98,7 +98,8 @@ the dedicated server reads the bucket; `/srv/maps` is still there.
 Done on 2026-11-19 ([record](../record/cloud-consolidation.md)). The
 intranet starts the cut on day 3 of each month on a temporary server and
 deletes the server when it reports; `deploy/maps/run.sh` is the job. The
-first scheduled cut published a build that the live API now serves.
+first scheduled cut failed 21 minutes in, and its rerun published the build
+the live API now serves (`agents/record/cloud-consolidation.md`).
 
 The cut timer on the dedicated server is stopped and disabled. Its unit
 files and `/srv/maps` are still there: the directory is slice 1's rollback,
@@ -107,7 +108,7 @@ the API's key can read `latest.json` and that the build it names is no more
 than 45 days old.
 
 The planet download decides how long a run takes: 15 minutes in the
-rehearsal and 86 in the first real cut, from the same source. The intranet
+rehearsal and 86 in the first published run, from the same source. The intranet
 ends a run after five hours, which leaves room for that.
 
 ### 3. The new VPS and a rehearsal
