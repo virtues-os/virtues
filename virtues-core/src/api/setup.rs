@@ -73,9 +73,6 @@ pub async fn login_start_handler(
 
     match link::login(pool, &http, &atlas, &email).await {
         Ok(LoginStart::Sent) => (StatusCode::OK, Json(json!({"status": "sent"}))).into_response(),
-        Ok(LoginStart::NoAccount) => {
-            (StatusCode::OK, Json(json!({"status": "no_account"}))).into_response()
-        }
         Ok(LoginStart::RateLimited) => {
             (StatusCode::OK, Json(json!({"status": "rate_limited"}))).into_response()
         }

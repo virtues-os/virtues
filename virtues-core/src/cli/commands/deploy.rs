@@ -270,10 +270,6 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
         LoginStart::Sent => {
             println!("  Sent a link to {email}. Open it and choose Attach box. Waiting… (Ctrl-C to cancel)");
         }
-        LoginStart::NoAccount => {
-            println!("  No Virtues account on {email}. Run `virtues subscribe` to create one.");
-            return Ok(());
-        }
         LoginStart::RateLimited => {
             println!("  Too many login attempts for {email}. Try again later.");
             return Ok(());

@@ -3377,9 +3377,6 @@ export function sendDeviceCopy(
 export function setupLinkPoll<T = unknown>(): Promise<T> {
 	return apiSend<T>('POST', '/setup/link/poll');
 }
-export function setupSubscribeStart<T = unknown>(): Promise<T> {
-	return apiSend<T>('POST', '/setup/subscribe/start');
-}
 export function setupLoginStart<T = unknown>(email: string): Promise<T> {
 	return apiSend<T>('POST', '/setup/login/start', { email });
 }
