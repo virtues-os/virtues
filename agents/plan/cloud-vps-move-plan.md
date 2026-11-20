@@ -1,7 +1,7 @@
 # Moving the cloud services off the dedicated server
 
-**Written 2026-11-19. Slice 1 is done and slice 2 is built but has not run;
-no server is ordered.** atlas, virtues-api and
+**Written 2026-11-19. Slice 1 is done and slice 2 is built and rehearsed,
+with its schedule still off; no server is ordered.** atlas, virtues-api and
 their Postgres run on one dedicated server since 2026-09-28
 ([record](../record/cloud-consolidation.md),
 [how it runs](../build/deployment.md#cloud-sidecar-atlas--virtues-api-on-one-server)).
@@ -95,7 +95,12 @@ the dedicated server reads the bucket; `/srv/maps` is still there.
 
 ### 2. The map cut runs on a temporary instance
 
-Built on 2026-11-19, not yet run for real:
+Built and rehearsed on 2026-11-19. The rehearsal cut the newest Protomaps
+build in 49 minutes and uploaded it under a prefix: 9,920 files, 178.2 GB,
+every object the size its index records, sampled files matching their sha256
+and readable, and the same squares as the dedicated server's last build
+except two fewer in open sea. The server and its storage key were deleted
+when it reported. The monthly schedule is still off.
 
 - `deploy/maps/run.sh` is the whole job on the temporary server: tools at
   pinned versions, `cut.py`, `upload.sh`, `prune.sh` (keeps the newest two
@@ -114,8 +119,8 @@ Built on 2026-11-19, not yet run for real:
 
 Left:
 
-- One rehearsal with a prefix, checked against the build the dedicated server
-  cut, then the monthly schedule switched on.
+- Switch the monthly schedule on. The first scheduled run publishes for
+  real, straight away if no real cut exists for the month.
 - Stop the timer on the dedicated server once a scheduled run has published.
 - `virtues-health` compares the bucket with the cut on the dedicated server
   today. When that cut stops, it needs the other check: the newest build in
