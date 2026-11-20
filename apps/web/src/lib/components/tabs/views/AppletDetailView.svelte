@@ -30,7 +30,7 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix, runLine } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
@@ -137,24 +137,6 @@
 		if (glyph === 'chats') return 'chat';
 		return null;
 	});
-
-	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
-		success: 'Ran',
-		error: 'Failed',
-		running: 'Running',
-		skipped: 'Skipped',
-		cancelled: 'Cancelled',
-		budget_exceeded: 'Stopped at its spending limit'
-	};
-
-	/** One run in a line: what it said, or why it failed. */
-	function runLine(e: AppletLogEntry): string {
-		const what =
-			e.status === 'error'
-				? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}`
-				: (e.summary ?? STATUS_WORD[e.status]);
-		return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
-	}
 
 	function openPage(id: string) {
 		windowShellStore.openTabFromRoute(`/page/${id}`, { focusExisting: true });

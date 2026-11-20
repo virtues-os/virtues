@@ -9,7 +9,7 @@
  * repaired — the plan's card is the pulse, not a colour scheme.
  */
 
-import type { Applet, AppletWatch } from '$lib/api/client';
+import type { Applet, AppletLogEntry, AppletWatch } from '$lib/api/client';
 
 /** A data trigger in words: "On new workouts", "30 min before calendar events". */
 export function describeWatch(w: AppletWatch): string {
@@ -206,4 +206,30 @@ export function runFix(error: string | null): { label: string; href: string } | 
 export function errorHeadline(error: string, max = 160): string {
 	const line = error.split('\n')[0].trim();
 	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+	success: 'Ran',
+	error: 'Failed',
+	running: 'Running',
+	skipped: 'Skipped',
+	cancelled: 'Cancelled',
+	budget_exceeded: 'Stopped at its spending limit',
+};
+
+/** One line of a run log in words: what the run said, or why it failed. */
+export function runLine(e: AppletLogEntry): string {
+	const what = e.status === 'error' ? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}` : (e.summary ?? STATUS_WORD[e.status]);
+	return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
+}
+
+/** The hosts a job's logged runs reached, each once, in the order first seen. */
+export function hostsReached(log: AppletLogEntry[]): string[] {
+	const hosts: string[] = [];
+	for (const e of log) {
+		for (const h of e.requests ?? []) {
+			if (h.requests > h.refused && !hosts.includes(h.host)) hosts.push(h.host);
+		}
+	}
+	return hosts;
 }

@@ -209,6 +209,29 @@ is in 30abf3ef4, with another session's change to the same file.
 - Left: a shipped applet with a view (the dot cloud) is addressed as a job,
   because the address is chosen from the id alone.
 
+### The Jobs page
+
+Built on wave on 2026-11-20 and seen in the dev app, from boards 4 and 5 of
+the design canvas.
+
+- The page lists jobs by what they are for. "Keeps your accounts and devices
+  current" has one row per connected account or device, with its jobs inside
+  when it has several. "Builds and keeps your record" has the server's own
+  jobs that start themselves. Nothing in the data says which jobs protect
+  your record, so backups are in that second group and there is no third.
+- A job that needs you stays in its place. The button that fixes it is under
+  the opening sentence, for up to two jobs.
+- A row is one line: its name, what it does, when it runs and when it last
+  ran. It opens in place (`JobOpen.svelte`) to the full sentence, "Run now",
+  the "Run it" switch, the hosts its last runs reached, and its last runs in
+  words. Its full history is on its own page.
+- The server's applets that nothing starts (the ones you start from chat)
+  are folded under "Runs only when asked". What you set up is in Sites; one
+  of yours that needs you is named in a sentence that links there.
+- Not seen with real data: the accounts group, since the dev database has no
+  connected account, and the "Reaches" line, since no run there reached a
+  host.
+
 ### Slice 6: names nobody sees
 
 Not started, and each needs a decision (D8, D9).
