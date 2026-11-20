@@ -349,9 +349,9 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 }
             }
         }
-        // Measure speech seconds once. It both gates the Gemini call (below the
-        // minimum → silent, no call) and, when we do call, primes the model's
-        // honesty ground-truth and the post-transcription hallucination guard.
+        // Measure speech seconds once. It gates the Gemini call (below the
+        // minimum → silent, no call) and feeds the post-transcription
+        // hallucination guard. It is never shown to the model.
         // None = VAD unavailable/errored → fail-open (proceed, never suppress).
         let speech_secs: Option<f32> = vad.as_ref().and_then(|v| v.speech_seconds(&audio_bytes));
         if matches!(speech_secs, Some(s) if s < crate::vad::MIN_SPEECH_SECS) {
@@ -375,11 +375,10 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         let audio_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_bytes);
 
-        // Deterministic ground-truth anchor: local time + measured silence, fed
-        // as a fenced consistency hint (never as content). Stops the model from
-        // stamping a "morning routine" onto an evening chunk, and tells it up
-        // front when it is being handed near-silence.
-        let ground_truth = build_ground_truth(rec, &tz, speech_secs);
+        // Deterministic ground-truth anchor: local time, fed as a fenced
+        // consistency hint (never as content). Stops the model from stamping a
+        // "morning routine" onto an evening chunk.
+        let ground_truth = build_ground_truth(rec, &tz);
 
         match transcribe(client, &audio_b64, &rec.audio_format, &ground_truth).await {
             // Cost is captured at the BearerClient chokepoint (post_json records
@@ -627,15 +626,15 @@ async fn insert_transcription(
 }
 
 /// Build the fenced GROUND TRUTH block prepended to the transcription request.
-/// Deterministic facts only — local time and measured silence — framed as a
-/// consistency/disambiguation hint the model must never treat as content. The
-/// time anchor is what catches a "morning routine" hallucinated onto an evening
-/// chunk; the speech measurement primes the model for near-silence up front.
-fn build_ground_truth(
-    rec: &PendingRecording,
-    tz: &chrono_tz::Tz,
-    speech_secs: Option<f32>,
-) -> String {
+/// Local time only, framed as a consistency hint the model must never treat as
+/// content. It catches a "morning routine" hallucinated onto an evening chunk.
+///
+/// The VAD's speech seconds stay out of the prompt. MarbleNet detects that
+/// speech is present but undercounts how much, by 1.5-14x, so a real
+/// conversation can measure under 2 s. A "mostly quiet" hint on such a clip made
+/// Gemini return an empty transcript in 3 of 3 runs where the same clip without
+/// it gave about 450 words.
+fn build_ground_truth(rec: &PendingRecording, tz: &chrono_tz::Tz) -> String {
     let local = rec.started_at.with_timezone(tz);
     let hour: u32 = local.format("%H").to_string().parse().unwrap_or(12);
     let part = match hour {
@@ -646,21 +645,10 @@ fn build_ground_truth(
     };
     let time_line = format!("- Local time: {} ({part})", local.format("%a %H:%M"));
 
-    let speech_line = match speech_secs {
-        Some(s) => {
-            let quiet = if s < 2.0 { " — mostly quiet" } else { "" };
-            match rec.duration_seconds {
-                Some(d) => format!("\n- Measured speech in this clip: {s:.1}s of {d:.0}s{quiet}"),
-                None => format!("\n- Measured speech in this clip: {s:.1}s{quiet}"),
-            }
-        }
-        None => String::new(),
-    };
-
     format!(
         "GROUND TRUTH — for consistency and disambiguation ONLY. Never transcribe, \
 describe, or infer content from these; if the audio contradicts them, transcribe the \
-audio and lower confidence.\n{time_line}{speech_line}\nDo not narrate any scene or \
+audio and lower confidence.\n{time_line}\nDo not narrate any scene or \
 routine these imply — they exist only to catch contradictions and disambiguate words \
 you actually hear."
     )
@@ -705,7 +693,13 @@ async fn transcribe(
         // Trim Gemini's thinking budget: scene-understanding transcription needs
         // almost no chain-of-thought, and "low" cut reasoning tokens ~332→18 in
         // live probes — a direct per-call cost saving with no quality loss here.
-        "reasoning_effort": "low"
+        "reasoning_effort": "low",
+        // Google's flex tier bills about half the standard rate (measured
+        // $0.0025 vs $0.0053 for a 5-minute chunk) in exchange for slower,
+        // lower-priority serving. Transcription runs on a 2-hour cron, so the
+        // extra seconds cost nothing. virtues-api merges its ZDR flag into this
+        // object rather than replacing it.
+        "providerOptions": { "google": { "serviceTier": "flex" } }
         // NOTE: no `response_format` — the Vercel gateway rejects it for Gemini
         // (HTTP 400 "Invalid input" on param response_format). The system prompt
         // enforces raw-JSON output, and the parse path below strips ```json
