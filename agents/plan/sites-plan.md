@@ -103,12 +103,12 @@ Built on wave on 2026-11-20, except the last line of wiring. Not yet run
 against a server that reports `has_view`.
 
 - When `setup` makes or rebuilds an applet with a view, the chat opens the
-  site in the pane beside it and keeps the keyboard
-  (`applets/sites.svelte.ts`, `ToolSideEffects.collectNewSites`). A rebuild
-  reloads a frame that is already showing the site. An old chat opens
-  nothing, and a phone opens nothing because it has no beside. This is the
-  one place the app splits the window without being asked; a page the
-  assistant makes still never does.
+  site the way it opens a page the assistant made: beside the chat when the
+  window is already split, otherwise as a new tab next to it. It never splits
+  the window on its own (the owner kept that rule on 2026-11-20), and the
+  chat keeps the keyboard (`applets/sites.svelte.ts`,
+  `ToolSideEffects.collectNewSites`). A rebuild reloads a frame that is
+  already showing the site. An old chat opens nothing, and so does a phone.
 - The chat keeps one row for the site: its name, when it refreshes, what
   that costs, and the switch (`AppletProposalCard.svelte`).
 - `setup` reports `has_view` and refuses a view that names another host,
@@ -137,9 +137,10 @@ against a server that reports `has_view`.
 
 ### Slice 3: a site's options hold how it runs
 
-- `AppletDetailView` becomes the site's options, opened from the site's tab
-  and from its card: when it runs, what it may spend, the on/off switch, its
-  runs, its prompt, and delete.
+- `AppletDetailView` becomes the site's options. They are part of the site's
+  own page, reached by a "Site / Options" switch in its page bar, and not a
+  panel beside it (the owner's call on 2026-11-20). They hold when it runs,
+  what it may spend, the on/off switch, its runs, its prompt, and delete.
 - A site that has no view gets the server's default view: what it made,
   newest first, each linking to the page or chat it wrote.
 - A site that needs you says so in one line on its card and at the top of its
