@@ -93,6 +93,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
     .into_iter()
     .chain(browser_tools())
     .chain([connection_tool(), send_imessage_tool(), create_task_tool(), update_task_tool()])
+    .chain(google_tools())
     .collect()
 }
 
@@ -226,6 +227,109 @@ fn send_imessage_tool() -> ToolConfig {
         display_order: 48,
         is_system: false,
     }
+}
+
+/// Change the owner's Gmail and Google Calendar through their Google sign-in
+/// (virtues-core `tools/google.rs`). Every change can be undone, there is no
+/// send tool, and deleting an event asks the owner first.
+fn google_tools() -> Vec<ToolConfig> {
+    let tool = |id: &str, name: &str, description: &str, llm: &str, parameters: serde_json::Value, icon: &str, order: i32| ToolConfig {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: description.to_string(),
+        llm_description: llm.to_string(),
+        parameters,
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: icon.to_string(),
+        display_order: order,
+        is_system: false,
+    };
+    let emails = serde_json::json!({ "type": "array", "items": { "type": "string" }, "description": "Ids from data_communication_email (id or message_id). The whole conversation each one is in changes" });
+    let account = serde_json::json!({ "type": "string", "description": "Only when the owner has more than one Google account: the address to use" });
+    vec![
+        tool(
+            "email_archive",
+            "Archive email",
+            "Archive mail in Gmail",
+            "Take conversations out of the owner's Gmail inbox, or put them back with `undo: true`. Archived mail stays in Gmail, so this can always be undone. Use it when the owner asks, or for mail they told you they do not need. Find the emails with sql_query on data_communication_email (the inbox ones have \"INBOX\" in `labels`). `reason` is kept with the email: say in a few words why it no longer needs the owner.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["emails", "reason"],
+                "properties": {
+                    "emails": emails,
+                    "reason": { "type": "string", "description": "Why, in a few words, such as \"shipping notice, already delivered\"" },
+                    "undo": { "type": "boolean", "description": "Put the conversations back in the inbox" },
+                    "account": account
+                }
+            }),
+            "ri:inbox-archive-line",
+            49,
+        ),
+        tool(
+            "email_label",
+            "Label email",
+            "Add or remove Gmail labels",
+            "Add labels to, or remove them from, conversations in the owner's Gmail. Labels are the owner's own (\"Receipts\", \"Travel\") or Gmail's STARRED, IMPORTANT and UNREAD; a label that does not exist is created when added. Removing a label undoes adding it. Not for the inbox (use email_archive), trash or spam.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["emails"],
+                "properties": {
+                    "emails": emails,
+                    "add": { "type": "array", "items": { "type": "string" }, "description": "Label names to add" },
+                    "remove": { "type": "array", "items": { "type": "string" }, "description": "Label names to remove" },
+                    "account": account
+                }
+            }),
+            "ri:price-tag-3-line",
+            50,
+        ),
+        tool(
+            "email_draft",
+            "Draft email",
+            "Write a draft in Gmail",
+            "Save an email as a draft in the owner's Gmail. It is never sent: the owner reads it and sends it from Gmail. For a reply, set `reply_to` to the email it answers; the draft joins that conversation, and `to` and `subject` default to the reply's. Write `body` as plain text in the owner's voice, in the first person. To revise a draft you wrote earlier, pass its `draft_id`; drafts the owner wrote are never replaced.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["body"],
+                "properties": {
+                    "to": { "type": "array", "items": { "type": "string" }, "description": "Addresses, as name <address> or address" },
+                    "cc": { "type": "array", "items": { "type": "string" } },
+                    "subject": { "type": "string" },
+                    "body": { "type": "string", "description": "Plain text" },
+                    "reply_to": { "type": "string", "description": "The email this answers: an id from data_communication_email" },
+                    "draft_id": { "type": "string", "description": "A draft you wrote earlier in this chat, to replace" },
+                    "account": account
+                }
+            }),
+            "ri:draft-line",
+            51,
+        ),
+        tool(
+            "calendar_event",
+            "Change your calendar",
+            "Add, change or delete a Google Calendar event",
+            "Create, change or delete an event in the owner's Google Calendar. No one is invited or emailed. Times are the owner's local time (2026-11-20T15:00); with no `end`, an event lasts an hour, or a day when `all_day`. To change or delete an event, find it with sql_query on data_calendar_event and pass its id in `event`; an event you just created can be named by the `event_id` this tool returned. A delete asks the owner first, so ask only when the owner asked you to delete it.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": { "type": "string", "enum": ["create", "update", "delete"] },
+                    "event": { "type": "string", "description": "For update and delete: an id from data_calendar_event, or an event_id this tool returned" },
+                    "title": { "type": "string" },
+                    "start": { "type": "string", "description": "2026-11-20T15:00, or 2026-11-20 when all_day" },
+                    "end": { "type": "string" },
+                    "all_day": { "type": "boolean" },
+                    "location": { "type": "string" },
+                    "description": { "type": "string" },
+                    "calendar_id": { "type": "string", "description": "Leave out for the owner's main calendar" },
+                    "account": account
+                }
+            }),
+            "ri:calendar-event-line",
+            52,
+        ),
+    ]
 }
 
 /// The owner's browser, a window in the Mac app (virtues-core `browser.rs`).
@@ -404,18 +508,20 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. Before your first show call in a chat, load the charts skill (use_applet): which chart fits, and the columns each reads. Give `chart` and `sql`, one read-only SELECT; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading or the owner asks to see something, once or twice a reply at most. Make one call per figure: if show refuses it, call once more with the fix the refusal names; never draw a figure again once it has drawn. If show is closed for the turn, say in words what it would have shown; don't draw it another way, such as with shell. One number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or a next step. Before your first show call in a chat, load the charts skill (use_applet): which chart fits, and the columns each reads. Give `chart` and `sql`, one read-only SELECT; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading or the owner asks to see something, once or twice a reply at most. Make one call per figure: if show refuses it, call once more with the fix the refusal names; never draw a figure again once it has drawn. If show is closed for the turn, say in words what it would have shown; don't draw it another way, such as with shell. One number belongs in a sentence.
+
+A next step is `chart: "choices"`: a card under your reply with a question (`title`), one or two sentences on why it comes up now (`context`), and 1-3 buttons (`options`). The first option is the main button. Offer one only when the reply leaves the owner something worth doing next, such as keeping the answer as a page, looking into something further, or the next question about the same numbers. Most replies end without one. Make it the last thing in the reply, at most one per reply, and don't ask its question again in words. Never use it to count, remind, or say what the owner hasn't done."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "chart": {
                     "type": "string",
                     "description": format!(
-                        "A purpose ({}), a chart the owner named, or choices for reply buttons",
+                        "A purpose ({}), a chart the owner named, or choices for a next step",
                         crate::chart_marks::PURPOSES.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")
                     )
                 },
-                "title": { "type": "string", "description": "A few words for what is shown" },
+                "title": { "type": "string", "description": "A few words for what is shown. choices: the question the buttons answer" },
                 "sql": { "type": "string", "description": "One read-only SELECT, its columns named as the charts skill says" },
                 "finding": { "type": "string", "description": "scatter; see the charts skill" },
                 "split_at": { "type": "string", "description": "interrupted; see the charts skill" },
@@ -433,8 +539,9 @@ fn show_tool() -> ToolConfig {
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "choices only: 2-4 short replies in the owner's voice; a tap sends one as their message. Ask the question before the call, and end the reply with it"
-                }
+                    "description": "choices only: 1-3 button labels in the owner's voice, at most 40 characters, the main action first; a tap sends the label as their message"
+                },
+                "context": { "type": "string", "description": "choices only: why this next step comes up now, in one or two sentences from what you found" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -905,7 +1012,11 @@ fn create_page_tool() -> ToolConfig {
             "required": ["title"],
             "properties": {
                 "title": { "type": "string" },
-                "content": { "type": "string", "description": "Markdown" }
+                "content": { "type": "string", "description": "Markdown" },
+                "layout": {
+                    "type": "object",
+                    "description": "A report's page: paper (a4, letter), column_count (1, 2), masthead {label, byline, records_through YYYY-MM-DD, subjects [routes], abstract}"
+                }
             }
         }),
         tool_type: ToolType::Builtin,
