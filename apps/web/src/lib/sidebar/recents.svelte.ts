@@ -100,7 +100,8 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 	}
 
 	for (const project of projectStore.projects) {
-		if (project.archived_at) continue;
+		// An unlisted thread stays out of the sidebar until you list it.
+		if (project.archived_at || project.is_listed === false) continue;
 		rows.push({
 			kind: 'thread',
 			url: `/thread/${project.id}`,

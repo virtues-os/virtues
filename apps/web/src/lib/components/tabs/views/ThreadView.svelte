@@ -187,7 +187,7 @@
 	}
 
 	// ── properties ─────────────────────────────────────────────────────────
-	async function setProps(patch: { is_backlog?: boolean; is_adding_automatic?: boolean; thing_id?: string | null }) {
+	async function setProps(patch: { is_backlog?: boolean; is_adding_automatic?: boolean; is_listed?: boolean; thing_id?: string | null }) {
 		const id = threadId;
 		if (!id) return;
 		try {
@@ -214,6 +214,9 @@
 		return detail.is_backlog ? 'In your backlog' : 'Active';
 	});
 
+	/** An unlisted thread holds a lesser concern and stays out of the sidebar. */
+	const unlisted = $derived(detail?.is_listed === false);
+
 	/** Status is one property with four values. Ending and reopening go through it. */
 	async function setStatus(next: Status) {
 		if (!detail || next === status) return;
@@ -234,6 +237,7 @@
 
 	let statusOpen = $state(false);
 	let addingOpen = $state(false);
+	let listedOpen = $state(false);
 	let underOpen = $state(false);
 
 	// ── what was added ─────────────────────────────────────────────────────
@@ -747,6 +751,26 @@
 									<MenuItem role="menuitemradio" icon="mynaui:sparkles" checked={!!detail.is_adding_automatic} label="Automatic"
 										description="Your server also files what it is sure belongs here, and asks about the rest."
 										onclick={() => choose(close, () => setProps({ is_adding_automatic: true }))} />
+								</div>
+							{/snippet}
+						</Popover>
+					</div>
+
+					<div class="prop">
+						<Popover bind:open={listedOpen} placement="bottom-start" offset={4}>
+							{#snippet trigger({ toggle })}
+								<PreviewRow icon={unlisted ? 'mynaui:eye-off' : 'mynaui:eye'} onclick={archived ? undefined : toggle}>
+									{unlisted ? 'Unlisted' : 'Listed'}
+								</PreviewRow>
+							{/snippet}
+							{#snippet children({ close })}
+								<div class="menu" role="menu" aria-label="Listing">
+									<MenuItem role="menuitemradio" icon="mynaui:eye" checked={!unlisted} label="Listed"
+										description="It has its own row in your sidebar."
+										onclick={() => choose(close, () => setProps({ is_listed: true }))} />
+									<MenuItem role="menuitemradio" icon="mynaui:eye-off" checked={unlisted} label="Unlisted"
+										description="It stays out of your sidebar. In your Inbox its things wait toward Noise until they are due."
+										onclick={() => choose(close, () => setProps({ is_listed: false }))} />
 								</div>
 							{/snippet}
 						</Popover>

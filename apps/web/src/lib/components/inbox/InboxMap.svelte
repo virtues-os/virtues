@@ -189,7 +189,8 @@
 		for (const s of route.stops) {
 			list.push({
 				key: s.key,
-				text: clip(`${clock(s.from)} ${s.name}`),
+				// A stop you were already at when the day began has no arrival time in this day.
+				text: clip(bounds && s.from <= bounds.startMs ? s.name : `${clock(s.from)} ${s.name}`),
 				x: s.x,
 				y: s.y,
 				size: s.planned ? 14 : 12,

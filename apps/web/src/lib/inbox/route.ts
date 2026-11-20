@@ -308,11 +308,13 @@ export const CLOCK_X1 = MAP_W - 24;
 
 /**
  * The clock's scale. It starts at 6 in the morning, or earlier when
- * something that day is earlier, and ends at midnight.
+ * something that day begins earlier, and ends at midnight. A time at the
+ * day's very start is a stay carried over from the night before, so it does
+ * not pull the clock back to midnight.
  */
 export function clockScale(day: DayBounds, times: number[]): { fromHour: number; x: (ms: number) => number } {
 	const hour = (ms: number) => (ms - day.startMs) / 3_600_000;
-	const fromHour = Math.max(0, Math.min(6, ...times.map((t) => Math.floor(hour(t)))));
+	const fromHour = Math.max(0, Math.min(6, ...times.filter((t) => t > day.startMs).map((t) => Math.floor(hour(t)))));
 	return {
 		fromHour,
 		x: (ms) => CLOCK_X0 + ((Math.min(24, Math.max(fromHour, hour(ms))) - fromHour) / (24 - fromHour)) * (CLOCK_X1 - CLOCK_X0),

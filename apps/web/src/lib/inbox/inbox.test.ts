@@ -122,6 +122,40 @@ describe('buildItems', () => {
 		const rest = Object.values(noise).filter((n) => n > 0).sort((x, y) => x - y);
 		expect(rest).toEqual([1, 2, 3, 4, 5].map((i) => i / 5));
 	});
+
+	it('keeps an unlisted thread toward the noise end until its day comes', () => {
+		const build = (carDue: string) =>
+			Object.fromEntries(
+				buildItems({
+					tasks: [
+						task({ id: 'bike', title: 'True the front wheel', thread_id: 't_bike' }),
+						task({ id: 'soon', title: 'Order brake pads', thread_id: 't_bike', due_on: '2026-03-14' }),
+						task({ id: 'car', title: 'Book the oil change', thread_id: 't_car', due_on: carDue }),
+						task({ id: 'loose', title: 'Sharpen the kitchen knives' }),
+					],
+					notes: [{ ...note, key: 'car', subjects: ['/thread/t_car'], until: new Date(2026, 3, 12).toISOString() }, note],
+					attention: [],
+					active: new Set(['t_bike', 't_car']),
+					unlisted: new Set(['t_car']),
+					now: NOW,
+				}).map((it) => [it.key, it]),
+			);
+		const far = build('2026-03-25');
+		// It keeps its thread's name, and sits after everything in a listed thread.
+		expect(far['task:car'].threadId).toBe('t_car');
+		expect(far['task:car'].noise).toBeGreaterThan(Math.max(far['task:bike'].noise, far['task:soon'].noise));
+		// What your server noticed about it waits too. In a listed thread it shows at once.
+		expect(far['note:car'].noise).toBeGreaterThan(far['task:bike'].noise);
+		expect(far['note:clash:a:b'].noise).toBe(0);
+		// A listed thread's thing due this week comes before one with no day.
+		expect(far['task:soon'].noise).toBeLessThan(far['task:bike'].noise);
+		// Later that week it passes the things with no thread, and on its day it leads.
+		const week = build('2026-03-14');
+		expect(week['task:car'].noise).toBeLessThan(week['task:loose'].noise);
+		expect(week['task:car'].noise).toBeGreaterThan(week['task:bike'].noise);
+		const due = build('2026-03-12');
+		expect(due['task:car'].noise).toBeLessThan(Math.min(due['task:soon'].noise, due['task:bike'].noise));
+	});
 });
 
 describe('radar layout', () => {
@@ -400,6 +434,8 @@ describe('today as a route', () => {
 		expect(early.fromHour).toBe(4);
 		expect(early.x(at(4))).toBe(CLOCK_X0);
 		expect(early.x(at(14))).toBeGreaterThan(early.x(at(9)));
+		// A night at home that runs from the day's start leaves the clock at 6 AM.
+		expect(clockScale(bounds, [at(0), at(9)]).fromHour).toBe(6);
 	});
 
 	it('moves a mark down a row when the one before is too close', () => {

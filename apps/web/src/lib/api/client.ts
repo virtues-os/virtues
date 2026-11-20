@@ -2168,6 +2168,12 @@ export interface Project {
 	is_backlog?: boolean;
 	/** Adding is automatic: your server also files what it is sure belongs. */
 	is_adding_automatic?: boolean;
+	/**
+	 * You keep it in view, with its own row in the sidebar. False is an
+	 * unlisted thread: a lesser concern that stays out of the sidebar.
+	 * Absent from a server older than the field, which means listed.
+	 */
+	is_listed?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -2335,6 +2341,7 @@ export function updateProject(
 		current_status?: string | null;
 		is_backlog?: boolean;
 		is_adding_automatic?: boolean;
+		is_listed?: boolean;
 	}
 ): Promise<Project> {
 	return apiSend<Project>('PUT', `/threads/${encodeURIComponent(id)}`, patch);

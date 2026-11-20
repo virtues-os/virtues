@@ -204,6 +204,7 @@ export class ProjectStore {
 			current_status?: string | null;
 			is_backlog?: boolean;
 			is_adding_automatic?: boolean;
+			is_listed?: boolean;
 		}
 	): Promise<Project> {
 		// A new name shows at once wherever the thread is listed, as a renamed

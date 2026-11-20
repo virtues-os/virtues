@@ -81,8 +81,12 @@ Checked against the working tree on 2026-11-17, after migration 0082
 
 - `app_threads` (0080, from `app_projects`): `name`, `icon`, `accent_color`,
   `current_status` with `current_status_at`, `instructions`, `archived_at`,
-  `outcome` (`finished` or `dropped`), `thing_id` (0078), and `is_backlog`
-  (0083), false for Active.
+  `outcome` (`finished` or `dropped`), `thing_id` (0078), `is_backlog`
+  (0083), false for Active, and `is_listed` (0096), true by default. An
+  unlisted thread holds a lesser concern: it stays out of the sidebar's
+  Recent list, and the Inbox ranks its things toward the Noise end until
+  they are due. You list or unlist a thread from its page. No code makes an
+  unlisted thread by itself yet.
 - `app_thread_items`: an item is a `url` with a `role` (`library`, `pin`,
   `manuscript`) and `added_by` (`user` or `magnet`). Items arrive only by hand
   today: `add_thread_item` in `api/threads.rs` inserts them with role

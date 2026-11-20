@@ -13,21 +13,32 @@ export const RINGS = ['Now', 'Today', 'This week', 'Later'] as const;
 export type Ring = 0 | 1 | 2 | 3;
 
 /**
- * How much a thing asks of you, as one of four levels, strongest first.
- * It is a separate measure from the ring, though a day can raise it:
- * something your server noticed about next week comes before a task due
- * today, and a task due today comes before one in a thread with no day.
+ * How much a thing asks of you, as one of six levels, strongest first. Two
+ * facts set it: the tier of the thread it sits in, and how near its day is.
+ *
+ * A thread you list is the first tier. An unlisted thread is the second: a
+ * lesser concern your server keeps for you, whose things stay toward the
+ * noise end until their day comes. A thing in no thread counts as second
+ * tier too. Once a thing is due, its tier stops mattering.
+ *   0  a result that waits for your answer, or something your server
+ *      noticed outside an unlisted thread
+ *   1  anything due today or earlier
+ *   2  first tier, due this week
+ *   3  first tier, due later or with no day
+ *   4  second tier, due this week
+ *   5  second tier, due later or with no day, and also what your server
+ *      needs and a request that is still running
  *
  * Your server stores no judgment of how much a thing matters, so the
- * levels rest only on facts it does store: who is waiting, what it
- * noticed, a due day, and whether a task sits in a thread you follow.
- *   0  a result that waits for your answer, or something your server noticed
- *   1  a task of yours due today or earlier
- *   2  a task of yours in an active thread
- *   3  a task in no active thread, what your server needs, or a request
- *      that is still running
+ * levels rest only on facts it does store.
  */
-type Level = 0 | 1 | 2 | 3;
+type Level = 0 | 1 | 2 | 3 | 4 | 5;
+
+/** The level of a thing that is nobody's result to accept: by its ring, then its tier. */
+function levelOf(ring: Ring, firstTier: boolean): Level {
+	if (ring <= 1) return 1;
+	return firstTier ? (ring === 2 ? 2 : 3) : ring === 2 ? 4 : 5;
+}
 
 /**
  * What kind of thing it is:
@@ -98,10 +109,13 @@ export function buildItems(src: {
 	attention: AttentionItem[];
 	/** Ids of the active threads. A thing in any other thread shows with no thread. */
 	active: ReadonlySet<string>;
+	/** Ids of the active threads that are unlisted. */
+	unlisted?: ReadonlySet<string>;
 	now?: Date;
 }): InboxItem[] {
 	const now = src.now ?? new Date();
 	const home = (id: string | null) => (id && src.active.has(id) ? id : null);
+	const firstTier = (id: string | null) => !!id && !src.unlisted?.has(id);
 	const items: InboxItem[] = [];
 	const level = new Map<string, Level>();
 	const add = (it: InboxItem, l: Level) => {
@@ -109,21 +123,14 @@ export function buildItems(src: {
 		level.set(it.key, l);
 	};
 	for (const a of src.attention) {
-		add({ key: `attention:${a.key}`, kind: 'needs', ring: 0, noise: 0, title: a.title, meta: 'Your server', threadId: null, attention: a }, 3);
+		add({ key: `attention:${a.key}`, kind: 'needs', ring: 0, noise: 0, title: a.title, meta: 'Your server', threadId: null, attention: a }, 5);
 	}
 	for (const n of src.notes) {
+		const threadId = home(noteThread(n, src.tasks));
+		const ring = noteRing(n, now);
 		add(
-			{
-				key: `note:${n.key}`,
-				kind: 'insight',
-				ring: noteRing(n, now),
-				noise: 0,
-				title: n.text,
-				meta: n.when,
-				threadId: home(noteThread(n, src.tasks)),
-				note: n,
-			},
-			0,
+			{ key: `note:${n.key}`, kind: 'insight', ring, noise: 0, title: n.text, meta: n.when, threadId, note: n },
+			threadId && src.unlisted?.has(threadId) ? levelOf(ring, false) : 0,
 		);
 	}
 	for (const t of src.tasks) {
@@ -132,18 +139,20 @@ export function buildItems(src: {
 		// tasks/requests says the same, but that module loads the toasts,
 		// and this one stays free of components so it can be unit tested.
 		const request = t.assignee === 'assistant';
+		const ring = taskRing(t, now);
+		const threadId = home(t.thread_id);
 		add(
 			{
 				key: `task:${t.id}`,
 				kind: ready ? 'needs' : request ? 'waiting' : 'task',
-				ring: taskRing(t, now),
+				ring,
 				noise: 0,
 				title: t.title,
 				meta: ready ? 'Result ready' : t.due_on ? dueLabel(t.due_on, t.due_at, now) : 'No date',
-				threadId: home(t.thread_id),
+				threadId,
 				task: t,
 			},
-			ready ? 0 : request ? 3 : dueGroup(t.due_on, now) === 'today' ? 1 : home(t.thread_id) ? 2 : 3,
+			ready ? 0 : request ? 5 : levelOf(ring, firstTier(threadId)),
 		);
 	}
 	items.sort(

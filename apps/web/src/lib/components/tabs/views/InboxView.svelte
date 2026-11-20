@@ -18,9 +18,11 @@
 	 * them. J and K walk the things shown, Enter opens the chosen one on its
 	 * own page, and Escape lets go.
 	 *
-	 * TODO(2026-11-19): migrate the Threads door onto this view. It is meant
-	 * to replace ThreadsView's Overview, Tasks, All threads and Insights, and
-	 * until then it is reached only by its address, /inbox.
+	 * The sidebar's Inbox row opens it.
+	 *
+	 * TODO(2026-11-19): migrate ThreadsView onto this view. It is meant to
+	 * replace ThreadsView's Overview, Tasks, All threads and Insights, which
+	 * /threads still serves.
 	 */
 	import { onMount, untrack } from 'svelte';
 	import type { Tab } from '$lib/tabs/types';
@@ -103,6 +105,7 @@
 			notes: notesStore.items,
 			attention: attention.items,
 			active: new Set(activeThreads.map((p) => p.id)),
+			unlisted: new Set(activeThreads.filter((p) => p.is_listed === false).map((p) => p.id)),
 			now,
 		}),
 	);
@@ -288,9 +291,26 @@
 		weekStart = `${d.getFullYear()}-${m}-${String(d.getDate()).padStart(2, '0')}`;
 	}
 
-	// ── threads that are not active ────────────────────────────────────────
-	let shelf = $state<'backlog' | 'finished' | null>(null);
-	const shelfRows = $derived(shelf === 'backlog' ? backlog : shelf === 'finished' ? projectStore.archived : []);
+	// ── threads that are out of view ───────────────────────────────────────
+	// An unlisted thread has no row in the sidebar, so this shelf is where
+	// you find one that has nothing in the Inbox right now.
+	type Shelf = 'unlisted' | 'backlog' | 'finished';
+	const SHELVES: { id: Shelf; label: string; empty: string }[] = [
+		{ id: 'unlisted', label: 'Unlisted', empty: 'Threads you unlist wait here.' },
+		{ id: 'backlog', label: 'Backlog', empty: 'Threads you mean to come back to wait here.' },
+		{ id: 'finished', label: 'Finished', empty: 'Threads you finish or drop wait here.' },
+	];
+	let shelf = $state<Shelf | null>(null);
+	const shelfInfo = $derived(SHELVES.find((x) => x.id === shelf));
+	const shelfRows = $derived(
+		shelf === 'unlisted'
+			? projectStore.projects.filter((p) => p.is_listed === false)
+			: shelf === 'backlog'
+				? backlog
+				: shelf === 'finished'
+					? projectStore.archived
+					: [],
+	);
 
 	/** A new task starts in the thread you chose, if any. */
 	function newTaskHere() {
@@ -446,8 +466,8 @@
 			<!-- The shelf lists threads, so it shows in the views that draw threads. -->
 			{#if view !== 'list' && view !== 'map'}
 				<div class="shelf">
-					{#if shelf}
-						<ul class="shelf-list" aria-label={shelf === 'backlog' ? 'Backlog' : 'Finished'}>
+					{#if shelfInfo}
+						<ul class="shelf-list" aria-label={shelfInfo.label}>
 							{#each shelfRows as p (p.id)}
 								<li>
 									<button type="button" class="srow" class:on={pickedThreadId === p.id} aria-pressed={pickedThreadId === p.id} onclick={() => pickThread(p.id)}>
@@ -456,16 +476,15 @@
 									</button>
 								</li>
 							{:else}
-								<li class="none">
-									{shelf === 'backlog' ? 'Threads you mean to come back to wait here.' : 'Threads you finish or drop wait here.'}
-								</li>
+								<li class="none">{shelfInfo.empty}</li>
 							{/each}
 						</ul>
 					{/if}
 					<div class="shelf-bar">
 						<span class="acts">
-							<Button variant="ghost" onclick={() => (shelf = shelf === 'backlog' ? null : 'backlog')}>Backlog</Button>
-							<Button variant="ghost" onclick={() => (shelf = shelf === 'finished' ? null : 'finished')}>Finished</Button>
+							{#each SHELVES as x (x.id)}
+								<Button variant="ghost" onclick={() => (shelf = shelf === x.id ? null : x.id)}>{x.label}</Button>
+							{/each}
 						</span>
 						{#if view !== 'week'}
 							<span class="legend">
