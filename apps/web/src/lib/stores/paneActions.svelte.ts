@@ -54,7 +54,9 @@ class PaneActionsStore {
 	#byTab = $state<Record<string, PaneAction[]>>({});
 	#crumbs = $state<Record<string, CrumbPath>>({});
 	#snippets = $state<Record<string, Snippet[]>>({});
-	#status = $state<Record<string, StatusMark>>({});
+	// Raw, so a teardown can tell its own mark by identity: a deep $state
+	// stores a proxy of the mark, which is never === the object the view passed.
+	#status = $state.raw<Record<string, StatusMark>>({});
 
 	/** The mark a tab's view set, if any. */
 	statusFor(tabId: string | null | undefined): StatusMark | undefined {
@@ -64,11 +66,14 @@ class PaneActionsStore {
 	/** Set a tab's status mark. Returns the teardown. */
 	setStatus(tabId: string, mark: StatusMark): () => void {
 		untrack(() => {
-			this.#status[tabId] = mark;
+			this.#status = { ...this.#status, [tabId]: mark };
 		});
 		return () => {
 			untrack(() => {
-				if (this.#status[tabId] === mark) delete this.#status[tabId];
+				if (this.#status[tabId] !== mark) return;
+				const rest = { ...this.#status };
+				delete rest[tabId];
+				this.#status = rest;
 			});
 		};
 	}

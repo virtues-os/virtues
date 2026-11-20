@@ -28,7 +28,7 @@
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
-	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
+	  Terminal     /virtues/developer/terminal — a shell on your server, from Your server or ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
 	session. The destructive actions are Unpair, on the page of the device it
