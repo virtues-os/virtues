@@ -31,7 +31,7 @@ export const DOORS: readonly Door[] = [
 	// Its id predates the Inbox: saved arrangements name it 'threads'.
 	{ id: 'threads', label: 'Inbox', glyph: 'inbox' },
 	{ id: 'pages', label: 'Pages', glyph: 'pages' },
-	{ id: 'applets', label: 'Applets', glyph: 'applets' },
+	{ id: 'applets', label: 'Sites', glyph: 'applets' },
 	{ id: 'wiki', label: 'Wiki', glyph: 'wiki' },
 	{ id: 'storage', label: 'Storage', glyph: 'drive' },
 ];

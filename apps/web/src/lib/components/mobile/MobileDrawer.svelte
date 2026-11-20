@@ -95,7 +95,7 @@
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
 		threads: { open: () => go("/inbox", "Inbox") },
-		applets: { open: () => go("/applets", "Applets") },
+		applets: { open: () => go("/applets", "Sites") },
 		wiki: { open: () => go("/wiki", "Wiki") },
 		storage: { open: () => go("/storage", "Storage") },
 	};

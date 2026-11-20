@@ -803,7 +803,7 @@ export async function runApplet(
 	});
 	if (!res.ok && res.status !== 500) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to run applet: ${res.statusText}`);
+		throw new Error(err.error || `Your server didn't start it: ${res.statusText}`);
 	}
 	return res.json();
 }
