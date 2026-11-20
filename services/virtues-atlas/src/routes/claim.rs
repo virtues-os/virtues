@@ -291,14 +291,29 @@ pub(crate) async fn account_email_by_key_hash(
         .await
 }
 
+/// The label a new box key is scoped by: the endpoint id the box reported,
+/// or, when it reported none, a fresh label of its own.
+///
+/// A link with no endpoint id used to rotate every key on the account. The
+/// endpoint id arrives on an unauthenticated `/init/start`, so whoever
+/// started a link chose that, and one clicked link could take every other
+/// box on the account offline. A fresh label scopes the new key to this
+/// link alone. The cost is that a box which never reports an endpoint id
+/// leaves its previous key alive when it links again; boxes report one
+/// except in a rare race at first boot.
+pub(crate) fn key_label(endpoint_id: Option<&str>) -> String {
+    match endpoint_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(ep) => ep.to_string(),
+        None => format!("unlabeled-{}", &random_token()[..16]),
+    }
+}
+
 /// Record a freshly minted box key, scoped to the box that earned it.
 ///
-/// Known `endpoint_id` → replace only THAT box's key (a second box linking no
-/// longer kills the first box's credential — the whole point of per-box
-/// keys). Unknown (older box that never identified itself) → the historical
-/// whole-account rotation, matching what virtues-api's `register_device`
-/// does for a `box_id: None` on its side, so the two systems never disagree
-/// about which keys are alive.
+/// Replaces only the key with the same label (see [`key_label`]), plus the
+/// account's legacy unlabeled key. virtues-api's `register_device` applies
+/// the same rule to a `box_id`, so the two systems never disagree about
+/// which keys are alive.
 ///
 /// Also mirrors the hash into `customers.api_key_hash` (most-recent-key
 /// semantics, when the account has a Stripe customer) so a rolled-back atlas
@@ -315,7 +330,7 @@ pub(crate) async fn account_email_by_key_hash(
 pub(crate) async fn mint_box_key(
     pool: &sqlx::PgPool,
     account_id: &str,
-    endpoint_id: Option<&str>,
+    label: &str,
     api_key_hash: &[u8],
 ) -> Result<(), sqlx::Error> {
     let stripe_customer_id: Option<String> = sqlx::query_scalar(
@@ -326,30 +341,18 @@ pub(crate) async fn mint_box_key(
     .await?
     .flatten();
     let stripe_customer_id = stripe_customer_id.as_deref();
-    match endpoint_id {
-        Some(ep) => {
-            // `OR endpoint_id IS NULL` is load-bearing: SQL `=` never matches
-            // NULL, so without it every backfilled/legacy unlabeled key would
-            // survive its box's re-link FOREVER — an immortal live credential
-            // (review finding, 2026-08-24). The NULL row is the account's old
-            // shared single key; the first labeled attach retires it, exactly
-            // as the legacy whole-account rotation would have.
-            sqlx::query(
-                "DELETE FROM box_key WHERE account_id = $1 \
-                 AND (endpoint_id = $2 OR endpoint_id IS NULL)",
-            )
-            .bind(account_id)
-            .bind(ep)
-            .execute(pool)
-            .await?;
-        }
-        None => {
-            sqlx::query("DELETE FROM box_key WHERE account_id = $1")
-                .bind(account_id)
-                .execute(pool)
-                .await?;
-        }
-    }
+    // `OR endpoint_id IS NULL` is load-bearing: SQL `=` never matches NULL,
+    // so without it every backfilled/legacy unlabeled key would survive its
+    // box's re-link forever, an immortal live credential. The NULL row is
+    // the account's old shared single key; the first labeled attach retires it.
+    sqlx::query(
+        "DELETE FROM box_key WHERE account_id = $1 \
+         AND (endpoint_id = $2 OR endpoint_id IS NULL)",
+    )
+    .bind(account_id)
+    .bind(label)
+    .execute(pool)
+    .await?;
     sqlx::query(
         "INSERT INTO box_key (api_key_hash, account_id, stripe_customer_id, endpoint_id) \
          VALUES ($1, $2, $3, $4)",
@@ -357,7 +360,7 @@ pub(crate) async fn mint_box_key(
     .bind(api_key_hash)
     .bind(account_id)
     .bind(stripe_customer_id)
-    .bind(endpoint_id)
+    .bind(label)
     .execute(pool)
     .await?;
     if let Some(cid) = stripe_customer_id {
@@ -410,5 +413,66 @@ mod bound_account_tests {
         assert_eq!(bound_account_id(&json!({ "account_id": "  " })), None);
         assert_eq!(bound_account_id(&json!({ "account_id": 7 })), None);
         assert_eq!(bound_account_id(&serde_json::Value::Null), None);
+    }
+}
+
+#[cfg(test)]
+mod key_label_tests {
+    use super::{key_label, mint_box_key};
+
+    #[test]
+    fn keeps_a_reported_endpoint_and_labels_a_missing_one() {
+        assert_eq!(key_label(Some("ep_abc")), "ep_abc");
+        let a = key_label(None);
+        let b = key_label(Some("  "));
+        assert!(a.starts_with("unlabeled-") && b.starts_with("unlabeled-"));
+        assert_ne!(a, b, "each unlabeled link gets its own label");
+    }
+
+    async fn labels(pool: &sqlx::PgPool, account: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT coalesce(endpoint_id, '<null>') FROM box_key WHERE account_id = $1 ORDER BY 1",
+        )
+        .bind(account)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// A link that reported no endpoint id used to delete every key on the
+    /// account, and whoever started the link chooses that. Now it adds one
+    /// key and leaves the other boxes' keys alone.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unlabeled_link_leaves_other_boxes_keys(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO accounts (account_id, email) VALUES ('acct_a', 'owner@example.com')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k1").await.unwrap();
+        mint_box_key(&pool, "acct_a", "ep_office", b"k2").await.unwrap();
+
+        let label = key_label(None);
+        mint_box_key(&pool, "acct_a", &label, b"k3").await.unwrap();
+
+        let got = labels(&pool, "acct_a").await;
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(got.contains(&"ep_kitchen".to_string()) && got.contains(&"ep_office".to_string()));
+    }
+
+    /// Re-linking the same box replaces its key and retires the account's
+    /// legacy unlabeled key.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn relinking_a_box_replaces_its_key(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO accounts (account_id, email) VALUES ('acct_a', 'owner@example.com')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO box_key (api_key_hash, account_id) VALUES ('legacy', 'acct_a')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k1").await.unwrap();
+        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k2").await.unwrap();
+        assert_eq!(labels(&pool, "acct_a").await, vec!["ep_kitchen".to_string()]);
     }
 }

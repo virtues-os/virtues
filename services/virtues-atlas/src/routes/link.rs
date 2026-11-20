@@ -51,7 +51,11 @@ pub fn router() -> Router<AppState> {
         // up the matching customer, sends a magic link via Resend. The
         // verify_login GET endpoint clicks → marks the device_link ready.
         .route("/init/login", post(login_start))
-        .route("/init/login/verify", get(login_verify))
+        // GET shows what the link will do; only the POST from that page
+        // attaches. Opening an emailed link must not be enough on its own:
+        // anyone holding a link code can have the email sent to any address,
+        // and mail scanners open links before people do.
+        .route("/init/login/verify", get(login_confirm).post(login_verify))
         // The same login, reachable from the PAGE. `/init/login` takes the
         // box's secret device_code, which a browser cannot know — so without
         // this an owner with an existing account had no way through the web
@@ -479,7 +483,7 @@ async fn login_web(
         LoginOutcome::Sent => page(
             "Check your email",
             &format!(
-                "We sent a link to <b>{who}</b>. Open it on any device &mdash; your box links \
+                "We sent a link to <b>{who}</b>. Open it on any device and choose Attach box. Your box links \
                  itself within a few seconds.<br><br>Wrong address? You can {back}."
             ),
         ),
@@ -793,12 +797,13 @@ async fn redeem_granted_link(
         }
     };
 
+    let label = super::claim::key_label(endpoint_id.as_deref());
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
-            box_id: endpoint_id.clone(),
+            box_id: Some(label.clone()),
             api_key_hash: hex::encode(&api_key_hash),
             account_id: account_id.clone(),
         })
@@ -811,7 +816,7 @@ async fn redeem_granted_link(
     if let Err(e) = super::claim::mint_box_key(
         &state.pool,
         &account_id,
-        endpoint_id.as_deref(),
+        &label,
         &api_key_hash[..],
     )
     .await
@@ -1000,9 +1005,88 @@ struct LoginVerifyQuery {
     token: String,
 }
 
-async fn login_verify(
+/// `GET /init/login/verify?token=…` — the page an emailed link opens. It
+/// checks the token without using it, shows the link code and what attaching
+/// does, and offers one button that POSTs the token back.
+async fn login_confirm(
     State(state): State<AppState>,
     Query(q): Query<LoginVerifyQuery>,
+) -> axum::response::Response {
+    let token_hash = sha256(q.token.as_bytes());
+    let row: Option<(String, String)> = match sqlx::query_as(
+        r#"
+        SELECT la.email, dl.user_code
+        FROM login_attempt la
+        JOIN device_link dl ON dl.device_code_hash = la.device_code_hash
+        WHERE la.token_hash = $1
+          AND la.status = 'pending'
+          AND la.expires_at > now()
+        "#,
+    )
+    .bind(&token_hash[..])
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("login_attempt lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't check this link just now. Wait a moment and open it again. It is still valid.",
+            );
+        }
+    };
+    let Some((email, user_code)) = row else {
+        return page(
+            "Link expired or already used",
+            "This link is no longer valid. Open the Virtues app and start the link again \
+             &mdash; it fetches a fresh code from your box. (Set the box up from a terminal? \
+             Re-run the link command there.)",
+        );
+    };
+    confirm_page(&q.token, &html_escape(&email), &html_escape(&user_code))
+}
+
+/// The one-button confirmation behind an emailed link.
+fn confirm_page(token: &str, email: &str, user_code: &str) -> axum::response::Response {
+    // The token is 64 hex characters from `random_hex`; anything else is not
+    // a token this server minted, so it is not echoed into the page.
+    let token = if token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        token
+    } else {
+        ""
+    };
+    Html(format!(
+        "<!doctype html><html><head><meta charset=utf-8>\
+         <meta name=viewport content='width=device-width,initial-scale=1'>\
+         <title>Attach this box?</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}}\
+         h1{{font-size:1.4rem}}\
+         .code{{font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em}}\
+         p.sub{{color:#555;font-size:.92rem}}\
+         button{{font:inherit;padding:.6rem 1.1rem;border:0;border-radius:8px;background:#111;color:#fff;cursor:pointer}}\
+         </style></head>\
+         <body>\
+         <h1>Attach this box to your account?</h1>\
+         <p>A box showing link code <span class=code>{user_code}</span> asked to join the \
+         Virtues account for <b>{email}</b>. Attaching it lets that box use your account, \
+         including its AI credit.</p>\
+         <p class=sub>Only attach it if you started linking a box just now. If you didn't, \
+         close this page. Nothing changes.</p>\
+         <form method=post action=/init/login/verify>\
+         <input type=hidden name=token value='{token}'>\
+         <button type=submit>Attach box</button>\
+         </form>\
+         </body></html>"
+    ))
+    .into_response()
+}
+
+/// `POST /init/login/verify` — the confirmation page's button. Uses the
+/// token and attaches the box.
+async fn login_verify(
+    State(state): State<AppState>,
+    axum::extract::Form(q): axum::extract::Form<LoginVerifyQuery>,
 ) -> axum::response::Response {
     let token_hash = sha256(q.token.as_bytes());
 
@@ -1099,10 +1183,10 @@ enum AttachOutcome {
 ///
 /// ## Why the link is CLAIMED before anything is rotated
 ///
-/// `register_device` (box_id=None) DELETEs the account's whole key set and
-/// inserts the new one, and rotating `customers.api_key_hash` retires the old
-/// hash for atlas's own billing-auth. Both are destructive to any box already
-/// on the account. The link flip used to be LAST — so a lost race (the code
+/// `register_device` DELETEs the key with this label (and the account's
+/// legacy unlabeled key) and inserts the new one, and rotating
+/// `customers.api_key_hash` retires the old hash for atlas's own
+/// billing-auth. Both are destructive to a box already holding that key. The link flip used to be LAST — so a lost race (the code
 /// rotated, or the magic-link door and this one both fired) rotated the
 /// account key and then flipped ZERO rows, leaving an existing box holding a
 /// key neither virtues-api nor atlas would accept any more. Permanent, silent.
@@ -1166,14 +1250,15 @@ async fn attach_link_to_account(
         .await;
     };
 
+    // The endpoint_id the box self-reported at /init/start, carried on the
+    // device_link row (0015), or a fresh label when it reported none.
+    // virtues-api replaces only the key with this label. Label, never an
+    // authorization input.
+    let label = super::claim::key_label(endpoint_id.as_deref());
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
-            // The endpoint_id the box self-reported at /init/start, carried on
-            // the device_link row (0015). Some → virtues-api replaces only
-            // THIS box's key; None (older box) → the historical whole-account
-            // rotation. Label, never an authorization input.
-            box_id: endpoint_id.clone(),
+            box_id: Some(label.clone()),
             api_key_hash: hex::encode(&api_key_hash),
             account_id: account_id.to_string(),
         })
@@ -1196,7 +1281,7 @@ async fn attach_link_to_account(
     if let Err(e) = super::claim::mint_box_key(
         &state.pool,
         account_id,
-        endpoint_id.as_deref(),
+        &label,
         &api_key_hash[..],
     )
     .await
@@ -1256,5 +1341,33 @@ mod start_body_tests {
         assert_eq!(b.r#box.endpoint_id, None);
         let empty: StartBody = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.r#box.endpoint_id, None);
+    }
+}
+
+#[cfg(test)]
+mod confirm_page_tests {
+    use super::confirm_page;
+
+    async fn body(r: axum::response::Response) -> String {
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    /// The emailed link lands on a page that attaches nothing by itself: the
+    /// token only goes back through the form's POST.
+    #[tokio::test]
+    async fn the_page_posts_the_token_back() {
+        let token = "a".repeat(64);
+        let html = body(confirm_page(&token, "owner@example.com", "ABCD-EFGH")).await;
+        assert!(html.contains("method=post action=/init/login/verify"));
+        assert!(html.contains(&format!("value='{token}'")));
+        assert!(html.contains("ABCD-EFGH"));
+    }
+
+    #[tokio::test]
+    async fn a_token_it_did_not_mint_is_not_echoed() {
+        let html = body(confirm_page("x'><script>", "owner@example.com", "ABCD-EFGH")).await;
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("value=''"));
     }
 }

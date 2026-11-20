@@ -242,8 +242,8 @@
 			<Choices>
 				<Waiting>
 					{intent === "subscribe"
-						? "A link is on its way to your email. Open it, and checkout opens here next."
-						: "A sign-in link is on its way to your email. Open it and this picks up on its own. You can leave this where it is."}
+						? "A link is on its way to your email. Open it and choose Attach box, and checkout opens here next."
+						: "A sign-in link is on its way to your email. Open it and choose Attach box, and this picks up on its own. You can leave this where it is."}
 				</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>

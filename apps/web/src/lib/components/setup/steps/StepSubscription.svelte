@@ -394,8 +394,8 @@
 				<span class="wait-mark" aria-hidden="true"><ThinkingMark depth={4} size={18} /></span>
 				<p>
 					{intent === "subscribe"
-						? `A link is on its way to ${email.trim()}. Open it, and checkout opens here next.`
-						: `A sign-in link is on its way to ${email.trim()}. Open it and this page picks up on its own.`}
+						? `A link is on its way to ${email.trim()}. Open it and choose Attach box, and checkout opens here next.`
+						: `A sign-in link is on its way to ${email.trim()}. Open it and choose Attach box, and this page picks up on its own.`}
 				</p>
 			</div>
 		{:else if mode === "endpoint" || mode === "saving"}

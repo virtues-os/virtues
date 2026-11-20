@@ -380,7 +380,7 @@
 					<p class="panel-lede">
 						Continue opens a new tab at
 						<strong>{signinHost || 'the Virtues sign-in page'}</strong>
-						where you enter your email. Open the link we send, and this page picks up on its own.
+						where you enter your email. Open the link we send and choose Attach box, and this page picks up on its own.
 					</p>
 					<div class="code-block">
 						<div class="code-caption">Your pairing code</div>

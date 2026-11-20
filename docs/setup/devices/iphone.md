@@ -23,8 +23,8 @@ The Virtues iPhone app needs iOS 26.2 or later.
 5. At **What this iPhone can share**, choose **Turn on Location and Health**, and allow
    each one when iOS asks.
 6. At **Choose how … thinks**, keep **A Virtues subscription** chosen,
-   choose **Continue to checkout**, enter your email, and open the link we
-   send. Checkout then opens in your browser, where you confirm. If you
+   choose **Continue to checkout**, enter your email, open the link we send,
+   and choose **Attach box**. Checkout then opens in your browser, where you confirm. If you
    already have an account, choose **I already have an account**. To use
    your own AI model, choose **Your own AI** and enter its address and key.
 7. Choose **Open Virtues**. **A note from us** opens the founder's letter,
