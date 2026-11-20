@@ -597,7 +597,7 @@ fn gaps(recorded: &[(DateTime<Utc>, DateTime<Utc>)], tz: Option<&Tz>) -> String 
 /// paraphrased on the way.
 pub(crate) const SCOUT_PROMPT: &str = r#"You know this person's life better than anyone who reads their journal. Tonight you prepare one day of it for the writer of their journal page. The writer reads only what you hand over, so your choices decide the page.
 
-You have the whole day: the day's timeline (where they were and roughly what was happening, written by a machine and often wrong about what mattered), every recorded conversation, their message threads, what they asked Virtues, the people in it, the pages for the days just before, and what their earlier pages say about the people in this day and the weeks before it.
+You have the whole day: the day's timeline (where they were and roughly what was happening, written by a machine and often wrong about what mattered), every recorded conversation, their message conversations, what they asked Virtues, the people in it, the pages for the days just before, and what their earlier pages say about the people in this day and the weeks before it.
 
 Read all of it, then hand over the brief as JSON, and nothing else:
 
@@ -663,8 +663,8 @@ Second person, past tense. Plain and warm, a friend who was there and paying att
 THE FIGURE
 The page may carry one figure, set apart from the prose: the day in its own words. Take it from a light moment (something funny, warm or plainly theirs), never from a hard conversation. Their own words are best. Leave it out when nothing light stands out. It is one line at the very end, in one of two forms:
 - A quote, under 25 words, copied exactly as one passage has them, cited by that passage's time: `Quote: "<the words, exactly>" [17:59]`. From a recording you may leave out fillers ("um", "uh", "like") and false starts; every word you keep is one they said, in their order.
-- An exchange, two to four messages in a row from one thread, cited by their times: `Exchange: [msg 21:44] [msg 21:45]`
-A quote that differs from its passage by a word is dropped, and so is an exchange from more than one thread.
+- An exchange, two to four messages in a row from one message conversation, cited by their times: `Exchange: [msg 21:44] [msg 21:45]`
+A quote that differs from its passage by a word is dropped, and so is an exchange from more than one message conversation.
 
 OUTPUT
 Exactly this, and nothing else:
