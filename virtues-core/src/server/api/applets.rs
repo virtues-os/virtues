@@ -75,6 +75,7 @@ pub fn routes() -> Router<AppState> {
             post(chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
+        .route("/api/chat-import/status", get(chat_import_status_handler))
         .route("/api/applets/:id/runs", get(list_applet_runs_handler))
         .route("/api/applets/:id/log", get(applet_log_handler))
         .route("/api/applets/:id/pages", get(applet_pages_handler))
@@ -199,6 +200,53 @@ pub async fn chat_import_upload_handler(
             error_response(e)
         }
     }
+}
+
+/// One chat site's history on this server: the months that have messages,
+/// oldest first.
+#[derive(Debug, Serialize)]
+pub struct ChatHistory {
+    pub provider: String,
+    pub months: Vec<ChatMonth>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatMonth {
+    /// `YYYY-MM`, in UTC.
+    pub month: String,
+    pub messages: i64,
+}
+
+/// GET /api/chat-import/status — what has arrived from other AI chat sites,
+/// by site and month: the rows the export import (`chat_import`) and the
+/// live syncs (`grok_chats`) wrote. Setup's chats step reads it to say which
+/// sites are in and over what span.
+pub async fn chat_import_status_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ChatHistory>>, Error> {
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT provider, to_char(date_trunc('month', occurred_at AT TIME ZONE 'UTC'), 'YYYY-MM'), \
+                count(*)::bigint \
+           FROM data_content_conversation \
+          WHERE source_table IN ('chat_import', 'grok_chats') \
+          GROUP BY 1, 2 \
+          ORDER BY 1, 2",
+    )
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| Error::Database(format!("read imported chat months: {e}")))?;
+
+    let mut out: Vec<ChatHistory> = Vec::new();
+    for (provider, month, messages) in rows {
+        match out.last_mut() {
+            Some(h) if h.provider == provider => h.months.push(ChatMonth { month, messages }),
+            _ => out.push(ChatHistory {
+                provider,
+                months: vec![ChatMonth { month, messages }],
+            }),
+        }
+    }
+    Ok(Json(out))
 }
 
 /// Stream the upload's `file` field to `path` and return its `provider`
