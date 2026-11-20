@@ -198,15 +198,17 @@ the box. Built in slice 4; the manual page is
   self-hosted copy of the same layout. Download and unpack are shared with
   the map files (`virtues-core/src/downloads.rs`).
 
-Before servers can download a style, two steps remain, both the owner's:
+Published 2026-11-20 at the owner's go-ahead: both archives and
+`catalog.json` are in the bucket under `backgrounds/` (uploaded with the maps
+writer key, archives first, sizes checked), and virtues-api runs the route
+from wave at 4a8e8d82b. Without a key both routes answer 401, and the API's
+read key reads the files. A download through the live API with a real
+subscriber key has not been tried yet. Servers get the download with the
+next release that carries slice 4.
 
-1. Upload the output of `package.py` to the bucket under `backgrounds/`,
-   archives first and `catalog.json` last, with the maps writer key.
-2. Deploy virtues-api with the backgrounds route. The API is never deployed
-   from wave without asking; see `agents/build/deployment.md`.
-
-Until then a server's catalog request gets a 404 or 503, and the pickers show
-Plain and whatever is installed by hand, and home shows the lake.
+To publish a new or rebuilt style: run `package.py` over every style, upload
+the new archives, then `catalog.json` last. An archive no catalog names any
+more can be deleted after a day, once servers have refreshed their catalog.
 
 Each archive is about 100 MB because it holds AVIF and WebP at two widths.
 Every Apple device of the last few years shows AVIF, so dropping WebP would
@@ -270,8 +272,8 @@ Each slice replaces the old way in the same change.
 4. **Delivery.** Built 2026-11-20 (see Delivery above): the packaging tool,
    the virtues-api route, the box's catalog, download and install, the
    download state on the Settings cards, the manual page and the privacy
-   boundary entry. Tested end to end against a local copy of the catalog;
-   not yet against virtues-api or the bucket.
+   boundary entry. Tested end to end against a local copy of the catalog.
+   Archives uploaded and the API route deployed on 2026-11-20.
 5. **A second renderer.** One cheap moving style (dots or a single shader) to
    check the renderer split before more image styles are added.
 6. **Night versions** of the paintings, replacing the curated pairs.
