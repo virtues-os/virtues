@@ -337,11 +337,16 @@ struct Stored {
     finished_at: Option<DateTime<Utc>>,
 }
 
+/// A deletion's chat, as `chat_id` over the alias `d`. A chat in Recently
+/// deleted can't be opened, so while it waits there the deletion names none.
+const CHAT_ID: &str = "CASE WHEN EXISTS (SELECT 1 FROM app_chats c WHERE c.id = d.chat_id AND c.deleted_at IS NULL) THEN d.chat_id END AS chat_id";
+
 async fn stored(pool: &PgPool, id: &str) -> Result<Stored> {
-    let row = sqlx::query(
-        "SELECT id, chat_id, summary, targets, status, receipt, error, created_at, approved_at, finished_at \
-         FROM app_deletions WHERE id = $1",
-    )
+    let row = sqlx::query(&format!(
+        "SELECT d.id, {CHAT_ID}, d.summary, d.targets, d.status, d.receipt, d.error, \
+                d.created_at, d.approved_at, d.finished_at \
+         FROM app_deletions d WHERE d.id = $1"
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await?
@@ -376,22 +381,30 @@ fn is_running_here(id: &str) -> bool {
     running().lock().is_ok_and(|set| set.contains(id))
 }
 
+/// A run marked `running` that is not running in this process was cut off by
+/// a restart: record it as failed, so the owner can allow it again. Every
+/// batch committed whole, so a second run removes only what is left. Returns
+/// whether it was.
+async fn settle_cut_off(pool: &PgPool, id: &str, status: &str) -> Result<bool> {
+    if status != "running" || is_running_here(id) {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE app_deletions SET status = 'failed', error = $2, finished_at = now() WHERE id = $1 AND status = 'running'")
+        .bind(id)
+        .bind(RESTARTED)
+        .execute(pool)
+        .await?;
+    Ok(true)
+}
+
 /// A deletion as it stands. While it waits, its rows are counted and sampled
 /// again, so the card shows what allowing it would remove now.
 pub async fn get(pool: &PgPool, id: &str) -> Result<Deletion> {
     let mut row = stored(pool, id).await?;
 
-    // Cut off by a restart: say so, and let the owner allow it again. Every
-    // batch committed whole, so a second run removes only what is left.
-    if row.status == "running" && !is_running_here(id) {
-        let error = RESTARTED;
-        sqlx::query("UPDATE app_deletions SET status = 'failed', error = $2, finished_at = now() WHERE id = $1 AND status = 'running'")
-            .bind(id)
-            .bind(error)
-            .execute(pool)
-            .await?;
+    if settle_cut_off(pool, id, &row.status).await? {
         row.status = "failed".to_string();
-        row.error = Some(error.to_string());
+        row.error = Some(RESTARTED.to_string());
     }
 
     let mut targets = Vec::new();
@@ -423,43 +436,45 @@ pub async fn get(pool: &PgPool, id: &str) -> Result<Deletion> {
 }
 
 /// Every deletion that ran or is running, newest first: Settings · Deleted
-/// records. A proposal the owner never allowed, or set aside, is not a
-/// deletion and is left out. Nothing is counted again here; a finished
-/// deletion's receipt says what went. One cut off by a restart reads as
-/// failed, as `get` says it, without writing.
+/// records. Every deletion the owner allowed is here, including one that
+/// stopped and was then set aside: its tombstones still refuse what it had
+/// deleted, and its page is where they can be lifted. A proposal never
+/// allowed is not a deletion and is left out. Nothing is counted again; a
+/// finished deletion's receipt says what went. One cut off by a restart is
+/// recorded as failed, as `get` does.
 pub async fn list(pool: &PgPool) -> Result<Vec<Deletion>> {
-    let rows = sqlx::query(
-        "SELECT id, chat_id, summary, status, receipt, error, created_at, approved_at, finished_at \
-         FROM app_deletions WHERE status IN ('running', 'done', 'failed') \
-         ORDER BY COALESCE(approved_at, created_at) DESC LIMIT 500",
-    )
+    let rows = sqlx::query(&format!(
+        "SELECT d.id, {CHAT_ID}, d.summary, d.status, d.receipt, d.error, \
+                d.created_at, d.approved_at, d.finished_at \
+         FROM app_deletions d WHERE d.approved_at IS NOT NULL \
+         ORDER BY d.approved_at DESC"
+    ))
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let id: String = row.get("id");
-            let mut status: String = row.get("status");
-            let mut error: Option<String> = row.get("error");
-            if status == "running" && !is_running_here(&id) {
-                status = "failed".to_string();
-                error = Some(RESTARTED.to_string());
-            }
-            Deletion {
-                id,
-                chat_id: row.get("chat_id"),
-                summary: row.get("summary"),
-                status,
-                targets: Vec::new(),
-                preview_error: None,
-                receipt: row.get("receipt"),
-                error,
-                created_at: row.get("created_at"),
-                approved_at: row.get("approved_at"),
-                finished_at: row.get("finished_at"),
-            }
-        })
-        .collect())
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: String = row.get("id");
+        let mut status: String = row.get("status");
+        let mut error: Option<String> = row.get("error");
+        if settle_cut_off(pool, &id, &status).await? {
+            status = "failed".to_string();
+            error = Some(RESTARTED.to_string());
+        }
+        out.push(Deletion {
+            id,
+            chat_id: row.get("chat_id"),
+            summary: row.get("summary"),
+            status,
+            targets: Vec::new(),
+            preview_error: None,
+            receipt: row.get("receipt"),
+            error,
+            created_at: row.get("created_at"),
+            approved_at: row.get("approved_at"),
+            finished_at: row.get("finished_at"),
+        });
+    }
+    Ok(out)
 }
 
 /// Record a deletion for the owner to allow. Nothing is deleted. Returns its
@@ -735,7 +750,7 @@ pub async fn delete_rows(pool: &PgPool, table_name: &str, ids: &[String]) -> Res
     )
     .bind(&id)
     .bind(format!("{}: rows you picked in Query", table.label))
-    .bind(json!([{ "table": table.name }]))
+    .bind(json!([{ "table": table.name, "ids": ids }]))
     .execute(pool)
     .await?;
     if let Ok(mut set) = running().lock() {
@@ -759,9 +774,16 @@ pub async fn delete_rows(pool: &PgPool, table_name: &str, ids: &[String]) -> Res
         Ok(()) => ("done", None),
         Err(e) => ("failed", Some(e.to_string())),
     };
-    sqlx::query("UPDATE app_deletions SET status = $2, error = $3, receipt = $4, finished_at = now() WHERE id = $1")
-        .bind(&id)
-        .bind(status)
+    // Done, it keeps only which table it was; failed, it keeps the ids, so
+    // allowing it again deletes what is left.
+    sqlx::query(
+        "UPDATE app_deletions SET status = $2, error = $3, receipt = $4, finished_at = now(), \
+         targets = CASE WHEN $2 = 'done' THEN jsonb_build_array(jsonb_build_object('table', targets->0->>'table')) \
+                        ELSE targets END \
+         WHERE id = $1",
+    )
+    .bind(&id)
+    .bind(status)
         .bind(error)
         .bind(removed.receipt())
         .execute(pool)
@@ -1260,14 +1282,42 @@ mod tests {
         deletion(&pool, "del_stopped", "failed", Some("2026-11-09T10:00:00Z")).await;
         // Marked running, but no run is going on in this process: a restart cut it off.
         deletion(&pool, "del_cut", "running", Some("2026-11-14T10:00:00Z")).await;
+        // Stopped part way, then set aside: its tombstones still refuse what it deleted.
+        deletion(&pool, "del_set_aside", "cancelled", Some("2026-11-10T10:00:00Z")).await;
         deletion(&pool, "del_waiting", "proposed", None).await;
         deletion(&pool, "del_not_now", "cancelled", None).await;
 
         let listed = list(&pool).await.unwrap();
         let ids: Vec<&str> = listed.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["del_cut", "del_new", "del_stopped", "del_old"]);
+        assert_eq!(ids, ["del_cut", "del_new", "del_set_aside", "del_stopped", "del_old"]);
         assert_eq!(listed[0].status, "failed");
         assert_eq!(listed[0].error.as_deref(), Some(RESTARTED));
+        // Recorded, so allowing it again finds it failed.
+        let stored: String = sqlx::query_scalar("SELECT status FROM app_deletions WHERE id = 'del_cut'").fetch_one(&pool).await.unwrap();
+        assert_eq!(stored, "failed");
+    }
+
+    #[sqlx::test]
+    async fn a_query_deletion_keeps_its_ids_until_it_is_done(pool: PgPool) {
+        grant_reader(&pool).await;
+        heart_rate(&pool, "hr_a", "ios:hr:a", "2026-03-03T10:00:00Z").await;
+        delete_rows(&pool, "data_health_heart_rate", &["hr_a".to_string()]).await.unwrap();
+        let done: Value = sqlx::query_scalar("SELECT targets FROM app_deletions").fetch_one(&pool).await.unwrap();
+        assert_eq!(done, json!([{ "table": "data_health_heart_rate" }]), "done, it keeps only its table");
+
+        // One that stopped part way keeps the ids, so allowing it again deletes the rest.
+        heart_rate(&pool, "hr_b", "ios:hr:b", "2026-03-03T10:05:00Z").await;
+        sqlx::query(
+            "INSERT INTO app_deletions (id, summary, targets, status, approved_at) \
+             VALUES ('del_q', 'Heart rate: rows you picked in Query', $1, 'failed', now())",
+        )
+        .bind(json!([{ "table": "data_health_heart_rate", "ids": ["hr_b"] }]))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let receipt = run(&pool, "del_q").await.unwrap();
+        assert_eq!(receipt["records"], 1);
+        close_reader(&pool).await;
     }
 
     #[sqlx::test]
@@ -1277,15 +1327,30 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO app_deletions (id, chat_id, summary, targets, status) \
-             VALUES ('del_d', 'chat_d', 'Invented records', '[]', 'done')",
+            "INSERT INTO app_deletions (id, chat_id, summary, targets, status, approved_at) \
+             VALUES ('del_d', 'chat_d', 'Invented records', '[]', 'done', now())",
         )
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("DELETE FROM app_chats WHERE id = 'chat_d'").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO app_deletions (id, chat_id, summary, targets) VALUES ('del_never', 'chat_d', 'Invented records', '[]')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
+        // In Recently deleted the chat can't be opened, so the deletion names none.
+        sqlx::query("UPDATE app_chats SET deleted_at = now() WHERE id = 'chat_d'").execute(&pool).await.unwrap();
+        assert_eq!(get(&pool, "del_d").await.unwrap().chat_id, None);
+
+        sqlx::query("DELETE FROM app_chats WHERE id = 'chat_d'").execute(&pool).await.unwrap();
         let kept = get(&pool, "del_d").await.unwrap();
         assert_eq!(kept.chat_id, None, "the deletion stays, and only loses its chat");
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM app_deletions WHERE id = 'del_never'").await,
+            0,
+            "a proposal never allowed goes with its chat"
+        );
     }
 }

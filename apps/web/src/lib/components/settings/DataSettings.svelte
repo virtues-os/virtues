@@ -25,7 +25,6 @@
 	import { getBackupStatus, getProfile, updateProfile, type BackupStatus } from '$lib/api/client';
 	import { backupSummary } from '$lib/settings/backup';
 
-	let { assistantName }: { assistantName: string } = $props();
 
 	const MANUAL = 'https://virtues.com/docs#what-leaves-the-server';
 

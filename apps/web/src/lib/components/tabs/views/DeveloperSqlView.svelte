@@ -130,6 +130,8 @@
 	}
 
 	function selectTable(name: string) {
+		// A query is running: picking now would show this table over that one's rows.
+		if (loading) return;
 		selectedTable = name;
 		sql = `SELECT * FROM ${name} LIMIT 100;`;
 		void runQuery(name);
@@ -166,6 +168,8 @@
 			const receipt = await deleteRows(table, ids);
 			const gone = receipt.records ?? 0;
 			toast(`Deleted ${gone.toLocaleString()} ${gone === 1 ? 'row' : 'rows'} from ${table}`);
+			// Show the table again, whatever was typed in the box since.
+			sql = `SELECT * FROM ${table} LIMIT 100;`;
 			await runQuery(table);
 		} catch (e) {
 			deleteError = `Your server didn’t delete those rows: ${e instanceof Error ? e.message : String(e)}`;
@@ -250,7 +254,8 @@
 										<input type="checkbox" aria-label="Select every row shown" checked={allSelected} onchange={toggleAll} />
 									</th>
 								{/if}
-								{#each columns as name (name)}<th>{name}</th>{/each}
+								<!-- By position: a join or `SELECT 1, 2` can repeat a name. -->
+								{#each columns as name, c (c)}<th>{name}</th>{/each}
 							</tr>
 						</thead>
 						<tbody>
@@ -264,7 +269,7 @@
 											{/if}
 										</td>
 									{/if}
-									{#each columns as name (name)}
+									{#each columns as name, c (c)}
 										<td class:null={row[name] === null || row[name] === undefined} class:num={typeof row[name] === 'number'} title={cell(row[name])}
 											>{cell(row[name])}</td
 										>

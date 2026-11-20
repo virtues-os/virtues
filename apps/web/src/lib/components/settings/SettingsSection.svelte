@@ -151,7 +151,7 @@
 				<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/assistant/spending', spoken)}>Models and spending</button>.
 			</p>
 		{:else if id === 'data'}
-			<DataSettings assistantName={spoken} />
+			<DataSettings />
 		{/if}
 	</div>
 </SettingsPage>

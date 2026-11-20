@@ -27,17 +27,12 @@ describe('streamName', () => {
 
 describe('covers', () => {
 	it('says to now while records still arrive', () => {
-		expect(covers(at('2025-03-04T08:00:00'), at('2026-11-18T20:00:00'), NOW)).toBe(
-			`${new Date(at('2025-03-04T08:00:00')).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })} to now`,
-		);
+		expect(covers(at('2025-03-04T08:00:00'), at('2026-11-18T20:00:00'), NOW)).toBe('March 2025 to now');
 	});
 
 	it('gives the last date once a stream has been quiet', () => {
-		const text = covers(at('2025-06-02T08:00:00'), at('2026-10-30T20:00:00'), NOW);
-		expect(text).toMatch(/ to /);
-		expect(text).not.toMatch(/now$/);
-		expect(text).not.toMatch(/2026$/);
-		expect(covers(at('2025-06-02T08:00:00'), at('2025-10-30T20:00:00'), NOW)).toMatch(/2025$/);
+		expect(covers(at('2025-06-02T08:00:00'), at('2026-10-30T20:00:00'), NOW)).toBe('June 2025 to October 30');
+		expect(covers(at('2025-06-02T08:00:00'), at('2025-10-30T20:00:00'), NOW)).toBe('June 2025 to October 30, 2025');
 	});
 
 	it('says nothing without a first date', () => {
@@ -48,7 +43,7 @@ describe('covers', () => {
 describe('streamsLead', () => {
 	it('counts the streams, adds up their size, and names the first month', () => {
 		const lead = streamsLead([stream(), stream({ stream_name: 'location', earliest_at: at('2025-06-01T08:00:00') })]);
-		expect(lead).toMatch(/^Your server keeps 2 streams, 4\.0 GB in all, going back to .+\.$/);
+		expect(lead).toBe('Your server keeps 2 streams, 4.0 GB in all, going back to March 2025.');
 	});
 
 	it('says when nothing has arrived', () => {

@@ -5,26 +5,23 @@
 	 *
 	 * A deletion removes records at once and tombstones them, so no sync
 	 * brings them back (api::deletions on the server). Each row opens the
-	 * deletion's own page, which says what it reached and can let its
-	 * records be collected again. One that stopped part way offers Try
-	 * again here. Chats, pages and files are not records: they wait 30 days
-	 * in Recently deleted instead.
+	 * deletion's own page, which says what it reached, can let its records
+	 * be collected again, and offers Try again for one that stopped. While
+	 * one is running the list checks again every 2 seconds. Chats, pages and
+	 * files are not records: they wait 30 days in Recently deleted instead.
 	 */
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import LoadError from './LoadError.svelte';
-	import Button from '$lib/components/Button.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
-	import { allowDeletion, listDeletions, type Deletion } from '$lib/api/deletions';
+	import { listDeletions, type Deletion } from '$lib/api/deletions';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
-	import { deletionLine, deletionTitle } from '$lib/settings/deletions';
+	import { deletionLine, deletionTitle, stopped } from '$lib/settings/deletions';
 
 	let deletions = $state<Deletion[] | null>(null);
 	let failed = $state<string | null>(null);
 	let name = $state(DEFAULT_ASSISTANT_NAME);
-	let retrying = $state<string | null>(null);
-	let retryError = $state<string | null>(null);
 
 	async function load() {
 		failed = null;
@@ -51,18 +48,12 @@
 		windowShellStore.navigate(`/virtues/data/deleted/${d.id}`, { label: 'Settings · Deleted records' });
 	}
 
-	async function retry(d: Deletion) {
-		retrying = d.id;
-		retryError = null;
-		try {
-			await allowDeletion(d.id);
-			await load();
-		} catch (e) {
-			retryError = `Your server didn’t start it again: ${e instanceof Error ? e.message : String(e)}`;
-		} finally {
-			retrying = null;
-		}
-	}
+	// A running deletion finishes on its own; check until none is.
+	$effect(() => {
+		if (!deletions?.some((d) => d.status === 'running')) return;
+		const timer = setInterval(() => void load(), 2000);
+		return () => clearInterval(timer);
+	});
 
 	const openQuery = () => void windowShellStore.openTabFromRoute('/sources/query', { label: 'Sources · Query', focusExisting: true });
 	const openTrash = () => windowShellStore.navigate('/storage/trash', { label: 'Recently deleted' });
@@ -88,27 +79,18 @@
 		<p class="settings-sub">{@render howTo()}</p>
 	{:else}
 		<p class="settings-sub how">{@render howTo()}</p>
-		{#if retryError}<p class="retry-error" role="alert">{retryError}</p>{/if}
 		<div class="list" role="list">
 			{#each deletions as d (d.id)}
-				<div class="row" role="listitem">
-					{#if d.status === 'failed'}
+				<div role="listitem">
+					<button type="button" class="open" onclick={() => open(d)}>
 						<span class="words">
 							<span class="name">{deletionTitle(d)}</span>
-							<span class="line warn">{deletionLine(d, now)}</span>
+							<span class="line" class:warn={stopped(d)}>{deletionLine(d, now)}</span>
 						</span>
-						<Button variant="secondary" loading={retrying === d.id} onclick={() => retry(d)}>Try again</Button>
-					{:else}
-						<button type="button" class="open" onclick={() => open(d)}>
-							<span class="words">
-								<span class="name">{deletionTitle(d)}</span>
-								<span class="line">{deletionLine(d, now)}</span>
-							</span>
-							<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" width="15" height="15">
-								<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" />
-							</svg>
-						</button>
-					{/if}
+						<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" width="15" height="15">
+							<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m9 18l6-6l-6-6" />
+						</svg>
+					</button>
 				</div>
 			{/each}
 		</div>
@@ -134,27 +116,13 @@
 		white-space: nowrap;
 	}
 
-	.retry-error {
-		margin: 12px 0 0;
-		font-size: 13px;
-		color: var(--color-error);
-	}
-
 	.list {
 		margin-top: 16px;
 	}
 
-	.row {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 16px;
-		min-height: 60px;
-	}
-
 	.open {
-		grid-column: 1 / -1;
 		display: grid;
+		width: 100%;
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 16px;
@@ -166,14 +134,6 @@
 		text-align: left;
 		color: inherit;
 		cursor: pointer;
-	}
-
-	.words {
-		padding: 8px 0;
-	}
-
-	.open .words {
-		padding: 0;
 	}
 
 	.name {

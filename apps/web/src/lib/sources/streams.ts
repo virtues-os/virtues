@@ -26,7 +26,8 @@ export function streamName(id: string): string {
 	return words ? words.charAt(0).toUpperCase() + words.slice(1) : id;
 }
 
-const monthYear = (d: Date) => d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+// US English, as `formatDate` writes dates, so they match the sentence around them.
+const monthYear = (d: Date) => d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
 /**
  * The dates a stream covers: "March 2025 to now", or "March 2025 to
@@ -39,7 +40,7 @@ export function covers(earliest: string | null, latest: string | null, now = Dat
 	if (!latest || now - new Date(latest).getTime() <= 2 * DAY_MS) return `${from} to now`;
 	const last = new Date(latest);
 	const sameYear = last.getFullYear() === new Date(now).getFullYear();
-	const to = last.toLocaleDateString(undefined, sameYear ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
+	const to = last.toLocaleDateString('en-US', sameYear ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
 	return `${from} to ${to}`;
 }
 

@@ -18,7 +18,10 @@
     let webSocket: WebSocket | null = null;
     let connectionStatus = $state<
         "disconnected" | "connecting" | "reconnecting" | "connected"
-    >("disconnected");
+    >("connecting");
+    // One attempt at a time. Try now during an attempt would otherwise open a
+    // second socket, and two tmux clients would write into one screen.
+    let attempting = $state(false);
 
     // Paste/drop upload state. Reported in the header, never written into the
     // terminal: a TUI owns that screen, and a status line printed under it would
@@ -241,7 +244,8 @@
     });
 
     async function connectWebSocket() {
-        if (disposed || !terminal) return;
+        if (disposed || !terminal || attempting) return;
+        attempting = true;
         connectionStatus = reconnectAttempts > 0 ? "reconnecting" : "connecting";
 
         // The shell runs with sudo on the box, so the box asks for the app's
@@ -255,13 +259,18 @@
             if (err instanceof ApiError && err.status === 403) {
                 connectionStatus = "disconnected";
                 fatal = err.message;
+                attempting = false;
                 return;
             }
             console.error("[terminal] owner proof failed", err);
+            attempting = false;
             scheduleReconnect();
             return;
         }
-        if (disposed || !terminal) return;
+        if (disposed || !terminal) {
+            attempting = false;
+            return;
+        }
 
         // Open the PTY at the size we're actually showing. A TUI reads the
         // winsize once at startup, so a PTY born at 80x24 and resized a beat
@@ -273,6 +282,14 @@
         if (proof) params.set("owner_proof", proof);
         const url = `${WS_URL}?${params}`;
 
+        // A socket left from before goes quietly, so its close can't start
+        // another reconnect.
+        if (webSocket) {
+            webSocket.onclose = null;
+            webSocket.onmessage = null;
+            webSocket.close();
+        }
+
         try {
             webSocket = new WebSocket(url);
             // Receive PTY output as raw bytes so xterm.js decodes UTF-8 itself
@@ -281,6 +298,7 @@
             webSocket.binaryType = "arraybuffer";
 
             webSocket.onopen = () => {
+                attempting = false;
                 connectionStatus = "connected";
                 reconnectAttempts = 0;
                 // On a reattach the box's tmux repaints the full screen for us,
@@ -305,9 +323,13 @@
             // onerror always precedes onclose, so schedule the retry from
             // onclose alone and there's exactly one per drop.
             webSocket.onerror = () => {};
-            webSocket.onclose = () => scheduleReconnect();
+            webSocket.onclose = () => {
+                attempting = false;
+                scheduleReconnect();
+            };
         } catch (err) {
             console.error("[terminal] WebSocket failed to open", err);
+            attempting = false;
             scheduleReconnect();
         }
     }
@@ -404,6 +426,7 @@
 
     /** Skip the rest of the backoff and connect now. */
     function tryNow() {
+        if (attempting) return;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = null;
         void connectWebSocket();
@@ -453,7 +476,7 @@
     {#if band}
         <div class="band" role="status">
             <p>{band}</p>
-            {#if !fatal}<Button variant="secondary" onclick={tryNow}>Try now</Button>{/if}
+            {#if !fatal}<Button variant="secondary" loading={attempting} onclick={tryNow}>Try now</Button>{/if}
         </div>
     {/if}
 

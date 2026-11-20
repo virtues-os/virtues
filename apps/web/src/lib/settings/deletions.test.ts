@@ -1,7 +1,7 @@
 // Deletions in words. Every deletion, count and date here is invented.
 import { describe, expect, it } from 'vitest';
 import type { Deletion } from '$lib/api/deletions';
-import { alsoRemoved, deletionLead, deletionLine, deletionTitle, span, stillKept } from './deletions';
+import { alsoRemoved, deletionLead, deletionLede, deletionLine, deletionTitle, span, stillKept } from './deletions';
 
 const NOW = new Date('2026-11-19T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -47,8 +47,24 @@ describe('deletionLine', () => {
 	});
 
 	it('gives the year for a deletion from another year', () => {
-		const old = deletion({ finished_at: at('2025-10-03T10:00:00') });
+		const old = deletion({ approved_at: at('2025-10-03T10:00:00') });
 		expect(deletionLine(old, NOW)).toMatch(/^October 3, 2025, from a chat\./);
+	});
+
+	it('keeps the day it was allowed, however late it was settled', () => {
+		const cut = deletion({ status: 'failed', error: 'Your server restarted before this finished.', finished_at: at('2026-11-18T10:00:00') });
+		expect(deletionLine(cut, NOW)).toMatch(/^October 28, from a chat\./);
+	});
+
+	it('says when one stopped and was set aside', () => {
+		expect(deletionLine(deletion({ status: 'cancelled' }), NOW)).toBe('October 28, from a chat. Stopped, and you set it aside.');
+	});
+});
+
+describe('deletionLede', () => {
+	it('says Deleted once it finished, and Started before', () => {
+		expect(deletionLede(deletion())).toBe('Deleted October 28, 2026, after you asked in a chat.');
+		expect(deletionLede(deletion({ status: 'failed', chat_id: null }))).toBe('Started October 28, 2026.');
 	});
 });
 
