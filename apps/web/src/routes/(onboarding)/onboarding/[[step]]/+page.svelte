@@ -37,6 +37,7 @@
 <script lang="ts">
 	import { afterNavigate, goto, replaceState } from "$app/navigation";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import Background from "$lib/components/Background.svelte";
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "$lib/utils/transitions";
@@ -402,13 +403,11 @@
 	<div class="ink"></div>
 </div>
 {#if closing}
-	<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
-	     macOS (174 KB), the JPEG last (508 KB). -->
-	<picture>
-		<source srcset="/scenes/lake.avif" type="image/avif" />
-		<source srcset="/scenes/lake.webp" type="image/webp" />
-		<img class="arrival-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" />
-	</picture>
+	<!-- The home background setup closes into. Before a server is reached
+	     that is the lake. -->
+	<div class="arrival-scene" aria-hidden="true">
+		<Background position="72% 100%" dimLake={false} />
+	</div>
 	<div class="arrival-veil" aria-hidden="true"></div>
 {/if}
 <!-- The Mac app's title bar is an overlay, so the traffic lights float over
@@ -783,8 +782,6 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
-		object-fit: cover;
-		object-position: 72% 100%;
 		pointer-events: none;
 		animation: bloom 1400ms var(--m-ease) 250ms both;
 	}
