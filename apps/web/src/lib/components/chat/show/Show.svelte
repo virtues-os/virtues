@@ -19,7 +19,6 @@
 	import ShowTable from "./ShowTable.svelte";
 	import ShowMap from "./ShowMap.svelte";
 	import ShowTimeline from "./ShowTimeline.svelte";
-	import ShowChoices from "./ShowChoices.svelte";
 	import ShowSeries from "./ShowSeries.svelte";
 
 	interface Props {
@@ -85,7 +84,10 @@
 		{:else if out.kind === "timeline"}
 			<ShowTimeline {rows} />
 		{:else if out.kind === "choices"}
-			<ShowChoices title={out.title} context={out.context} options={out.options ?? []} {active} {onChoose} />
+			<!-- Loaded when a reply ends with one, so the chat home doesn't carry it before its first paint. -->
+			{#await import("./ShowChoices.svelte") then { default: ShowChoices }}
+				<ShowChoices title={out.title} context={out.context} options={out.options ?? []} {active} {onChoose} />
+			{/await}
 		{/if}
 
 		{#if out && out.kind !== "choices"}

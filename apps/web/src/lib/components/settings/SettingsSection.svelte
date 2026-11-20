@@ -31,7 +31,8 @@
 	import { getAssistantProfile, getByoKey } from '$lib/api/client';
 	import { getAccent, getThemeChoice, setTheme, type Accent, type ThemeChoice } from '$lib/utils/theme';
 	import { SECTIONS, findSetting, titleOf, type SectionId } from '$lib/settings';
-	import { lightPendingSetting, openSettingsPage } from '$lib/settings/focus';
+	import { openSettingsPage } from '$lib/settings/focus';
+	import { lightPendingSetting } from '$lib/settings/light';
 
 	let { section: id }: { section: SectionId } = $props();
 

@@ -27,7 +27,7 @@
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { isMacOS } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { lightPendingSetting } from "$lib/settings/focus";
+	import { lightPendingSetting } from "$lib/settings/light";
 	import {
 		kindIcon,
 		kindSentence,

@@ -26,7 +26,7 @@
 	import { isTauri, isMacOS } from "$lib/utils/platform";
 	import { BUILD, buildLabel } from "$lib/build";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { lightPendingSetting } from "$lib/settings/focus";
+	import { lightPendingSetting } from "$lib/settings/light";
 	import {
 		collectorOf,
 		deviceName,

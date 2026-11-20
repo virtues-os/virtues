@@ -24,7 +24,7 @@
 	import MobileStreamPage from "./MobileStreamPage.svelte";
 	import MobileAudioSettings from "./MobileAudioSettings.svelte";
 	import Fold from "$lib/components/settings/Fold.svelte";
-	import { lightPendingSetting } from "$lib/settings/focus";
+	import { lightPendingSetting } from "$lib/settings/light";
 	import { BUILD, buildLabel } from "$lib/build";
 	import { isIPad } from "$lib/utils/platform";
 	import { boxApiVersion } from "$lib/boxApi";

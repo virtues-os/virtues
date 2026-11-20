@@ -32,7 +32,7 @@
 	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { reloadApp } from '$lib/reload';
-	import { lightPendingSetting } from '$lib/settings/focus';
+	import { lightPendingSetting } from '$lib/settings/light';
 	import { BUILD, buildLabel } from '$lib/build';
 	import { formatDate } from '$lib/utils/dateUtils';
 	import { shellIdentity, describeOtaCheck, runsOwnCopy, stagedBundle, type ShellIdentity } from '$lib/tauri/bridge';
