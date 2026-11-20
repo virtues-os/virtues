@@ -10,7 +10,7 @@
 	 * and never priced, since only your provider knows the price.
 	 */
 	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
-	import Button from '$lib/components/Button.svelte';
+	import LoadError from '$lib/components/settings/LoadError.svelte';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import { formatMicrosPrecise, formatMicrosUSD } from '$lib/utils/currency';
 	import { featureLabel } from '$lib/utils/aiFeatures';
@@ -121,10 +121,7 @@
 
 <SettingsPage title="What AI has cost" lede="This month, what it went to, and every call." back={{ route: '/virtues/assistant/spending', label: 'Models and spending' }}>
 	{#if summaryError}
-		<div class="failed" role="alert">
-			<p>{summaryError}</p>
-			<Button variant="secondary" onclick={loadSummary}>Try again</Button>
-		</div>
+		<LoadError message={summaryError} onretry={loadSummary} />
 	{:else if !summary}
 		<p class="quiet">Reading your server's call log…</p>
 	{:else}
@@ -324,20 +321,6 @@
 		margin: 32px 0 0;
 		font-size: 14px;
 		color: var(--color-foreground-muted);
-	}
-
-	.failed {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		margin-top: 32px;
-		font-size: 14px;
-		color: var(--color-foreground-muted);
-	}
-
-	.failed p {
-		margin: 0;
 	}
 
 	@media (max-width: 640px) {

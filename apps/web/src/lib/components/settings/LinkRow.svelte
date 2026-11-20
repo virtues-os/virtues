@@ -5,7 +5,8 @@
 	 * is the button; the page opens in this tab, so Back returns here.
 	 *
 	 * `value` says where the setting stands ("Not set", a host) in place of
-	 * "Open".
+	 * "Open". `tabLabel` names the tab when the page is not a Settings page
+	 * (Query and Streams are in Sources).
 	 */
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -15,12 +16,14 @@
 		help,
 		href,
 		value,
+		tabLabel = `Settings · ${label}`,
 	}: {
 		id: string;
 		label: string;
 		help?: string;
 		href: string;
 		value?: string;
+		tabLabel?: string;
 	} = $props();
 </script>
 
@@ -29,7 +32,7 @@
 	class="row"
 	id="setting-{id}"
 	data-setting={id}
-	onclick={() => windowShellStore.navigate(href, { label: `Settings · ${label}` })}
+	onclick={() => windowShellStore.navigate(href, { label: tabLabel })}
 >
 	<span class="words">
 		<span class="name">{label}</span>

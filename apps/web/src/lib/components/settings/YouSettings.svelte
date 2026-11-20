@@ -10,7 +10,7 @@
 	import { onMount } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import Input from '$lib/components/Input.svelte';
-	import Button from '$lib/components/Button.svelte';
+	import LoadError from './LoadError.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
 	import LinkRow from '$lib/components/settings/LinkRow.svelte';
@@ -112,10 +112,7 @@
 	{#if phase === 'error'}
 		<!-- Empty fields here would be read as "nothing on file", and saving from
 		     them would overwrite what the server holds. -->
-		<div class="load-error" role="alert">
-			<p>Your server couldn't load your profile.</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't load your profile." onretry={load} />
 	{:else}
 		<SettingRow id="full-name" label={label('full-name')} forId="profile-full-name">
 			<Input id="profile-full-name" bind:value={values.full_name} autocomplete="name" disabled={phase !== 'ready'} autoSave onSave={(v) => save('full_name', v)} />
@@ -168,20 +165,6 @@
 
 	.date {
 		width: 180px;
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		padding: 12px 0;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 13px;
-		color: var(--color-error);
 	}
 
 	@media (max-width: 560px) {

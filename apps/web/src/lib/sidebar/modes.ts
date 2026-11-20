@@ -81,6 +81,7 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/backup': { icon: 'mynaui:archive' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
 	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
+	'/virtues/developer/terminal': { icon: 'mynaui:terminal' },
 };
 
 function settingsRow(href: string, label: string, group: string): ModeRow {
@@ -110,12 +111,13 @@ function settingsRows(): ModeRow[] {
 			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
 		}
 	}
-	// Pages Your server links to rather than the site map: Search and Applets.
-	// This device's line appears only on a device with a page of its own, so
-	// its row is here rather than in LANDING.
+	// Pages Your server links to rather than the site map: Search, Applets
+	// and Terminal. This device's line appears only on a device with a page
+	// of its own, so its row is here rather than in LANDING.
 	rows.push(
 		settingsRow('/virtues/search', 'Search', 'Your server'),
 		settingsRow('/virtues/applets', 'Applets', 'Your server'),
+		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);
 	return rows;

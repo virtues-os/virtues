@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
-    import Icon from "$lib/components/Icon.svelte";
+    import Button from "$lib/components/Button.svelte";
+    import { usePageStatus } from "$lib/stores/paneActions.svelte";
     import { onMount, onDestroy } from "svelte";
     import { browser } from "$app/environment";
     import { getWsUrl } from "$lib/config/backend";
@@ -17,7 +18,10 @@
     let webSocket: WebSocket | null = null;
     let connectionStatus = $state<
         "disconnected" | "connecting" | "reconnecting" | "connected"
-    >("disconnected");
+    >("connecting");
+    // One attempt at a time. Try now during an attempt would otherwise open a
+    // second socket, and two tmux clients would write into one screen.
+    let attempting = $state(false);
 
     // Paste/drop upload state. Reported in the header, never written into the
     // terminal: a TUI owns that screen, and a status line printed under it would
@@ -31,7 +35,9 @@
     // whatever was running still running. Worth retrying hard.
     let reconnectAttempts = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let hasAttached = false;
+    let hasAttached = $state(false);
+    // Set when retrying cannot help (an app too old to sign the connection).
+    let fatal = $state<string | null>(null);
     let disposed = false;
 
     const RECONNECT_BASE_MS = 500;
@@ -146,34 +152,11 @@
 
             fitAddon.fit();
 
-            // Welcome message — serif "Virtues" wordmark (matches the CLI banner)
-            terminal.writeln("");
-            terminal.writeln(
-                "\x1b[90m              ,,                                            \x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m`7MMF'   `7MF'db             mm                             \x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m  `MA     ,V                 MM                             \x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m   VM:   ,V `7MM  `7Mb,od8 mmMMmm `7MM  `7MM  .gP\"Ya  ,pP\"Ybd\x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m    MM.  M'   MM    MM' \"'   MM     MM    MM ,M'   Yb 8I   `\"\x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m    `MM A'    MM    MM       MM     MM    MM 8M\"\"\"\"\"\" `YMMMa.\x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m     :MM;     MM    MM       MM     MM    MM YM.    , L.   I8\x1b[0m",
-            );
-            terminal.writeln(
-                "\x1b[90m      VF    .JMML..JMML.     `Mbmo  `Mbod\"YML.`Mbmmd' M9mmmP'\x1b[0m",
-            );
-            terminal.writeln("");
-            terminal.writeln("\x1b[1mTerminal\x1b[0m");
+            // What a closed tab does (api/terminal.rs keeps one tmux session),
+            // and the two things the mouse can't show. tmux paints over these
+            // when it attaches, so they also sit in the status mark's tip.
+            terminal.writeln(`\x1b[90m${SESSION_NOTE}\x1b[0m`);
+            terminal.writeln(`\x1b[90m${MOUSE_NOTE}\x1b[0m`);
             terminal.writeln("");
 
             // Connect to WebSocket. Only now that fit() has run do we know the
@@ -261,7 +244,8 @@
     });
 
     async function connectWebSocket() {
-        if (disposed || !terminal) return;
+        if (disposed || !terminal || attempting) return;
+        attempting = true;
         connectionStatus = reconnectAttempts > 0 ? "reconnecting" : "connecting";
 
         // The shell runs with sudo on the box, so the box asks for the app's
@@ -274,14 +258,19 @@
             // An app too old to sign: retrying cannot help.
             if (err instanceof ApiError && err.status === 403) {
                 connectionStatus = "disconnected";
-                terminal?.writeln(`\r\n\x1b[90m[${err.message}]\x1b[0m`);
+                fatal = err.message;
+                attempting = false;
                 return;
             }
             console.error("[terminal] owner proof failed", err);
+            attempting = false;
             scheduleReconnect();
             return;
         }
-        if (disposed || !terminal) return;
+        if (disposed || !terminal) {
+            attempting = false;
+            return;
+        }
 
         // Open the PTY at the size we're actually showing. A TUI reads the
         // winsize once at startup, so a PTY born at 80x24 and resized a beat
@@ -293,6 +282,14 @@
         if (proof) params.set("owner_proof", proof);
         const url = `${WS_URL}?${params}`;
 
+        // A socket left from before goes quietly, so its close can't start
+        // another reconnect.
+        if (webSocket) {
+            webSocket.onclose = null;
+            webSocket.onmessage = null;
+            webSocket.close();
+        }
+
         try {
             webSocket = new WebSocket(url);
             // Receive PTY output as raw bytes so xterm.js decodes UTF-8 itself
@@ -301,6 +298,7 @@
             webSocket.binaryType = "arraybuffer";
 
             webSocket.onopen = () => {
+                attempting = false;
                 connectionStatus = "connected";
                 reconnectAttempts = 0;
                 // On a reattach the box's tmux repaints the full screen for us,
@@ -325,9 +323,13 @@
             // onerror always precedes onclose, so schedule the retry from
             // onclose alone and there's exactly one per drop.
             webSocket.onerror = () => {};
-            webSocket.onclose = () => scheduleReconnect();
+            webSocket.onclose = () => {
+                attempting = false;
+                scheduleReconnect();
+            };
         } catch (err) {
             console.error("[terminal] WebSocket failed to open", err);
+            attempting = false;
             scheduleReconnect();
         }
     }
@@ -416,66 +418,67 @@
         );
         reconnectAttempts += 1;
 
-        // Say it once, on the first drop. The session is still alive on the box;
-        // this is a lost connection, not a lost shell — and repeating the notice
-        // on every backoff tick would scroll the screen we're about to restore.
-        if (reconnectAttempts === 1) {
-            terminal?.writeln(
-                "\r\n\x1b[90m[disconnected — reconnecting…]\x1b[0m",
-            );
-        }
-
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
             void connectWebSocket();
         }, delay);
     }
+
+    /** Skip the rest of the backoff and connect now. */
+    function tryNow() {
+        if (attempting) return;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        void connectWebSocket();
+    }
+
+    const SESSION_NOTE = "Closing this tab leaves the shell running. Every Terminal tab shows this same session.";
+    const MOUSE_NOTE = "Drop or paste a file to type its path. Hold Shift and drag to select text.";
+
+    // Where the connection stands, in the page bar beside the crumbs. On a
+    // phone the bar has no room, so the page draws it above the shell.
+    const statusLabel = $derived(
+        uploadError
+            ? "Upload failed"
+            : uploading
+              ? "Uploading…"
+              : connectionStatus === "connected"
+                ? "Connected to your server"
+                : connectionStatus === "connecting"
+                  ? "Connecting…"
+                  : connectionStatus === "reconnecting"
+                    ? "Reconnecting…"
+                    : "Not connected",
+    );
+    const statusError = $derived(!!uploadError || connectionStatus === "disconnected");
+    const status = usePageStatus(() => ({
+        label: statusLabel,
+        tip: uploadError ?? `${SESSION_NOTE} ${MOUSE_NOTE}`,
+        tone: statusError ? "error" : "muted",
+    }));
+
+    // Said only while the shell can't be reached. The shell lives in tmux on
+    // your server, so a drop loses the connection, not the work.
+    const band = $derived(
+        fatal ??
+            (connectionStatus === "reconnecting"
+                ? hasAttached
+                    ? "Your server stopped answering. Whatever was running keeps running there."
+                    : "Your server didn't answer. Terminal keeps trying."
+                : null),
+    );
 </script>
 
 <div class="terminal-wrapper">
-    <!-- Header -->
-    <div class="terminal-header">
-        <div class="header-left">
-            <Icon icon="mynaui:terminal"/>
-            <span class="terminal-title">Terminal</span>
-            <!-- The wheel now scrolls tmux's history, which means the mouse
-                 belongs to the terminal and click-drag no longer selects text.
-                 Shift is the standard escape hatch, and nobody discovers it. -->
-            <span class="hint">⇧ drag to select</span>
+    {#if !status.inToolbar}
+        <p class="status-line" class:error={statusError}>{statusLabel}</p>
+    {/if}
+    {#if band}
+        <div class="band" role="status">
+            <p>{band}</p>
+            {#if !fatal}<Button variant="secondary" loading={attempting} onclick={tryNow}>Try now</Button>{/if}
         </div>
-        <div class="header-right">
-            {#if uploadError}
-                <span class="connection-badge error" title={uploadError}>
-                    <Icon icon="mynaui:danger-circle"/>
-                    Upload failed
-                </span>
-            {:else if uploading}
-                <span class="connection-badge">
-                    <Icon icon="mynaui:spinner" class="animate-spin"/>
-                    Uploading
-                </span>
-            {/if}
-            <span
-                class="connection-badge"
-                class:connected={connectionStatus === "connected"}
-                class:error={connectionStatus === "disconnected"}
-            >
-                {#if connectionStatus === "connected"}
-                    <Icon icon="mynaui:wifi"/>
-                    Connected
-                {:else if connectionStatus === "connecting"}
-                    <Icon icon="mynaui:spinner" class="animate-spin"/>
-                    Connecting
-                {:else if connectionStatus === "reconnecting"}
-                    <Icon icon="mynaui:spinner" class="animate-spin"/>
-                    Reconnecting
-                {:else}
-                    <Icon icon="mynaui:wifi-off"/>
-                    Disconnected
-                {/if}
-            </span>
-        </div>
-    </div>
+    {/if}
 
     <!-- Terminal Container. The inner surface carries no padding of its own —
          see .terminal-surface below for why that matters. -->
@@ -501,57 +504,33 @@
         background: var(--color-background);
     }
 
-    .terminal-header {
+    .status-line {
+        flex: none;
+        margin: 0;
+        padding: 8px 16px;
+        font-size: 13px;
+        color: var(--color-foreground-muted);
+    }
+
+    .status-line.error {
+        color: var(--color-error);
+    }
+
+    .band {
+        flex: none;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        height: 53px;
-        padding: 0 16px;
-        background: var(--color-surface);
+        gap: 16px;
+        padding: 8px 16px;
         border-bottom: 1px solid var(--color-border);
-        flex-shrink: 0;
     }
 
-    .header-left {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--color-foreground-muted);
+    .band p {
+        margin: 0;
         font-size: 14px;
-    }
-
-    .terminal-title {
-        font-weight: 500;
-    }
-
-    .hint {
-        font-size: 11px;
-        color: var(--color-foreground-subtle);
-    }
-
-    .header-right {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .connection-badge {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 12px;
-        padding: 4px 10px;
-        border-radius: var(--radius-md);
-        background: var(--color-surface-elevated);
-        color: var(--color-foreground-muted);
-    }
-
-    .connection-badge.connected {
-        color: var(--color-success);
-    }
-
-    .connection-badge.error {
-        color: var(--color-foreground-subtle);
+        line-height: 1.45;
+        color: var(--color-warning);
     }
 
     .terminal-container {
@@ -620,8 +599,4 @@
        forced the classic 8px gutter inside the terminal. app.css dresses it
        instead, via the universal selector — which is what reaches an element
        this component never writes. */
-
-    .animate-spin {
-        animation: virtues-spin 1s linear infinite;
-    }
 </style>

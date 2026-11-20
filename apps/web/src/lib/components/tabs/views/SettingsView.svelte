@@ -20,6 +20,7 @@
 	  Your data    /virtues/data           — backup, export, keep recordings, deleting
 	               /virtues/data/shared    — every link shared through the door
 	               /virtues/data/keys      — the named keys applets use
+	               /virtues/data/deleted   — every deletion of records, and one (/:id)
 	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
 	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
@@ -28,7 +29,7 @@
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
-	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
+	  Terminal     /virtues/developer/terminal — a shell on your server, from Your server or ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
 	session. The destructive actions are Unpair, on the page of the device it
@@ -58,6 +59,8 @@
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
 	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
+	import DeletedRecordsPage from '$lib/components/settings/DeletedRecordsPage.svelte';
+	import DeletionPage from '$lib/components/settings/DeletionPage.svelte';
 	import SearchPage from '$lib/components/settings/SearchPage.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -235,6 +238,13 @@
 				<SharedLinksView />
 			{:else if sub === 'keys'}
 				<KeysView />
+			{:else if sub === 'deleted'}
+				{@const deletionId = raw.split('/')[2]}
+				{#if deletionId}
+					{#key deletionId}<DeletionPage id={deletionId} />{/key}
+				{:else}
+					<DeletedRecordsPage />
+				{/if}
 			{:else}
 				<SettingsSection section="data" />
 			{/if}

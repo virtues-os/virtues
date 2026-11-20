@@ -10,7 +10,6 @@
 	 * scrolls to that setting's row and lights it once (`settings/focus`).
 	 */
 	import { onMount } from 'svelte';
-	import Button from '$lib/components/Button.svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
@@ -22,6 +21,7 @@
 	import SettingRow from './SettingRow.svelte';
 	import ModelRows from './ModelRows.svelte';
 	import SettingsPage from './SettingsPage.svelte';
+	import LoadError from './LoadError.svelte';
 	import LinkRow from './LinkRow.svelte';
 	import YouSettings from './YouSettings.svelte';
 	import BillingSettings from './BillingSettings.svelte';
@@ -107,10 +107,7 @@
 			{#if assistant === 'error'}
 				<!-- Name and notes would otherwise show defaults the server may
 				     not hold, and a save from there would overwrite what it does. -->
-				<div class="load-error" role="alert">
-					<p>Your server couldn't load {spoken}'s name and notes.</p>
-					<Button variant="secondary" onclick={loadAssistant}>Try again</Button>
-				</div>
+				<LoadError message={`Your server couldn't load ${spoken}'s name and notes.`} onretry={loadAssistant} />
 			{/if}
 			<div class="block" id="setting-assistant-name"><AssistantNameSettings bind:name disabled={assistant !== 'ready'} /></div>
 			<div class="block" id="setting-style">
@@ -135,9 +132,9 @@
 					value={provider}
 				/>
 			</div>
-			<p class="aside">
+			<p class="settings-aside">
 				Your subscription and balance are on
-				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', spoken)}>Billing</button>.
+				<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/billing', spoken)}>Billing</button>.
 			</p>
 		{:else if id === 'appearance'}
 			<SettingRow id="theme" label={title('theme')} help="Light, dark, or the same as your device. It follows you to every device." block>
@@ -149,12 +146,12 @@
 			<AppearanceSettings assistantName={spoken} />
 		{:else if id === 'billing'}
 			<BillingSettings />
-			<p class="aside">
+			<p class="settings-aside">
 				Your own AI provider is on
-				<button type="button" class="link" onclick={() => openSettingsPage('/virtues/assistant/spending', spoken)}>Models and spending</button>.
+				<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/assistant/spending', spoken)}>Models and spending</button>.
 			</p>
 		{:else if id === 'data'}
-			<DataSettings assistantName={spoken} />
+			<DataSettings />
 		{/if}
 	</div>
 </SettingsPage>
@@ -168,38 +165,5 @@
 	   Space sets the blocks apart, no rule between them. */
 	.block {
 		padding: 24px 0 8px;
-	}
-
-	.aside {
-		margin: 24px 0 0;
-		font-size: 13px;
-		color: var(--color-foreground-subtle);
-	}
-
-	.link {
-		padding: 0;
-		border: none;
-		background: none;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-
-	.link:hover {
-		text-decoration: underline;
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		padding: 12px 0;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 13px;
-		color: var(--color-error);
 	}
 </style>

@@ -113,9 +113,8 @@
 	/* A page that opens with where things stand: one serif sentence, the
 	   facts behind it in `.settings-sub`, and a closing `.settings-aside`
 	   that points to the manual. `.settings-link` is a button worded as a
-	   link inside that prose.
-	   TODO(2026-11-19): migrate the local .lead, .sub and .aside copies in
-	   UpdatesPage and DevicesView onto these. */
+	   link inside that prose. A failed load is LoadError, and the server's
+	   own error text under it is ServerSaid. */
 	.page :global(.settings-lead) {
 		margin: 32px 0 0;
 		font-family: var(--font-serif);

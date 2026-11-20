@@ -21,6 +21,7 @@
 	import { Button } from '$lib';
 	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import Fold from '$lib/components/settings/Fold.svelte';
+	import LoadError from '$lib/components/settings/LoadError.svelte';
 	import { listPublications, revokePublication, type Publication } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -124,10 +125,7 @@
 	back={{ route: '/virtues/data', label: 'Your data' }}
 >
 	{#if error}
-		<div class="load-error" role="alert">
-			<p>Your server couldn't list your shared links. {error}</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message={`Your server couldn't list your shared links. ${error}`} onretry={load} />
 	{:else if loading}
 		<p class="quiet">Loading your shared links…</p>
 	{:else if all.length === 0}
@@ -287,20 +285,6 @@
 		margin: 32px 0 0;
 		font-size: 14px;
 		color: var(--color-foreground-muted);
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		margin-top: 32px;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 14px;
-		color: var(--color-error);
 	}
 
 	.empty {

@@ -1,7 +1,7 @@
 # Moving the cloud services off the dedicated server
 
-**Written 2026-11-19. Slice 1 is done and slice 2 is built and rehearsed,
-with its schedule still off; no server is ordered.** atlas, virtues-api and
+**Written 2026-11-19. Slices 1 and 2 are done; no server is ordered.**
+atlas, virtues-api and
 their Postgres run on one dedicated server since 2026-09-28
 ([record](../record/cloud-consolidation.md),
 [how it runs](../build/deployment.md#cloud-sidecar-atlas--virtues-api-on-one-server)).
@@ -95,36 +95,21 @@ the dedicated server reads the bucket; `/srv/maps` is still there.
 
 ### 2. The map cut runs on a temporary instance
 
-Built and rehearsed on 2026-11-19. The rehearsal cut the newest Protomaps
-build in 49 minutes and uploaded it under a prefix: 9,920 files, 178.2 GB,
-every object the size its index records, sampled files matching their sha256
-and readable, and the same squares as the dedicated server's last build
-except two fewer in open sea. The server and its storage key were deleted
-when it reported. The monthly schedule is still off.
+Done on 2026-11-19 ([record](../record/cloud-consolidation.md)). The
+intranet starts the cut on day 3 of each month on a temporary server and
+deletes the server when it reports; `deploy/maps/run.sh` is the job. The
+first scheduled cut failed 21 minutes in, and its rerun published the build
+the live API now serves (`agents/record/cloud-consolidation.md`).
 
-- `deploy/maps/run.sh` is the whole job on the temporary server: tools at
-  pinned versions, `cut.py`, `upload.sh`, `prune.sh` (keeps the newest two
-  builds in the bucket), and a report of each step.
-- The intranet starts it (decision 2). It creates a server with room for the
-  planet and one build, hands it a storage key made for that run and a
-  one-run token for reporting back, and deletes the server and the key on the
-  final report or after five hours without one. Any server with the cut's
-  name that no running cut owns is deleted too. Results go to Slack and the
-  intranet's Servers page.
-- Uploading `latest.json` last keeps the guarantee that the API never serves
-  half a build. A failed run starts again from the planet download, which
-  costs about an hour; the resume from `<build>.partial/` does not survive a
-  deleted disk.
-- A run with a prefix uploads beside the real builds, where no box reads.
+The cut timer on the dedicated server is stopped and disabled. Its unit
+files and `/srv/maps` are still there: the directory is slice 1's rollback,
+and it stops getting newer from here on. `virtues-health` there checks that
+the API's key can read `latest.json` and that the build it names is no more
+than 45 days old.
 
-Left:
-
-- Switch the monthly schedule on. The first scheduled run publishes for
-  real, straight away if no real cut exists for the month.
-- Stop the timer on the dedicated server once a scheduled run has published.
-- `virtues-health` compares the bucket with the cut on the dedicated server
-  today. When that cut stops, it needs the other check: the newest build in
-  the bucket is younger than the schedule allows.
+The planet download decides how long a run takes: 15 minutes in the
+rehearsal and 86 in the first published run, from the same source. The intranet
+ends a run after five hours, which leaves room for that.
 
 ### 3. The new VPS and a rehearsal
 

@@ -27,6 +27,7 @@
 	import Switch from './Switch.svelte';
 	import Command from './Command.svelte';
 	import Fold from './Fold.svelte';
+	import ServerSaid from './ServerSaid.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getUpdateStatus, setUpdateChannel, applyUpdate, type UpdateStatus } from '$lib/api/client';
 	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
@@ -362,15 +363,14 @@
 >
 	<div id="setting-updates">
 		{#if lead}
-			<p class="lead">{lead.sentence}</p>
-			{#if lead.sub}<p class="sub">{lead.sub}</p>{/if}
+			<p class="settings-lead">{lead.sentence}</p>
+			{#if lead.sub}<p class="settings-sub">{lead.sub}</p>{/if}
 		{:else if loading}
-			<p class="sub">Checking for updates…</p>
+			<p class="settings-sub">Checking for updates…</p>
 		{/if}
 
 		{#if errorDetail}
-			<p class="said">Your server said:</p>
-			<code class="error">{errorDetail}</code>
+			<ServerSaid text={errorDetail} />
 		{/if}
 
 		{#if restart?.error}
@@ -385,9 +385,8 @@
 		{/if}
 
 		{#if applyError}
-			<p class="said">Your server said:</p>
-			<code class="error">{applyError}</code>
-			<p class="sub">You can also install it with this command on your server:</p>
+			<ServerSaid text={applyError} />
+			<p class="settings-sub">You can also install it with this command on your server:</p>
 			<div class="command"><Command command="sudo virtues upgrade" /></div>
 		{/if}
 	</div>
@@ -477,7 +476,7 @@
 			</div>
 		</section>
 
-		<p class="aside">
+		<p class="settings-aside">
 			The manual’s <a href={GUIDE} target="_blank" rel="noopener noreferrer">Upgrading</a> page covers channels, pinning a
 			version, and going back to an earlier one.
 		</p>
@@ -485,39 +484,6 @@
 </SettingsPage>
 
 <style>
-	.lead {
-		margin: 32px 0 0;
-		font-family: var(--font-serif);
-		font-size: 28px;
-		font-weight: 400;
-		line-height: 1.25;
-		color: var(--color-foreground);
-	}
-
-	.sub {
-		margin: 8px 0 0;
-		max-width: 60ch;
-		font-size: 14px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.said {
-		margin: 16px 0 0;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.error {
-		display: block;
-		margin-top: 4px;
-		font-family: var(--font-mono);
-		font-size: 12px;
-		line-height: 1.45;
-		color: var(--color-error);
-		overflow-wrap: anywhere;
-	}
-
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -608,17 +574,5 @@
 		font-size: 12px;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
-	}
-
-	.aside {
-		margin: 32px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.aside a {
-		color: var(--color-primary);
-		text-decoration: none;
 	}
 </style>

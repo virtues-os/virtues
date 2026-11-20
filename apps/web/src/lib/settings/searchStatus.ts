@@ -76,7 +76,7 @@ export function searchLead(s: SearchStatus, now = Date.now()): { sentence: strin
 	if (!s.reachable) {
 		return {
 			sentence: 'Search isn’t answering.',
-			sub: `New searches can’t run until the server at ${host} answers. Check that it’s running, then reload this page.`,
+			sub: `New searches can’t run until the server at ${host} answers. Check that it’s running, then check again.`,
 		};
 	}
 	if (s.model_change) {

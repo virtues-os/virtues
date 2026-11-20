@@ -1,12 +1,17 @@
 # Map cut
 
 The monthly job that produces the map files boxes download
-(agents/record/map-tiles.md). It runs on the virtues-api server:
-`cut.py` writes `/srv/maps/<build>/` and `/srv/maps/latest.json`, and
-virtues-api serves them from `/v1/maps/*` (`services/virtues-api/src/routes/maps.rs`),
-behind the box's bearer key and without logging.
+(agents/record/map-tiles.md). It runs on a temporary server made for each
+run (below): `cut.py` writes `<build>/` and `latest.json` to that server's
+disk, `upload.sh` copies them to the maps bucket, and virtues-api serves them
+from `/v1/maps/*` (`services/virtues-api/src/routes/maps.rs`), behind the
+box's bearer key and without logging.
 
-## Install
+## On the dedicated server
+
+The dedicated server ran the cut from a timer until the temporary-server run
+replaced it. That timer is stopped and disabled; its unit files and
+`/srv/maps` stay as the rollback. To set it up there again:
 
 ```sh
 sudo useradd --system --home /srv/maps --shell /usr/sbin/nologin virtues-maps
@@ -32,10 +37,10 @@ bucket. When they are set the directory is not read.
 `upload.sh <build>` copies one build from `/srv/maps` to the bucket with a
 key that can write to it, checks each file against the index's sha256 on the
 way, and writes `latest.json` last, so the API never serves half a build.
-On the server it is installed as `/opt/virtues-maps/upload.sh`, with its key
-in `/etc/virtues/maps-writer.env`. Production reads the bucket, so run it
-after each cut: until then boxes keep getting the previous build, and
-`virtues-health` reports that the bucket is behind.
+On the dedicated server it is installed as `/opt/virtues-maps/upload.sh`,
+with its key in `/etc/virtues/maps-writer.env`, for uploading a build by
+hand. Production reads the bucket, and the monthly run on a temporary server
+(below) is what normally fills it.
 
 ## The run on a temporary server
 
@@ -65,8 +70,10 @@ only the top of the bucket, so that is a rehearsal no box sees.
    `latest.json`.
 4. Deletes the planet and all but the newest two builds.
 
-A failed run leaves `<build>.partial/` and resumes where it stopped. Dry run
-on a laptop, a few squares, no planet download:
+On the dedicated server a failed run leaves `<build>.partial/`, and the next
+run resumes where it stopped. A temporary server is deleted after a failed
+run, so the next run starts over. Dry run on a laptop, a few squares, no
+planet download:
 
 ```sh
 python3 cut.py --maps-dir /tmp/maps --remote --limit 2

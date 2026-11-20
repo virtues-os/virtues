@@ -7,7 +7,8 @@
 	 * (`serverLead` in lib/settings/serverStatus.ts). Below it: the disk and
 	 * the backup, a row each for Updates, Search and Applets with where each
 	 * stands, the last 24 hours from the server's stored samples
-	 * (`/system/history`), and the machine's name, system and uptime.
+	 * (`/system/history`), and the machine's name, system and uptime. For
+	 * developers, at the foot: Terminal, and Query and Streams in Sources.
 	 *
 	 * Nothing outside the troubleshooting fold changes while you read: the
 	 * samples and the rows refresh once a minute. The fold holds the operator
@@ -511,6 +512,31 @@
 				</div>
 			</Fold>
 		</div>
+
+		<section class="group">
+			<h2 class="settings-label">For developers</h2>
+			<LinkRow
+				id="terminal"
+				label="Terminal"
+				help="A shell on your server. Every Terminal tab shows the same session."
+				href="/virtues/developer/terminal"
+				tabLabel="Terminal"
+			/>
+			<LinkRow
+				id="query"
+				label="Query"
+				help="Read any table with SQL, and delete rows from your own records."
+				href="/sources/query"
+				tabLabel="Sources · Query"
+			/>
+			<LinkRow
+				id="streams"
+				label="Streams"
+				help="Everything your devices and accounts sent, exactly as it arrived."
+				href="/sources/streams"
+				tabLabel="Sources · Streams"
+			/>
+		</section>
 	{/if}
 </SettingsPage>
 
