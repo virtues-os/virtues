@@ -147,7 +147,7 @@ fn exchange_secret() -> Result<String, String> {
 /// Public addresses stay rejected, which is what keeps an attacker's own server
 /// out. Note the redirect is issued to the *browser* — the proxy never dials a
 /// private address itself, so widening this opens no SSRF surface.
-fn is_valid_return_url(url: &str) -> bool {
+pub(crate) fn is_valid_return_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };

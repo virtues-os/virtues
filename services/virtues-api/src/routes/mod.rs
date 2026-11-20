@@ -10,6 +10,7 @@
 //! - /v1/services/plaid/* - Bank data (keeps the master Plaid secret off the box)
 //! - /v1/maps/*          - Map files for the boxes (bearer-gated, never logged)
 //! - /v1/push/*          - Calendar change signals a box collects (push.rs)
+//! - /v1/google/*        - Gmail and Calendar through a verified app we do not run yet (google.rs)
 //!
 //! Bank connections (Plaid) start through the OAuth proxy (`oauth.rs`,
 //! via_proxy); the per-user data syncs run through the `plaid.rs` proxy so the
@@ -18,6 +19,7 @@
 pub mod ai;
 pub mod bearer_test;
 pub mod connections;
+pub mod google;
 pub mod search;
 pub mod health;
 pub mod internal;

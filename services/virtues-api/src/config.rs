@@ -114,6 +114,14 @@ pub struct Config {
     /// Plaid app secret (master credential).
     pub plaid_secret: Option<String>,
 
+    /// Truto API token: Google connections through Truto's verified app
+    /// (routes/google.rs). It can reach every connected account, so it stays
+    /// here and never goes to a box. Unset turns those routes off.
+    pub truto_api_token: Option<String>,
+
+    /// Truto API base URL.
+    pub truto_api_url: String,
+
     /// Plaid API base URL, selected by `PLAID_ENV` (sandbox | development |
     /// production). Default: production. Used by both the `/v1/services/plaid/*`
     /// data proxy and the OAuth link/exchange calls in `routes/oauth.rs`.
@@ -169,6 +177,11 @@ impl Config {
             // Plaid master credentials + environment-selected base URL.
             plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
             plaid_secret: std::env::var("PLAID_SECRET").ok(),
+            truto_api_token: std::env::var("TRUTO_API_TOKEN").ok().filter(|t| !t.is_empty()),
+            truto_api_url: std::env::var("TRUTO_API_URL")
+                .ok()
+                .filter(|u| !u.is_empty())
+                .unwrap_or_else(|| "https://api.truto.one".to_string()),
             plaid_base_url: plaid_base_url_from_env()?,
 
             maps_dir: std::env::var("VIRTUES_MAPS_DIR")
