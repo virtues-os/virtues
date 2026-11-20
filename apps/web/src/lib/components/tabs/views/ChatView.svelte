@@ -125,7 +125,6 @@
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
-	import DeletionCard from "$lib/components/chat/DeletionCard.svelte";
 	import TaskCard from "$lib/components/chat/TaskCard.svelte";
 	import ConnectionReceiptCard from "$lib/components/chat/ConnectionReceiptCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
@@ -2319,8 +2318,12 @@
 												{@const out = (part as any).output}
 												<!-- A deletion the assistant proposed: what it covers, and
 												     the Delete that only you can press. A later call that
-												     only checks on one leaves nothing here. -->
-												<DeletionCard deletionId={out.deletion_id} summary={out.summary ?? ""} />
+												     only checks on one leaves nothing here. Loaded when a
+												     reply holds one, so the chat home doesn't carry it
+												     before its first paint. -->
+												{#await import("$lib/components/chat/DeletionCard.svelte") then { default: DeletionCard }}
+													<DeletionCard deletionId={out.deletion_id} summary={out.summary ?? ""} />
+												{/await}
 											{:else if (part.type === "tool-create_task" || part.type === "tool-update_task") && (part as any).state === "output-available"}
 												{@const out = (part as any).output}
 												<!-- The tasks themselves, with working checkboxes. A failed
