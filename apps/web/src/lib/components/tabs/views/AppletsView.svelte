@@ -19,7 +19,7 @@
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
 	import SiteCard from '$lib/components/applets/SiteCard.svelte';
-	import { siteHome } from '$lib/applets/sites.svelte';
+	import { homeRoute } from '$lib/applets/routes';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
@@ -71,7 +71,7 @@
 	];
 
 	function openHome(a: Applet) {
-		windowShellStore.openTabFromRoute(siteHome(a), { label: a.name, focusExisting: true });
+		windowShellStore.openTabFromRoute(homeRoute(a.id), { label: a.name, focusExisting: true });
 	}
 
 	function openConversation(a: Applet) {
@@ -109,7 +109,7 @@
 		if (canRun(a)) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
-		items.push(pinMenuItem({ url: siteHome(a), label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 </script>

@@ -22,6 +22,7 @@
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { relativeTime } from '$lib/applets/palette';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { homeRoute } from '$lib/applets/routes';
 
 	const store = sourcesStore;
 
@@ -228,7 +229,7 @@
 
 	function open(row: Row) {
 		if (row.applet_id) {
-			windowShellStore.openTabFromRoute(`/applet/${row.applet_id}`, { label: row.applet });
+			windowShellStore.openTabFromRoute(homeRoute(row.applet_id), { label: row.applet });
 		}
 	}
 </script>

@@ -504,7 +504,7 @@
 	}
 
 	function openApplets() {
-		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
+		windowShellStore.openTabFromRoute('/sites', { label: 'Sites', focusExisting: true });
 	}
 
 	function openWiki() {

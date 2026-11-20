@@ -33,7 +33,8 @@
 	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
-	import { siteRoute } from '$lib/applets/sites.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
+	import { homeRoute, optionsRoute, readAddress } from '$lib/applets/routes';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -50,8 +51,8 @@
 	 * around them is the same for every applet: name, schedule and where the
 	 * work goes, the switch, Conversation, Info and More.
 	 *
-	 * Info (`?panel=info`) holds Run history and Technical details, each
-	 * opening in place. `?panel=history` and `?panel=details` open Info with
+	 * Options (`/options`) holds Run history and Technical details, each
+	 * opening in place. `?panel=history` and `?panel=details` open Options with
 	 * that one open, which is where the table's dots and Last run link.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
@@ -75,23 +76,19 @@
 		};
 	});
 
-	const url = $derived(new URL(tab.route, 'http://localhost'));
-	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
-	const asked = $derived(url.searchParams.get('panel'));
-	const inInfo = $derived(asked === 'info' || asked === 'history' || asked === 'details');
+	const address = $derived(readAddress(tab.route));
+	const appletId = $derived(address?.id ?? null);
+	const asked = $derived(address?.open ?? null);
+	const inInfo = $derived(address?.side === 'options');
 
 	function showInfo(open: boolean) {
 		if (!appletId) return;
-		const base = `/applet/${appletId}`;
-		windowShellStore.updateTab(tab.id, { route: open ? `${base}?panel=info` : base });
+		windowShellStore.retarget(tab.id, open ? optionsRoute(appletId) : homeRoute(appletId), action?.name);
 	}
 
-	// A site with a view shows it full page on its own route. This page is
-	// then its options, so a link to the bare address goes to the view.
+	// A tab saved under an earlier address keeps working, and takes today's.
 	$effect(() => {
-		if (action && action.id === appletId && action.has_face && !inInfo) {
-			windowShellStore.retarget(tab.id, siteRoute(action.id), action.name);
-		}
+		if (address && tab.route !== address.route) windowShellStore.updateTab(tab.id, { route: address.route });
 	});
 
 	let historyOpen = $state(false);
@@ -447,7 +444,7 @@
 			});
 		}
 		items.push(
-			pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
+			pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
 		);
 		if (a.owner !== 'system') {
 			items.push({
@@ -478,7 +475,6 @@
 			tabId={tab.id}
 			appletId={action.id}
 			name={action.name}
-			hasView={action.has_face}
 			showing={inInfo ? 'options' : 'site'}
 		/>
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
@@ -514,11 +510,28 @@
 	</li>
 {/snippet}
 
-<div class="applet-home">
+<div class="applet-home" class:bleed={!!action?.has_face && !inInfo}>
 	{#if loading && !action}
 		<p class="state">Loading…</p>
 	{:else if err && !action}
 		<p class="state error-msg">{err}</p>
+	{:else if action?.has_face && !inInfo}
+		<!-- A site with a view: the view fills the page, and what it needs
+		     from you is one sentence above it. -->
+		{#if !toolbar.inToolbar}
+			<div class="head-actions bar">{@render headActions()}</div>
+		{/if}
+		{#if problem}
+			<p class="needs">
+				<span>{problemText}.</span>
+				{#if fix}
+					<Button variant="primary" onclick={openFix}>{fix.label}</Button>
+				{:else if canRunNow}
+					<TextAction onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
+				{/if}
+			</p>
+		{/if}
+		<FaceFrame appletId={action.id} height="100%" />
 	{:else if action}
 		<div style:max-width={width.css} class="measure">
 			{#if inInfo}
@@ -687,6 +700,33 @@
 		.applet-home {
 			padding: 24px 16px 48px;
 		}
+	}
+	/* A site's view fills the pane, so the frame drops its own border. */
+	.applet-home.bleed {
+		display: flex;
+		flex-direction: column;
+		padding: 0;
+		overflow: hidden;
+	}
+	.applet-home.bleed :global(iframe.face-frame) {
+		flex: 1;
+		min-height: 0;
+		border: none;
+		border-radius: 0;
+	}
+	.bar {
+		justify-content: center;
+		padding: 8px 16px;
+	}
+	.needs {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin: 0;
+		padding: 8px 24px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 14px;
 	}
 	.measure {
 		margin: 0 auto;

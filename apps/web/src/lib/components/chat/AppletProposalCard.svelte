@@ -7,6 +7,7 @@
 	import { describeTriggers } from '$lib/applets/palette';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { openSiteBeside } from '$lib/applets/sites.svelte';
+	import { homeRoute } from '$lib/applets/routes';
 
 	/**
 	 * The receipt for an applet the assistant made or changed: what it does,
@@ -64,7 +65,7 @@
 
 	function open() {
 		if (site) openSiteBeside(appletId, name);
-		else windowShellStore.openRouteBeside(`/applet/${appletId}`);
+		else windowShellStore.openRouteBeside(homeRoute(appletId));
 	}
 
 	// Setup's result names the schedule. A data trigger comes from the

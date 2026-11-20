@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Settings · Applets (/virtues/applets): what runs on its own on your
+	 * Settings · Jobs (/virtues/jobs): what runs on its own on your
 	 * server, and how its last runs went. For checking and fixing; the Applets
 	 * page in Home is where you use them.
 	 *
@@ -24,6 +24,7 @@
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { openSettingsPage } from '$lib/settings/focus';
 	import { actionOf, appletLine, appletsLead, canRun, groupApplets, type AppletAction } from '$lib/applets/standing';
+	import { homeRoute, optionsRoute } from '$lib/applets/routes';
 
 	let loaded = $state(false);
 	let now = $state(Date.now());
@@ -56,7 +57,7 @@
 		windowShellStore.openAside({
 			type: 'applet',
 			label: a.name,
-			route: panel ? `/applet/${a.id}?panel=${panel}` : `/applet/${a.id}`,
+			route: panel ? optionsRoute(a.id, panel) : homeRoute(a.id),
 			icon: 'atlas:applets',
 		});
 	}
@@ -99,7 +100,7 @@
 		items.push({ id: 'open', label: 'Open', icon: 'atlas:applets', action: () => openApplet(a) });
 		items.push({ id: 'history', label: 'Run history', icon: 'mynaui:clock-circle', action: () => openApplet(a, 'history') });
 		if (canRun(a)) items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void run(a) });
-		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
@@ -176,7 +177,7 @@
 						<button
 							type="button"
 							class="settings-link"
-							onclick={() => windowShellStore.openTabFromRoute('/applets', { label: 'Sites', focusExisting: true })}>Sites</button
+							onclick={() => windowShellStore.openTabFromRoute('/sites', { label: 'Sites', focusExisting: true })}>Sites</button
 						>. Each one's options say when it runs and how its runs went.
 					</p>
 				{:else}

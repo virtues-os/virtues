@@ -20,6 +20,7 @@ import { pinsStore } from '$lib/stores/pins.svelte';
 import { visits } from '$lib/stores/visits.svelte';
 import { isUntitled, untitled } from '$lib/refs/identity.svelte';
 import type { Applet, PageSummary, ProjectSummary } from '$lib/api/client';
+import { homeRoute } from '$lib/applets/routes';
 
 export type RecentKind = 'chat' | 'page' | 'thread' | 'applet';
 
@@ -114,7 +115,7 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 		if (!ts) continue;
 		rows.push({
 			kind: 'applet',
-			url: `/applet/${applet.id}`,
+			url: homeRoute(applet.id),
 			...named(applet.name, 'applet'),
 			ts,
 			applet,

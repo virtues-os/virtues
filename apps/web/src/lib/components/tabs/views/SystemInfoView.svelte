@@ -379,7 +379,7 @@
 				id="applets"
 				label="Jobs"
 				help="What runs on its own, and how its last runs went."
-				href="/virtues/applets"
+				href="/virtues/jobs"
 				value={appletsValue(appletsNeedingYou)}
 			/>
 		</section>

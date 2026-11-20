@@ -55,7 +55,7 @@ export interface CrumbPath {
 const DOORS: { prefixes: string[]; root: Crumb; glyph: string }[] = [
 	{ prefixes: ['/page'], root: { label: 'Pages', route: '/page', menu: { kind: 'pages' } }, glyph: 'pages' },
 	{ prefixes: ['/threads', '/thread', '/task', '/insight'], root: threadsCrumb(), glyph: 'projects' },
-	{ prefixes: ['/applets', '/applet'], root: { label: 'Applets', route: '/applets', menu: { kind: 'applets' } }, glyph: 'applets' },
+	{ prefixes: ['/sites', '/site', '/applets', '/applet'], root: { label: 'Sites', route: '/sites', menu: { kind: 'applets' } }, glyph: 'applets' },
 ];
 
 /** Wiki entity routes that are not under their row's href. */
