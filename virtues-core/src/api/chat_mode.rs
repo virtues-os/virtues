@@ -527,9 +527,11 @@ pub(crate) mod tests {
         // `use_applet`, and 700 more the same day for
         // delete_data and the delete-data skill's line. Rose 4,900 on
         // 2026-11-19 for the Gmail and Calendar tools and the next-step
-        // card. The rest sit just above their 2026-09-29 size.
+        // card. Rose 200 on 2026-11-20 for `use_applet` listing the
+        // insight-report applet. The rest sit just above their 2026-09-29
+        // size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 30_050),
+            ("chat", 30_250),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -547,6 +549,8 @@ pub(crate) mod tests {
             // sql_query, search and delete_data. Just above its size when it
             // shipped on 2026-11-18.
             ("delete-data", 9_200),
+            // Just above its size when it shipped on 2026-11-20.
+            ("insight-report", 12_300),
             ("meeting-prep", 8_550),
             ("morning-brief", 8_850),
             ("new-applet", 3_550),

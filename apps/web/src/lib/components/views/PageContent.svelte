@@ -913,6 +913,7 @@
 					<PageCoverImage
 						{coverUrl}
 						width={width.width}
+						{paper}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;

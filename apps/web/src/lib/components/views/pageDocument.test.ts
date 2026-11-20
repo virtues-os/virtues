@@ -192,17 +192,21 @@ describe('PageContent, in its source', () => {
 		expect(page).toMatch(/class:width-sheet=/);
 	});
 
-	it('the cover is as wide as the text in every width, the A4 sheet included', () => {
+	it('the cover is as wide as the text in every width, the A4 and Letter sheets included', () => {
 		const cover = source('../pages/PageCoverImage.svelte');
 		// The column widths come from one table, for the cover and the text alike.
-		expect(page).toMatch(/style:max-width=\{width\.width === "sheet" \? undefined : width\.css\}/);
-		expect(cover).toMatch(/style:max-width=\{width === "sheet" \? undefined : PAGE_WIDTH_CSS\[width\]\}/);
-		expect(page).toMatch(/width=\{width\.width\}/);
-		// The sheet is the one width the CSS sets, and both set it the same.
+		// On paper the text is the sheet whatever the width, and so is the cover.
+		expect(page).toMatch(/style:max-width=\{width\.width === "sheet" \|\| onPaper \? undefined : width\.css\}/);
+		expect(cover).toMatch(/const sheet = \$derived\(width === "sheet" \|\| paper !== "screen"\)/);
+		expect(cover).toMatch(/style:max-width=\{sheet \? undefined : PAGE_WIDTH_CSS\[width\]\}/);
+		expect(page).toMatch(/width=\{width\.width\}\s+\{paper\}/);
+		// The sheets are the widths the CSS sets, and both set them the same.
 		const widthOf = (css: string, selector: string) =>
 			new RegExp(`${selector.replace(/\./g, '\\.')} \\{[^}]*max-width: ([^;]+);`).exec(css)?.[1];
 		expect(widthOf(cover, '.cover-image-wrapper.width-sheet')).toBe('210mm');
 		expect(widthOf(page, '.page-inner.width-sheet')).toBe('210mm');
+		expect(widthOf(cover, '.cover-image-wrapper.width-sheet.paper-letter')).toBe('8.5in');
+		expect(widthOf(page, '.page-inner.width-sheet.paper-letter')).toBe('8.5in');
 	});
 
 	it('the history panel previews a block version with DocumentPreview and restores it on the server', () => {
