@@ -121,15 +121,21 @@
 		setTimeout(grab, 0);
 	}
 
+	/** Bumped by every stop(), so a tick still awaiting the server when its
+	    poll was stopped or replaced cannot act on the new state. */
+	let pollGen = 0;
 	function stop() {
 		if (timer) clearInterval(timer);
 		timer = null;
+		pollGen += 1;
 	}
 	function poll() {
 		stop();
+		const gen = pollGen;
 		timer = setInterval(async () => {
 			try {
 				const d = await setupLinkPoll<{ status: string }>();
+				if (gen !== pollGen) return;
 				if (d.status === "ready") {
 					stop();
 					if (intent === "subscribe") await subscribe(true);
@@ -161,10 +167,12 @@
 	 *  enough for a card and a 3-D Secure prompt. */
 	function pollPaid() {
 		stop();
+		const gen = pollGen;
 		let ticks = 0;
 		timer = setInterval(async () => {
 			ticks += 1;
 			await gettingStarted.refresh();
+			if (gen !== pollGen) return;
 			if (gettingStarted.aiConnected || ticks >= 120) stop();
 		}, 5000);
 	}
@@ -187,10 +195,12 @@
 				await gettingStarted.refresh();
 			} else {
 				mode = "choose";
+				intent = "signin";
 				error = r.kind === "error" ? r.message : "Couldn't open checkout. Try again.";
 			}
 		} catch {
 			mode = "choose";
+			intent = "signin";
 			error = UNREACHABLE;
 		}
 	}
@@ -205,7 +215,7 @@
 				poll();
 			} else {
 				mode = "signin";
-				if (d.status === "no_account") error = "There's no Virtues account for that email yet. Set up a subscription instead.";
+				if (d.status === "no_account") error = "There's no Virtues account for that email yet.";
 				else if (d.status === "rate_limited") error = "Too many attempts for that email. Try again in an hour.";
 				else error = "That didn't go through. Try again.";
 			}

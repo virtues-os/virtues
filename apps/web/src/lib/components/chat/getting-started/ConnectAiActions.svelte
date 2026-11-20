@@ -64,15 +64,21 @@
 		setTimeout(grab, 0);
 	}
 
+	/** Bumped by every stop(), so a tick still awaiting the server when its
+	    poll was stopped or replaced cannot act on the new state. */
+	let pollGen = 0;
 	function stop() {
 		if (timer) clearInterval(timer);
 		timer = null;
+		pollGen += 1;
 	}
 	function poll() {
 		stop();
+		const gen = pollGen;
 		timer = setInterval(async () => {
 			try {
 				const d = await setupLinkPoll<{ status: string }>();
+				if (gen !== pollGen) return;
 				if (d.status === "ready") {
 					stop();
 					if (intent === "subscribe") await subscribe(true);
@@ -104,10 +110,12 @@
 	    enough for a card and a 3-D Secure prompt. */
 	function pollPaid() {
 		stop();
+		const gen = pollGen;
 		let ticks = 0;
 		timer = setInterval(async () => {
 			ticks += 1;
 			await gettingStarted.refresh();
+			if (gen !== pollGen) return;
 			if (gettingStarted.aiConnected || ticks >= 120) stop();
 		}, 5000);
 	}
@@ -130,10 +138,12 @@
 				await gettingStarted.refresh();
 			} else {
 				mode = "choose";
+				intent = "signin";
 				error = r.kind === "error" ? r.message : "Couldn't open checkout. Try again.";
 			}
 		} catch {
 			mode = "choose";
+			intent = "signin";
 			error = UNREACHABLE;
 		}
 	}
@@ -241,7 +251,12 @@
 	{:else if mode === "checkout"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>Finish in the window that opened. This picks up on its own once you have, and we charge nothing until you confirm there.</Waiting>
+				<Waiting>Finish checkout in your browser. This picks up on its own once you have, and we charge nothing until you confirm there.</Waiting>
+				{#if checkoutUrl}
+					<!-- A checkout opened from a timer (after the emailed sign-in)
+					     has no click behind it, and a browser may block it. -->
+					<Act onclick={() => checkoutUrl && void openExternal(checkoutUrl)}>Open checkout</Act>
+				{/if}
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>

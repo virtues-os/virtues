@@ -204,18 +204,24 @@ async fn verify(
         .await;
 
     // A session may exist before any payment does — sign in, then buy, then
-    // link. So a missing customer is not an error here. lower(): customers
-    // rows store the email as Stripe reported it, which is whatever case the
-    // payer typed at checkout; the newest row wins for determinism under
-    // duplicate-email customers.
-    let customer: Option<(String,)> = sqlx::query_as(
-        "SELECT stripe_customer_id FROM customers WHERE lower(email) = $1 \
-         ORDER BY created_at DESC LIMIT 1",
+    // link. So a missing customer is not an error here. The customer comes
+    // from the account this code just proved, never from `customers.email`:
+    // that is the address typed at Stripe, which nobody verified.
+    let customer: Option<(String,)> = match sqlx::query_as(
+        "SELECT stripe_customer_id FROM accounts \
+         WHERE email = lower($1) AND stripe_customer_id IS NOT NULL",
     )
     .bind(&email)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(c) => c,
+        // Not "no customer": that would sign a paying owner in as unpaid.
+        Err(e) => {
+            tracing::warn!("sign-in customer lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not sign in");
+        }
+    };
     let customer_id = customer.map(|c| c.0);
 
     let token = random_hex(32);

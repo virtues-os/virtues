@@ -6,7 +6,7 @@
 1 services/virtues-api/src/entitlement.rs	let old_balance = existing.map(|(b,)| b).unwrap_or(0);
 1 services/virtues-api/src/entitlement.rs	month_to_date_micros: mtd.unwrap_or(0),
 1 services/virtues-atlas/src/routes/account.rs	.ok()
-2 services/virtues-atlas/src/routes/account.rs	.unwrap_or(None);
+1 services/virtues-atlas/src/routes/account.rs	.unwrap_or(None);
 1 services/virtues-atlas/src/routes/diag.rs	.ok()
 1 services/virtues-atlas/src/routes/diag.rs	let n = row.map(|(n,)| n).unwrap_or(0);
 1 services/virtues-atlas/src/routes/link.rs	.unwrap_or((0,));
