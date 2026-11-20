@@ -29,7 +29,17 @@ pub fn router() -> Router<AppState> {
         .route("/preorder/session/:id", get(session))
 }
 
+/// Pre-orders are closed while the next hardware is designed. The marketing
+/// site no longer links here, but the route is public, so it refuses on its
+/// own rather than trusting nobody calls it. The session lookup below stays
+/// open so existing buyers keep their confirmation page. Flip this back when a
+/// new pre-order opens.
+const PREORDERS_OPEN: bool = false;
+
 async fn checkout(State(state): State<AppState>) -> axum::response::Response {
+    if !PREORDERS_OPEN {
+        return err(StatusCode::GONE, "preorders_closed", "pre-orders are closed");
+    }
     if !state.stripe.is_configured() {
         return err(
             StatusCode::SERVICE_UNAVAILABLE,

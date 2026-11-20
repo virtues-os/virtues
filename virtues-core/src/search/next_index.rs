@@ -83,6 +83,7 @@ pub(crate) async fn step(pool: &PgPool, _lock: &IndexerLock, deadline: Instant) 
     // A swap whose follow-up was cut off (time limit, a restart): finish it
     // first, whatever the configuration says now.
     if rescore_pending(pool).await? {
+        promote_after_swap(pool).await?;
         finish(pool).await?;
     }
     let Some(cfg) = EndpointConfig::next() else {
@@ -180,6 +181,28 @@ pub(crate) async fn step(pool: &PgPool, _lock: &IndexerLock, deadline: Instant) 
     super::embedder::invalidate_embedder().await;
     finish(pool).await?;
     Ok(Progress::Swapped { model, dim })
+}
+
+/// A swap that committed while its `promote()` failed leaves the index
+/// recording the next model and the configuration naming the old one. Every
+/// search, and `finish()`'s rescoring, then fails its geometry check, so the
+/// promotion is retried here. A next endpoint for a different model is a new
+/// change, and is left for `step` to build.
+async fn promote_after_swap(pool: &PgPool) -> Result<()> {
+    let Some(cfg) = EndpointConfig::next() else {
+        return Ok(());
+    };
+    // An unreachable next server can't be compared, so `finish()` goes ahead
+    // as it would without one.
+    let Ok(next) = LocalEmbedder::connect(cfg).await else {
+        return Ok(());
+    };
+    let geometry = (next.model_id(), next.dimension() as i32);
+    if super::indexer::recorded_geometry(pool).await?.as_ref() == Some(&geometry) {
+        promote()?;
+        super::embedder::invalidate_embedder().await;
+    }
+    Ok(())
 }
 
 async fn rescore_pending(pool: &PgPool) -> Result<bool> {

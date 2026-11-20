@@ -83,7 +83,7 @@
 		position: absolute;
 		bottom: 100%;
 		left: 50%;
-		z-index: 10;
+		z-index: var(--z-popover);
 		width: max-content;
 		max-width: 16rem;
 		padding: 4px 8px;

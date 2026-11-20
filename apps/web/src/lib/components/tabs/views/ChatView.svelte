@@ -2675,6 +2675,7 @@
 								disabled={true}
 								sendDisabled={true}
 								maxWidth="max-w-full"
+								inline={!isEmpty}
 								placeholder="Connect AI above to write here"
 								onSubmit={() => {}}
 							/>
@@ -2688,6 +2689,7 @@
 							sendDisabled={turnPhase.working}
 							isStreaming={turnPhase.working}
 							maxWidth="max-w-full"
+							inline={!isEmpty}
 							placeholder={isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
@@ -3302,7 +3304,7 @@
 	   fill with no outline: the turn reads as yours by its ground alone, and
 	   sits lighter beside the answer. */
 	.message-wrapper[data-role="user"] {
-		background: var(--color-surface-elevated);
+		background: var(--fill-bg);
 		border-radius: var(--radius-xl);
 		padding: 8px 14px;
 		width: fit-content;

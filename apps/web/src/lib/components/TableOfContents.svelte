@@ -95,7 +95,7 @@
 		position: sticky;
 		top: 3rem;
 		align-self: flex-start;
-		z-index: 10;
+		z-index: var(--z-sticky);
 		display: flex;
 		flex-direction: column;
 		padding: 0.5rem 0;

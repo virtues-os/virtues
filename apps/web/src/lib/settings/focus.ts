@@ -23,9 +23,13 @@ export function settingsLabel(route: string, assistantName: string): string {
 	return page ? `Settings · ${titleOf(page.title, assistantName)}` : 'Settings';
 }
 
-/** A section page finds the row on arrival. A page of its own holds no rows to find. */
+/** Pages of their own that light a row on arrival, as a section page does:
+ *  This device, whose landing links name its parts. */
+const LIT_PAGES = new Set(['/virtues/devices/this']);
+
+/** A section page finds the row on arrival, and so does a page in `LIT_PAGES`. */
 function litOnArrival(route: string): boolean {
-	return !!sectionAt(route);
+	return !!sectionAt(route) || LIT_PAGES.has(route);
 }
 
 /** Go to a Settings page, by route. */

@@ -17,39 +17,37 @@
 	               /virtues/assistant/spending/provider — your own AI provider
 	  Appearance   /virtues/appearance     — theme, reading font, motion
 	  Billing      /virtues/billing        — subscription, balance, auto top-up
-	  Your data    /virtues/data           — keep recordings, export everything
+	  Your data    /virtues/data           — backup, export, keep recordings, deleting
+	               /virtues/data/shared    — every link shared through the door
+	               /virtues/data/keys      — the named keys applets use
+	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
+	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
-	  Server       /virtues/server         — updates, and reaching it from away
-	  Keys         /virtues/keys           — the named keys applets use
-	  System       /virtues/system         — the machine, measured (read-only)
-	  Search       /virtues/search         — where search runs, and what it covers
-	  Devices      /virtues/devices        — paired devices, and Unpair
-	               /virtues/devices/server — the server's own page: its release
-	               /virtues/devices/this   — the machine you're on (local panel)
+	  Search       /virtues/search         — whether search answers, what it covers, where it runs
+	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
+	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
-	  Shared links /virtues/shared         — every link shared through the door
-	  Applets      /virtues/applets        — every applet, built-in ones included
+	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
 	  Terminal     /virtues/developer/terminal — a shell on your server, opened from ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
-	session. The destructive actions are Unpair, beside the device it removes,
-	and Start over, at the foot of the landing page, which unpairs everything.
+	session. The destructive actions are Unpair, on the page of the device it
+	removes, and Start over, at the foot of Devices, which unpairs everything.
 
 	Legacy flat/nested routes (/virtues/account, /virtues/connections/*,
 	/virtues/box/devices, /virtues/developer/console, …) self-heal on mount.
 -->
 
 <script lang="ts">
-	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
-	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
 	import SettingsLanding from '$lib/components/settings/SettingsLanding.svelte';
 	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
 	import ByoPage from '$lib/components/settings/ByoPage.svelte';
 	import BackupPage from '$lib/components/settings/BackupPage.svelte';
+	import UpdatesPage from '$lib/components/settings/UpdatesPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -59,8 +57,8 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
-	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
-	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
+	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
+	import SearchPage from '$lib/components/settings/SearchPage.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -98,16 +96,17 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network and updates are the Server page; versions are the server's
-		// device page; the machine measured is System.
-		'/virtues/network': '/virtues/server',
-		'/virtues/software': '/virtues/devices/server',
+		// Updates holds the versions each part runs; reaching the server from
+		// away is on Devices; the machine itself is Your server.
+		'/virtues/server': '/virtues/updates',
+		'/virtues/network': '/virtues/devices',
+		'/virtues/software': '/virtues/updates',
+		'/virtues/devices/server': '/virtues/updates',
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/server',
-		'/virtues/box/updates': '/virtues/server',
-		'/virtues/updates': '/virtues/server',
-		'/virtues/version': '/virtues/devices/server',
+		'/virtues/box/network': '/virtues/devices',
+		'/virtues/box/updates': '/virtues/updates',
+		'/virtues/version': '/virtues/updates',
 		// This Mac is `devices/this`, a device page like any other, and a
 		// stable word Sources can link to without knowing a device id.
 		'/virtues/box/devices': '/virtues/devices',
@@ -123,6 +122,9 @@
 		'/virtues/system/activity': '/virtues/devices',
 		'/virtues/activity': '/virtues/devices',
 		'/virtues/developer/activity': '/virtues/devices',
+		// Shared links and Keys open from Your data.
+		'/virtues/shared': '/virtues/data/shared',
+		'/virtues/keys': '/virtues/data/keys',
 	};
 
 	// Sources left Settings for its own door. `/sources` is a different tab
@@ -174,32 +176,28 @@
 		| 'page'
 		| 'profile'
 		| 'appearance'
-		| 'server'
+		| 'updates'
 		| 'data'
 		| 'backup'
 		| 'assistant'
 		| 'billing'
-		| 'keys'
 		| 'system'
 		| 'search'
 		| 'devices'
-		| 'shared'
 		| 'applets'
 		| 'developer';
 
 	const SECTIONS = [
 		'profile',
 		'appearance',
-		'server',
+		'updates',
 		'data',
 		'backup',
 		'assistant',
 		'billing',
-		'keys',
 		'system',
 		'search',
 		'devices',
-		'shared',
 		'applets',
 		'developer',
 	];
@@ -214,9 +212,6 @@
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
 
-	// The applets section lays out its own column. The other sections are
-	// SettingsPage's, which sets its own width.
-	const width = usePageWidth(() => (section === 'applets' ? 'full' : null));
 	const sub = $derived(raw.split('/')[1] ?? '');
 	const subPage = $derived(raw.split('/')[2] ?? '');
 	const role = $derived(new URLSearchParams(routeQuery).get('role') ?? undefined);
@@ -233,10 +228,16 @@
 			<SettingsSection section="you" />
 		{:else if section === 'appearance'}
 			<SettingsSection section="appearance" />
-		{:else if section === 'server'}
-			<SettingsSection section="server" />
+		{:else if section === 'updates'}
+			<UpdatesPage />
 		{:else if section === 'data'}
-			<SettingsSection section="data" />
+			{#if sub === 'shared'}
+				<SharedLinksView />
+			{:else if sub === 'keys'}
+				<KeysView />
+			{:else}
+				<SettingsSection section="data" />
+			{/if}
 		{:else if section === 'backup'}
 			<BackupPage />
 		{:else if section === 'assistant'}
@@ -255,36 +256,19 @@
 			{/if}
 		{:else if section === 'billing'}
 			<SettingsSection section="billing" />
-		{:else if section === 'keys'}
-			<KeysView />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
-			<SearchSettingsView />
-		{:else if section === 'shared'}
-			<SharedLinksView />
+			<SearchPage />
 		{:else if section === 'applets'}
-			<!-- Padding on the scroller, the page's width inside it: the same
-			     box model as the Applets page in Home, so the two line up. -->
-			<div class="applets-settings">
-				<div class="measure" style:max-width={width.css}>
-					<ManageApplets {tab} />
-				</div>
-			</div>
+			<AppletsPage />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
-			{:else if sub === 'server'}
-				<!-- The server's own page. It is row zero of Devices, not a
-				     separate subject: "what release does this machine run" is a
-				     fact about a device. -->
-				<SoftwareView />
 			{:else if sub === 'this' && isIOS}
-				<!-- iOS keeps its own instrument panel for now: MobileDeviceScreen
-				     is 900 lines of stream-by-stream local detail that has no
-				     box-side equivalent. iOS FIRST, because an iPad satisfies
-				     `isMacOS` too (it reports a desktop platform string; see
-				     utils/platform.ts) and would otherwise get the Mac panel. -->
+				<!-- The phone's own page reads plugins only the phone has. iOS
+				     first, because an iPad satisfies `isMacOS` too (it reports a
+				     desktop platform string; see utils/platform.ts). -->
 				<ThisDeviceView />
 			{:else}
 				<!-- ONE page for every other device, including this Mac. It used
@@ -316,14 +300,5 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
-	}
-
-	.applets-settings {
-		padding: 48px;
-	}
-
-	.measure {
-		width: 100%;
-		margin: 0 auto;
 	}
 </style>

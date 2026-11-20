@@ -96,6 +96,10 @@ export interface WikiDayApi {
 	start_timezone: string | null;
 	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
 	article?: string | null;
+	/** When you removed this day's page; null or absent when you haven't, or from an older server. */
+	page_removed_at?: string | null;
+	/** The removed page, while Recently deleted still has it and it can be put back. */
+	removed_page_id?: string | null;
 	new_entity_count: number;
 	new_topic_count: number;
 	created_at: string;
@@ -896,6 +900,26 @@ export function rewriteDay(
 	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/rewrite`, {
 		replace_edits: replaceEdits
 	});
+}
+
+/**
+ * Ask your server to write a day's page after you removed it. It answers at
+ * once and writes in the background, which takes a few minutes. Throws
+ * `not_removed` when the day's page was not removed.
+ */
+export function writeDayAgain(date: string): Promise<{ state: 'running' }> {
+	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/page/write-again`);
+}
+
+/** Where a day's Write it again stands. `code` is how it ended: `written`, `not_enough`, or another that did not write. */
+export type DayWriteAgainStatus =
+	| { state: 'idle' }
+	| { state: 'running' }
+	| { state: 'ended'; code: string };
+
+/** Ask your server where a day's Write it again stands. */
+export function getDayWriteAgain(date: string): Promise<DayWriteAgainStatus> {
+	return apiSend('GET', `/wiki/day/${encodeURIComponent(date)}/page/write-again`);
 }
 
 /** How the day's pictures are made: `ui_preferences.day_pictures`, oil when unset. */

@@ -4,8 +4,10 @@
 	/**
 	 * Settings' landing page: the question, the search field, a site map with
 	 * a button for every page, one line each for your assistant, your profile
-	 * and your server (`LANDING` in lib/settings), and what changed lately.
-	 * It fits on one screen.
+	 * and your server (`LANDING` in lib/settings), plus this device where it
+	 * has a page of its own (`deviceLanding`), and what changed lately. It
+	 * fits on one screen. Your server's and this device's names open their
+	 * own pages.
 	 *
 	 * Typing lists the matching settings from every page in place of the
 	 * rest, grouped by the page each lives on. ↑ and ↓ pick one and Return
@@ -17,11 +19,26 @@
 	import ChangedLately from './ChangedLately.svelte';
 	import DraftCard from './DraftCard.svelte';
 	import SearchField from '$lib/components/SearchField.svelte';
-	import { getAssistantProfile } from '$lib/api/client';
-	import { LANDING, matchSettings, settingPlace, titleOf, type LandingLink, type Setting } from '$lib/settings';
+	import { getAssistantProfile, listDevices } from '$lib/api/client';
+	import {
+		LANDING,
+		deviceLanding,
+		matchSettings,
+		settingPlace,
+		titleOf,
+		type DeviceHere,
+		type LandingGroup,
+		type LandingLink,
+		type Setting,
+	} from '$lib/settings';
+	import { isIOS, isMacOS, isTauri } from '$lib/utils/platform';
 	import { openSetting, openSettingsPage } from '$lib/settings/focus';
 
 	let name = $state(DEFAULT_ASSISTANT_NAME);
+
+	/** The device this page is open on, once known. Null on the server's own
+	 *  console, which has no line: Your server covers that machine. */
+	let here = $state<DeviceHere | null>(null);
 
 	onMount(() => {
 		void getAssistantProfile<{ assistant_name?: string | null }>()
@@ -29,7 +46,29 @@
 			.catch(() => {
 				// The default name stands in; nothing on this page saves it.
 			});
+		if (isIOS) here = 'ios-app';
+		else if (isTauri) here = isMacOS ? 'mac-app' : 'desktop-app';
+		else {
+			// A browser is a device only on a paired computer, where it counts
+			// as that computer's app. On the console it is the server itself.
+			void listDevices<{ devices: { kind: string; is_current: boolean }[] }>()
+				.then((r) => {
+					const current = r.devices.find((d) => d.is_current);
+					here = current && current.kind === 'desktop_app' ? 'browser' : null;
+				})
+				.catch(() => {
+					// absent-ok: without the list, the line stays off; This
+					// device is still listed on Devices.
+				});
+		}
 	});
+
+	const siteMap: readonly LandingGroup[] = $derived(here ? [...LANDING, deviceLanding(here)] : LANDING);
+	const searchPlatform = $derived(here === 'ios-app' ? 'ios' : here === 'mac-app' || here === 'browser' ? 'mac' : null);
+
+	function openGroup(group: LandingGroup) {
+		if (group.route) openSettingsPage(group.route, spoken);
+	}
 
 	function openLink(link: LandingLink) {
 		if (link.setting) openSetting(link.setting, spoken);
@@ -47,7 +86,7 @@
 	const groups = $derived.by(() => {
 		if (!typing) return [];
 		const byPlace = new Map<string, Setting[]>();
-		for (const setting of matchSettings(query, spoken)) {
+		for (const setting of matchSettings(query, spoken, searchPlatform)) {
 			const place = settingPlace(setting, spoken);
 			if (!byPlace.has(place)) byPlace.set(place, []);
 			byPlace.get(place)!.push(setting);
@@ -183,9 +222,32 @@
 
 	{#if !typing && !draftText}
 		<div class="map">
-			{#each LANDING as group (group.title)}
-				<nav aria-label={group.heading}>
-					<h2>{group.heading}</h2>
+			{#each siteMap as group (group.title)}
+				<nav aria-label={group.title}>
+					{#if group.route}
+						<h2>
+							<a
+								class="opens"
+								href={group.route}
+								onclick={(e) => {
+									e.preventDefault();
+									openGroup(group);
+								}}
+								>{group.title}<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"
+									><path
+										d="m9 18l6-6-6-6"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/></svg
+								></a
+							>
+						</h2>
+					{:else}
+						<h2>{group.title}</h2>
+					{/if}
 					<div class="buttons">
 						{#each group.links as link (link.label)}
 							<a
@@ -313,6 +375,25 @@
 		font-weight: 400;
 		letter-spacing: normal;
 		color: var(--color-foreground-subtle);
+	}
+
+	/* A party with a page of its own: its name is a link, drawn in ink with a
+	   chevron so it reads as one beside the plain labels. */
+	.map h2 .opens {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+
+	.map h2 .opens svg {
+		flex: none;
+		color: var(--color-foreground-muted);
+	}
+
+	.map h2 .opens:hover svg {
+		color: var(--color-foreground);
 	}
 
 	.buttons {

@@ -596,7 +596,7 @@
 	.about-page {
 		position: fixed;
 		inset: 0;
-		z-index: 80;
+		z-index: calc(var(--z-page) + 1);
 		display: flex;
 		flex-direction: column;
 		background: var(--color-surface);

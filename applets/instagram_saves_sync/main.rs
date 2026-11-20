@@ -40,11 +40,9 @@ const SAVED_URL: &str = "https://www.instagram.com/api/v1/feed/saved/posts/";
 /// The web client's app id, a public constant it sends on every request.
 const IG_APP_ID: &str = "936619743392459";
 
-/// Saves fetched per page — the web client's own page size.
-const PAGE_SIZE: u32 = 25;
-
-/// Runaway guard and first-backfill ceiling. At 25 a page this reaches ~1,500
-/// saves; stated in the summary when hit, per the no-silent-caps rule.
+/// Runaway guard and first-backfill ceiling. At the endpoint's 25 a page this
+/// reaches ~1,500 saves; stated in the summary when hit, per the no-silent-caps
+/// rule.
 const MAX_PAGES: u32 = 60;
 
 #[tokio::main]
@@ -70,7 +68,9 @@ async fn main() -> Result<()> {
     let last_seen = virtues_applets::config_str(&input, "newest_id").map(String::from);
 
     let storage = lake::storage_from_env()?;
-    let client = virtues_applets::http_client();
+    // Redirects are not followed: a dead session is a 302 to the login page,
+    // which the status check below turns into a reconnect request.
+    let client = virtues_applets::http_client_no_redirects();
 
     let mut total_written = 0usize;
     let mut images_stored = 0usize;
@@ -95,11 +95,7 @@ async fn main() -> Result<()> {
             .header("x-requested-with", "XMLHttpRequest")
             .header("cookie", &cookies)
             .header("referer", "https://www.instagram.com/")
-            .header(
-                "user-agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-                 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
-            );
+            .header("user-agent", virtues_applets::session_user_agent(&input));
         if let Some(claim) = &www_claim {
             req = req.header("x-ig-www-claim", claim);
         }

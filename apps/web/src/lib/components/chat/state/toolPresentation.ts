@@ -238,6 +238,45 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	// Drawn in the reply as the tasks themselves (TaskCard); these are their
 	// lines in the thinking block.
+	email_archive: {
+		noun: "Gmail",
+		depth: 4,
+		say: (input, live) => {
+			const n = Array.isArray(input.emails) ? input.emails.length : 1;
+			const what = n === 1 ? "an email" : `${n} emails`;
+			if (input.undo === true) return live ? `Moving ${what} back to your inbox` : `Moved ${what} back to your inbox`;
+			return live ? `Archiving ${what}` : `Archived ${what}`;
+		},
+	},
+	email_label: {
+		noun: "Gmail",
+		depth: 4,
+		say: (input, live) => {
+			const n = Array.isArray(input.emails) ? input.emails.length : 1;
+			const what = n === 1 ? "an email" : `${n} emails`;
+			return live ? `Labeling ${what}` : `Labeled ${what}`;
+		},
+	},
+	email_draft: {
+		noun: "Gmail",
+		depth: 4,
+		say: (input, live) => {
+			const reply = typeof input.reply_to === "string" && input.reply_to.trim() !== "";
+			const what = reply ? "a reply" : "an email";
+			return live ? `Drafting ${what}` : `Drafted ${what}`;
+		},
+	},
+	calendar_event: {
+		noun: "Calendar",
+		depth: 4,
+		say: (input, live, short) => {
+			const title = typeof input.title === "string" ? input.title.trim() : "";
+			const named = title ? ` ${fit(title, short)}` : " an event";
+			if (input.action === "delete") return live ? "Deleting an event" : "Deleted an event";
+			if (input.action === "update") return live ? `Changing${named}` : `Changed${named}`;
+			return live ? `Adding${named} to your calendar` : `Added${named} to your calendar`;
+		},
+	},
 	create_task: {
 		noun: "Tasks",
 		depth: 4,

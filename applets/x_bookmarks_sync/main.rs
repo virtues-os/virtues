@@ -114,11 +114,7 @@ async fn main() -> Result<()> {
             .header("x-twitter-client-language", "en")
             // A real browser UA: X serves the API to the web client, and an
             // empty or scripted UA is the cheapest thing for it to gate on.
-            .header(
-                "user-agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-                 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
-            )
+            .header("user-agent", virtues_applets::session_user_agent(&input))
             .send()
             .await
             .context("x bookmarks request failed")?;

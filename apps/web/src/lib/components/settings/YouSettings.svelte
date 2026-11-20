@@ -128,7 +128,7 @@
 				<Input id="profile-birthday" type="date" bind:value={values.birth_date} disabled={phase !== 'ready'} autoSave onSave={(v) => save('birth_date', v)} />
 			</div>
 		</SettingRow>
-		<SettingRow id="occupation" label={label('occupation')} help="Leave where blank if you work for yourself." forId="profile-occupation">
+		<SettingRow id="occupation" label={label('occupation')} help="Leave the second box blank if you work for yourself." forId="profile-occupation">
 			<div class="pair">
 				<Input id="profile-occupation" placeholder="What you do" bind:value={values.occupation} autocomplete="organization-title" disabled={phase !== 'ready'} autoSave onSave={(v) => save('occupation', v)} />
 				<span id="setting-employer" data-setting="employer" class="marker"></span>

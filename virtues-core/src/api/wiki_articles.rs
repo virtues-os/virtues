@@ -105,7 +105,7 @@ pub async fn get_article_prose(
         SELECT p.content, p.updated_at, (a.maintenance <> 'never') AS "maintained!"
         FROM wiki_articles a
         JOIN app_pages p ON p.id = a.page_id
-        WHERE a.subject_type = $1 AND a.subject_id = $2
+        WHERE a.subject_type = $1 AND a.subject_id = $2 AND p.deleted_at IS NULL
         "#,
         subject_type,
         subject_id
@@ -667,8 +667,9 @@ pub async fn get_history_feed(pool: &PgPool, limit: i64) -> Result<Vec<HistoryEn
             ) v
             JOIN wiki_articles a ON a.page_id = v.page_id
             JOIN app_pages p ON p.id = v.page_id
-            WHERE $1::timestamptz IS NULL
-               OR (v.created_at, v.version_number, v.page_id) < ($1, $2, $3)
+            WHERE p.deleted_at IS NULL
+              AND ($1::timestamptz IS NULL
+               OR (v.created_at, v.version_number, v.page_id) < ($1, $2, $3))
             ORDER BY v.created_at DESC, v.version_number DESC, v.page_id DESC
             LIMIT $4
             "#,

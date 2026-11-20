@@ -379,7 +379,7 @@
 <style>
 	/* FloatingContent wrapper styles */
 	:global(.entity-picker-container) {
-		--z-floating: 101;
+		--z-floating: calc(var(--z-overlay) + 1);
 		padding: 0;
 		background: transparent;
 		border: none;

@@ -113,7 +113,7 @@
 </script>
 
 <section>
-	<h2 class="settings-label"><label for="style-notes">How it talks to you</label></h2>
+	<h2 class="settings-label"><label for="style-notes">Style</label></h2>
 	<div class="notes-field">
 		<Textarea
 			id="style-notes"
@@ -137,7 +137,7 @@
 	<!-- The counter shares the hint's line, so appearing moves nothing. -->
 	<div class="under">
 		<p class="sec-hint">
-			{assistantName} has a manner of its own. Where yours differs, yours wins.
+			{assistantName} has a style of its own. What you write here takes priority over it.
 		</p>
 		{#if draft.length > COUNT_FROM}
 			<p class="count">

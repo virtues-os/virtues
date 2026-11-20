@@ -69,8 +69,8 @@ pub const EMBED_GGUF_SHA256: &str =
 pub const EMBED_QUERY_PROMPT: &str = "task: search result | query: ";
 pub const EMBED_DOC_PROMPT: &str = "title: none | text: ";
 
-/// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
-/// + answerai-colbert@256 rerank, served by `virtues-qnnd` behind the same
+/// The Dragon NPU path's QAIRT context binaries (Hexagon v68): gte-small embed
+/// and answerai-colbert@256 rerank, served by `virtues-qnnd` behind the same
 /// llama-compatible HTTP contract on :18181/:18182, on a Dragon that hasn't
 /// moved its search to the CPU. Named here only to report what such a box
 /// runs; nothing fetches them any more.
@@ -89,10 +89,14 @@ fn models_dir() -> PathBuf {
 /// runs. False once a Dragon's search moves to its CPU (`cli::model_set`);
 /// for the board itself, see [`is_dragon_board`]. Keyed off the installer's
 /// `VIRTUES_INFERENCE=dragon`, with the qnnd unit file as a fallback for `sudo`
-/// CLI contexts that don't load the box env.
+/// CLI contexts that don't load the box env. A Dragon on its owner's own
+/// server (`manual`) keeps the qnnd unit file but doesn't use it.
 pub(crate) fn is_dragon_profile() -> bool {
-    std::env::var("VIRTUES_INFERENCE").map(|v| v == "dragon").unwrap_or(false)
-        || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
+    match std::env::var("VIRTUES_INFERENCE").as_deref() {
+        Ok("dragon") => true,
+        Ok("manual") => false,
+        _ => std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists(),
+    }
 }
 
 /// Is this machine a Radxa Dragon Q6A, by its device tree? A question about the

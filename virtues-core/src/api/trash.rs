@@ -151,8 +151,31 @@ pub async fn trash(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
     if stamped.is_none() {
         return Err(Error::NotFound(format!("{kind:?} not found: {id}")));
     }
+    if matches!(kind, TrashKind::Page) {
+        mark_day_page_removed(pool, id, true).await?;
+    }
 
     drop_embeddings(pool, kind, id).await
+}
+
+/// Record on the day that its page was removed, or put back.
+///
+/// A day's page is written by the server, so trashing one needs a marker the
+/// day writer reads: `wiki_days.page_removed_at`. It outlives the page (the
+/// purge leaves it), and while it is set `day_summary::narrate_day` writes
+/// nothing for the day. A page that is not a day's page matches no row.
+async fn mark_day_page_removed(pool: &PgPool, page_id: &str, removed: bool) -> Result<()> {
+    sqlx::query(
+        "UPDATE wiki_days d SET page_removed_at = CASE WHEN $2 THEN now() END \
+         FROM wiki_articles a \
+         WHERE a.page_id = $1 AND a.subject_type = 'day' AND a.subject_id = d.id",
+    )
+    .bind(page_id)
+    .bind(removed)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to mark the day of page {page_id}: {e}")))?;
+    Ok(())
 }
 
 /// Bring a trashed row back. The index refills itself: the indexer sees no
@@ -169,6 +192,9 @@ pub async fn restore(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
 
     if restored.is_none() {
         return Err(Error::NotFound(format!("{kind:?} is not in the trash: {id}")));
+    }
+    if matches!(kind, TrashKind::Page) {
+        mark_day_page_removed(pool, id, false).await?;
     }
     Ok(())
 }

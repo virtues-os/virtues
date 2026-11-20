@@ -36,6 +36,7 @@
 		suggestion = null,
 		onSuggestion = undefined,
 		mentionQuery = $bindable(null),
+		inline = false,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -60,6 +61,10 @@
 		/** What is typed after an open `@`, else null. The chat sky lights
 		 *  the moments it matches. */
 		mentionQuery?: string | null;
+		/** One row: (+), the field, then the buttons. Used once a chat has
+		 *  messages, where the composer is docked under the thread. The card
+		 *  goes back to two rows as soon as the text wraps. */
+		inline?: boolean;
 	} = $props();
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
@@ -289,8 +294,16 @@
 
 	// The field is as tall as its content, or as the question drawn in it.
 	let contentHeight = MIN_HEIGHT;
+	// Set once the text wraps, and kept until the field is empty. Going back
+	// to one row while text is in it would narrow the field and wrap it again.
+	let wrapped = $state(false);
+	$effect(() => {
+		if (inputIsEmpty) wrapped = false;
+	});
+	const oneRow = $derived(inline && !wrapped);
 	function setHeight(contentPx: number) {
 		contentHeight = contentPx;
+		if (contentPx > MIN_HEIGHT + 4) wrapped = true;
 		fitHeight(ghost ? ghostHeight : 0);
 	}
 	function fitHeight(ghostPx: number) {
@@ -549,7 +562,7 @@
 			</div>
 		</div>
 
-		<div class="composer-card bg-surface">
+		<div class="composer-card bg-surface" class:one-row={oneRow}>
 			{#if onAttach}
 				<input
 					bind:this={fileInputEl}
@@ -747,6 +760,26 @@
 		border-radius: calc(var(--shell-radius) - 1px);
 		transition: border-color var(--motion-enter) var(--ease-premium);
 	}
+
+	/* One row: the toolbar's buttons join the field's row. */
+	.composer-card.one-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+		align-items: center;
+		gap: 0;
+		padding: 0.375rem 0.5rem;
+	}
+	.one-row .composer-toolbar {
+		display: contents;
+	}
+	.one-row .toolbar-spacer {
+		display: none;
+	}
+	.one-row .attach-button { grid-area: 1 / 1; }
+	.one-row .field-row { grid-area: 1 / 2; }
+	.one-row .offline-note { grid-area: 1 / 3; margin-right: 0.25rem; }
+	.one-row .mic-button { grid-area: 1 / 4; }
+	.one-row .action-btn { grid-area: 1 / 5; }
 
 	.tray-open .composer-card {
 		border-top-color: var(--color-border);

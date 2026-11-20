@@ -12,8 +12,8 @@
 
 	const WORDS: Record<Capability['id'], { label: string; help: string }> = {
 		web_search: { label: 'Search the web', help: 'Looks things up online when a question needs it.' },
-		browser: { label: 'Use your browser', help: 'Works in the browser in the Virtues app on your Mac, while the app is open.' },
-		applets: { label: 'Make and change applets', help: 'Builds applets that run on their own, and edits them. Running them stays on.' },
+		browser: { label: 'Use your browser', help: 'Browses the web in the Virtues app on your Mac, while the app is open.' },
+		applets: { label: 'Make and change applets', help: 'Builds applets that run on their own, and edits them. Applets you already have keep running.' },
 		pages: { label: 'Write in your pages', help: 'Creates pages and edits them when you ask.' },
 	};
 </script>

@@ -137,10 +137,12 @@
 						? `${formatMicrosUSD(summary.last_month_to_date_micros)} by this day in ${lastMonthName}.`
 						: `Nothing by this day in ${lastMonthName}.`}
 				{/if}
+				This counts AI calls only.
 				{#if balance !== null}
 					Your balance is {formatMicrosUSD(balance)} on
 					<!-- Billing's tab label has no assistant name in it, so the default stands in. -->
-					<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', DEFAULT_ASSISTANT_NAME)}>Billing</button>.
+					<button type="button" class="link" onclick={() => openSettingsPage('/virtues/billing', DEFAULT_ASSISTANT_NAME)}>Billing</button>,
+					which also pays for web search, places and bank data.
 				{/if}
 				{#if byoCalls > 0}
 					Calls on your own key aren't priced here.

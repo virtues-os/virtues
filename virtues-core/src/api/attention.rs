@@ -152,13 +152,24 @@ fn search_rebuild_items(items: &mut Vec<AttentionItem>, model: Option<String>) {
 /// `(applet id, name, error)` for each applet that is on and whose latest
 /// finished run failed. It stays until a run succeeds, or the owner turns the
 /// applet off.
+///
+/// A sync whose sign-in needs the owner is left out. The runner refuses to
+/// load such a sign-in, so every run fails, and [`broken_sources`] already
+/// asks the owner to sign in again: one cause is one item.
+///
+/// The latest run is the newest by `created_at`, which the runs index
+/// `(applet_id, created_at DESC)` answers without sorting an applet's whole
+/// history. A run is inserted when it starts, so the two times agree.
 async fn failed_applets(db: &Database) -> Result<Vec<(String, String, Option<String>)>> {
     Ok(sqlx::query_as(
         "SELECT a.id, a.name, r.error FROM app_applets a \
          JOIN LATERAL (SELECT id, status, error FROM app_applet_runs \
                         WHERE applet_id = a.id AND status IN ('success', 'error', 'budget_exceeded') \
-                        ORDER BY started_at DESC LIMIT 1) r ON true \
+                        ORDER BY created_at DESC LIMIT 1) r ON true \
          WHERE a.enabled AND a.archived_at IS NULL AND r.status = 'error' \
+           AND NOT EXISTS (SELECT 1 FROM credentials c \
+                            WHERE c.id = a.credential_id AND c.kind = 'source' \
+                              AND c.status IN ('reauth_required', 'error')) \
          ORDER BY a.name",
     )
     .fetch_all(db.pool())
@@ -884,6 +895,27 @@ mod tests {
         assert!(new_from_applets(&db).await.unwrap().is_empty(), "opening the applet clears it");
         run("run_s2", "applet_sync", "success", "cron", Some("Synced 4."), 10.0).await;
         assert!(failed_applets(&db).await.unwrap().is_empty(), "a later success clears it");
+
+        // A sync that fails because its sign-in ended is the sign-in's item.
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) VALUES \
+             ('cred_gone', 'instagram', 'Instagram', 'active', 'x')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE app_applets SET credential_id = 'cred_gone' WHERE id = 'applet_sync'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        run("run_s3", "applet_sync", "error", "cron", None, 5.0).await;
+        assert_eq!(failed_applets(&db).await.unwrap().len(), 1, "a failure with a working sign-in is the applet's");
+        sqlx::query("UPDATE credentials SET status = 'reauth_required' WHERE id = 'cred_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(failed_applets(&db).await.unwrap().is_empty(), "the sign-in's own item covers it");
+        assert_eq!(broken_sources(&db).await.unwrap().len(), 1);
 
         crate::scheduler::applets::record_rows_output(&pool, "run_r1", "applet_water.drinks", 2).await.unwrap();
         crate::scheduler::applets::record_rows_output(&pool, "run_r1", "applet_water.drinks", 3).await.unwrap();

@@ -51,6 +51,19 @@ pub fn http_client() -> reqwest::Client {
         .expect("failed to build reqwest client")
 }
 
+/// `http_client` that returns a redirect instead of following it. A sync that
+/// replays a logged-in web session needs this: when the session ends, the site
+/// redirects to its login page, and a client that follows the redirect gets the
+/// login page's HTML with a 200 instead of a status the applet can recognize.
+pub fn http_client_no_redirects() -> reqwest::Client {
+    ensure_crypto_provider();
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build reqwest client")
+}
+
 /// Install the ring crypto provider once (reqwest here is rustls-tls-no-provider,
 /// so direct external HTTPS panics with "No provider set" without this).
 fn ensure_crypto_provider() {
@@ -104,6 +117,27 @@ pub fn cookie_header(input: &AppletInput, field: &str) -> Result<String> {
         return Ok(pairs.join("; "));
     }
     secret(input, field).map(str::to_string)
+}
+
+/// The user agent a session sync sends when the sign-in does not say which
+/// browser made it: a sign-in whose cookies the owner pasted, or one handed
+/// over by an app older than `secrets.user_agent`.
+const PASTED_SESSION_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
+
+/// The user agent to replay a browser session with: the one the session was
+/// made in (`secrets.user_agent`, sent by the app's sign-in), so the site sees
+/// one browser. A site can end a session that turns up from a second browser.
+/// A value that is empty or could not be a header is ignored.
+pub fn session_user_agent(input: &AppletInput) -> &str {
+    input
+        .credentials
+        .as_ref()
+        .and_then(|c| c.get("secrets"))
+        .and_then(|s| s.get("user_agent"))
+        .and_then(|v| v.as_str())
+        .filter(|ua| !ua.trim().is_empty() && ua.chars().all(|c| c == ' ' || c.is_ascii_graphic()))
+        .unwrap_or(PASTED_SESSION_USER_AGENT)
 }
 
 /// Mark this run's credential as needing the owner to reconnect, with the
@@ -194,6 +228,17 @@ mod tests {
 
     fn input(secrets: serde_json::Value) -> AppletInput {
         serde_json::from_value(json!({ "config": {}, "credentials": { "id": "cred_t", "secrets": secrets } })).unwrap()
+    }
+
+    #[test]
+    fn a_session_is_replayed_as_the_browser_that_made_it() {
+        let app = input(json!({ "user_agent": "Mozilla/5.0 Example/1.0" }));
+        assert_eq!(session_user_agent(&app), "Mozilla/5.0 Example/1.0");
+        // A pasted sign-in, an empty value and one that could not be a header
+        // all fall back to the default.
+        for secrets in [json!({}), json!({ "user_agent": " " }), json!({ "user_agent": "a\r\nx: y" })] {
+            assert_eq!(session_user_agent(&input(secrets)), PASTED_SESSION_USER_AGENT);
+        }
     }
 
     #[test]

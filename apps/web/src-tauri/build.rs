@@ -95,6 +95,7 @@ const APP_COMMANDS: &[&str] = &[
     "set_summon_shortcut",
     // Logging in to a source in a window of its own (desktop, browser.rs).
     "browser_login",
+    "browser_login_user_agent",
     // The Browser pane beside the app's view (desktop, browser.rs).
     "browser_pane_open",
     "browser_pane_bounds",

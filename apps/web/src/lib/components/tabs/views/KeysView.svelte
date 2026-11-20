@@ -141,6 +141,7 @@
 
 <SettingsPage
 	title="Keys"
+	back={{ route: '/virtues/data', label: 'Your data' }}
 	lede="What your applets sign in with, such as an API key. An applet gets only the keys it lists, and the assistant sees their names, never their values."
 	width="medium"
 >

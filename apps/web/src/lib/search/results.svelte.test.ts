@@ -39,9 +39,9 @@ describe('settingPlace', () => {
 		expect(settingPlace(findSetting('limit-day')!, 'Iris')).toBe('Models and spending');
 		expect(settingPlace(findSetting('style')!, 'Iris')).toBe('How Iris talks to you');
 		expect(settingPlace(findSetting('occupation')!, null)).toBe('Profile');
-		expect(settingPlace(findSetting('devices')!, 'Iris')).toBe('Your server');
+		expect(settingPlace(findSetting('search-runs-on')!, 'Iris')).toBe('Your server');
 		expect(settingPlace(findSetting('byo-ai')!, 'Iris')).toBe('Models and spending');
 		expect(settingPlace(findSetting('ai-cost')!, 'Iris')).toBe('Models and spending');
-		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Updates and network');
+		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Devices');
 	});
 });

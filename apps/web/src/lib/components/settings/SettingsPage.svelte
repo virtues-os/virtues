@@ -99,6 +99,61 @@
 		padding-bottom: 4px;
 	}
 
+	/* A section heading on any Settings page: the app's serif h2 at the
+	   heading step. Set here, once, for every page this frame holds. */
+	.page :global(.settings-label) {
+		font-family: var(--font-serif);
+		font-size: var(--text-heading);
+		font-weight: 400;
+		line-height: 1.3;
+		letter-spacing: normal;
+		margin: 0 0 8px;
+	}
+
+	/* A page that opens with where things stand: one serif sentence, the
+	   facts behind it in `.settings-sub`, and a closing `.settings-aside`
+	   that points to the manual. `.settings-link` is a button worded as a
+	   link inside that prose.
+	   TODO(2026-11-19): migrate the local .lead, .sub and .aside copies in
+	   UpdatesPage and DevicesView onto these. */
+	.page :global(.settings-lead) {
+		margin: 32px 0 0;
+		font-family: var(--font-serif);
+		font-size: 28px;
+		font-weight: 400;
+		line-height: 1.25;
+		color: var(--color-foreground);
+	}
+
+	.page :global(.settings-sub) {
+		margin: 8px 0 0;
+		max-width: 60ch;
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.page :global(.settings-aside) {
+		margin: 32px 0 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.page :global(:is(.settings-sub, .settings-aside) a),
+	.page :global(.settings-link) {
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
+	.page :global(.settings-link) {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		cursor: pointer;
+	}
+
 	.lede {
 		margin: 8px 0 24px;
 		font-size: 15px;

@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
-	 * The on/off switch settings use: a track that turns green with a knob
-	 * that slides across. `label` names it for screen readers when the row's
-	 * words are not its label.
+	 * The on/off switch settings use: a track that fills with the accent, the
+	 * color that means "now" (design.md), with a knob that slides across.
+	 * `label` names it for screen readers when the row's words are not its
+	 * label.
 	 */
 	let {
 		checked,
@@ -43,7 +44,7 @@
 	}
 
 	.switch.on {
-		background: var(--color-success);
+		background: var(--color-primary);
 	}
 
 	.switch::after {

@@ -1,40 +1,21 @@
 <!--
-  This device — the iOS/iPadOS half of `devices/this`, the way DeviceView is
-  the macOS half.
+  This device on the iPhone and iPad: the iOS half of `devices/this`, the way
+  DeviceView is the desktop half. MobileDeviceScreen reads the phone's own
+  plugins, which exist only on the phone: its streams, its link to the
+  server, its sync queue and its notifications.
 
-  Exists because MobileDeviceScreen used not to be route-driven at all: it
-  rendered on a `menuView` flag inside the phone's More tab. So when Devices
-  grew a page per row, a phone had two doors to itself — the menu's rich local
-  panel, and the box-side page, which closed by saying the live detail "can
-  only be seen there" while *there* was the device in your hand. That sentence
-  was true from a Mac and a lie on the phone.
-
-  Both doors now land here. The More tab's "This device" keeps its promoted
-  position — on a phone the device IS the sensor, so its health is the first
-  question, not a settings detail — but it is a route push like every other
-  entry beside it, and the `menuView` toggle it needed is gone.
-
-  Page-wrapped rather than bare because MobileDeviceScreen carries no gutter of
-  its own — the menu's `.body` supplied `0 16px`, and `padding="compact"` is the
-  same measure.
+  The phone's drawer opens it, and the Settings landing page's This device
+  line does too, so its back link goes to Settings, where that line is.
 -->
 <script lang="ts">
-	import { Page } from '$lib';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
 	import MobileDeviceScreen from '$lib/components/mobile/MobileDeviceScreen.svelte';
+	import { isIPad } from '$lib/utils/platform';
 </script>
 
-<!-- No "← Devices" chrome: on the phone this page is entered from the drawer,
-     not the Devices list, so the link pointed somewhere the reader never was.
-     Swipe-back / the drawer are the ways out.
-
-     Titled "Settings", not "This device": the drawer's door says Settings
-     (VIR-345), and this is the room it opens — the phone's streams, its link
-     to the server, and the way to the profile. The route keeps its name;
-     the device is still the subject, the title is what people look for. -->
-<Page
-	title="Settings"
-	description="What this phone collects, whether it is reaching your server, and who you are."
-	padding="compact"
+<SettingsPage
+	title={isIPad ? 'This iPad' : 'This iPhone'}
+	lede="What it sends, how it reaches your server, and the app."
 >
 	<MobileDeviceScreen />
-</Page>
+</SettingsPage>

@@ -275,7 +275,7 @@
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
 		animation: setup-rise var(--m-base) var(--m-ease) both;
-		z-index: 2;
+		z-index: var(--z-dropdown);
 	}
 	.list button {
 		display: flex;

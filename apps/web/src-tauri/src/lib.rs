@@ -83,6 +83,9 @@ pub mod web_bundle;
 /// | 16 | `close_permission_tile` (desktop; the Mac implements it): the Full
 /// |   | Disk Access and Accessibility panes open with a drag tile for the
 /// |   | collector, which the page closes once the grant lands |
+/// | 17 | `browser_login_user_agent` (desktop): the user agent a `browser_login`
+/// |   | session was made with, which the connect form sends to the server
+/// |   | beside the cookies so a sync replays the session as that browser |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -90,7 +93,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 16;
+pub const COMMAND_SURFACE_VERSION: u32 = 17;
 
 /// What the native shell knows about itself.
 ///

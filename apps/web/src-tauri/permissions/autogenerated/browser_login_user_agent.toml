@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-login-user-agent"
+description = "Enables the browser_login_user_agent command without any pre-configured scope."
+commands.allow = ["browser_login_user_agent"]
+
+[[permission]]
+identifier = "deny-browser-login-user-agent"
+description = "Denies the browser_login_user_agent command without any pre-configured scope."
+commands.deny = ["browser_login_user_agent"]

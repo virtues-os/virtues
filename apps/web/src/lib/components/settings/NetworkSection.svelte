@@ -1,10 +1,12 @@
 <script lang="ts">
 	/**
-	 * Settings → Updates and network: the relay switch. Whether this server keeps
-	 * a rendezvous on the Virtues relay, so devices find it away from home, and
-	 * which relay that is. The relay is a baked default
+	 * Settings · Devices · Away from home: the relay switch. Whether this server
+	 * keeps a rendezvous on the Virtues relay, so your devices find it away from
+	 * home, and which relay that is. The relay is a baked default
 	 * (relay.rs::DEFAULT_RELAY_URL), so the row names it and can turn it off.
 	 * What the relay can and can't see is in agents/build/privacy-boundary.md.
+	 * The heading draws with the row, so a server that can't say leaves no
+	 * empty heading behind.
 	 */
 	import { apiGet, apiSend } from '$lib/api/client';
 	import SettingRow from './SettingRow.svelte';
@@ -55,7 +57,16 @@
 </script>
 
 {#if relay}
-	<SettingRow id="reach" label="Reach your server away from home" {help}>
-		<Switch checked={relay.enabled} label="Reach your server away from home" disabled={busy} onchange={toggle} />
-	</SettingRow>
+	<section class="group">
+		<h2 class="settings-label">Away from home</h2>
+		<SettingRow id="reach" label="Reach your server" {help}>
+			<Switch checked={relay.enabled} label="Reach your server away from home" disabled={busy} onchange={toggle} />
+		</SettingRow>
+	</section>
 {/if}
+
+<style>
+	.group {
+		padding: 24px 0 8px;
+	}
+</style>

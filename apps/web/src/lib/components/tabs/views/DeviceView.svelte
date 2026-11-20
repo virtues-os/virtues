@@ -1,29 +1,41 @@
 <!--
-  One device, the only page about a device, whichever device it is.
+  One device's page, whichever device it is (/virtues/devices/:id), and This
+  device (/virtues/devices/this) for the device you're using.
 
   A device can be looked at from two places: what your server knows about it,
-  and what the device knows about itself. The box holds `DeviceListItem` per
-  device: identity, pairing, last contact, reported build and self-reported
-  permissions. Everything richer (queue depth, live permission probes, the
-  update state) comes from a Tauri plugin over local IPC and exists only on
-  the machine it describes, so those sections show only on that machine.
+  and what the device knows about itself. The server holds each device's
+  pairing, last contact, reported build, push registration, and for a Mac the
+  permissions its collector last reported. Collecting, the live permission
+  check and the app's own updates come from the Mac app over local IPC, so
+  they show only on the Mac app itself. A browser on a paired computer counts
+  as that computer but has no bridge to ask, so it shows what the server knows.
+
+  What the page holds depends on the kind (`platformOf`): a Mac, a phone, a
+  Windows or Linux computer, an AI agent, or your server's console. The iPhone
+  app's own This device is ThisDeviceView; SettingsView routes it there.
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
-	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
-	import Icon from "$lib/components/Icon.svelte";
-	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import { onMount } from "svelte";
+	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
+	import LinkRow from "$lib/components/settings/LinkRow.svelte";
+	import Button from "$lib/components/Button.svelte";
+	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
-	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { listDevices } from "$lib/api/client";
 	import { isTauri, isMacOS } from "$lib/utils/platform";
 	import { BUILD, buildLabel } from "$lib/build";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { lightPendingSetting } from "$lib/settings/light";
 	import {
-		kindLabel,
-		kindIcon,
 		collectorOf,
+		deviceName,
+		kindSentence,
+		machineWord,
+		pairedOn,
+		platformOf,
+		reachedAgo,
+		reportedPermissions,
 		revokeDeviceFlow,
 		type Device,
 		type DevicesResponse,
@@ -48,41 +60,34 @@
 	const res = createResource(() => listDevices<DevicesResponse>());
 	const devices = $derived(res.data?.devices ?? []);
 
-	// `this` is a stable alias for whichever row is making the request, so a
-	// bookmark or the sidebar can point at "this machine" without knowing an id
-	// that changes on every re-pair.
+	// `this` stands for whichever row is making the request, so a link can
+	// point at "this machine" without knowing an id that changes on a re-pair.
 	const device = $derived<Device | null>(
 		deviceId === "this"
 			? (devices.find((d) => d.is_current) ?? null)
 			: (devices.find((d) => d.id === deviceId) ?? null),
 	);
 
-	// The collector this machine installed, folded in rather than listed apart.
-	// `installed_by` is stamped at pairing for exactly this — without it one Mac
-	// reads as two unrelated devices, which is how a stale collector version sat
-	// next to a current app version with nothing connecting them.
+	// A Mac's collector folds into its page: one Mac, one page.
 	const collector = $derived<Device | null>(collectorOf(device, devices));
+	const platform = $derived(device ? platformOf(device, !!collector) : null);
+	const word = $derived(platform ? machineWord(platform) : "device");
 
-	/**
-	 * Are we standing on the device we are describing?
-	 *
-	 * The whole page turns on this. Local means a Tauri shell is here to ask;
-	 * everything else is what crossed the wire. A plain browser is never local
-	 * even on the right machine — there is no daemon to read.
-	 */
+	/** Standing on the device described, with a Tauri shell to ask. */
 	const local = $derived(!!device?.is_current && isTauri);
 	const localMac = $derived(local && isMacOS);
 
-	// Permissions come from the collector, never the app: the app's row carries
-	// none, so reading it left this section empty on every Mac. Looking at a
-	// collector's own row, that row is the reporter.
+	// Permissions come from the collector: the app's row carries none. On a
+	// collector's own page (its app is gone), that row is the reporter.
 	const reporter = $derived<Device | null>(collector ?? (device?.permissions ? device : null));
+	const reported = $derived(reportedPermissions(reporter));
 
-	// ── Local instrument readings (localMac only) ────────────────────────────
+	// ── What only the Mac app can read ───────────────────────────────────────
 	let status = $state<CollectorStatus | null>(null);
 	let shell = $state<ShellIdentity | null>(null);
 	let upd = $state<AppUpdateState | null>(null);
 	let toggling = $state(false);
+	let checking = $state(false);
 
 	async function readLocal() {
 		status = await getCollectorStatus();
@@ -91,15 +96,14 @@
 
 	onMount(() => {
 		if (local) void shellIdentity().then((s) => (shell = s));
+		return lightPendingSetting();
 	});
 
 	// Each reading starts the collector CLI as a process, so read only while
-	// this view is on screen: not in a kept-alive tab behind another, and not
-	// while the window is in the background. The timer starts here, not after
-	// an await in onMount, where a view closed during the await kept polling
-	// forever.
+	// this view is on screen and the window is in front. The timer starts
+	// here, not after an await, so a view closed during the await stops.
 	$effect(() => {
-		if (!local || active === false) return;
+		if (!localMac || active === false) return;
 		void readLocal();
 		const timer = setInterval(() => {
 			if (document.visibilityState === "visible") void readLocal();
@@ -123,262 +127,376 @@
 		}
 	}
 
+	async function checkApp() {
+		checking = true;
+		try {
+			await checkAppUpdate();
+			upd = await appUpdateState();
+		} finally {
+			checking = false;
+		}
+	}
+
+	function relaunch() {
+		if (!uploadsHold("relaunch", () => void applyAppUpdate())) void applyAppUpdate();
+	}
+
 	const queued = $derived((status?.pendingEvents ?? 0) + (status?.pendingMessages ?? 0));
 
-	/**
-	 * The app's freshness, in one phrase.
-	 *
-	 * "Couldn't check" is deliberately NOT folded into "up to date". A failed
-	 * check and a passed one are different facts, and rendering them the same
-	 * is the habit that let a box sit ten days behind while every screen looked
-	 * healthy.
-	 */
-	const appFreshness = $derived.by(() => {
-		if (!local) return { text: "", tone: "muted" as const };
-		if (upd?.stagedVersion) return { text: `v${upd.stagedVersion} ready`, tone: "info" as const };
-		if (upd?.lastCheck?.outcome === "failed")
-			return { text: "Couldn't check", tone: "warning" as const };
-		if (upd?.lastCheck?.outcome === "up_to_date")
-			return { text: "Up to date", tone: "muted" as const };
-		return { text: "", tone: "muted" as const };
+	const collecting = $derived.by(() => {
+		if (!status) return "Checking…";
+		if (!status.running) return "Not running.";
+		const state = status.paused ? "Paused." : "Collecting.";
+		const waiting = queued > 0 ? ` ${queued} waiting to send.` : "";
+		const synced = status.lastSync ? ` Synced ${status.lastSync}.` : "";
+		return `${state}${waiting}${synced}`;
 	});
 
-	/**
-	 * The collector runs a build the app installs, so a lasting disagreement
-	 * means a relaunch has not happened — not that the collector is wrong.
-	 * Both numbers are stamped from the same source since 2026-08-28; before
-	 * that the collector's was a literal and this line could never be quiet.
-	 */
 	const appVersion = $derived((local ? shell?.appVersion : device?.app_version) ?? null);
-	const collectorBehind = $derived(
-		!!(collector?.version && appVersion && collector.version !== appVersion),
-	);
+	const collectorVersion = $derived(collector?.version ?? (localMac ? (status?.version ?? null) : null));
+
+	// A collector runs the build its app installed, so a lasting disagreement
+	// means the app hasn't relaunched since it updated.
+	const collectorBehind = $derived(!!(collectorVersion && appVersion && collectorVersion !== appVersion));
 
 	/**
-	 * Does this kind of device carry a native shell at all?
-	 *
-	 * A CLI session and a bare sensor have no app, no interface bundle and no
-	 * collector — rendering those rows as "—" invents three absences that are
-	 * not facts about the device, only about the template. An empty row reads
-	 * as a missing value; the honest thing is not to claim the field exists.
+	 * The app's own freshness, from its updater. A failed check is said as a
+	 * failed check: it is a different fact from "up to date".
 	 */
-	const hasApp = $derived(device?.kind === "mobile_app" || device?.kind === "desktop_app");
-
-	/** The UI build in front of you: locally the one we compiled into, otherwise
-	 *  the bundle the device's requests came from — which for a paired desktop
-	 *  mirrors the server, since the server is what served it. */
-	const interfaceVersion = $derived(local ? buildLabel(BUILD) : (device?.version ?? null));
-
-	const reaching = $derived.by(() => {
-		if (local) return { text: "On this device", tone: "muted" as const };
-		if (!device?.last_seen_at) return { text: "Never reached your server", tone: "warning" as const };
-		return { text: `Last reached ${formatTimeAgo(device.last_seen_at)}`, tone: "muted" as const };
+	const appState = $derived.by(() => {
+		if (upd?.stagedVersion) return { value: appVersion ?? "", note: `Version ${upd.stagedVersion} is downloaded. Relaunch to use it.`, warn: false };
+		if (upd?.lastCheck?.outcome === "failed") return { value: appVersion ?? "", note: "It couldn't check for a newer version.", warn: true };
+		if (upd?.lastCheck?.outcome === "up_to_date") return { value: `${appVersion ?? ""}, up to date`, note: "", warn: false };
+		return { value: appVersion ?? "Not reported", note: "", warn: false };
 	});
 
-	/**
-	 * The other direction, and the only place it is ever said.
-	 *
-	 * `reaching` is the device reaching the server. This is the server reaching
-	 * the device, and it is worth its own line because the failure is silent at
-	 * every other layer: Apple accepts a push for a phone whose owner turned
-	 * notifications off and reports success, so a box that cannot reach a phone
-	 * looks exactly like a box with nothing to say. Only the device's own
-	 * registration distinguishes them.
-	 *
-	 * Shown for phones only. A sensor, a CLI and a desktop app have nothing to
-	 * notify, and a row there would read as a fault rather than "not applicable".
-	 */
-	const notifying = $derived.by(() => {
-		if (!device?.push_address_at) {
-			return {
-				text: "Your server cannot send notifications to this device. Open the app and allow notifications.",
-				tone: "warning" as const,
-			};
+	const lede = $derived.by(() => {
+		if (!device) return "";
+		if (localMac) return "The Mac you're using: what it collects, what it may read, and its app.";
+		if (local) return "The computer you're using: its app, and how it looks here.";
+		if (platform === "console") return `${kindSentence(device, devices)}.`;
+		return `${kindSentence(device, devices)}, paired ${pairedOn(device.paired_at)}.`;
+	});
+
+	const lastReached = $derived.by(() => {
+		if (!device) return "";
+		if (device.is_current) return "Now. This is the device you're using.";
+		if (!device.last_seen_at) return "Never";
+		const ago = reachedAgo(device.last_seen_at);
+		return ago.charAt(0).toUpperCase() + ago.slice(1);
+	});
+
+	const permissionsNote = $derived.by(() => {
+		if (!device) return "";
+		const checked = reporter?.permissions?.checked_at;
+		const when = checked ? reachedAgo(checked) : null;
+		if (device.is_current) {
+			return when
+				? `This Mac last reported these ${when}. To change one, open the Virtues app on this Mac.`
+				: "To change one, open the Virtues app on this Mac.";
 		}
-		// "confirmed", not "since": the phone re-reports on every foreground, so
-		// this is when the server last heard the address was good — which is also
-		// the moment an APNs 410 is compared against.
-		return {
-			text: `Your server can notify this device · confirmed ${formatTimeAgo(device.push_address_at).toLowerCase()}`,
-			tone: "muted" as const,
-		};
+		return when
+			? `${device.label} last reported these ${when}. To change one, open this page on that Mac.`
+			: "To change one, open this page on that Mac.";
 	});
+
+	const unpairCopy = $derived.by(() => {
+		if (!device) return "";
+		if (platform === "agent") return "The agent stops reaching your server at once. What it already wrote stays.";
+		const who = device.is_current ? `This ${word}` : device.label;
+		const stops = collector ? `${who} and its collector stop` : `${who} stops`;
+		const signsOut = device.is_current ? ", and this window signs out" : "";
+		// A Windows or Linux app sends nothing, so there is nothing to keep.
+		const sent = collector ? " What they already sent stays." : platform === "ios" ? " What it already sent stays." : "";
+		const again = device.is_current ? ` To use Virtues here again, pair this ${word} again.` : " To use it again, pair it again.";
+		return `${stops} reaching your server at once${signsOut}.${sent}${again}`;
+	});
+
+	async function unpair() {
+		if (!device) return;
+		const done = await revokeDeviceFlow(device, {
+			verb: platform === "agent" ? "Disconnect" : "Unpair",
+			with: collector ? [collector] : [],
+		});
+		if (done) windowShellStore.navigate("/virtues/devices", { label: "Settings · Devices" });
+	}
+
+	const back = $derived(
+		deviceId === "this" ? { route: "/virtues", label: "Settings" } : { route: "/virtues/devices", label: "Devices" },
+	);
 </script>
 
-{#if res.loading}
-	<LoadingState />
-{:else if res.error}
-	<ErrorState message={String(res.error)} />
-{:else if !device}
-	<SettingsPage title="No such device" lede="It may have been unpaired." back={{ route: "/virtues/devices", label: "Devices" }} />
-{:else}
-	<SettingsPage
-		title={device.label}
-		lede="What this device runs, and whether it is reaching your server."
-		back={{ route: "/virtues/devices", label: "Devices" }}
-	>
-		<!-- ── Header: the two questions people open this page for ─────────── -->
-		<Card>
-			<div class="flex items-center gap-3">
-				<Icon icon={kindIcon(device.kind)} class="text-foreground-muted flex-none" />
-				<div class="flex-1 min-w-0">
-					<div class="text-sm font-medium text-foreground">
-						{kindLabel(device.kind)}
-						{#if device.paired_at}
-							<span class="text-foreground-subtle font-normal">
-								· paired {formatTimeAgo(device.paired_at)}{device.paired_from_ip ? ` from ${device.paired_from_ip}` : ""}
-							</span>
-						{/if}
-					</div>
-					<div
-						class="text-xs mt-0.5"
-						class:text-warning={reaching.tone === "warning"}
-						class:text-foreground-muted={reaching.tone === "muted"}
-					>
-						{reaching.text}
-					</div>
-					<!-- Phones only. A desktop app has no push at all, so on a Mac's page
-					     "allow notifications" would be advice with nothing behind it. -->
-					{#if device.kind === "mobile_app" && !local}
-						<div
-							class="text-xs mt-0.5"
-							class:text-warning={notifying.tone === "warning"}
-							class:text-foreground-muted={notifying.tone === "muted"}
-						>
-							{notifying.text}
-						</div>
-					{/if}
-				</div>
-			</div>
-		</Card>
+{#snippet fact(label: string, value: string, note = "", warn = false)}
+	<div class="fact">
+		<span class="label">{label}</span>
+		<span class="value-cell">
+			<span class="value" class:warn>{value}</span>
+			{#if note}<span class="note">{note}</span>{/if}
+		</span>
+	</div>
+{/snippet}
 
-		<!-- ── Now — live, and only where there is something live to read ──── -->
-		{#if localMac}
-			<Section title="Now">
-			<Card>
-				<div class="flex items-center gap-3">
-					<span
-						class={`w-2.5 h-2.5 rounded-full flex-none ${
-							status?.paused ? "bg-warning" : "bg-success"
-						}`}
-					></span>
-					<div class="flex-1 min-w-0">
-						<div class="text-sm font-medium text-foreground">
-							{status?.paused ? "Paused" : "Collecting"}
-						</div>
-						<div class="text-xs text-foreground-muted mt-0.5">
-							{#if queued > 0}
-								{queued} queued{status?.lastSync ? ` · synced ${status.lastSync}` : ""}
-							{:else if status?.lastSync}
-								Synced {status.lastSync}
-							{:else}
-								Uploaded to your server over your private link
-							{/if}
-						</div>
-					</div>
-					<Button variant="secondary" onclick={togglePause} disabled={toggling}>
-						{toggling ? "…" : status?.paused ? "Resume" : "Pause"}
-					</Button>
-				</div>
-			</Card>
-			</Section>
-		{/if}
-
-		<!-- ── Software — ONE ledger, and each line says what it governs ────
-		     Three artifacts move independently and have no reason to agree: the
-		     native shell ships through Apple, the interface ships with the
-		     server, the collector ships inside the app. Printing three bare
-		     numbers is what made "is this current?" unanswerable. -->
-		{#if hasApp}
-		<Section title="Software">
-		<Card list>
-		<ul>
-			<Field
-				label="App"
-				hint="the shell, and what it can do"
-				value={appVersion}
-				unknown={!appVersion}
-				note={appFreshness.text || undefined}
-				tone={appFreshness.tone}
-				mono
-			>
-				{#snippet action()}
-					{#if local && upd?.stagedVersion}
-						<Button variant="secondary" onclick={() => void (uploadsHold("relaunch", () => void applyAppUpdate()) || applyAppUpdate())}>Relaunch</Button>
-					{:else if local}
-						<Button variant="ghost" onclick={() => void checkAppUpdate()}>Check</Button>
-					{/if}
-				{/snippet}
-			</Field>
-
-			<Field
-				label="Interface"
-				hint="the screens you are looking at - served by your server"
-				value={interfaceVersion}
-				unknown={!interfaceVersion}
-				mono
-			/>
-
-			{#if collector}
-				<!-- Nested, not listed apart. The collector is a part of this
-				     machine, and showing it as its own device is what made one
-				     Mac read as two. -->
-				<Field
-					label="Collector"
-					hint="the daemon that reads this machine and sends it on"
-					value={collector.version}
-					unknown={!collector.version}
-					note={collectorBehind ? "behind the app - relaunch" : undefined}
-					tone="warning"
-					mono
-				/>
-			{/if}
-		</ul>
-		</Card>
-		</Section>
-		{/if}
-
-		<!-- ── Permissions ─────────────────────────────────────────────────
-		     Live probe when we are standing here; the device's own last report
-		     otherwise. Never silently merged — a granted permission the box was
-		     told about months ago is not the same claim as one read a second
-		     ago, and the label is what keeps them apart. -->
-		{#if localMac || reporter?.permissions}
-			<Section title="Permissions">
-			<Card list>
-				{#if localMac}
-					<MacPermissions {status} onRecheck={recheck} />
-				{:else}
-					<MacPermissions device={reporter} />
-				{/if}
-			</Card>
-			</Section>
-		{/if}
-
-		<!-- ── Feeds ───────────────────────────────────────────────────────── -->
-		{#if device.source_id}
-			<Section title="Feeds">
-			<Card class="text-sm text-foreground">
-				Sends as <span class="font-mono text-foreground-muted">{device.source_id}</span>
-			</Card>
-			</Section>
-		{/if}
-
-		<!-- ── The honest sentence, where a panel would otherwise look broken ── -->
-		{#if !local && hasApp}
-			<!-- Only for a device that HAS instruments and is not the one you are
-			     holding. Saying it on the local console pointed someone at the
-			     browser they were already reading it in. -->
-			<p class="text-xs text-foreground-subtle mt-6 leading-relaxed max-w-prose">
-				Queue depth, live permission checks and update state are read on the device itself and
-				never sent to your server. Open this page on {device.label} to see them.
-			</p>
-		{/if}
-
-		<div class="mt-8">
-			<Button variant="ghost" onclick={() => void revokeDeviceFlow(device)}>
-				Unpair this device
-			</Button>
+{#if res.error}
+	<SettingsPage title="Devices" {back}>
+		<div class="load-error" role="alert">
+			<p>Your server couldn't list your devices.</p>
+			<Button variant="secondary" onclick={() => void res.reload()}>Try again</Button>
 		</div>
 	</SettingsPage>
+{:else if res.loading && !res.data}
+	<SettingsPage title={deviceId === "this" ? "This device" : "Devices"} {back}>
+		<p class="quiet">Loading…</p>
+	</SettingsPage>
+{:else if !device}
+	<SettingsPage title="No such device" lede="It may have been unpaired." {back} />
+{:else}
+	<SettingsPage title={deviceName(device)} {lede} {back}>
+		{#if localMac}
+			<!-- ── This Mac: what only the app can read ──────────────────── -->
+			<section class="group" id="setting-collecting">
+				<h2 class="settings-label">Collecting</h2>
+				<div class="fact">
+					<span class="label">This Mac</span>
+					<span class="value-cell">
+						<span class="with-action">
+							<span class="value">{collecting}</span>
+							<Button variant="secondary" disabled={!status?.running || toggling} onclick={togglePause}>
+								{status?.paused ? "Resume" : "Pause"}
+							</Button>
+						</span>
+						<span class="note">Pause stops this Mac collecting until you resume it.</span>
+					</span>
+				</div>
+			</section>
+
+			<section class="group" id="setting-permissions">
+				<h2 class="settings-label">What it may read</h2>
+				<p class="lead-note">Checked on this Mac, and again when you come back from System Settings.</p>
+				<div class="mac-permissions"><MacPermissions {status} onRecheck={recheck} /></div>
+			</section>
+
+			<section class="group" id="setting-the-app">
+				<h2 class="settings-label">The app</h2>
+				<div class="fact">
+					<span class="label">App</span>
+					<span class="value-cell">
+						<span class="with-action">
+							<span class="value">{appState.value}</span>
+							{#if upd?.stagedVersion}
+								<Button variant="secondary" onclick={relaunch}>Relaunch</Button>
+							{:else}
+								<Button variant="secondary" loading={checking} onclick={checkApp}>Check again</Button>
+							{/if}
+						</span>
+						{#if appState.note}<span class="note" class:warn-note={appState.warn}>{appState.note}</span>{/if}
+					</span>
+				</div>
+				{#if collectorVersion}
+					{@render fact("Collector", collectorVersion, collectorBehind ? "Older than the app. Relaunch the app to update it." : "", collectorBehind)}
+				{/if}
+				{@render fact("Screens", buildLabel(BUILD))}
+				<LinkRow id="appearance-here" label="Appearance on this Mac" help="Glass, reading font, text size and motion, for this device only." href="/virtues/appearance" />
+			</section>
+		{:else if local}
+			<!-- ── This Windows or Linux computer: no collector, no updater ── -->
+			<section class="group" id="setting-the-app">
+				<h2 class="settings-label">The app</h2>
+				{@render fact("App", appVersion ?? "Not reported")}
+				{@render fact("Screens", buildLabel(BUILD), "They come from your server.")}
+				<LinkRow id="appearance-here" label="Appearance on this computer" help="Glass, reading font, text size and motion, for this device only." href="/virtues/appearance" />
+			</section>
+		{:else}
+			<!-- ── What your server knows ────────────────────────────────── -->
+			<section class="group">
+				<h2 class="settings-label">Reaching your server</h2>
+				{@render fact("Last reached", lastReached)}
+				{#if platform === "ios"}
+					{#if device.push_address_at}
+						{@render fact("Notifications", "Your server can notify this phone.", `Confirmed ${reachedAgo(device.push_address_at)}.`)}
+					{:else}
+						{@render fact("Notifications", "Your server can't notify this phone.", "Open the app on the phone and allow notifications.", true)}
+					{/if}
+					<p class="lead-note spaced">What this phone sends and what it may read are on the phone itself. Open Settings there, under This device.</p>
+				{/if}
+				{#if platform === "console"}
+					<p class="lead-note spaced">
+						This stands for anything that reaches your server from the server itself: the virtues command, or a browser
+						over SSH. It can't be unpaired.
+					</p>
+				{/if}
+			</section>
+
+			{#if platform === "mac"}
+				<section class="group" id="setting-permissions">
+					<h2 class="settings-label">What it may read</h2>
+					{#if reported.length && reported.some((p) => p.granted !== null)}
+						<p class="lead-note">{permissionsNote}</p>
+						{#each reported as p (p.key)}
+							{@render fact(
+								p.label,
+								p.granted === true ? "Allowed" : p.granted === false ? "Off" : "Not reported",
+								p.granted === false ? `${p.costs.charAt(0).toUpperCase()}${p.costs.slice(1)}.` : "",
+								p.granted === false,
+							)}
+						{/each}
+						{#if reporter?.permissions?.stale}
+							<p class="lead-note spaced warn-note">Its collector hasn't reported lately. It may have stopped.</p>
+						{/if}
+					{:else}
+						<p class="lead-note">Its collector hasn't reported what it may read yet.</p>
+					{/if}
+				</section>
+			{/if}
+
+			{#if platform === "agent"}
+				<section class="group">
+					<h2 class="settings-label">What it can do</h2>
+					<p class="lead-note">It reaches your server only through these. It can't open the app, your settings or your keys.</p>
+					<p class="kind">It can read</p>
+					{@render fact("Your records", "Run queries against your records and your wiki.")}
+					{@render fact("Search", "Search your whole record by meaning.")}
+					{@render fact("Your pages", "Read any page.")}
+					<p class="kind">It can change</p>
+					{@render fact("Your pages", "Create pages and edit them.")}
+					{@render fact("Applets", "Set up applets, run them, and write to their own tables. It can't edit or delete one.")}
+				</section>
+			{/if}
+
+			{#if platform === "mac" || platform === "ios" || platform === "windows" || platform === "linux" || platform === "desktop"}
+				<section class="group" id="setting-the-app">
+					<h2 class="settings-label">{device.is_current ? "The app" : "Software"}</h2>
+					{@render fact("App", appVersion ?? "Not reported", platform === "ios" ? "New versions come from Apple." : "")}
+					{#if collectorVersion}
+						{@render fact("Collector", collectorVersion, collectorBehind ? "Older than the app. Relaunch the app on that Mac to update it." : "", collectorBehind)}
+					{/if}
+					{#if platform === "ios" && device.version}
+						{@render fact("Screens", device.version, "They update with your server.")}
+					{/if}
+					{#if device.is_current}
+						<LinkRow id="appearance-here" label="Appearance in this browser" help="Glass, reading font, text size and motion, for this browser only." href="/virtues/appearance" />
+					{/if}
+				</section>
+			{/if}
+		{/if}
+
+		{#if platform !== "console"}
+			<section class="group">
+				<h2 class="settings-label">{platform === "agent" ? "Disconnect" : "Unpair"}</h2>
+				<p class="lead-note body">{unpairCopy}</p>
+				<button type="button" class="danger" onclick={unpair}>
+					{platform === "agent" ? `Disconnect ${device.label}` : device.is_current ? `Unpair this ${word}` : `Unpair ${device.label}`}
+				</button>
+			</section>
+		{/if}
+	</SettingsPage>
 {/if}
+
+<style>
+	.group {
+		padding: 24px 0 8px;
+	}
+
+	.fact {
+		display: grid;
+		grid-template-columns: 180px minmax(0, 1fr);
+		gap: 16px;
+		padding: 8px 0;
+		font-size: 15px;
+	}
+
+	.value-cell {
+		min-width: 0;
+	}
+
+	.value {
+		color: var(--color-foreground-muted);
+	}
+
+	.value.warn,
+	.warn-note {
+		color: var(--color-warning);
+	}
+
+	.note {
+		display: block;
+		margin-top: 2px;
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+	}
+
+	.with-action {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.lead-note {
+		margin: 0 0 4px;
+		max-width: 60ch;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.lead-note.spaced {
+		margin-top: 12px;
+	}
+
+	.lead-note.body {
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.kind {
+		margin: 12px 0 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	/* MacPermissions pads its rows for a list inside a box; this page has no
+	   box, so its text lines up with the rows above. */
+	.mac-permissions {
+		margin: 0 -16px;
+	}
+
+	.danger {
+		height: 34px;
+		margin-top: 12px;
+		padding: 0 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-surface);
+		font: inherit;
+		font-size: 14px;
+		color: var(--color-error);
+		cursor: pointer;
+		transition: background var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.danger:hover {
+		background: color-mix(in srgb, var(--color-error) 6%, var(--color-surface));
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.quiet {
+		margin: 24px 0 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+
+	.load-error {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 24px;
+	}
+
+	.load-error p {
+		margin: 0;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+</style>

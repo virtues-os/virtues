@@ -107,7 +107,7 @@
 
 <style>
 	:global(.ai-prompt-container) {
-		--z-floating: 103;
+		--z-floating: calc(var(--z-overlay) + 3);
 		padding: 0;
 		background: transparent;
 		border: none;

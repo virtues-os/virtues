@@ -47,7 +47,7 @@
 
 <style>
 	:global(.suggestion-bar-container) {
-		--z-floating: 102;
+		--z-floating: calc(var(--z-overlay) + 2);
 		padding: 0;
 		background: transparent;
 		border: none;

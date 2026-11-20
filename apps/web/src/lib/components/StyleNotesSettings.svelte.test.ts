@@ -78,6 +78,6 @@ describe('StyleNotesSettings', () => {
 		// Svelte puts a corrected value back into the field a tick later.
 		await vi.waitFor(() => expect(field().value).toHaveLength(1000));
 		expect(text()).toContain('1,000 of 1,000');
-		expect(text()).toContain('Nick has a manner of its own. Where yours differs, yours wins.');
+		expect(text()).toContain('Nick has a style of its own. What you write here takes priority over it.');
 	});
 });

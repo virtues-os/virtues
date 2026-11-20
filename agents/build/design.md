@@ -378,6 +378,35 @@ elevation.** Stop at the first one that works. Do not reach for a 1px rule.
 screen, such as the phone's drawer, takes the page's own paint and gets its
 depth from sliding.
 
+### Stacking
+
+**Anything that floats over a page or the app takes a step from the ladder.**
+The ladder is in `themes.css`, low to high:
+
+| Step | For |
+|---|---|
+| `--z-sticky` | a page's sticky bar, breadcrumbs, outline |
+| `--z-dropdown` | dropdowns, menus, a field's list of matches |
+| `--z-popover` | a ref preview, a selection popover, a hover note |
+| `--z-page` | a full-screen page on the phone, and a page opened from it one above |
+| `--z-overlay` | split panes, side panels, the tab bar, the floating layer |
+| `--z-modal` | dialogs, search |
+| `--z-lightbox` | fullscreen media |
+| `--z-context-menu` | the right-click menu, and `--z-context-submenu` one above it |
+| `--z-tooltip` | tooltips and the label that follows a drag |
+
+A neighbor of a step is a `calc()` from it. A scrim under its popover is
+`calc(var(--z-popover) - 1)`, and a floating menu that opens over another is
+`calc(var(--z-overlay) + 1)`.
+
+**Order inside one component is a small plain number.** A placeholder over
+its field, a marker over its line and a table's own pinned header only have
+to beat their siblings. Do not give them a step from the ladder: a table
+header at `--z-sticky` would tie with the page's sticky bar.
+
+The setup flow numbers its own fixed layers below `--z-overlay`. The ladder
+has no step for them.
+
 ### Motion
 
 The shell's tokens, always on `--ease-premium`:

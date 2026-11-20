@@ -452,6 +452,20 @@ export async function browserLogin(
 	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title, domains });
 }
 
+/** The surface that added `browser_login_user_agent` (lib.rs `COMMAND_SURFACE_VERSION`). */
+export const BROWSER_LOGIN_USER_AGENT_SURFACE = 17;
+
+/**
+ * The user agent a `browserLogin` session was made with, or null on a shell
+ * older than the command. The connect form sends it beside the cookies, so a
+ * sync on the server replays the session as the browser the site already saw.
+ */
+export async function browserLoginUserAgent(): Promise<string | null> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await shellSupports(BROWSER_LOGIN_USER_AGENT_SURFACE))) return null;
+	return invoke<string>('browser_login_user_agent');
+}
+
 /** The surface that added the Browser pane (lib.rs `COMMAND_SURFACE_VERSION`). */
 export const BROWSER_PANE_SURFACE = 11;
 

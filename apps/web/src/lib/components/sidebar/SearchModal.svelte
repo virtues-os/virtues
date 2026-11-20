@@ -144,6 +144,10 @@
 					onkeydown={(e) => list?.keydown(e)}
 					placeholder={mode === "theme" ? "Filter themes" : "Search, ask, or type an address"}
 					aria-label="Search"
+					autocomplete="off"
+					autocorrect="off"
+					autocapitalize="off"
+					spellcheck="false"
 					use:focus
 				/>
 				<button class="close" onclick={onClose} aria-label="Close search">

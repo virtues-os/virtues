@@ -136,7 +136,8 @@
 	}
 	function tokens(n: number | null | undefined): string {
 		if (!n) return "";
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
+		// One decimal at most, and none when it is zero: 1,048,576 reads "1M", not "1.0M".
+		if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
 		return `${Math.round(n / 1000)}K`;
 	}
 	function cardFigures(m: ModelRow): string {

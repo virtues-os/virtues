@@ -7,17 +7,18 @@
 	wrote as markup, and every figure on it came out of the record.
 
 	Unframed, like the rest of the box's turn (design.md, "Framed and unframed blocks"): no border
-	and no ground of its own, a chart at the full width of the column.
+	and no ground of its own, a chart at the full width of the column. The
+	next-step card (choices) is the one framed kind; see ShowChoices.
 -->
 <script lang="ts">
 	import { isKitMark, isShowOutput, type ShowOutput } from "./show";
+	import Drawing from "./Drawing.svelte";
 	import ShowChart from "./ShowChart.svelte";
 	import ShowMark from "./ShowMark.svelte";
 	import ShowNumbers from "./ShowNumbers.svelte";
 	import ShowTable from "./ShowTable.svelte";
 	import ShowMap from "./ShowMap.svelte";
 	import ShowTimeline from "./ShowTimeline.svelte";
-	import ShowChoices from "./ShowChoices.svelte";
 	import ShowSeries from "./ShowSeries.svelte";
 
 	interface Props {
@@ -69,7 +70,7 @@
 		{/if}
 
 		{#if !out}
-			<div class="drawing" class:short={kind === "numbers"}></div>
+			<Drawing short={kind === "numbers"} />
 		{:else if isKitMark(out.mark)}
 			<ShowMark out={{ ...out, mark: out.mark }} {onOpenRows} />
 		{:else if out.kind === "chart"}
@@ -83,7 +84,10 @@
 		{:else if out.kind === "timeline"}
 			<ShowTimeline {rows} />
 		{:else if out.kind === "choices"}
-			<ShowChoices options={out.options ?? []} {active} {onChoose} />
+			<!-- Loaded when a reply ends with one, so the chat home doesn't carry it before its first paint. -->
+			{#await import("./ShowChoices.svelte") then { default: ShowChoices }}
+				<ShowChoices title={out.title} context={out.context} options={out.options ?? []} {active} {onChoose} />
+			{/await}
 		{/if}
 
 		{#if out && out.kind !== "choices"}
@@ -102,8 +106,9 @@
 		margin: 1.25rem 0 1.5rem;
 		min-width: 0;
 	}
+	/* The next-step card spaces itself, so an older turn whose card is gone leaves no gap. */
 	.show.choices {
-		margin: 0.5rem 0 1rem;
+		margin: 0;
 	}
 	.title {
 		font-family: var(--font-serif);
@@ -112,34 +117,6 @@
 		line-height: 1.35;
 		color: var(--color-foreground);
 		margin-bottom: 0.5rem;
-	}
-	.drawing {
-		height: 200px;
-		border-radius: var(--radius-xl);
-		background: linear-gradient(
-			90deg,
-			var(--color-surface) 0%,
-			var(--color-surface-elevated) 50%,
-			var(--color-surface) 100%
-		);
-		background-size: 200% 100%;
-		animation: drawing 1.4s ease-in-out infinite;
-	}
-	.drawing.short {
-		height: 64px;
-	}
-	@keyframes drawing {
-		from {
-			background-position: 100% 0;
-		}
-		to {
-			background-position: -100% 0;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.drawing {
-			animation: none;
-		}
 	}
 	.source {
 		display: flex;

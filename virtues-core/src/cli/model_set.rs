@@ -236,8 +236,12 @@ pub(crate) async fn start_recommended_change() {
     };
     // A moved Dragon with virtues-qnnd back beside virtues-embed (an older
     // installer re-run brings it back): the two race for :18181 at every boot.
-    // Search runs on virtues-embed here, so qnnd goes.
-    if unit_path(QNND).exists() && box_env::get("VIRTUES_EMBED_URL").as_deref() == Some(EMBED_URL) {
+    // Search runs on virtues-embed here, so qnnd goes. Not during a move: until
+    // the swap, qnnd may be what serves the live index.
+    if unit_path(QNND).exists()
+        && box_env::get("VIRTUES_EMBED_URL").as_deref() == Some(EMBED_URL)
+        && box_env::get("VIRTUES_EMBED_NEXT_URL").is_none()
+    {
         retire_qnnd();
         systemctl(&["restart", EMBED]);
     }

@@ -335,6 +335,9 @@ impl ToolExecutor {
         "sql_write",
         // Real money, per call.
         "generate_image",
+        // Only a delete: creating and changing an event can be undone with
+        // this same tool, and a deleted event cannot be brought back.
+        "calendar_event",
     ];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
@@ -354,6 +357,9 @@ impl ToolExecutor {
             .flatten();
         // Listing and reading applets change nothing.
         if tool_name == "applet" && super::applet_management::is_read(arguments) {
+            return Ok(None);
+        }
+        if tool_name == super::google::CALENDAR_TOOL && !super::google::is_delete(arguments) {
             return Ok(None);
         }
         // A dry run writes nothing: `check_only` validates and creates nothing.
@@ -403,6 +409,7 @@ impl ToolExecutor {
                     let (title, verb) = match tool_name {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
+                        "calendar_event" => ("an event on your calendar".to_string(), "delete"),
                         // Setup names the applet it writes, new or changed.
                         "applet" => (
                             arguments
@@ -594,6 +601,10 @@ impl ToolExecutor {
             name if super::connection::split(name).is_some() => {
                 Ok(super::connection::call_tool(&self._pool, name, arguments, context).await)
             }
+            super::google::ARCHIVE_TOOL => Ok(super::google::archive(&self._pool, &arguments, context).await),
+            super::google::LABEL_TOOL => Ok(super::google::label(&self._pool, &arguments, context).await),
+            super::google::DRAFT_TOOL => Ok(super::google::draft(&self._pool, &arguments, context).await),
+            super::google::CALENDAR_TOOL => Ok(super::google::calendar_event(&self._pool, &arguments, context).await),
             super::tasks::CREATE_TOOL => Ok(super::tasks::create(&self._pool, &arguments, context).await),
             super::tasks::UPDATE_TOOL => Ok(super::tasks::update(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {

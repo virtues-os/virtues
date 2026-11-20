@@ -2,7 +2,7 @@
 // page draws, reads correctly on its own, and is found by the words people
 // type for it.
 import { describe, expect, it } from 'vitest';
-import { LANDING, SECTIONS, SETTINGS, findSetting, matchSettings, sectionAt, settingsIn, titleOf } from './index';
+import { LANDING, SECTIONS, SETTINGS, deviceLanding, findSetting, matchSettings, sectionAt, settingsIn, titleOf } from './index';
 
 describe('the list of settings', () => {
 	it('gives every setting a unique id', () => {
@@ -62,13 +62,25 @@ describe('titleOf', () => {
 		expect(titleOf("{name}'s name", null)).toBe("Your assistant's name");
 		expect(titleOf('{name}', 'ari')).toBe('Ari');
 	});
+
+	it('gives a name ending in s a bare apostrophe', () => {
+		expect(titleOf("{name}'s name", 'Virtues')).toBe("Virtues' name");
+		expect(titleOf("{name}'s name", 'Ari')).toBe("Ari's name");
+	});
 });
 
 describe('matchSettings', () => {
 	const ids = (q: string, name?: string) => matchSettings(q, name).map((s) => s.id);
 
 	it('returns every setting, in page order, for an empty query', () => {
-		expect(ids('  ')).toEqual(SETTINGS.map((s) => s.id));
+		expect(ids('  ')).toEqual(SETTINGS.filter((s) => !s.platform).map((s) => s.id));
+	});
+
+	it("lists a device's own settings only on that platform", () => {
+		expect(ids('pause')).not.toContain('collecting');
+		expect(matchSettings('pause', null, 'mac').map((s) => s.id)).toContain('collecting');
+		expect(matchSettings('location', null, 'mac').map((s) => s.id)).not.toContain('what-it-sends');
+		expect(matchSettings('location', null, 'ios').map((s) => s.id)).toContain('what-it-sends');
 	});
 
 	it('finds a setting by a word people use for it, not only its title', () => {
@@ -93,6 +105,23 @@ describe('matchSettings', () => {
 
 	it('finds nothing for a query that matches nothing', () => {
 		expect(ids('zzqx')).toEqual([]);
+	});
+});
+
+describe('the landing page', () => {
+	it("opens Your server's page from its name", () => {
+		expect(LANDING.find((g) => g.title === 'Your server')?.route).toBe('/virtues/system');
+	});
+
+	it("links This device's parts to settings that exist on its page", () => {
+		for (const here of ['mac-app', 'ios-app', 'desktop-app', 'browser'] as const) {
+			const group = deviceLanding(here);
+			expect(group.route, here).toBe('/virtues/devices/this');
+			for (const link of group.links) {
+				expect(link.route, `${here} ${link.label}`).toBe('/virtues/devices/this');
+				expect(findSetting(link.setting ?? '')?.route, `${here} ${link.label}`).toBe('/virtues/devices/this');
+			}
+		}
 	});
 });
 

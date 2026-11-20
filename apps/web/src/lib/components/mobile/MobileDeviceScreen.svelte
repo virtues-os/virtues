@@ -17,13 +17,16 @@
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getVersion } from "@tauri-apps/api/app";
 	import { onMount } from "svelte";
 	import MobileStreamPage from "./MobileStreamPage.svelte";
 	import MobileAudioSettings from "./MobileAudioSettings.svelte";
+	import Fold from "$lib/components/settings/Fold.svelte";
+	import { lightPendingSetting } from "$lib/settings/light";
+	import { BUILD, buildLabel } from "$lib/build";
+	import { isIPad } from "$lib/utils/platform";
 	import { boxApiVersion } from "$lib/boxApi";
 	import {
 		audioState,
@@ -802,6 +805,8 @@
 	const openMeta = $derived(open ? STREAMS.find((s) => s.key === open)! : null);
 
 	onMount(load);
+	// The landing page's This device links name a part of this page.
+	onMount(() => lightPendingSetting());
 	// Notifications are switched on or off in Settings, outside the app, so the
 	// row goes stale the moment the owner leaves to fix it. Re-read on return.
 	onMount(() => {
@@ -814,7 +819,7 @@
 </script>
 
 <div class="device">
-	<div class="group-label">Connection</div>
+	<h2 class="settings-label">Reaching your server</h2>
 	<div class="card">
 		<div class="stream">
 			<div class="s-icon" class:on={conn.tone === "on"}>
@@ -827,7 +832,7 @@
 			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
 		</div>
 		{#if notif}
-			<div class="stream">
+			<div class="stream" id="setting-notifications">
 				<div class="s-icon" class:on={notif.tone === "on"}>
 					<Icon icon="mynaui:bell" width={18} />
 				</div>
@@ -846,10 +851,8 @@
 		{/if}
 	</div>
 
-	<!-- "This phone", not "Streams": under a page titled Settings, the group
-	     label is what says these rows are about the device in hand. -->
-	<div class="group-label">This phone</div>
-	<div class="card">
+	<h2 class="settings-label">What it sends</h2>
+	<div class="card" id="setting-what-it-sends">
 		{#each shownStreams as s (s.key)}
 			{@const on = streamOn(s.key)}
 			<button class="stream link" type="button" onclick={() => (open = s.key)}>
@@ -868,7 +871,7 @@
 		{/each}
 	</div>
 
-	<div class="group-label">Sync</div>
+	<h2 class="settings-label">Sending</h2>
 	<div class="card">
 		<div class="stream">
 			<div class="s-icon" class:on={!!sync && sync.queued === 0}>
@@ -901,43 +904,42 @@
 		</button>
 	</div>
 
-	<!-- The profile lives on the box (name, appearance); this is its only door
-	     on the phone since the drawer's gear went. A route push, so the way
-	     back is the drawer, like every other page on the phone. -->
-	<div class="group-label">You</div>
-	<div class="card">
-		<button
-			class="stream link"
-			type="button"
-			onclick={() => windowShellStore.openTabFromRoute("/virtues", { label: "Settings" })}
-		>
-			<div class="s-icon">
-				<Icon icon="mynaui:user" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Settings</div>
-				<div class="s-sub">You, your assistant, and how the app looks</div>
-			</div>
-			<Icon icon="mynaui:chevron-right" width={18} class="chev" />
-		</button>
+	<h2 class="settings-label">The app</h2>
+	<div class="card" id="setting-the-app">
+		<div class="about">
+			<span>App</span><span class="v">{version || "Not known"}</span>
+		</div>
+		<p class="about-note">New versions come from Apple.</p>
+		<div class="about">
+			<span>Screens</span><span class="v">{buildLabel(BUILD)}</span>
+		</div>
+		<p class="about-note">They update with your server.</p>
 	</div>
 
-	<div class="group-label">About</div>
-	<div class="card">
-		<div class="about">
-			<span>App version</span><span class="v">{version || "—"}</span>
-		</div>
-		<div class="about">
-			<span>Recorded points</span><span class="v">{fixes.length}</span>
-		</div>
-		{#if radio}
-			<div class="about">
-				<span>{radio.parked ? "Radio resting" : "Link active"}</span>
-				<span class="v">{radio.drains} uploads · {fmtBytes(radio.bytes)}</span>
+	<!-- Counters for working out a sync problem, out of the way of everyone else. -->
+	<div class="trouble">
+		<Fold label="For troubleshooting" sub="Recorded points and the radio's counters.">
+			<div class="card">
+				<div class="about">
+					<span>Recorded points</span><span class="v">{fixes.length}</span>
+				</div>
+				{#if radio}
+					<div class="about">
+						<span>{radio.parked ? "Radio resting" : "Link active"}</span>
+						<span class="v">{radio.drains} uploads · {fmtBytes(radio.bytes)}</span>
+					</div>
+				{/if}
 			</div>
-		{/if}
+		</Fold>
+	</div>
+
+	<h2 class="settings-label">Unpair</h2>
+	<p class="unpair-note">
+		This {isIPad ? "iPad" : "iPhone"} stops reaching your server at once, and the app goes back to setup. What it already sent stays.
+	</p>
+	<div class="card">
 		<button class="danger-row" onclick={unpairDevice} disabled={forgetting} type="button">
-			{forgetting ? "Unpairing…" : "Unpair this device"}
+			{forgetting ? "Unpairing…" : `Unpair this ${isIPad ? "iPad" : "iPhone"}`}
 		</button>
 	</div>
 </div>
@@ -1062,13 +1064,37 @@
 	.device {
 		padding-bottom: 8px;
 	}
-	.group-label {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		font-size: 11px;
+	/* Section headings take the Settings page's serif (.settings-label, set
+	   by SettingsPage); this adds the space above each. */
+	.device h2 {
+		margin-top: 32px;
+	}
+
+	.device h2:first-child {
+		margin-top: 8px;
+	}
+
+	.about-note,
+	.unpair-note {
+		margin: 0;
+		padding: 0 14px 12px;
+		font-size: 12px;
+		line-height: 1.45;
 		color: var(--color-foreground-muted);
-		margin: 18px 4px 8px;
+	}
+
+	.about-note {
+		margin-top: -8px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.unpair-note {
+		padding: 0 4px 12px;
+		font-size: 13px;
+	}
+
+	.trouble {
+		margin-top: 16px;
 	}
 	.card {
 		background: var(--color-surface);

@@ -29,6 +29,7 @@
 //! profile timezone takes effect within one [`REFRESH_INTERVAL`].
 
 pub mod applets;
+mod google_push;
 pub mod slots;
 pub mod watch;
 
@@ -358,6 +359,9 @@ impl Scheduler {
             .start()
             .await
             .map_err(|e| Error::Other(format!("Failed to start scheduler: {e}")))?;
+
+        // Calendar syncs also start early when Google says a calendar changed.
+        google_push::spawn(RunnerDeps { db: self.db.clone(), yjs: self.yjs_state.clone() });
 
         tracing::info!("Scheduler started");
         Ok(())

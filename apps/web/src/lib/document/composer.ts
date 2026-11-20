@@ -368,8 +368,10 @@ function messagePaste(onAttach?: (files: File[]) => void): Extension {
  * because Return breaks the line here (the send button sends).
  * Autocorrect and sentence capitalization on: this is prose typed to a
  * model on glass, and the prediction strip earns its row. Spellcheck stays
- * off: the red underlines were the complaint, not the suggestions. On a
- * desktop the defaults are right and nothing is set.
+ * off because people complained about the red underlines. On a desktop,
+ * autocorrect and spellcheck are both off: the macOS correction bubble
+ * replaces a word when you press an arrow key or Return to pick from the
+ * slash or mention menu.
  */
 export function composerAttributes(mobile: boolean, label = 'Message'): Record<string, string> {
 	const attrs: Record<string, string> = {
@@ -382,6 +384,10 @@ export function composerAttributes(mobile: boolean, label = 'Message'): Record<s
 		attrs.enterkeyhint = 'enter';
 		attrs.autocorrect = 'on';
 		attrs.autocapitalize = 'sentences';
+		attrs.spellcheck = 'false';
+	} else {
+		attrs.autocorrect = 'off';
+		attrs.autocapitalize = 'off';
 		attrs.spellcheck = 'false';
 	}
 	return attrs;

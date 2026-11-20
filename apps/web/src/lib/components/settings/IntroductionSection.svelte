@@ -1,18 +1,16 @@
 <!--
-  Settings, at the foot of the Updates and network page: run the
-  introduction again.
+  Settings · Profile, at the foot: run the introduction again. It walks
+  through setup (your names, your connected accounts, your subscription), and
+  Profile is where your names live.
 
   It deletes nothing, so it runs in one click. Getting started's steps are
   derived from rows on every read, so a step that is done comes back as done;
   the only stored fact is the skip list, and this clears it, so a step set
   aside comes back.
-
-  Its name stays apart from "Start over" just above it, which unpairs every
-  device.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import {
 		getGettingStarted,
 		skipGettingStartedStep,
@@ -53,57 +51,42 @@
 	}
 </script>
 
-<div class="field">
-	<button type="button" class="again" disabled={busy} onclick={run}>
-		{busy ? 'Opening…' : 'Run the introduction again'}
-		<Icon icon="mynaui:arrow-right" width="14" />
-	</button>
-	<span class="field-hint">Opens the introduction, with any step you set aside. Nothing is deleted.</span>
-
+<section>
+	<h2 class="settings-label">The introduction</h2>
+	<p class="sub">
+		Walks you through setup again: your names, your connected accounts and your subscription. Any step you set aside comes
+		back, and nothing is deleted.
+	</p>
 	{#if error}
-		<span class="err">{error}</span>
+		<p class="err" role="alert">The introduction didn't open. {error}</p>
 	{/if}
-</div>
+	<Button variant="secondary" loading={busy} onclick={run}>Run the introduction again</Button>
+</section>
 
 <style>
-	.field {
+	section {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		align-items: flex-start;
+		gap: 12px;
 	}
 
-	/* The serif of the letter link above it — the two are one subject, and a
-	   sans button beside a serif link reads as two unrelated controls. */
-	.again {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		width: fit-content;
-		padding: 0;
-		background: none;
-		border: none;
-		font-family: var(--font-serif-ui);
-		font-size: 15px;
-		color: var(--color-foreground);
-		cursor: pointer;
+	/* The page's heading style, set on .settings-label by SettingsPage. */
+	h2 {
+		margin-bottom: 0;
 	}
 
-	.again:hover {
-		color: var(--color-primary);
-	}
-
-	.again:disabled {
+	.sub {
+		margin: 0;
+		max-width: 60ch;
+		font-size: 14px;
+		line-height: 1.5;
 		color: var(--color-foreground-muted);
-		cursor: default;
-	}
-
-	.field-hint {
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
 	}
 
 	.err {
-		font-size: 12px;
+		margin: 0;
+		font-size: 13px;
 		color: var(--color-error);
 	}
 </style>

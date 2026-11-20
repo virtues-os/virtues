@@ -54,8 +54,10 @@
 <section>
 	<h2 class="settings-label">What tasks may spend</h2>
 	<p class="sec-hint">
-		For tasks you hand {assistantName}. A task that reaches its limit stops and shows you what it
-		has so far. Chat and applets have no limit.
+		For tasks you assign to {assistantName} to work on in the background. A task that reaches its
+		limit stops and shows you what it has so far. When the last 24 hours reach the day's limit,
+		tasks wait until spending drops below it. Chats and applets have no limit, and neither does
+		anything that runs on your own AI provider.
 	</p>
 	<div class="limit">
 		<label for="limit-run-field">One task</label>
@@ -68,7 +70,6 @@
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 	{/if}
-	<p class="sec-hint">Once the last 24 hours reach the day's limit, tasks wait until spending falls under it. Neither limit applies on your own AI key, whose cost isn't known.</p>
 </section>
 
 <style>

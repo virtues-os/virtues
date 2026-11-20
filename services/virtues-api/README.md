@@ -80,6 +80,8 @@ Security model:
 | `VIRTUES_API_FLUSH_INTERVAL` | No | `30` | Seconds between budget flushes |
 | `VIRTUES_API_DEFAULT_BUDGET` | No | `5.0` | Default budget for new users (USD) |
 | `VIRTUES_API_PORT` | No | `9002` | Port to listen on (9000 used by MinIO) |
+| `VIRTUES_MAPS_DIR` | No | `/srv/maps` | Directory the map files are read from when no map storage is set |
+| `VIRTUES_MAPS_S3_ENDPOINT`, `_BUCKET`, `_REGION`, `_ACCESS_KEY`, `_SECRET_KEY` | No | unset | S3-compatible storage holding the map files. Set all five or none. When set, map files are read from the bucket through a key that can only read it, and the directory is not used |
 
 \* At least one provider API key is required.
 
@@ -193,7 +195,7 @@ live database).
 
 Environment is **not** passed inline at `docker run` time. It lives in a
 root-only env-file on the host, `/etc/virtues/api.env`, and the container runs
-with `--network host` on `:9002` with `/srv/maps` mounted read-only. To add or
+with `--network host` on `:9002`. Map files come from object storage (the `VIRTUES_MAPS_S3_*` variables); `/srv/maps` is still mounted read-only as the fallback when they are unset. To add or
 change a secret, edit the env-file (keep a timestamped `.bak`) and redeploy the
 running ref: `docker restart` does not re-read `--env-file`.
 

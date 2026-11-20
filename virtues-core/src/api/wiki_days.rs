@@ -28,6 +28,13 @@ pub struct WikiDay {
     /// The day's prose, from `wiki_day_prose`. The article page is its only
     /// home — the legacy `autobiography` column was dropped in 0106.
     pub article: Option<String>,
+    /// When the owner removed this day's page. Set until they put the page
+    /// back or ask for it to be written again.
+    #[serde(default)]
+    pub page_removed_at: Option<DateTime<Utc>>,
+    /// The removed page, while it is still in the trash and can be put back.
+    #[serde(default)]
+    pub removed_page_id: Option<String>,
     // Gone with the columns behind them (0025): `last_edited_by` was the
     // one-pen freeze flag, which ownership no longer has; `cover_image` and
     // `snapshot` never had a writer; `data_quality` and `epigraph` were parsed
@@ -77,6 +84,10 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         SELECT
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
+            page_removed_at,
+            (SELECT a.page_id FROM wiki_articles a JOIN app_pages p ON p.id = a.page_id
+              WHERE a.subject_type = 'day' AND a.subject_id = wiki_days.id
+                AND p.deleted_at IS NOT NULL) AS removed_page_id,
             created_at, updated_at
         FROM wiki_days
         WHERE date = $1
@@ -130,6 +141,9 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         // Absent from the INSERT..RETURNING path (a just-created day has no
         // prose anyway) — `.ok()` makes that read as None rather than an error.
         article: row.try_get("article").ok().flatten(),
+        // Absent from that path too: a just-created day has no page to remove.
+        page_removed_at: row.try_get("page_removed_at").ok().flatten(),
+        removed_page_id: row.try_get("removed_page_id").ok().flatten(),
         new_entity_count,
         new_topic_count,
         created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),

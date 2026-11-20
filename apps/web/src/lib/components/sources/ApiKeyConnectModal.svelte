@@ -17,7 +17,13 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { Button, Input } from '$lib';
 	import { apikeyComplete, type SourceCatalogItem } from '$lib/api/client';
-	import { browserLogin, canBrowserLogin, canBrowserPane, type JarCookie } from '$lib/tauri/bridge';
+	import {
+		browserLogin,
+		browserLoginUserAgent,
+		canBrowserLogin,
+		canBrowserPane,
+		type JarCookie
+	} from '$lib/tauri/bridge';
 
 	interface Props {
 		source: SourceCatalogItem | null;
@@ -75,15 +81,17 @@
 
 	/** The api_key fields a login fills, from the site's cookie jar, plus the
 	 *  whole jar as `jar` with every cookie field, which a browser on the box
-	 *  loads as it is. The named fields stay for boxes that read only them. */
-	function fieldsFromJar(jar: JarCookie[]): Record<string, unknown> {
+	 *  loads as it is. The named fields stay for boxes that read only them.
+	 *  `user_agent` is the browser the session was made in, which a sync sends
+	 *  when it replays the session; a shell that cannot say leaves it out. */
+	function fieldsFromJar(jar: JarCookie[], userAgent: string | null): Record<string, unknown> {
 		const login = source!.login!;
 		const named: Record<string, string> = login.jar_field
 			? { [login.jar_field]: jar.map((c) => `${c.name}=${c.value}`).join('; ') }
 			: Object.fromEntries(
 					login.cookies.map((n) => [n, jar.find((c) => c.name === n)?.value ?? ''])
 				);
-		return { ...named, jar };
+		return { ...named, jar, ...(userAgent ? { user_agent: userAgent } : {}) };
 	}
 
 	async function logIn() {
@@ -103,7 +111,7 @@
 			const { credential_id } = await apikeyComplete(
 				source.id,
 				source.name,
-				fieldsFromJar(jar),
+				fieldsFromJar(jar, await browserLoginUserAgent()),
 				credentialId
 			);
 			onSuccess(credential_id);
