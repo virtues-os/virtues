@@ -10,6 +10,7 @@
 	import { Popover } from '$lib/floating';
 	import { background } from '$lib/stores/background.svelte';
 	import { parseSetting } from '$lib/backgrounds/resolve';
+	import { current, isRotating, keep, step, thumbnail } from '$lib/backgrounds/controls';
 	import {
 		getAvailableThemes,
 		getThemeChoice,
@@ -33,6 +34,7 @@
 	});
 
 	const setting = $derived(parseSetting(background.setting));
+	const now = $derived(current());
 
 	// The style the swiper shows: the setting's, or the first installed one
 	// while the lake or Plain is showing.
@@ -44,11 +46,11 @@
 
 	const caption = $derived.by(() => {
 		if (setting.kind === 'plain') return { title: 'Plain', note: 'No picture' };
-		if (setting.kind === 'default' || !background.current) return { title: 'The lake', note: 'The default picture' };
-		return { title: background.current.title, note: background.current.collectionTitle };
+		if (setting.kind === 'default' || !now) return { title: 'The lake', note: 'The default picture' };
+		return { title: now.title, note: now.collectionTitle };
 	});
 
-	const canStep = $derived(setting.kind === 'path' && !!background.current);
+	const canStep = $derived(setting.kind === 'path' && !!now);
 
 	function chooseTheme(next: ThemeChoice) {
 		theme = next;
@@ -73,19 +75,19 @@
 		{#snippet children()}
 			<div class="panel" role="dialog" aria-label="Background and appearance">
 				<div class="now">
-					<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => background.step(-1)}>
+					<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => step(-1)}>
 						<Icon icon="mynaui:chevron-left" width="16" />
 					</button>
 					<div class="caption">
 						<span class="title">{caption.title}</span>
 						<span class="note">{caption.note}</span>
 					</div>
-					<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => background.step(1)}>
+					<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => step(1)}>
 						<Icon icon="mynaui:chevron-right" width="16" />
 					</button>
 				</div>
-				{#if background.rotating && background.current}
-					<button type="button" class="keep" onclick={() => background.keep()}>Keep this picture</button>
+				{#if isRotating() && now}
+					<button type="button" class="keep" onclick={() => keep()}>Keep this picture</button>
 				{/if}
 
 				<div class="themes" role="radiogroup" aria-label="Appearance">
@@ -116,7 +118,7 @@
 								aria-checked={picked}
 								onclick={() => background.set(`${style.style}/${c.id}`)}
 							>
-								<img src={background.thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
+								<img src={thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
 								<span>{c.title}</span>
 							</button>
 						{/each}

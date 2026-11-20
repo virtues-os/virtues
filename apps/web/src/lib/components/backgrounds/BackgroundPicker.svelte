@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { background } from '$lib/stores/background.svelte';
 	import { parseSetting, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
+	import { thumbnail } from '$lib/backgrounds/controls';
 
 	onMount(() => {
 		background.start();
@@ -21,7 +22,7 @@
 		style && setting.kind === 'path' && setting.collection ? (style.collections.find((c) => c.id === setting.collection) ?? null) : null,
 	);
 
-	const thumb = (s: StyleManifest, p: Picture) => background.thumbnail(s.style, p);
+	const thumb = (s: StyleManifest, p: Picture) => thumbnail(s.style, p);
 
 	/** Up to four pictures for a card that stands for many. */
 	function mosaic(s: StyleManifest, pictures: Picture[]): string[] {

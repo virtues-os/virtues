@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, narrowest, parseSetting, pickForDay, pool, srcset, stepFrom, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, parseSetting, pickForDay, pool, srcset, type StyleManifest, type Variant } from './resolve';
+import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
 	return {

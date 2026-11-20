@@ -9,8 +9,8 @@
  *
  * Under a rotating setting the home control's arrows choose another picture
  * for the rest of the day (`ui_preferences.background_today`), and rotation
- * resumes the next day. Under one picture they change the setting to its
- * neighbor in the collection.
+ * resumes the next day. What the arrows do is in lib/backgrounds/browse.ts,
+ * which loads with the home control rather than at launch.
  */
 
 import { backendUrl } from '$lib/config/backend';
@@ -20,12 +20,10 @@ import {
 	dayNumber,
 	find,
 	formatAddress,
-	narrowest,
 	parseSetting,
 	pickForDay,
 	pool,
 	srcset,
-	stepFrom,
 	widest,
 	type Address,
 	type Appearance,
@@ -61,7 +59,8 @@ interface CachedPicture {
 	picture: Picture;
 }
 
-function fileUrl(style: string) {
+/** The URL of a style's file, from its path in the manifest. */
+export function fileUrl(style: string) {
 	return (rel: string) => backendUrl(`/api/backgrounds/files/${style}/${rel}`);
 }
 
@@ -128,21 +127,6 @@ class BackgroundStore {
 
 	/** Every picture the setting covers, once the styles are loaded. */
 	readonly pool = $derived.by((): Address[] => (this.styles ? pool(this.styles, parseSetting(this.setting)) : []));
-
-	/** Whether the setting changes picture each day. */
-	readonly rotating = $derived.by(() => {
-		const s = parseSetting(this.setting);
-		return s.kind === 'path' && !s.picture;
-	});
-
-	/** Today's picture with the names of its style and collection, for the home control. */
-	readonly current = $derived.by(() => {
-		const today = this.today;
-		if (!today || !this.styles) return null;
-		const [style, collection] = today.address.split('/');
-		const c = this.styles.find((s) => s.style === style)?.collections.find((x) => x.id === collection);
-		return { address: today.address, style, collection, collectionTitle: c?.title ?? collection, title: today.picture[this.appearance].title };
-	});
 
 	readonly shown = $derived.by((): Shown => {
 		const setting = parseSetting(this.setting);
@@ -236,37 +220,14 @@ class BackgroundStore {
 	}
 
 	/**
-	 * The previous or next picture. Under a rotating setting it is today's
-	 * picture until midnight; under one picture it becomes the setting.
+	 * Another picture for today under a rotating setting, until midnight.
+	 * The home control's arrows choose it (lib/backgrounds/browse.ts).
 	 */
-	async step(dir: 1 | -1): Promise<void> {
-		await this.ensureStyles();
-		const current = this.today?.address ?? '';
-		if (this.rotating) {
-			const next = stepFrom(this.pool, current, dir);
-			if (!next) return;
-			const choice: DayChoice = { setting: this.setting, day: this.day, address: formatAddress(next) };
-			this.dayChoice = choice;
-			this.#cacheToday();
-			await updateUiPreferences({ background_today: choice });
-			return;
-		}
-		const setting = parseSetting(this.setting);
-		if (setting.kind !== 'path' || !this.styles) return;
-		const siblings = pool(this.styles, { kind: 'path', style: setting.style, collection: setting.collection });
-		const next = stepFrom(siblings, current, dir);
-		if (next) await this.set(formatAddress(next));
-	}
-
-	/** Keep today's picture: the setting becomes that one picture. */
-	async keep(): Promise<void> {
-		const address = this.today?.address;
-		if (address) await this.set(address);
-	}
-
-	/** A small picture for a thumbnail, in the current appearance. */
-	thumbnail(style: string, picture: Picture): string {
-		return narrowest(picture[this.appearance], fileUrl(style));
+	async chooseForToday(address: string): Promise<void> {
+		const choice: DayChoice = { setting: this.setting, day: this.day, address };
+		this.dayChoice = choice;
+		this.#cacheToday();
+		await updateUiPreferences({ background_today: choice });
 	}
 
 	/** Change the setting and save it to the server. */
