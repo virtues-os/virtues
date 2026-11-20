@@ -30,3 +30,23 @@ The relay stays on its own server. The two items still open are in
   sha256, and a resumed range through the live API. The directory on the
   server is still there and still the rollback. This is the first slice of
   [moving off the dedicated server](../plan/cloud-vps-move-plan.md).
+- **2026-11-19, the map cut moved to a temporary server.** The operator's
+  intranet now creates a server for the monthly cut, hands it a storage key
+  and a report token made for that run, and deletes it on the final report.
+  A rehearsal under a prefix no box reads ran in 49 minutes. The first
+  scheduled cut then failed 21 minutes in: the job reported from its setup
+  step after it had started cutting, so it had been started twice. The
+  server was gone before its log could be read; what fits is Ubuntu's
+  background upgrade on the new server restarting the job's service. Nothing
+  was uploaded and boxes kept their build. The job now switches those
+  upgrades off, cannot be restarted by anything on the server, uploads its
+  log before the final report, and reports progress every five minutes. The
+  rerun published build 20261118 (9,920 files, 178.2 GB) in 106 minutes, 86
+  of them the planet download; every object matched its index, a box's key
+  read it through the live API with matching checksums, and the previous
+  build stayed in the bucket.
+- **2026-11-19, alerts.** The intranet's Slack alerts channel had never been
+  set, so no alert of any kind had been delivered. It now posts to a private
+  channel and logs when it has nowhere to post. Failure class: an alert path
+  that returns quietly when unconfigured looks, from the code, exactly like
+  one that works; send one and read it back.

@@ -32,10 +32,10 @@ bucket. When they are set the directory is not read.
 `upload.sh <build>` copies one build from `/srv/maps` to the bucket with a
 key that can write to it, checks each file against the index's sha256 on the
 way, and writes `latest.json` last, so the API never serves half a build.
-On the server it is installed as `/opt/virtues-maps/upload.sh`, with its key
-in `/etc/virtues/maps-writer.env`. Production reads the bucket, so run it
-after each cut: until then boxes keep getting the previous build, and
-`virtues-health` reports that the bucket is behind.
+On the dedicated server it is installed as `/opt/virtues-maps/upload.sh`,
+with its key in `/etc/virtues/maps-writer.env`, for uploading a build by
+hand. Production reads the bucket, and the monthly run on a temporary server
+(below) is what normally fills it.
 
 ## The run on a temporary server
 
