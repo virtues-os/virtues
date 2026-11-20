@@ -2,35 +2,22 @@
 	/**
 	 * Home's notes line, between the message box and the tiles. It shows one
 	 * note at a time, with its action,
-	 * "Not now" and "Next". Notes come from four places, most pressing first:
+	 * "Not now" and "Next". Notes come from three places, most pressing first:
 	 * what the server says needs you (`attention`, the ∴ inbox's list), what
-	 * it noticed about your tasks and threads (`notes`), chats with a reply
-	 * you haven't read, and the box's suggested question. "Not now" on a
+	 * it noticed about your tasks and threads (`notes`), and chats with a
+	 * reply you haven't read. "Not now" on a
 	 * task or thread note sets it aside on the server until its condition
 	 * changes; on the others it hides the note until the app reloads.
 	 * Nothing here counts.
 	 */
 	import { onMount } from 'svelte';
 	import { fade } from '$lib/utils/transitions';
-	import type { SuggestedQuestion } from '$lib/api/client';
 	import { attention } from '$lib/stores/attention.svelte';
 	import { notesStore } from '$lib/stores/notes.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	type Note = { key: string; text: string; action: string; run: () => void; dismiss?: () => void };
-
-	let {
-		note = null,
-		onAsk,
-		onDismiss,
-		onShown
-	}: {
-		note?: SuggestedQuestion | null;
-		onAsk?: (note: SuggestedQuestion) => void;
-		onDismiss?: (note: SuggestedQuestion) => void;
-		onShown?: (note: SuggestedQuestion) => void;
-	} = $props();
 
 	onMount(() => {
 		attention.start();
@@ -72,10 +59,6 @@
 				run: () => windowShellStore.openTabFromRoute(`/chat/${s.conversation_id}`, { label: title, focusExisting: true })
 			});
 		}
-		if (note) {
-			const n = note;
-			out.push({ key: `ask:${n.id}`, text: n.question, action: 'Ask', run: () => onAsk?.(n), dismiss: () => onDismiss?.(n) });
-		}
 		return out.filter((n) => !hidden.includes(n.key));
 	});
 
@@ -86,13 +69,6 @@
 		hidden = [...hidden, n.key];
 	}
 
-	let reported: string | null = null;
-	$effect(() => {
-		if (note && current?.key === `ask:${note.id}` && reported !== note.id) {
-			reported = note.id;
-			onShown?.(note);
-		}
-	});
 </script>
 
 {#if current}

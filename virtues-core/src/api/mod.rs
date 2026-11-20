@@ -76,7 +76,6 @@ pub mod publish_chat;
 pub mod search_local;
 pub mod chat_applets;
 pub mod sky;
-pub mod suggestions;
 pub mod place_review;
 pub mod search_status;
 pub mod places;

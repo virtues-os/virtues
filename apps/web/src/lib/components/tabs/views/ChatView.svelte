@@ -135,12 +135,7 @@
 	import ComposerTray from "$lib/components/chat/ComposerTray.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { skills } from "$lib/stores/skills.svelte";
-	import {
-		getSuggestedQuestion,
-		recordSuggestionOutcome,
-		type SkillSummary,
-		type SuggestedQuestion,
-	} from "$lib/api/client";
+	import { type SkillSummary } from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { threadCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
@@ -572,10 +567,6 @@
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
-	/** The question this empty chat offers in its composer (api::suggestions).
-	 *  An hourly job writes it ahead of time, so asking costs nothing. */
-	let suggestion = $state<SuggestedQuestion | null>(null);
-	let suggestionAskedFor: string | null = null;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -598,8 +589,6 @@
 				// all must not follow the view into the next conversation.
 				composerSkill = null;
 				turnSkill = null;
-				suggestion = null;
-				suggestionAskedFor = null;
 			}
 			// Get or create new instance with model, space, active page, and agent mode getters
 			chat = chatInstances.getOrCreate({
@@ -1183,12 +1172,6 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	// Asked once per empty chat, and kept only if the chat it was asked for
-	// is still the one on screen. A temporary chat and the getting-started
-	// room show none: each is somewhere a question drawn from the record does
-	// not belong.
-	const suggestionAllowed = $derived(isEmpty && !isGhost && !inRoom);
-
 	/** Home is showing: the day's headline and the tiles, on the painting. */
 	const showsHome = $derived(isEmpty && !isGhost && !threeBodyOpen && attachments.count === 0);
 	/**
@@ -1206,23 +1189,6 @@
 			intro = false;
 		};
 	});
-	$effect(() => {
-		const askedFor = conversationId;
-		if (!suggestionAllowed || suggestionAskedFor === askedFor) return;
-		suggestionAskedFor = askedFor;
-		getSuggestedQuestion()
-			.then((r) => {
-				if (conversationId === askedFor) suggestion = r.suggestion;
-			})
-			// A box older than suggestions answers 404; the field keeps its placeholder.
-			.catch(() => {});
-	});
-
-	function onSuggestion(id: string, outcome: "shown" | "used" | "dismissed") {
-		if (outcome !== "shown") suggestion = null;
-		recordSuggestionOutcome(id, outcome).catch((e) => console.error("Recording the suggestion failed:", e));
-	}
-
 	// The interview's close. Three witnesses, any one suffices: the tool
 	// result in this session (the transient data part — see chatInstances),
 	// a write_it_up part in the loaded transcript (a reload after the close),
@@ -2590,15 +2556,7 @@
 						<div class="home-tiles-wrap" out:fade={{ duration: 200 }}>
 							<HomeTiles currentChatId={conversationId}>
 								{#snippet lead()}
-									<HomeNotes
-										note={suggestionAllowed ? suggestion : null}
-										onShown={(n) => onSuggestion(n.id, "shown")}
-										onAsk={(n) => {
-											onSuggestion(n.id, "used");
-											handleChatSubmit(n.question);
-										}}
-										onDismiss={(n) => onSuggestion(n.id, "dismissed")}
-									/>
+									<HomeNotes />
 								{/snippet}
 							</HomeTiles>
 						</div>

@@ -15,7 +15,6 @@
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
 	import StyleNotesSettings from '$lib/components/StyleNotesSettings.svelte';
 	import RulesSettings from '$lib/components/RulesSettings.svelte';
-	import SuggestionsSettings from '$lib/components/SuggestionsSettings.svelte';
 	import RequestLimitsSettings from '$lib/components/RequestLimitsSettings.svelte';
 	import IntroductionSection from './IntroductionSection.svelte';
 	import SettingRow from './SettingRow.svelte';
@@ -116,7 +115,6 @@
 			<div class="block" id="setting-subjects"><RulesSettings assistantName={spoken} /></div>
 		{:else if id === 'tools'}
 			<CapabilitiesSettings assistantName={spoken} />
-			<div class="block" id="setting-suggested-questions"><SuggestionsSettings assistantName={spoken} /></div>
 		{:else if id === 'spending'}
 			<!-- Each role's row opens the model list with that role picked. -->
 			<div class="block" id="setting-models"><ModelRows assistantName={spoken} /></div>

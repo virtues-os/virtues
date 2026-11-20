@@ -97,7 +97,6 @@ export const SETTINGS: readonly Setting[] = [
 
 	// What the assistant can do
 	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
-	{ id: 'suggested-questions', title: 'Suggested questions', section: 'tools', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas', 'speaking up'], route: '/virtues/assistant/tools' },
 
 	// Models and spending
 	{ id: 'models', title: 'Models {name} runs on', section: 'spending', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant/spending' },

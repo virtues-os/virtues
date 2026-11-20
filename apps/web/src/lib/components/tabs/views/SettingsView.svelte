@@ -10,7 +10,7 @@
 	  (landing)    /virtues                — search, Changed lately, every page
 	  Profile      /virtues/profile        — you: name, birthday, work, home
 	  How it talks /virtues/assistant      — its name, its manner, what it never raises
-	  Can do       /virtues/assistant/tools — its tools, and suggested questions
+	  Can do       /virtues/assistant/tools — its tools
 	  Spending     /virtues/assistant/spending — models, and what tasks may spend
 	               /virtues/assistant/spending/models — the model list (?role= picks one)
 	               /virtues/assistant/spending/cost   — what AI has cost, and every call
