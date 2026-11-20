@@ -39,7 +39,11 @@ BUILD=""
 STARTED=$(date +%s)
 
 # report <state> [message]: state is running, done or failed. Never fails the run.
+# The final report is what gets this server deleted, so it keeps trying for
+# ten minutes; a step report gives up after one.
 report() {
+  local tries=2
+  [ "$1" = running ] || tries=20
   python3 - "$1" "$PHASE" "${2:-}" "$BUILD" "$LOG" <<'PY' |
 import json, sys
 state, phase, message, build, log = sys.argv[1:6]
@@ -51,8 +55,9 @@ if state == "failed":
         pass
 print(json.dumps({"state": state, "phase": phase, "message": message, "build": build or None, "log": tail}))
 PY
-    curl -fsS -m 30 --retry 3 -X POST "$REPORT_URL" -H "Authorization: Bearer $REPORT_TOKEN" \
-      -H 'Content-Type: application/json' --data-binary @- > /dev/null || echo "report: could not reach $REPORT_URL"
+    curl -fsS -m 30 --retry "$tries" --retry-delay 30 --retry-all-errors -X POST "$REPORT_URL" \
+      -H "Authorization: Bearer $REPORT_TOKEN" -H 'Content-Type: application/json' --data-binary @- > /dev/null \
+      || echo "report: could not reach $REPORT_URL"
 }
 
 save_log() {
