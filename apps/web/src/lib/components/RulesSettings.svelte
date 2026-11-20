@@ -11,6 +11,7 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	// By path, not the `$lib` barrel, which the component tests cannot load.
 	import Button from '$lib/components/Button.svelte';
+	import LoadError from '$lib/components/settings/LoadError.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import { getNarrativeRules, saveNarrativeRules, type NarrativeRule } from '$lib/api/client';
@@ -232,10 +233,7 @@
 	</p>
 
 	{#if phase === 'error'}
-		<p class="field-error">Your server couldn't load the rules.</p>
-		<div>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't load the rules." onretry={load} />
 	{:else}
 		{#if rows.length}
 			<ul class="list" bind:this={listEl}>

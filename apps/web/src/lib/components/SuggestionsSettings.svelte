@@ -8,6 +8,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Switch from '$lib/components/settings/Switch.svelte';
+	import LoadError from '$lib/components/settings/LoadError.svelte';
 	import { getApplet, patchApplet, ApiError } from '$lib/api/client';
 
 	let { assistantName = DEFAULT_ASSISTANT_NAME }: { assistantName?: string } = $props();
@@ -64,7 +65,7 @@
 			<Switch checked={enabled} label="Suggested questions" disabled={!loaded || saving} onchange={() => toggle()} />
 		</div>
 		{#if loadError}
-			<p class="error">Your server couldn't read this setting. <button type="button" class="again" onclick={load}>Try again</button></p>
+			<LoadError message="Your server couldn't read this setting." onretry={load} />
 		{:else if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -98,14 +99,5 @@
 		margin: 8px 0 0;
 		font-size: 12px;
 		color: var(--color-error);
-	}
-
-	.again {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
 	}
 </style>

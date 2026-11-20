@@ -15,6 +15,8 @@
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import Fold from './Fold.svelte';
+	import LoadError from './LoadError.svelte';
+	import ServerSaid from './ServerSaid.svelte';
 	import Command from './Command.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getSearchStatus, type SearchStatus } from '$lib/api/client';
@@ -27,6 +29,7 @@
 
 	let status = $state<SearchStatus | null>(null);
 	let failed = $state(false);
+	let checking = $state(false);
 
 	async function load() {
 		failed = false;
@@ -35,6 +38,12 @@
 		} catch {
 			failed = true;
 		}
+	}
+
+	async function recheck() {
+		checking = true;
+		await load();
+		checking = false;
 	}
 
 	onMount(load);
@@ -54,10 +63,7 @@
 
 <SettingsPage title="Search" lede="Where search runs, and how much of your record it covers." back={{ route: '/virtues/system', label: 'Your server' }}>
 	{#if failed}
-		<div class="load-error" role="alert">
-			<p>Your server couldn’t send the search status.</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn’t send the search status." onretry={load} />
 	{:else if !status || !lead}
 		<p class="settings-sub">Asking your server about search…</p>
 	{:else}
@@ -65,8 +71,10 @@
 		<p class="settings-lead">{lead.sentence}</p>
 		<p class="settings-sub">{lead.sub}</p>
 		{#if !status.reachable && !status.busy && status.probe_error}
-			<p class="said">Your server said:</p>
-			<code class="error">{status.probe_error}</code>
+			<ServerSaid text={status.probe_error} />
+		{/if}
+		{#if !status.reachable}
+			<div class="recheck"><Button variant="secondary" loading={checking} onclick={recheck}>Check again</Button></div>
 		{/if}
 
 		<section class="group">
@@ -132,30 +140,8 @@
 </SettingsPage>
 
 <style>
-	.load-error p {
-		margin: 24px 0 12px;
-		font-size: 15px;
-		color: var(--color-foreground);
-	}
-
-	.said {
-		margin: 16px 0 0;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.error {
-		display: block;
-		margin-top: 4px;
-		padding: 8px 12px;
-		border-radius: var(--radius-md);
-		background: var(--color-surface-elevated);
-		font-family: var(--font-mono);
-		font-size: 13px;
-		line-height: 1.45;
-		color: var(--color-foreground);
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
+	.recheck {
+		margin-top: 16px;
 	}
 
 	.group {

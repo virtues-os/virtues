@@ -40,7 +40,7 @@
 	.head {
 		display: grid;
 		grid-template-columns: 16px minmax(0, 1fr);
-		align-items: center;
+		align-items: start;
 		gap: 8px;
 		width: 100%;
 		min-height: 52px;
@@ -53,7 +53,9 @@
 		cursor: pointer;
 	}
 
+	/* Level with the label's first line, however far the label wraps. */
 	.chevron {
+		margin-top: 3px;
 		color: var(--color-foreground-muted);
 		transition: transform var(--motion-state) var(--ease-premium);
 	}
@@ -65,6 +67,7 @@
 	.label {
 		display: block;
 		font-size: 15px;
+		line-height: 1.4;
 	}
 
 	.sub {

@@ -22,7 +22,7 @@
 	import SettingsPage from './SettingsPage.svelte';
 	import Command from './Command.svelte';
 	import Fold from './Fold.svelte';
-	import Button from '$lib/components/Button.svelte';
+	import LoadError from './LoadError.svelte';
 	import { getBackupStatus, type BackupStatus, type BackupVolumeStatus } from '$lib/api/client';
 	import { backupAgo } from '$lib/settings/backup';
 
@@ -89,10 +89,7 @@
 
 <SettingsPage title="Backup" lede="An encrypted copy of your data, on drives you keep." back={{ route: '/virtues/system', label: 'Your server' }}>
 	{#if failed}
-		<div class="load-error" role="alert">
-			<p>Your server couldn't read its backup status.</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't read its backup status." onretry={load} />
 	{:else if status}
 		<p class="settings-lead">{lead}</p>
 		<p class="settings-sub">{sub}</p>
@@ -218,20 +215,6 @@
 		font-size: 15px;
 		line-height: 1.5;
 		color: var(--color-foreground);
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		margin-top: 24px;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 14px;
-		color: var(--color-error);
 	}
 
 	@media (max-width: 560px) {

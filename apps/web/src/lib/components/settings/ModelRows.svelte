@@ -12,6 +12,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Button from '$lib/components/Button.svelte';
+	import LoadError from './LoadError.svelte';
 	import { modelSlots, type SlotConfig } from '$lib/stores/modelSlots.svelte';
 	import { getUsageSummary } from '$lib/api/client';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
@@ -65,8 +66,7 @@
 	<h2 class="settings-label">Models</h2>
 	<p class="sec-hint">Each kind of work runs on its own model. Change one on the model list, where you can compare what each costs.</p>
 	{#if !modelSlots.loaded && modelSlots.error}
-		<p class="error" role="alert">{modelSlots.error}</p>
-		<div><Button variant="secondary" onclick={() => modelSlots.load(true)}>Try again</Button></div>
+		<LoadError message={modelSlots.error} onretry={() => modelSlots.load(true)} />
 	{:else}
 		<div class="rows" aria-busy={!modelSlots.loaded}>
 			{#each roles as slot (slot.key)}
@@ -104,16 +104,11 @@
 		gap: 8px;
 	}
 
-	.sec-hint,
-	.error {
+	.sec-hint {
 		margin: 0;
 		font-size: 13px;
 		line-height: 1.5;
 		color: var(--color-foreground-subtle);
-	}
-
-	.error {
-		color: var(--color-error);
 	}
 
 	.rows {

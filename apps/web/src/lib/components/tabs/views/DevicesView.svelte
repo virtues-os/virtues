@@ -16,6 +16,7 @@
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
+	import LoadError from "$lib/components/settings/LoadError.svelte";
 	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
 	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
 	import Button from "$lib/components/Button.svelte";
@@ -112,10 +113,7 @@
 	{/snippet}
 
 	{#if res.error}
-		<div class="load-error" role="alert">
-			<p>Your server couldn't list your devices.</p>
-			<Button variant="secondary" onclick={() => void res.reload()}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't list your devices." onretry={() => void res.reload()} />
 	{:else if res.loading && !res.data}
 		<p class="quiet">Loading your devices…</p>
 	{:else if rows.length === 0}
@@ -145,7 +143,7 @@
 	<NetworkSection />
 	<ReopenSection />
 
-	<p class="aside">
+	<p class="settings-aside">
 		The manual's <a href={MANUAL} target="_blank" rel="noopener noreferrer">Reaching your server</a> page explains pairing, the
 		relay, and what the relay can and can't see.
 	</p>
@@ -253,32 +251,6 @@
 		margin: 24px 0 0;
 		font-size: 14px;
 		color: var(--color-foreground-muted);
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		margin-top: 24px;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 14px;
-		color: var(--color-error);
-	}
-
-	.aside {
-		margin: 32px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.aside a {
-		color: var(--color-primary);
-		text-decoration: none;
 	}
 
 	.add-choices {

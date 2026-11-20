@@ -18,6 +18,7 @@
 	 */
 	import { Button } from '$lib';
 	import Switch from './Switch.svelte';
+	import LoadError from './LoadError.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
@@ -314,9 +315,8 @@
 		</p>
 	</div>
 {:else if usageError && (isSubscribed || standingUnknown)}
-	<div class="balance" id="setting-balance" data-setting="balance">
-		<p class="context">Your server couldn't read your balance. {usageError}</p>
-		<div><Button variant="secondary" onclick={() => void loadUsage()}>Check again</Button></div>
+	<div id="setting-balance" data-setting="balance">
+		<LoadError message={`Your server couldn't read your balance. ${usageError}`} onretry={() => void loadUsage()} />
 	</div>
 {/if}
 
@@ -422,7 +422,7 @@
 		{/if}
 	{:else if localError}
 		<SettingRow id="auto-top-up" label="Auto top-up" help="Your server couldn't read this setting. {localError}">
-			<Button variant="secondary" onclick={() => void loadLocal()}>Check again</Button>
+			<Button variant="secondary" onclick={() => void loadLocal()}>Try again</Button>
 		</SettingRow>
 	{/if}
 

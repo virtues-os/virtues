@@ -14,6 +14,7 @@
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import Fold from './Fold.svelte';
+	import LoadError from './LoadError.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { adminReconcile, runApplet, type Applet } from '$lib/api/client';
 	import { appletsStore } from '$lib/stores/applets.svelte';
@@ -151,10 +152,7 @@
 	back={{ route: '/virtues/system', label: 'Your server' }}
 >
 	{#if failed}
-		<div class="load-error" role="alert">
-			<p>Your server couldn’t send your applets.</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn’t send your applets." onretry={load} />
 	{:else if !loaded}
 		<p class="settings-sub">Asking your server about its applets…</p>
 	{:else}
@@ -231,12 +229,6 @@
 </SettingsPage>
 
 <style>
-	.load-error p {
-		margin: 24px 0 12px;
-		font-size: 15px;
-		color: var(--color-foreground);
-	}
-
 	.run-error {
 		margin: 12px 0 0;
 		font-size: 13px;

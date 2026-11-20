@@ -15,7 +15,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import Button from '$lib/components/Button.svelte';
+	import LoadError from './LoadError.svelte';
 	import ChangesChart from './ChangesChart.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openSetting } from '$lib/settings/focus';
@@ -124,10 +124,7 @@
 	</div>
 
 	{#if loadError}
-		<div class="failed">
-			<span>Your server couldn't load what changed lately.</span>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't load what changed lately." onretry={load} />
 	{:else if lately}
 		<ChangesChart {changes} listed={shown.map((c) => c.id)} hot={hot ?? fresh} label={(c) => `${nameOf(c)} ${sentence(c)}`} onpick={find} />
 		{#if changes.length}
@@ -269,15 +266,6 @@
 
 	.empty {
 		margin: 0;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.failed {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		margin-top: 8px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}

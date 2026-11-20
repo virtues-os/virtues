@@ -21,7 +21,7 @@
 	import LinkRow from './LinkRow.svelte';
 	import Command from './Command.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
-	import Button from '$lib/components/Button.svelte';
+	import LoadError from './LoadError.svelte';
 	import { getBackupStatus, getProfile, updateProfile, type BackupStatus } from '$lib/api/client';
 	import { backupSummary } from '$lib/settings/backup';
 
@@ -105,10 +105,7 @@
 <section class="group">
 	<h2 class="settings-label">What your server keeps</h2>
 	{#if phase === 'error'}
-		<div class="load-error" role="alert">
-			<p>Your server couldn't read how long it keeps recordings.</p>
-			<Button variant="secondary" onclick={load}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't read how long it keeps recordings." onretry={load} />
 	{:else}
 		<SettingRow id="keep-recordings" label="Keep recordings" help={keepHelp}>
 			<Segmented id="keep-recordings-choice" label="Keep recordings" value={keep} options={KEEP} disabled={phase !== 'ready'} onchange={chooseKeep} />
@@ -172,20 +169,6 @@
 		font-family: var(--font-mono);
 		font-size: 0.92em;
 		white-space: nowrap;
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		padding: 12px 0;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 13px;
-		color: var(--color-error);
 	}
 
 </style>

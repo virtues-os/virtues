@@ -18,6 +18,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { onMount } from "svelte";
 	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
+	import LoadError from "$lib/components/settings/LoadError.svelte";
 	import LinkRow from "$lib/components/settings/LinkRow.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
@@ -238,10 +239,7 @@
 
 {#if res.error}
 	<SettingsPage title="Devices" {back}>
-		<div class="load-error" role="alert">
-			<p>Your server couldn't list your devices.</p>
-			<Button variant="secondary" onclick={() => void res.reload()}>Try again</Button>
-		</div>
+		<LoadError message="Your server couldn't list your devices." onretry={() => void res.reload()} />
 	</SettingsPage>
 {:else if res.loading && !res.data}
 	<SettingsPage title={deviceId === "this" ? "This device" : "Devices"} {back}>
@@ -484,19 +482,5 @@
 		margin: 24px 0 0;
 		font-size: 14px;
 		color: var(--color-foreground-muted);
-	}
-
-	.load-error {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		margin-top: 24px;
-	}
-
-	.load-error p {
-		margin: 0;
-		font-size: 14px;
-		color: var(--color-error);
 	}
 </style>

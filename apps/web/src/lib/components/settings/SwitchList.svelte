@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import SettingRow from './SettingRow.svelte';
 	import Switch from './Switch.svelte';
+	import LoadError from './LoadError.svelte';
 	import { ApiError } from '$lib/api/client';
 
 	let {
@@ -59,10 +60,7 @@
 
 <SettingRow {id} {label} {help} block>
 	{#if loadError}
-		<p class="note">
-			Your server couldn't read these.
-			<button type="button" class="again" onclick={load}>Try again</button>
-		</p>
+		<LoadError message="Your server couldn't read these." onretry={load} />
 	{:else if items}
 		<ul>
 			{#each items as item (item.id)}
@@ -78,7 +76,7 @@
 				{/if}
 			{/each}
 		</ul>
-		{#if error}<p class="note error">{error}</p>{/if}
+		{#if error}<p class="note">{error}</p>{/if}
 	{/if}
 </SettingRow>
 
@@ -114,22 +112,8 @@
 	}
 
 	.note {
-		margin: 0;
+		margin: 8px 0 0;
 		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.note.error {
-		margin-top: 8px;
 		color: var(--color-error);
-	}
-
-	.again {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
 	}
 </style>
