@@ -21,6 +21,7 @@ export function browserLabel(url: string | null): string {
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { THREAD_ICON } from '$lib/utils/iconHelpers';
+import { JOBS_ROUTE, SITES_ROUTE, homeRoute, isSiteId, readAddress } from '$lib/applets/routes';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -34,7 +35,6 @@ const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesVie
 const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
-const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
 const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
 const DesignView: ViewLoader = () => import('$lib/components/tabs/views/DesignView.svelte');
@@ -52,7 +52,6 @@ const InsightView: ViewLoader = () => import('$lib/components/tabs/views/Insight
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
-const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -712,71 +711,67 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// APPLETS: /applets (legacy /actions/* still resolves)
+	// SITES: /sites, the door for what you set up. The addresses it had
+	// before (/applets, /actions/*) still resolve.
 	// ========================================================================
 	applets: {
 		match: (path) =>
+			path === SITES_ROUTE ||
 			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'applets',
-			label: 'Applets',
+			label: 'Sites',
 			icon: 'atlas:applets',
+			normalizedRoute: SITES_ROUTE,
 		}),
 		serialize: () => 'applets',
-		deserialize: () => '/applets',
+		deserialize: () => SITES_ROUTE,
 		icon: 'atlas:applets',
-		defaultLabel: 'Applets',
+		defaultLabel: 'Sites',
 		component: AppletsView,
 	},
 
 	// ========================================================================
-	// APPLET VIEW: /applet/applet_{id}/view — the applet's face, full-page.
-	// Must precede `applet` (whose match ends at $, so order is belt-and-braces).
+	// A tab saved while a site's view had a tab type of its own. No route
+	// resolves to it now; the entry keeps such a tab opening, on the page
+	// that draws the view.
 	// ========================================================================
 	'applet-view': {
-		match: (path) => /^\/(?:applet|action)\/applet_[^/]+\/view$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)\/view$/);
-			return {
-				type: 'applet-view',
-				label: 'Applet',
-				icon: 'mynaui:layout',
-				entityId: match?.[1],
-			};
-		},
-		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
-		deserialize: (serialized) => {
-			const id = serialized.replace(/__view$/, '');
-			if (id.startsWith('applet_')) return `/applet/${id}/view`;
-			return '/applets';
-		},
-		icon: 'mynaui:layout',
-		defaultLabel: 'Applet',
-		component: AppletView,
+		match: () => false,
+		parse: () => ({ type: 'applet-view', label: 'Site', icon: 'atlas:applets' }),
+		serialize: () => 'applet-view',
+		deserialize: () => SITES_ROUTE,
+		icon: 'atlas:applets',
+		defaultLabel: 'Site',
+		component: AppletDetailView,
 	},
 
 	// ========================================================================
-	// APPLET DETAIL: /applet/applet_{id} — settings, prompt, runs (no face).
+	// A SITE OR A JOB: /site/{name} and /job/{name}, each with /options for
+	// its other side (`applets/routes.ts`). The addresses used before
+	// (/applet/applet_{id}, with /view or ?panel=) resolve to these.
 	// ========================================================================
 	applet: {
-		match: (path) => /^\/(applet|action)\/applet_[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)$/);
+		match: (path) => readAddress(path) !== null,
+		parse: (path, params) => {
+			const query = params?.toString();
+			const address = readAddress(query ? `${path}?${query}` : path);
 			return {
 				type: 'applet',
-				label: 'Applet',
+				label: address && !isSiteId(address.id) ? 'Job' : 'Site',
 				icon: 'atlas:applets',
-				entityId: match?.[1],
+				entityId: address?.id,
+				normalizedRoute: address?.route,
 			};
 		},
 		serialize: (id) => (id ? `applet_${id}` : 'applet'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
-			return '/applets';
+			const id = serialized.replace(/^applet_(?=applet_)/, '');
+			return id.startsWith('applet_') ? homeRoute(id) : SITES_ROUTE;
 		},
 		icon: 'atlas:applets',
-		defaultLabel: 'Applet',
+		defaultLabel: 'Site',
 		component: AppletDetailView,
 		detailComponent: AppletDetailView,
 	},
@@ -961,35 +956,17 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
-	// moments, with the day's inspector and scrubber. `/timeline/YYYY-MM-DD`
-	// opens it on that day; the view then puts the route back to `/timeline`,
-	// so there is one Timeline tab and the rail's tile finds it.
-	// ========================================================================
-	timeline: {
-		match: (path) => path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
-		parse: () => ({
-			type: 'timeline',
-			label: 'Timeline',
-			icon: 'mynaui:path',
-		}),
-		serialize: () => 'timeline',
-		deserialize: () => '/timeline',
-		icon: 'mynaui:path',
-		defaultLabel: 'Timeline',
-		component: TimelineView,
-	},
-
-	// ========================================================================
 	// INBOX: /inbox. Tasks, insights and what your server needs, with the
 	// chosen one whole beside the list. The page opens on its list; any
 	// other view is in the query (`?view=radar`, and the others InboxView
-	// names). No door opens it yet; it is reached by its address.
+	// names). The sidebar's Inbox row opens it. The day on a map is its Map
+	// view, so the address the Timeline page had (`/timeline`, and
+	// `/timeline/YYYY-MM-DD` from an old link or pin) opens that view.
 	// ========================================================================
 	inbox: {
-		match: (path) => path === '/inbox',
-		parse: (_path, params) => {
-			const view = params?.get('view');
+		match: (path) => path === '/inbox' || path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
+		parse: (path, params) => {
+			const view = path.startsWith('/timeline') ? 'map' : params?.get('view');
 			const query = view && ['radar', 'cards', 'graph', 'map', 'week'].includes(view) ? `?view=${view}` : '';
 			return { type: 'inbox', label: 'Inbox', icon: 'mynaui:inbox', normalizedRoute: `/inbox${query}` };
 		},
@@ -1024,12 +1001,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	virtues: {
 		match: (path) => path === '/virtues' || path.startsWith('/virtues/'),
 		parse: (path) => {
-			const page = path === '/virtues' ? 'you' : path.replace('/virtues/', '');
+			// The Jobs page was at /virtues/applets.
+			const page = path === '/virtues' ? 'you' : path === '/virtues/applets' ? 'jobs' : path.replace('/virtues/', '');
 			return {
 				type: 'virtues',
 				label: 'Settings',
 				icon: 'mynaui:cog',
 				virtuesPage: page,
+				...(path === '/virtues/applets' ? { normalizedRoute: JOBS_ROUTE } : {}),
 			};
 		},
 		serialize: (id) => (id ? `virtues_${id}` : 'virtues'),
@@ -1080,9 +1059,8 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
-		'applets', // Applets list page (must come before singular 'applet')
-		'applet-view', // Applet full-page face (must come before 'applet')
-		'applet', // Applet detail page
+		'applets', // The Sites door
+		'applet', // A site's or a job's page
 		'record', // /record/<ontology>/<id> — single raw record
 		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern
@@ -1090,9 +1068,8 @@ export function parseRoute(route: string): ParsedRoute {
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
-		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
 		'design', // The design system: /design
-		'inbox', // /inbox
+		'inbox', // /inbox, and the Timeline page's old /timeline
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /

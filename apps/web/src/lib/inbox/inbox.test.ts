@@ -5,7 +5,7 @@ import { buildItems, noteRing, taskRing } from './items';
 import { buildGraph, hubId } from './graph';
 import { fitLabels, labelWidth, markBox } from './labels';
 import { CX, CY, LOOSE, RING_R, layout, placeLabels, polar, slots, type Dot } from './radar';
-import { CLOCK_X0, MAP_H, MAP_W, buildRoute, clockScale, dayBars, dayBounds, geoBox, itemTime, stack } from './route';
+import { CLOCK_X0, MAP_H, MAP_W, buildRoute, clockScale, dayBars, dayBounds, entriesAhead, geoBox, itemTime, stack } from './route';
 
 // An invented clock: a Thursday, early afternoon.
 const NOW = new Date(2026, 2, 12, 13, 30);
@@ -411,6 +411,25 @@ describe('today as a route', () => {
 		expect(placed.a.row).toBe(0);
 		expect(placed.b.row).toBe(1);
 		expect(placed.c.row).toBe(0);
+	});
+	it('places a planned entry at one of your places looked up by name, and frames the map to reach it', () => {
+		const mill = { name: 'The old mill', lat: 10.02, lng: 20.03 };
+		const d = day({ stays, calendar: [event('e1', 'Collect the timber', 16, 17, 'The old mill, loading bay')] });
+		expect(buildRoute(d, NOW.getTime()).stops.some((s) => s.planned)).toBe(false);
+		const route = buildRoute(d, NOW.getTime(), undefined, [mill]);
+		expect(route.stops.filter((s) => s.planned).map((s) => s.name)).toEqual(['Collect the timber']);
+		expect(route.ahead).not.toBe('');
+		expect(geoBox(d, NOW.getTime(), [mill])).toMatchObject({ lat1: 10.02, lng1: 20.03 });
+		// A place nothing ahead names does not widen the map.
+		expect(geoBox(d, NOW.getTime(), [{ name: 'The far barn', lat: 11, lng: 21 }])).toMatchObject({ lat1: 10.004, lng1: 20.012 });
+	});
+
+	it('keeps an entry already under way in the plan, by the time it began', () => {
+		const d = day({ stays, calendar: [event('now', 'Glue the frame', 13, 15, 'The workshop'), event('done', 'Morning row', 7, 8, 'The boathouse')] });
+		expect(entriesAhead(d, NOW.getTime()).map((e) => e.id)).toEqual(['now']);
+		const planned = buildRoute(d, NOW.getTime()).stops.filter((s) => s.planned);
+		expect(planned).toHaveLength(1);
+		expect(planned[0].from).toBe(at(13));
 	});
 });
 

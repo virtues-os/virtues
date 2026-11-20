@@ -2,15 +2,21 @@
 	/**
 	 * The Inbox as today's route. The solid line is where you have been, from
 	 * the day's recorded path and stops. The dotted line is the rest of the
-	 * plan, for the calendar entries your server can place. The route lies on
-	 * a street map from your server's own map files when it has them
-	 * (RouteGround), and on plain paper when it does not. Under the route is
-	 * the day's clock, with the same stops and entries by time and each thing
-	 * at its own time. A thing with no time of its own today sits in a row
-	 * under the clock. The geometry is in lib/inbox/route.
+	 * plan, for the calendar entries your server can place: at a place you
+	 * stopped at today, or at one of your places that the entry names, which
+	 * this looks up. The route lies on a street map from your server's own
+	 * map files when it has them (RouteGround), and on plain paper when it
+	 * does not. A thing in the Inbox with a time today is a dotted mark on
+	 * the route where that time falls, with its time and name beside it.
+	 * Under the route is the day's clock, with the same stops and entries by
+	 * time and each thing at its own time. A thing with no time of its own
+	 * today sits in a row under the clock. The geometry is in
+	 * lib/inbox/route.
 	 */
+	import { untrack } from 'svelte';
 	import { TextAction } from '$lib';
 	import { fetchDay, type TimelineDay } from '$lib/timeline/day';
+	import { getPlaceById, listPlaces } from '$lib/wiki/api';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { MARK_SIZE, type InboxItem } from '$lib/inbox/items';
 	import { fitLabels, markBox, type Box, type Wanted } from '$lib/inbox/labels';
@@ -23,9 +29,11 @@
 		clockScale,
 		dayBars,
 		dayBounds,
+		entriesAhead,
 		geoBox,
 		itemTime,
 		stack,
+		type NamedPlace,
 		type Project,
 		type Pt,
 	} from '$lib/inbox/route';
@@ -81,10 +89,38 @@
 
 	const nowMs = $derived(now.getTime());
 	const bounds = $derived(day ? dayBounds(day) : null);
+
+	/**
+	 * Your places that an entry still ahead names, with where each is. A
+	 * calendar entry carries only a name, and the day's own stops cover only
+	 * where you have been, so a place not yet reached today is looked up
+	 * among your places. Each location is asked about once.
+	 */
+	let lookedUp = $state.raw<NamedPlace[]>([]);
+	const asked = new Set<string>();
+	$effect(() => {
+		if (!day) return;
+		const names = entriesAhead(day, nowMs)
+			.map((e) => e.location_name)
+			.filter((name): name is string => !!name && !asked.has(name));
+		if (names.length === 0) return;
+		for (const name of names) asked.add(name);
+		void (async () => {
+			const places = await listPlaces();
+			const found: NamedPlace[] = [];
+			for (const name of names) {
+				const match = places.find((p) => p.name.trim().length >= 3 && name.toLowerCase().includes(p.name.trim().toLowerCase()));
+				const place = match ? await getPlaceById(match.id) : null;
+				if (place && place.latitude !== null && place.longitude !== null) found.push({ name: place.name, lat: place.latitude, lng: place.longitude });
+			}
+			if (found.length > 0) lookedUp = [...untrack(() => lookedUp), ...found.filter((f) => !untrack(() => lookedUp).some((p) => p.name === f.name))];
+		})().catch((e) => console.error('[InboxMap] place lookup failed:', e));
+	});
+
 	/** How the map under the route places a point, once it is drawn. Null while there is no map. */
 	let onMap = $state.raw<Project | null>(null);
-	const ground = $derived(day ? geoBox(day, nowMs) : null);
-	const route = $derived(day ? buildRoute(day, nowMs, onMap ?? undefined) : null);
+	const ground = $derived(day ? geoBox(day, nowMs, lookedUp) : null);
+	const route = $derived(day ? buildRoute(day, nowMs, onMap ?? undefined, lookedUp) : null);
 	const bars = $derived(day ? dayBars(day, nowMs) : []);
 
 	const timed = $derived(bounds ? items.map((it) => ({ it, t: itemTime(it, bounds) })) : []);
@@ -107,14 +143,14 @@
 	const onRoute = $derived.by(() => {
 		if (!route) return [];
 		const taken = new Map<string, number>();
-		const out: { it: InboxItem; x: number; y: number }[] = [];
+		const out: { it: InboxItem; t: number; x: number; y: number }[] = [];
 		for (const { it, t } of clocked) {
 			const p = route.at(t);
 			if (!p) continue;
 			const spot = `${Math.round(p.x / 8)}:${Math.round(p.y / 8)}`;
 			const n = taken.get(spot) ?? 0;
 			taken.set(spot, n + 1);
-			out.push({ it, x: p.x + n * 24, y: p.y + 24 });
+			out.push({ it, t, x: p.x + n * 24, y: p.y + 24 });
 		}
 		return out;
 	});
@@ -129,13 +165,15 @@
 
 	/** The caption's room at the top left, so no name lands under it. */
 	const CAPTION: Box = { x1: 12, y1: 12, x2: 548, y2: 72 };
-	type Tag = Wanted & { tone: '' | 'planned' | 'here' };
+	type Tag = Wanted & { tone: '' | 'planned' | 'here' | 'note' };
 
 	/**
-	 * The names on the map: where you are, the thing you picked, and every
-	 * stop with the time you got there. Each is placed clear of the others,
-	 * of the stops and marks, and of the caption (lib/inbox/labels), so
-	 * stops that sit close together keep readable names.
+	 * The names on the map: where you are, the thing you picked, every stop
+	 * with the time you got there, and each thing on the route with its
+	 * time. Each is placed clear of the others, of the stops and marks, and
+	 * of the caption (lib/inbox/labels), so stops that sit close together
+	 * keep readable names. A thing's name is the first to go where there is
+	 * no room for it; pointing at its mark still names it.
 	 */
 	const tags = $derived.by(() => {
 		const list: Tag[] = [];
@@ -159,6 +197,10 @@
 				pinned: true,
 				tone: s.planned ? 'planned' : '',
 			});
+		}
+		for (const m of onRoute) {
+			if (m.it.key === picked) continue;
+			list.push({ key: `note:${m.it.key}`, text: clip(`${clock(m.t)} ${m.it.title}`), x: m.x, y: m.y, size: MARK_SIZE[m.it.kind], right: right(m.x), pinned: false, tone: 'note' });
 		}
 		const taken = [CAPTION, ...list.map(markBox), ...onRoute.map((m) => markBox({ x: m.x, y: m.y, size: MARK_SIZE[m.it.kind] }))];
 		return { list, spots: fitLabels(list, taken, { w: MAP_W, h: MAP_H }) };
@@ -393,6 +435,14 @@
 	.tag.planned,
 	.tag.here {
 		color: var(--color-primary);
+	}
+	/* A thing in the Inbox: not lived yet, so its name wears a dotted line. */
+	.tag.note {
+		border: 1px dotted var(--color-border-field);
+		font-family: var(--font-sans);
+		font-size: var(--text-caption);
+		line-height: 18px; /* design-ok: 20px less the 1px border, top and bottom */
+		color: var(--color-foreground-muted);
 	}
 
 	.hour {

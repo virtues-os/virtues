@@ -40,7 +40,6 @@ export type TabType =
 	| 'asset' // Single file viewer (open density): /drive/file_{id}
 	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// The Timeline: one day on a map
-	| 'timeline' // Timeline: /timeline
 	// The design system: agents/build/design.md with live specimens
 	| 'design' // /design
 	// System namespace

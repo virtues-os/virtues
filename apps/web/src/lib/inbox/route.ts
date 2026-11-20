@@ -3,10 +3,11 @@
  *
  * The solid line is where you have been: the day's recorded path and the
  * places you stopped. The dotted line is the rest of the plan: calendar
- * entries still ahead, where your server can tell where they are. A calendar
- * entry carries a place's name and no coordinates, so one is put on the map
- * only when its name matches a place you stopped at today. An entry that has
- * passed is never drawn as somewhere you were.
+ * entries not yet over, where your server can tell where they are. A
+ * calendar entry carries a place's name and no coordinates, so one is put on
+ * the map only when its name matches a place you stopped at today, or one of
+ * your places that the caller looked up by name. An entry that has passed is
+ * never drawn as somewhere you were.
  *
  * Under the route sits the day's clock, which shows the same day by time:
  * the stops so far, the entries ahead, and each thing at its own time.
@@ -33,6 +34,13 @@ export interface GeoBox {
 	lat1: number;
 	lng0: number;
 	lng1: number;
+}
+
+/** One of your places, with where it is: for a planned entry at a place you have not been to today. */
+export interface NamedPlace {
+	name: string;
+	lat: number;
+	lng: number;
 }
 
 export interface Stop {
@@ -121,10 +129,29 @@ function boxOf(geo: { lat: number; lng: number }[]): GeoBox | null {
 	return { lat0: Math.min(...lats), lat1: Math.max(...lats), lng0: Math.min(...lngs), lng1: Math.max(...lngs) };
 }
 
-/** The ground the day covers so far, or null on a day with no location. */
-export function geoBox(day: TimelineDay, nowMs: number): GeoBox | null {
+/** The calendar entries that could still be gone to: not over, not all day, not cancelled, not declined. */
+export function entriesAhead(day: TimelineDay, nowMs: number): TimelineDay['calendar'] {
+	return day.calendar
+		.filter((e) => !e.is_all_day && Date.parse(e.ended_at) > nowMs && e.status !== 'cancelled' && e.response_status !== 'declined')
+		.sort((a, b) => a.started_at.localeCompare(b.started_at));
+}
+
+/** The first of these places a calendar entry's location names. A place with no real name matches nothing. */
+function namedIn<T extends { name: string }>(location: string | null, places: T[]): T | undefined {
+	const where = location ? norm(location) : '';
+	return where ? places.find((p) => realPlaceName(p.name) && where.includes(norm(p.name))) : undefined;
+}
+
+/**
+ * The ground the map shows: what the day covers so far, and the looked-up
+ * places the plan still goes to. Null on a day with no location.
+ */
+export function geoBox(day: TimelineDay, nowMs: number, places: NamedPlace[] = []): GeoBox | null {
 	const { stays, fixes } = soFar(day, nowMs);
-	return boxOf([...stays.map((s) => ({ lat: s.latitude, lng: s.longitude })), ...fixes]);
+	const lived = [...stays.map((s) => ({ lat: s.latitude, lng: s.longitude })), ...fixes];
+	if (lived.length === 0) return null;
+	const ahead = entriesAhead(day, nowMs).flatMap((e) => namedIn(e.location_name, places) ?? []);
+	return boxOf([...lived, ...ahead]);
 }
 
 /**
@@ -149,9 +176,10 @@ function plainFit({ lat0, lat1, lng0, lng1 }: GeoBox): Project {
 /**
  * The day's route. `onMap` is how the map under the drawing places a point,
  * so the route lies on the map's own ground. Without one the route gets a
- * plain fit.
+ * plain fit. `places` are your places looked up by name, for planned
+ * entries at a place you have not been to today.
  */
-export function buildRoute(day: TimelineDay, nowMs: number, onMap?: Project): Route {
+export function buildRoute(day: TimelineDay, nowMs: number, onMap?: Project, places: NamedPlace[] = []): Route {
 	const { stays, fixes } = soFar(day, nowMs);
 	const box = boxOf([...stays.map((s) => ({ lat: s.latitude, lng: s.longitude })), ...fixes]);
 	if (!box) return NO_ROUTE;
@@ -187,16 +215,17 @@ export function buildRoute(day: TimelineDay, nowMs: number, onMap?: Project): Ro
 	const here = been[been.length - 1].p;
 	const you = { x: here[0], y: here[1] };
 
-	// The plan: entries still ahead whose place is one of today's stops.
+	// The plan: entries not yet over whose place is one of today's stops, or
+	// one of your places looked up by name. One already under way is planned
+	// from now on, and keeps the time it began.
 	const planned: Stop[] = [];
-	for (const e of [...day.calendar].sort((a, b) => a.started_at.localeCompare(b.started_at))) {
-		const from = Date.parse(e.started_at);
-		if (e.is_all_day || from <= nowMs || e.status === 'cancelled' || e.response_status === 'declined') continue;
-		const place = e.location_name ? norm(e.location_name) : '';
-		const where = place ? stops.find((s) => realPlaceName(s.name) && place.includes(norm(s.name))) : undefined;
-		if (where) planned.push({ key: `plan:${e.id}`, name: e.title, x: where.x, y: where.y, from, to: Date.parse(e.ended_at), planned: true });
+	for (const e of entriesAhead(day, nowMs)) {
+		const stop = namedIn(e.location_name, stops);
+		const place = stop ? undefined : namedIn(e.location_name, places);
+		const where = stop ? ([stop.x, stop.y] as Pt) : place ? project(place.lat, place.lng) : null;
+		if (where) planned.push({ key: `plan:${e.id}`, name: e.title, x: where[0], y: where[1], from: Date.parse(e.started_at), to: Date.parse(e.ended_at), planned: true });
 	}
-	const plan = [{ t: nowMs, p: here }, ...planned.flatMap((s) => [{ t: s.from, p: [s.x, s.y] as Pt }, { t: s.to, p: [s.x, s.y] as Pt }])];
+	const plan = [{ t: nowMs, p: here }, ...planned.flatMap((s) => [{ t: Math.max(s.from, nowMs), p: [s.x, s.y] as Pt }, { t: s.to, p: [s.x, s.y] as Pt }])];
 	const n = (v: number) => v.toFixed(1);
 	let ahead = '';
 	let from = here;

@@ -23,7 +23,6 @@
 		search: 'mynaui:search',
 		device: 'mynaui:mobile',
 		sources: 'mynaui:database',
-		timeline: 'mynaui:path',
 		setup: 'mynaui:flag',
 		home: 'mynaui:home',
 		settings: 'mynaui:cog',

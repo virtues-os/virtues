@@ -80,7 +80,7 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/devices/this': { icon: 'mynaui:desktop' },
 	'/virtues/backup': { icon: 'mynaui:archive' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
-	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
+	'/virtues/jobs': { icon: 'atlas:applets', glyph: 'applets' },
 	'/virtues/developer/terminal': { icon: 'mynaui:terminal' },
 };
 
@@ -116,7 +116,7 @@ function settingsRows(): ModeRow[] {
 	// of its own, so its row is here rather than in LANDING.
 	rows.push(
 		settingsRow('/virtues/search', 'Search', 'Your server'),
-		settingsRow('/virtues/applets', 'Jobs', 'Your server'),
+		settingsRow('/virtues/jobs', 'Jobs', 'Your server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);
@@ -194,9 +194,6 @@ export const WIKI_MODE: SidebarMode = {
 				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
 			group: 'Time',
 		},
-		// The day on the box's own map. It was a rail room of its own; with the
-		// rail gone it is the Time group's live view, beside the days it draws.
-		{ id: 'timeline', label: 'Timeline', icon: 'mynaui:path', glyph: 'timeline', href: '/timeline', group: 'Time' },
 		{ id: 'days', label: 'Days', icon: 'mynaui:calendar', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',

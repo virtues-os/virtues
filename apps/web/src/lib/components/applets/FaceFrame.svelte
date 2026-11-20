@@ -29,7 +29,6 @@
 		'page',
 		'day',
 		'year',
-		'timeline',
 		'wiki',
 		'person',
 		'place',
