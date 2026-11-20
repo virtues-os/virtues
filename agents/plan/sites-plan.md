@@ -6,7 +6,7 @@ their own data, its own name and door. The other two kinds become a line next
 to what they make, or a list in Settings. The runtime underneath stays one
 primitive.
 
-"Site" is the working name in this plan. Choosing the noun is decision D1.
+The noun is "site", decided by the owner on 2026-11-20 (D1).
 
 ## Why change it
 
@@ -86,7 +86,7 @@ on one name.
 
 ### Slice 0: decide the words
 
-D1 to D3 below, with the owner. Nothing is built before D1.
+D1 is decided: "Sites". D2 and D3 below have picks and wait on the owner.
 
 ### Slice 1: show the site in chat
 
@@ -108,7 +108,7 @@ waits.
 
 ### Slice 2: the door shows sites
 
-- The sidebar door is renamed to the D1 noun and lists only applets with a
+- The sidebar door is renamed "Sites" and lists only applets with a
   view, as tiles or rows showing the view's title and when its data last
   changed. It shows no run status.
 - `AppletView` becomes the default page for a site. `AppletDetailView` becomes
@@ -130,7 +130,10 @@ waits.
 
 Every string in the table above, in the same change: Keys ("what your sites
 and scheduled jobs sign in with"), capabilities, devices, shared links, model
-slots. Rewrite the glossary entry and the backup page. Settle face or view in
+slots. Rewrite the glossary entry and the backup page. The glossary entry and
+the door's empty state say that a site is private until you share it, because
+"site" can read as "on the public web". The door carries no mark of where
+anything runs. Settle face or view in
 `faces.rs` and AGENTS.md. `tools/check-manual.py` must pass.
 
 ### Slice 5: code names (only if D3 says so)
@@ -143,7 +146,7 @@ the CLI. Do it only if D3 calls for it, as its own plan.
 
 | # | Question | Pick |
 |---|---|---|
-| D1 | The noun for a made view | Open. "Sites" is the clearest and is ChatGPT's word, which conflicts with the rule against claims other AIs can make and makes Virtues look like it followed. "Apps" and "Views" avoid that; "Pages" is taken by documents. Test candidates in chat before choosing. |
+| D1 | The noun for a made view | **Decided 2026-11-20: "Sites".** "Artifacts" was the other candidate. It is jargon, it covers documents in Claude and so collides with Pages, and it reads as a static leftover when a site keeps tables and refreshes. "Site" can suggest the public web, so the copy says a site is private until you share it. |
 | D2 | The name for scheduled work in Settings | "Runs for you" as the Settings heading, with no noun for a single item; each one goes by its own name. |
 | D3 | Rename in code too? | No. People never see the word, and the sweep costs migrations and a CLI release. Revisit only if the word confuses contributors. |
 | D4 | Does a site without a view still exist as a "site"? | No. No view means it's scheduled work, by definition. Adding a view later moves it into the door. |
