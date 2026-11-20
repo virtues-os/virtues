@@ -76,6 +76,7 @@ diagnose() {
 # The final report makes the caller delete the storage key, so the log is
 # uploaded first.
 fail() {
+  kill "${PULSE:-}" 2>/dev/null
   echo "✖ $PHASE: $1"
   diagnose
   save_log
@@ -91,8 +92,29 @@ if [ -e "$MARK" ]; then
 fi
 touch "$MARK"
 
+# step <name>: enter a step and say so. The name is also kept in a file for
+# the progress reports below, which run in their own shell.
+step() {
+  PHASE=$1
+  echo "$PHASE" > /run/virtues-maps-run.phase
+  report running
+}
+
 echo "$(date -Is) map run $RUN_ID on $(nproc) cores, $(df -BG --output=avail / | tail -1 | tr -d ' ') free"
-report running
+step setup
+
+# Every five minutes, report the last line of the log, and how much of the
+# planet has arrived while it downloads (curl prints nothing there). Without
+# this a slow step and a stuck one look the same from outside, and nobody can
+# log in to look.
+(
+  while sleep 300; do
+    PHASE=$(cat /run/virtues-maps-run.phase)
+    planet=$(stat -c %s "$MAPS_DIR"/planet-*.part 2>/dev/null | awk '{ printf " Planet download: %.1f GB so far.", $1 / 1e9 }')
+    report running "$(tail -n 1 "$LOG" | tr -d '\r' | cut -c1-200)$planet"
+  done
+) &
+PULSE=$!
 
 # Ubuntu's background upgrades start within the first hour of a new server.
 # They take the package lock, and their restart hook (needrestart) restarts
@@ -120,8 +142,7 @@ S3_SECRET=$S3_SECRET
 EOF
 )
 
-PHASE=cutting
-report running
+step cutting
 JOBS=$(( $(nproc) > 2 ? $(nproc) - 2 : 1 ))
 PATH="/usr/local/bin:$PATH" "$VENV/bin/python" "$HERE/cut.py" --maps-dir "$MAPS_DIR" --jobs "$JOBS" --keep 1 || fail "the cut failed"
 BUILD=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["build"])' "$MAPS_DIR/latest.json") || fail "the cut left no latest.json"
@@ -130,15 +151,14 @@ read -r FILES SIZE < <(python3 -c 'import json, sys
 files = json.load(open(sys.argv[1]))["files"]
 print(len(files), "%.1f GB" % (sum(f["bytes"] for f in files) / 1e9))' "$MAPS_DIR/$BUILD/index.json") || fail "the cut left no index.json"
 
-PHASE=uploading
-report running
+step uploading
 MAPS_DIR="$MAPS_DIR" JOBS=16 RATE=1G "$HERE/upload.sh" "$BUILD" || fail "the upload did not publish build $BUILD"
 
-PHASE=pruning
-report running
+step pruning
 note=""
 "$HERE/prune.sh" 2 || note=" Old builds were not removed from the bucket; see the log."
 
+kill "$PULSE" 2>/dev/null
 PHASE="done"
 mins=$(( ($(date +%s) - STARTED) / 60 ))
 echo "$(date -Is) ✓ build $BUILD: $FILES files, $SIZE, $mins minutes"
