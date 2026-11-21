@@ -16,12 +16,15 @@ use crate::error::Result;
 use crate::scheduler::applets::{self, Applet};
 
 /// Whether an applet has a task row: it is a task of the assistant's
-/// (`applets::kind_of`), it has not finished, and either someone set it up
-/// or it is on. One that came with the server and is off has no row, so the
-/// task list does not open with tasks nobody asked for.
+/// (`applets::kind_of`), it has not finished, and someone set it up. One
+/// that came with the server has no row, whether it is on or off: the
+/// morning examen is on from the first day, and a row for it would put a
+/// task nobody asked for in every task list. It stays on the Server tasks
+/// page. Whether a shipped one should ever show in Tasks is an open question
+/// in the plan (O7).
 fn wants_row(a: &Applet) -> bool {
     let has_view = crate::server::faces::face_for(&a.id).is_some();
-    applets::derived_kind(a, has_view) == "assistant_task" && a.archived_at.is_none() && (a.enabled || a.owner != "system")
+    applets::derived_kind(a, has_view) == "assistant_task" && a.archived_at.is_none() && a.owner != "system"
 }
 
 /// Open the applet's task row if it should have one, and return the id of
@@ -94,30 +97,27 @@ mod tests {
             .unwrap()
     }
 
-    /// Only a prompt that starts on its own gets a task row, and one that
-    /// came with the server gets it when it is turned on.
+    /// Only a prompt that starts on its own, set up by someone, gets a task
+    /// row. One that came with the server gets none, on or off.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_prompt_that_starts_itself_gets_one_task_row(pool: PgPool) {
         let sunday = Some("0 0 18 * * 0");
         applet(&pool, "applet_user__week_in_review", "ai", true, Some("Write the week."), sunday, None).await;
         applet(&pool, "applet_meeting_prep", "system", true, Some("Prepare the meeting."), None, None).await;
-        applet(&pool, "applet_morning_examen", "system", false, Some("Look back."), Some("0 0 7 * * *"), None).await;
+        applet(&pool, "applet_morning_examen", "system", true, Some("Look back."), Some("0 0 7 * * *"), None).await;
+        applet(&pool, "applet_user__reading_nudge", "user", false, Some("Suggest a book."), Some("0 0 9 * * 6"), None).await;
         applet(&pool, "applet_embedding_index", "system", true, None, Some("0 */15 * * * *"), Some("[\"embedding_index\"]")).await;
 
-        assert_eq!(ensure_all(&pool).await.unwrap(), 1);
-        assert_eq!(rows(&pool).await, ["applet_user__week_in_review"]);
+        // Yours get a row, on or off. The shipped examen gets none though it is on.
+        let yours = ["applet_user__reading_nudge", "applet_user__week_in_review"];
+        assert_eq!(ensure_all(&pool).await.unwrap(), 2);
+        assert_eq!(rows(&pool).await, yours);
         // Asking again opens nothing new.
-        assert_eq!(ensure_all(&pool).await.unwrap(), 1);
-        assert_eq!(rows(&pool).await, ["applet_user__week_in_review"]);
+        assert_eq!(ensure_all(&pool).await.unwrap(), 2);
+        assert_eq!(rows(&pool).await, yours);
 
-        // Turned on, the shipped one gets its row, and keeps it when turned off.
-        sqlx::query("UPDATE app_applets SET enabled = true WHERE id = 'applet_morning_examen'").execute(&pool).await.unwrap();
         let examen = applets::get_applet(&pool, "applet_morning_examen").await.unwrap();
-        assert!(ensure(&pool, &examen, None).await.unwrap().is_some());
-        sqlx::query("UPDATE app_applets SET enabled = false WHERE id = 'applet_morning_examen'").execute(&pool).await.unwrap();
-        let off = applets::get_applet(&pool, "applet_morning_examen").await.unwrap();
-        assert!(ensure(&pool, &off, None).await.unwrap().is_some());
-        assert_eq!(rows(&pool).await, ["applet_morning_examen", "applet_user__week_in_review"]);
+        assert!(ensure(&pool, &examen, None).await.unwrap().is_none());
     }
 
     /// A run's summary lands on the row with the page the run wrote. A

@@ -188,8 +188,10 @@ rule. The server's side is covered by its test and has not answered a request.
 ### Slice D: the assistant's tasks that repeat
 
 The first cut is built on wave (2026-11-21). The server side is covered by
-tests that run the migration. It has not run on a server, and no real run has
-filed a result.
+tests that run the migration. It was also run once against a scratch database
+with an invented task: the migration applied, the row opened, a result set by
+hand showed under "Ready for you", and opening it cleared it. No real run has
+filed a result, and it has not run on a server people use.
 
 What it is: the applet row stays and the applet runner keeps running it.
 Tasks cannot start on a clock time, on new data or behind a check, and they
@@ -202,10 +204,12 @@ Built:
 - **The link.** Migration 0098 adds `app_tasks.applet_id`, one row per
   applet, deleted with its applet.
 - **Which applets have a row** (`api/repeating_tasks.rs`). One whose kind is
-  the assistant's task, that has not finished, and that someone set up or
-  that is on. The morning examen has no row until it is turned on. The row
-  opens at setup, in the thread of the chat that made it, when a shipped one
-  is turned on, and when the server starts, for any that lack one.
+  the assistant's task, that has not finished, and that someone set up. One
+  that came with the server has no row: the morning examen is on from the
+  first day, and a row for it would put a task nobody asked for in every
+  task list (O7). It stays on the Server tasks page. The row opens at setup,
+  in the thread of the chat that made it, and when the server starts, for
+  any that lack one.
 - **The worker never runs it.** `is_queued` is false for the row, its
   `next_run_at` stays empty, and the claim and the restart requeue both check
   `applet_id IS NULL`.
@@ -220,7 +224,8 @@ Built:
 - **The task list.** A new result sits under "Ready for you" as "New".
   Otherwise the row sits under "With the assistant" and says when it runs,
   that it is off, or what went wrong. Its page shows the newest result, that
-  line, the fix when there is one, and Options.
+  line, the fix when there is one, and Options. It has no box to tick and no
+  due date.
 - **It leaves Sites.** An applet with a row is not listed in the Sites door
   or on the Server tasks page, and opening it anywhere opens its task.
 - **The assistant's prompt is not told how many results wait,** and a

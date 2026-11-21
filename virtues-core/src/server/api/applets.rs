@@ -745,8 +745,8 @@ pub async fn patch_applet_handler(
     }
     let pool = state.db.pool();
     let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
-    // Turning on a task of the assistant's that came with the server opens
-    // its row in the task list.
+    // A change can make it a task of the assistant's (a schedule added to a
+    // prompt you made), which gives it its row in the task list.
     crate::api::repeating_tasks::ensure(pool, &applet, None).await?;
     // The row as it serializes, with the detail's fields over it. The app
     // replaces the applet it holds with this reply, so a reply without

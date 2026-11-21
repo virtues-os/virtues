@@ -40,7 +40,7 @@
 	import { isClosed, toggleTaskDone } from '$lib/tasks/actions';
 	import { dueLabel } from '$lib/tasks/due';
 	import { RECUR_CHOICES, recurLabel, recurrenceOf, type Recurrence } from '$lib/tasks/recur';
-	import { isRequest } from '$lib/tasks/requests';
+	import { isRepeating, isRequest } from '$lib/tasks/requests';
 	import { eventLine, eventTime } from '$lib/tasks/history';
 	import { toast } from 'svelte-sonner';
 	import { untrack } from 'svelte';
@@ -206,13 +206,16 @@
 {#snippet body(task: Task)}
 			<main class="main">
 				<div class="head">
-					<span class="check">
-						<TaskCheck
-							done={task.status === 'done'}
-							label={isClosed(task) ? `Mark ${task.title} not done` : `Complete ${task.title}`}
-							onclick={toggle}
-						/>
-					</span>
+					<!-- A task that repeats is never finished, so it has no box to tick. -->
+					{#if !isRepeating(task)}
+						<span class="check">
+							<TaskCheck
+								done={task.status === 'done'}
+								label={isClosed(task) ? `Mark ${task.title} not done` : `Complete ${task.title}`}
+								onclick={toggle}
+							/>
+						</span>
+					{/if}
 					{#key task.id}
 						<textarea
 							class="title"
@@ -336,6 +339,8 @@
 		<PreviewRow icon="mynaui:link" quiet={(task.also_about ?? []).length === 0}>
 			<TaskAlsoAbout {task} onSave={(p) => save(p)} readonly={closed} plain />
 		</PreviewRow>
+		<!-- Its applet says when a task that repeats runs, so it has no due date. -->
+		{#if !isRepeating(task)}
 		<div class="prop">
 			<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
 				{#snippet trigger({ toggle: toggleDue })}
@@ -355,6 +360,7 @@
 				{/snippet}
 			</Popover>
 		</div>
+		{/if}
 		{#if !isRequest(task)}
 			<div class="prop">
 				<Popover bind:open={recurOpen} placement="bottom-start" offset={4}>

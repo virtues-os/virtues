@@ -164,7 +164,7 @@
 				{:else if trouble}
 					{trouble}.
 				{:else}
-					Runs {describeTriggers(applet).replace(/^./, (c) => c.toLowerCase())}.{#if !task.result}{' '}Its first result shows here.{/if}
+					{describeTriggers(applet)}.{#if !task.result}{' '}Its first result shows here.{/if}
 				{/if}
 			</p>
 			<div class="buttons">
