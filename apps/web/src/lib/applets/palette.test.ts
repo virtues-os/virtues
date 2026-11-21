@@ -5,6 +5,8 @@ import {
 	describeSchedule,
 	describeTriggers,
 	errorHeadline,
+	failureReason,
+	plainReason,
 	limitsOf,
 	relativeTime,
 	runFix
@@ -119,6 +121,33 @@ describe('appletDestination', () => {
 		expect(appletDestination(a({ has_face: true }))).toBe('Its dashboard');
 		expect(appletDestination(a({ config: { chat_id: 'c' } }))).toBe('Its conversation');
 		expect(appletDestination(a({}))).toBe('-');
+	});
+});
+
+describe('plainReason', () => {
+	it('says the kind of failure in a sentence', () => {
+		expect(plainReason('failed to spawn action command: No such file or directory (os error 2)')).toBe("Its program couldn't start");
+		expect(plainReason('action subprocess timed out after 310s')).toBe('It took too long and was stopped');
+		expect(plainReason('subprocess exited with status exit status: 1')).toBe('Its program stopped with an error');
+		expect(plainReason('HTTP client error: error sending request for url (https://api.example.com/v1)')).toBe("It couldn't reach a service it needs");
+		expect(plainReason('External API error: 429 Too Many Requests')).toBe('A service it uses asked it to slow down');
+		expect(plainReason('External API error: 503 Service Unavailable')).toBe('A service it uses had a problem');
+		expect(plainReason('Database error: condition sql failed: column "steps" does not exist')).toBe('A query it runs has an error');
+	});
+
+	it('puts an expired sign-in ahead of the failed request it caused', () => {
+		expect(plainReason('HTTP error: 401 Unauthorized: error sending request')).toBe('An account it uses needs you to sign in again');
+	});
+
+	it('leaves an error it does not recognize alone', () => {
+		expect(plainReason('Add OPENAI_API_KEY in Settings, under Keys.')).toBeNull();
+	});
+});
+
+describe('failureReason', () => {
+	it('keeps a sentence the server wrote for a person, without its period', () => {
+		expect(failureReason('Add OPENAI_API_KEY in Settings, under Keys.\n  at run')).toBe('Add OPENAI_API_KEY in Settings, under Keys');
+		expect(failureReason('action subprocess timed out after 310s')).toBe('It took too long and was stopped');
 	});
 });
 

@@ -30,7 +30,7 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix, runLine } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, failureReason, relativeTime, runFix, runLine } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
@@ -45,6 +45,10 @@
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { usePageActions, usePageStatus } from '$lib/stores/paneActions.svelte';
 	import { SLOTS } from '$lib/stores/modelSlots.svelte';
+	import { pagesStore } from '$lib/stores/pages.svelte';
+	import { inNewTab } from '$lib/utils/newActions';
+	import { appletBlockText } from '$lib/document/applet';
+	import { toast } from 'svelte-sonner';
 
 	/**
 	 * An applet's home opens on its results: its newest page with every page
@@ -382,17 +386,18 @@
 		)
 	);
 
-	// What went wrong, said once, where the missing result would be.
+	// What went wrong, said once, where the missing result would be. It has
+	// no final period: the sentence above a site adds one, the row doesn't.
 	const problem = $derived(Boolean(failedNow || overdue));
 	const problemText = $derived(
 		failedNow
 			? failure
-				? `${failure.title}. ${failure.remedy}`
+				? `${failure.title}. ${failure.remedy}`.replace(/\.$/, '')
 				: failedNow.error
-					? errorHeadline(failedNow.error)
-					: 'The run failed.'
+					? failureReason(failedNow.error)
+					: 'The run failed'
 			: overdue && action?.next_due_at
-				? `It was due ${relativeTime(action.next_due_at)} and hasn't run.`
+				? `It was due ${relativeTime(action.next_due_at)} and hasn't run`
 				: null
 	);
 	const missedWhen = $derived(failedNow?.last_at ?? (overdue ? (action?.next_due_at ?? null) : null));
@@ -441,6 +446,22 @@
 		return describeTriggers(action);
 	});
 
+	// A new page that starts with this site, opened in a tab beside this one.
+	// A page that already exists takes a site from its own Site block.
+	let addingToPage = false;
+	async function addToNewPage() {
+		if (!action || addingToPage) return;
+		addingToPage = true;
+		try {
+			const page = await pagesStore.createNewPage(action.name, undefined, appletBlockText(action.id));
+			inNewTab()(`/page/${page.id}`, page.title);
+		} catch {
+			toast.error("Your server couldn't make the page", { description: 'Nothing changed. Try again' });
+		} finally {
+			addingToPage = false;
+		}
+	}
+
 	function openMore(e: MouseEvent) {
 		if (!action) return;
 		const a = action;
@@ -450,6 +471,12 @@
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void runNow() });
 		}
 		if (a.has_face) {
+			items.push({
+				id: 'add-to-page',
+				label: 'Add to a new page',
+				icon: 'atlas:pages',
+				action: () => void addToNewPage()
+			});
 			items.push({
 				id: 'share',
 				label: 'Share',

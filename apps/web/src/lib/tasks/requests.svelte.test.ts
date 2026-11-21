@@ -53,6 +53,6 @@ describe('a task that repeats', () => {
 
 		const failed = { status: 'error', started_at: '2026-11-15T18:00:00', records_processed: null, error: 'timed out' };
 		appletsStore.list = [applet({ last_run: failed as Applet['last_run'] })];
-		expect(requestState(review, NOW)).toBe('timed out');
+		expect(requestState(review, NOW)).toBe('It took too long and was stopped');
 	});
 });

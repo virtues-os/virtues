@@ -101,6 +101,7 @@ None of this is on `staging`, and none has run against a real server.
 | The three words | `f126783e1` | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
 | What a row is | `3dee2a53f` | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
 | A task that repeats | slice D, 2026-11-21 | One task row per repeating applet, its newest result on it, cleared by opening it. |
+| The site, finished | slice F, 2026-11-21 | Failed runs said in sentences, a view that outlives a server restart, "Add to a new page". |
 
 ### What the built parts now say wrong
 
@@ -275,11 +276,34 @@ The small parts are built on wave (2026-11-21) and seen in a scratch app.
 
 ### Slice F: finish the site
 
-- "Add to a page" and "Share" on a site's page.
-- A site left open survives a server restart. Access tokens are kept in memory
-  today.
-- Failed-run reasons are written as plain sentences. Rows show raw text such
-  as "failed to spawn action command" today.
+Built on wave (2026-11-21) and seen in a scratch app, in the web app only.
+
+- **A failed run says why in a sentence.** `plainReason` in
+  `applets/palette.ts` matches the runner's own error strings and the usual
+  HTTP and OS errors to ten sentences, such as "Its program couldn't start",
+  "It took too long and was stopped" and "A service it uses asked it to slow
+  down". Rows on Server tasks, a site's card, a site's page and a repeating
+  task's page all read it through `failureReason`. An error it doesn't know
+  keeps its first line, since the server writes some for a person ("Add
+  OPENAI_API_KEY in Settings, under Keys"). The run log still shows the
+  error's own text.
+- **A site left open survives a server restart.** The server keeps view
+  tokens in memory and forgets them when it restarts. `FaceFrame` asks once a
+  minute while the window is showing, and each time the window comes back,
+  whether its token still stands (`applets/viewToken.ts`), and loads the view
+  again with a new token when the server answers 401. A view that is already
+  showing stays up while the server is away and asks for a token again every
+  30 seconds. A card's preview in the Sites door does not check.
+- **"Add to a new page"** is in a site's More menu, above Share. It makes a
+  page named after the site that starts with the site's block and opens it in
+  a new tab. A page that already exists takes a site from its own Site block.
+- Left: the reload after a restart loses whatever the view had on screen that
+  it had not saved, as the hourly renewal already does. A view could tell the
+  app the moment one of its queries is refused, which needs a line in
+  `virtues.js` (`server/faces.rs`); that file held another change in
+  progress. The frame's reload was seen as a new token and a query that
+  answered with it. The built-in browser used for the check refuses to draw a
+  sandboxed frame, so the redrawn view itself was not seen.
 
 ### Slice G: run it on a real server, then the pull request
 

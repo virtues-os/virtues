@@ -122,14 +122,14 @@ class PagesStore {
 	}
 
 	/**
-	 * Create a new page
+	 * Create a new page. `content` is what it starts with, as page text.
 	 */
-	async createNewPage(title: string = 'Untitled', spaceId?: string): Promise<Page> {
+	async createNewPage(title: string = 'Untitled', spaceId?: string, content: string = ''): Promise<Page> {
 		// Don't auto-add for system space
 		const sId = windowShellStore.isSystemSpace
 			? undefined
 			: (spaceId || windowShellStore.activeShellId);
-		const page = await createPage(title, '', sId);
+		const page = await createPage(title, content, sId);
 
 		// Invalidate the Pages view cache so the sidebar refreshes
 		windowShellStore.invalidateViewCache('page');

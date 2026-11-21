@@ -11,7 +11,7 @@ import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
 import { needsYou } from './days';
 import { inSitesDoor, isYours, kindOf, startsItself } from './kind';
-import { describeTriggers, errorHeadline, runFix } from './palette';
+import { describeTriggers, failureReason, runFix } from './palette';
 
 export interface Trouble {
 	/** `signin`: the run failed because an account's sign-in lapsed. */
@@ -25,8 +25,8 @@ export function troubleOf(a: Applet, now = Date.now()): Trouble | null {
 	if (!needsYou(a, now)) return null;
 	const run = a.last_run;
 	if (run?.status === 'error') {
-		// The run's own reason ("Gmail is disconnected") says more than when.
-		const reason = run.error ? errorHeadline(run.error, 120) : null;
+		// Why it failed says more than when.
+		const reason = run.error ? failureReason(run.error, 120) : null;
 		const when = run.started_at ? ` ${whenInWords(run.started_at, now)}` : '';
 		return { kind: fixOf(a) ? 'signin' : 'failed', text: reason ?? `Its last run didn't finish${when}` };
 	}

@@ -55,7 +55,7 @@
 					style:height="{DRAWN_HEIGHT}px"
 					style:transform="scale({width / DRAWN_WIDTH})"
 				>
-					<FaceFrame appletId={site.id} height="{DRAWN_HEIGHT}px" />
+					<FaceFrame appletId={site.id} height="{DRAWN_HEIGHT}px" keepAlive={false} />
 				</div>
 			{/if}
 		{:else if site.description}

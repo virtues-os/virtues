@@ -6,6 +6,7 @@
 	import type { TabType } from '$lib/tabs/types';
 	import { getTheme, isThemeDark } from '$lib/utils/theme';
 	import { siteBuilds } from '$lib/applets/sites.svelte';
+	import { tokenForgotten } from '$lib/applets/viewToken';
 
 	/**
 	 * The applet face runtime: face/index.html rendered in a sandboxed
@@ -14,7 +15,16 @@
 	 * parent access; its only data door is the token-scoped, read-only
 	 * /api/face/query bridge injected via virtues.js.
 	 */
-	let { appletId, height = '420px' }: { appletId: string; height?: string } = $props();
+	let {
+		appletId,
+		height = '420px',
+		keepAlive = true
+	}: {
+		appletId: string;
+		height?: string;
+		/** Whether to keep checking the view's token. A card's small preview doesn't. */
+		keepAlive?: boolean;
+	} = $props();
 
 	let src = $state<string | null>(null);
 	let err = $state<string | null>(null);
@@ -58,7 +68,13 @@
 	// one shortly before that, or every query in a view left open would start
 	// failing with nothing on screen to say why.
 	const RENEW_BEFORE_MS = 5 * 60 * 1000;
+	// How long to wait before asking for a token again when the server didn't
+	// answer, and how often to ask whether the token the view has still stands.
+	const RETRY_AFTER_MS = 30_000;
+	const CHECK_EVERY_MS = 60_000;
 	let renewals = $state(0);
+	// The token the frame was loaded with. Not drawn, so not reactive.
+	let held: string | null = null;
 
 	$effect(() => {
 		const id = appletId;
@@ -72,6 +88,7 @@
 			try {
 				const { token, expires_in_seconds } = await mintFaceToken(id);
 				if (gone) return;
+				held = token;
 				renew = setTimeout(
 					() => (renewals += 1),
 					Math.max(60_000, expires_in_seconds * 1000 - RENEW_BEFORE_MS)
@@ -85,12 +102,42 @@
 					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}`
 				);
 			} catch (e) {
-				if (!gone) err = e instanceof Error ? e.message : String(e);
+				if (gone) return;
+				// A view that is already showing stays while the server is away,
+				// and asks again. Only a view that never loaded says it couldn't.
+				if (held) renew = setTimeout(() => (renewals += 1), RETRY_AFTER_MS);
+				else err = e instanceof Error ? e.message : String(e);
 			}
 		})();
 		return () => {
 			gone = true;
 			clearTimeout(renew);
+		};
+	});
+
+	// The server keeps tokens in memory, so a restart forgets the one this
+	// view has, well before the hour is up. While the window is showing, and
+	// each time it comes back, the frame asks whether its token still stands
+	// and loads again with a new one when the server has forgotten it.
+	$effect(() => {
+		if (!keepAlive) return;
+		let asking = false;
+		const check = async () => {
+			const token = held;
+			if (!token || asking || document.visibilityState !== 'visible') return;
+			asking = true;
+			const forgotten = await tokenForgotten(token);
+			asking = false;
+			// A renewal may have replaced the token while the server answered.
+			if (forgotten && held === token) renewals += 1;
+		};
+		const timer = setInterval(check, CHECK_EVERY_MS);
+		document.addEventListener('visibilitychange', check);
+		window.addEventListener('online', check);
+		return () => {
+			clearInterval(timer);
+			document.removeEventListener('visibilitychange', check);
+			window.removeEventListener('online', check);
 		};
 	});
 </script>

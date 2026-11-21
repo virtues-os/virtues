@@ -42,6 +42,7 @@ describe('whenInWords', () => {
 describe('troubleOf', () => {
 	it("gives a failed run's own reason when it has one", () => {
 		expect(problemOf(failed('The weather service did not answer'), NOW)).toBe('The weather service did not answer');
+		expect(problemOf(failed('failed to spawn action command: No such file or directory (os error 2)'), NOW)).toBe("Its program couldn't start");
 		expect(problemOf(failed(null), NOW)).toBe(`Its last run didn't finish today at ${clock('2026-10-06T06:00:00')}`);
 	});
 
