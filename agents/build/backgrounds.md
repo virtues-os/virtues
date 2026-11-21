@@ -41,7 +41,7 @@ names it.
 | Kind | Where it lives | Example |
 |---|---|---|
 | Built in | `lib/backgrounds/builtin.ts`, shipped with the app | Dots |
-| Downloaded | the server's `/var/lib/virtues/backgrounds/<style>/`, fetched once from the catalog when picked | Watercolors, Oil paintings |
+| Downloaded | the server's `/var/lib/virtues/backgrounds/<style>/`, fetched once from the catalog when picked | Watercolors, Oil paintings, Photographs |
 
 The store (`lib/stores/background.svelte.ts`) lists built-in styles first,
 then the server's (`allStyles`). A built-in style resolves at once; a

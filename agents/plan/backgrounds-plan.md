@@ -219,6 +219,17 @@ a lot"): Watercolors is 40.8 MB and Oil paintings 36.8 MB, down from 113.5
 and 95.0. The older archives were deleted from the bucket on 2026-11-21
 at the owner's request.
 
+Photographs (`photographs`) was published on 2026-11-21 at the owner's
+go-ahead: 189 free Unsplash photographs (Unsplash+ photos left out) in five
+collections, Animals, National parks, Nature, Sea and Space, two per subject
+and three in the last three. It is a single-version pack, so Dark dims the
+Light picture. Each picture's title names its subject and photographer, the
+credit Unsplash asks for. The archive is 29.2 MB; the other two archives did
+not change. The source photos, the picks and the titles file are not
+tracked, so photographers' names stay out of the repo. The picks are the
+photos marked Keep on the owner's shortlist page, which keeps each photo's
+Unsplash id.
+
 How a style is added, built in or downloaded, and what a renderer must do,
 is in [agents/build/backgrounds.md](../build/backgrounds.md).
 
@@ -287,7 +298,7 @@ Each slice replaces the old way in the same change.
    - Follow the day in `lib/utils/theme.ts`, `app.html`, the theme cards and
      the settings agent's list of themes.
    - Each style's manifest carries its name in the pickers (`title`, from
-     `build.py --title`): Watercolors and Oil paintings.
+     `build.py --title`): Watercolors, Oil paintings and Photographs.
 4. **Delivery.** Built 2026-11-20 (see Delivery above): the packaging tool,
    the virtues-api route, the box's catalog, download and install, the
    download state on the Settings cards, the manual page and the privacy
