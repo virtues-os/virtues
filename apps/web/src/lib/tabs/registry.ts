@@ -21,7 +21,7 @@ export function browserLabel(url: string | null): string {
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { THREAD_ICON } from '$lib/utils/iconHelpers';
-import { SERVER_TASKS_ROUTE, SITES_ROUTE, homeRoute, isSiteId, readAddress } from '$lib/applets/routes';
+import { SERVER_TASKS_ROUTE, SITES_ROUTE, homeRoute, readAddress, type AddressWord } from '$lib/applets/routes';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -32,6 +32,9 @@ const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/History
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
+/** A tab's label before its page has loaded and given it a name. */
+const ADDRESS_LABEL: Record<AddressWord, string> = { site: 'Site', skill: 'Skill', 'server-task': 'Server task' };
+
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
@@ -744,9 +747,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// A SITE OR A JOB: /site/{name} and /job/{name}, each with /options for
-	// its other side (`applets/routes.ts`). The addresses used before
-	// (/applet/applet_{id}, with /view or ?panel=) resolve to these.
+	// A SITE, A SKILL OR A SERVER TASK: /site/{name}, /skill/{name} and
+	// /server-task/{name}, each with /options for its other side
+	// (`applets/routes.ts`). The addresses used before (/applet/applet_{id},
+	// with /view or ?panel=, and /job/{name}) resolve to these.
 	// ========================================================================
 	applet: {
 		match: (path) => readAddress(path) !== null,
@@ -755,7 +759,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			const address = readAddress(query ? `${path}?${query}` : path);
 			return {
 				type: 'applet',
-				label: address && !isSiteId(address.id) ? 'Server task' : 'Site',
+				label: address ? ADDRESS_LABEL[address.word] : 'Site',
 				icon: 'atlas:applets',
 				entityId: address?.id,
 				normalizedRoute: address?.route,
@@ -1057,7 +1061,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
 		'applets', // The Sites door
-		'applet', // A site's or a server task's page
+		'applet', // A site's, a skill's or a server task's page
 		'record', // /record/<ontology>/<id> — single raw record
 		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern

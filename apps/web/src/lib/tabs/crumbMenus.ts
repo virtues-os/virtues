@@ -9,7 +9,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import type { Crumb, CrumbMenu } from '$lib/tabs/crumbs';
 import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recents.svelte';
 import { appletsStore } from '$lib/stores/applets.svelte';
-import { homeRoute } from '$lib/applets/routes';
+import { homeOf } from '$lib/applets/kind';
 import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 import { search } from '$lib/stores/search.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -68,8 +68,8 @@ export function crumbMenuItems(
 						id: a.id,
 						label: a.name,
 						icon: GLYPH.applet,
-						checked: homeRoute(a.id) === current,
-						action: () => open(homeRoute(a.id)),
+						checked: homeOf(a) === current,
+						action: () => open(homeOf(a)),
 					}),
 				)
 			: recentRows({ pinned: true })

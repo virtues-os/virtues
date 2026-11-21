@@ -22,7 +22,7 @@ export function kindGlyph(url: string): string {
 	if (/^https?:\/\//i.test(url)) return 'wiki';
 	if (url.startsWith('/chat')) return 'chats';
 	if (url.startsWith('/thread/')) return 'projects';
-	if (/^\/(sites?|server-task|job|applets?)(\/|$)/.test(url)) return 'applets';
+	if (/^\/(sites?|skill|server-task|job|applets?)(\/|$)/.test(url)) return 'applets';
 	// A task, linked by `?task=`. A pin made before Tasks joined the
 	// Threads door still says /tasks, and opens the door's Tasks view.
 	if (url.startsWith('/tasks') || url.startsWith('/threads?view=tasks')) return 'tasks';

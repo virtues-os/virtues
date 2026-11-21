@@ -440,6 +440,11 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
                     );
+                    let kind = crate::scheduler::applets::kind_of(
+                        has_face,
+                        command.as_ref().is_some_and(|c| !c.is_empty()),
+                        crate::scheduler::applets::starts_itself(cron.as_deref(), watch.is_some(), &triggers),
+                    );
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -499,6 +504,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "device_id": device_id,
                         "origin": origin,
+                        "kind": kind,
                         "command": command,
                         "until": until,
                         "watch": watch,
@@ -646,6 +652,46 @@ async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow
         .collect())
 }
 
+/// One applet as the app reads it: its row, with what the row cannot say on
+/// its own (whose it is, what kind of thing it is, whether it has a view, the
+/// keys it names and its last run). The GET and the PATCH both answer with
+/// this, so a page that takes the PATCH reply as the applet loses nothing.
+async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::Applet) -> Result<serde_json::Value, Error> {
+    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await.ok().flatten();
+    let secrets = declared_secrets_status(pool, &action.id)
+        .await
+        .map_err(|e| Error::Other(format!("{e:#}")))?;
+    let has_view = crate::server::faces::face_for(&action.id).is_some();
+    Ok(serde_json::json!({
+        "id": action.id,
+        "owner": action.owner,
+        "name": action.name,
+        "description": action.description,
+        "agent": action.agent,
+        "schedule": action.schedule,
+        "enabled": action.enabled,
+        "config": action.config,
+        "triggers": action.triggers,
+        "memory": action.memory,
+        "command": action.command,
+        "credential_id": action.credential_id,
+        "device_id": action.device_id,
+        "origin": crate::scheduler::applets::derived_origin(action),
+        "kind": crate::scheduler::applets::derived_kind(action, has_view),
+        "until": action.until,
+        "watch": action.watch,
+        "archived_at": action.archived_at,
+        "next_due_at": action.next_due_at,
+        "last_slot_at": action.last_slot_at,
+        "has_face": has_view,
+        "has_override": action.has_override,
+        "secrets": secrets,
+        "created_at": action.created_at,
+        "updated_at": action.updated_at,
+        "last_run": last_run,
+    }))
+}
+
 /// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
@@ -653,53 +699,14 @@ pub async fn get_applet_handler(
 ) -> Response {
     let pool = state.db.pool();
     match crate::scheduler::applets::get_applet(pool, &applet_id).await {
-        Ok(action) => {
-            let last_run = crate::scheduler::applets::last_run(pool, &applet_id)
-                .await
-                .ok()
-                .flatten();
-            let secrets = match declared_secrets_status(pool, &action.id).await {
-                Ok(s) => s,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({ "error": format!("{e:#}") })),
-                    )
-                        .into_response()
-                }
-            };
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "id": action.id,
-                    "owner": action.owner,
-                    "name": action.name,
-                    "description": action.description,
-                    "agent": action.agent,
-                    "schedule": action.schedule,
-                    "enabled": action.enabled,
-                    "config": action.config,
-                    "triggers": action.triggers,
-                    "memory": action.memory,
-                    "command": action.command,
-                    "credential_id": action.credential_id,
-                    "device_id": action.device_id,
-                    "origin": crate::scheduler::applets::derived_origin(&action),
-                    "until": action.until,
-                    "watch": action.watch,
-                    "archived_at": action.archived_at,
-                    "next_due_at": action.next_due_at,
-                    "last_slot_at": action.last_slot_at,
-                    "has_face": crate::server::faces::face_for(&action.id).is_some(),
-                    "has_override": action.has_override,
-                    "secrets": secrets,
-                    "created_at": action.created_at,
-                    "updated_at": action.updated_at,
-                    "last_run": last_run,
-                })),
+        Ok(action) => match applet_detail(pool, &action).await {
+            Ok(detail) => (StatusCode::OK, Json(detail)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
             )
-                .into_response()
-        }
+                .into_response(),
+        },
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -720,7 +727,7 @@ pub async fn patch_applet_handler(
     caller: Option<axum::Extension<crate::console_socket::ConsoleCaller>>,
     Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
-) -> Result<Json<crate::scheduler::applets::Applet>, Error> {
+) -> Result<Json<serde_json::Value>, Error> {
     // An outside agent reaches this route for `virtues applet enable` and
     // nothing else (`console_socket::agent_may`): it may turn an applet on
     // or off, never rewrite its schedule, config or triggers.
@@ -729,9 +736,16 @@ pub async fn patch_applet_handler(
     {
         return Err(Error::Unauthorized("an agent key may only turn an applet on or off".into()));
     }
-    Ok(Json(
-        crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await?,
-    ))
+    let pool = state.db.pool();
+    let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
+    // The row as it serializes, with the detail's fields over it. The app
+    // replaces the applet it holds with this reply, so a reply without
+    // `has_face` or `kind` would turn a site's page into a list of runs.
+    let mut reply = serde_json::to_value(&applet).map_err(|e| Error::Other(e.to_string()))?;
+    if let (Some(row), serde_json::Value::Object(detail)) = (reply.as_object_mut(), applet_detail(pool, &applet).await?) {
+        row.extend(detail);
+    }
+    Ok(Json(reply))
 }
 
 /// An agent's patch: exactly `{"enabled": <bool>}`.

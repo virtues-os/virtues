@@ -5,18 +5,19 @@
 	 * see exactly what their server does.
 	 *
 	 * It opens with one sentence (`appletsLead` in lib/applets/standing.ts)
-	 * and the button that fixes what needs you. Then it lists jobs by what
+	 * and the button that fixes what needs you. Then it lists tasks by what
 	 * they are for: the ones that keep an account or a device current, one
-	 * row per account, and the ones that build and keep your record. A job
+	 * row per account, and the ones that build and keep your record. A task
 	 * that needs you stays in its place. A row opens in place
-	 * (`JobOpen.svelte`). What you set up yourself is in Sites.
+	 * (`ServerTaskOpen.svelte`). The skills that came with the server are
+	 * folded at the foot. What you set up yourself is in Sites.
 	 */
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
 	import Fold from './Fold.svelte';
 	import LoadError from './LoadError.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import JobOpen from '$lib/components/applets/JobOpen.svelte';
+	import ServerTaskOpen from '$lib/components/applets/ServerTaskOpen.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { whenInWords } from '$lib/utils/dateUtils';
 	import { adminReconcile, runApplet, type Applet } from '$lib/api/client';
@@ -31,13 +32,13 @@
 		appletLine,
 		appletsLead,
 		canRun,
-		groupJobs,
-		livingJobs,
+		groupServerTasks,
 		problemOf,
-		type AccountJobs,
+		serverTasks,
+		type AccountTasks,
 		type AppletAction,
 	} from '$lib/applets/standing';
-	import { homeRoute, optionsRoute } from '$lib/applets/routes';
+	import { homeOf, optionsOf } from '$lib/applets/kind';
 
 	let loaded = $state(false);
 	let now = $state(Date.now());
@@ -62,18 +63,18 @@
 
 	const applets = $derived(appletsStore.list);
 	const failed = $derived(loaded && !!appletsStore.error && applets.length === 0);
-	const groups = $derived(groupJobs(applets, now));
-	const jobs = $derived(livingJobs(applets));
-	const lead = $derived(appletsLead(jobs, now));
-	/** The jobs that need you and have a button that fixes them, for under the lead. */
+	const groups = $derived(groupServerTasks(applets, now));
+	const tasks = $derived(serverTasks(applets));
+	const lead = $derived(appletsLead(tasks, now));
+	/** The tasks that need you and have a button that fixes them, for under the lead. */
 	const fixes = $derived(
-		jobs.flatMap((a) => {
+		tasks.flatMap((a) => {
 			const action = actionOf(a, now);
 			return action ? [{ a, action }] : [];
 		})
 	);
 
-	// One row is open at a time: a job, or an account with its jobs inside.
+	// One row is open at a time: a task, or an account with its tasks inside.
 	let open = $state<string | null>(null);
 	let openInside = $state<string | null>(null);
 	function toggle(key: string) {
@@ -82,19 +83,19 @@
 	}
 
 	/** An account's or a device's name: its source, and its own label when the source has several. */
-	function accountName(g: AccountJobs): string {
+	function accountName(g: AccountTasks): string {
 		const c = sourcesStore.connections.find((x) => x.kind === g.kind && x.id === g.id);
-		if (!c) return g.jobs[0].name;
+		if (!c) return g.tasks[0].name;
 		const source = sourcesStore.sourceLabel(c.sourceId);
 		const several = sourcesStore.connections.filter((x) => x.sourceId === c.sourceId).length > 1;
 		return several && c.name ? `${source} - ${c.name}` : source || c.name;
 	}
 
-	/** An account's line: the job that needs you, or when one of its jobs last ran. */
-	function accountLine(g: AccountJobs): { text: string; warn: boolean } {
-		const needing = g.jobs.find((a) => problemOf(a, now));
+	/** An account's line: the task that needs you, or when one of its tasks last ran. */
+	function accountLine(g: AccountTasks): { text: string; warn: boolean } {
+		const needing = g.tasks.find((a) => problemOf(a, now));
 		if (needing) return { text: `${needing.name}: ${problemOf(needing, now)}.`, warn: true };
-		const last = g.jobs
+		const last = g.tasks
 			.map((a) => a.last_run?.started_at)
 			.filter((t): t is string => !!t)
 			.sort()
@@ -106,7 +107,7 @@
 		windowShellStore.openAside({
 			type: 'applet',
 			label: a.name,
-			route: panel ? optionsRoute(a.id, panel) : homeRoute(a.id),
+			route: panel ? optionsOf(a, panel) : homeOf(a),
 			icon: 'atlas:applets',
 		});
 	}
@@ -149,7 +150,7 @@
 		items.push({ id: 'open', label: 'Open', icon: 'atlas:applets', action: () => openApplet(a) });
 		items.push({ id: 'history', label: 'Run history', icon: 'mynaui:clock-circle', action: () => openApplet(a, 'history') });
 		if (canRun(a)) items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void run(a) });
-		items.push(pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
@@ -174,8 +175,8 @@
 	</svg>
 {/snippet}
 
-{#snippet jobRow(a: Applet, isOpen: boolean, onopen: () => void)}
-	<div class="job" role="listitem">
+{#snippet taskRow(a: Applet, isOpen: boolean, onopen: () => void)}
+	<div class="task" role="listitem">
 		<button type="button" class="open" aria-expanded={isOpen} onclick={onopen} oncontextmenu={(e) => rowMenu(a, e)}>
 			<span class="words">
 				<span class="name" class:off={!a.enabled || a.archived_at}>{a.name}</span>
@@ -185,14 +186,14 @@
 			{@render chevron(isOpen)}
 		</button>
 		{#if isOpen}
-			<JobOpen job={a} onchanged={() => void load()} />
+			<ServerTaskOpen task={a} onchanged={() => void load()} />
 		{/if}
 	</div>
 {/snippet}
 
 {#snippet list(items: Applet[])}
 	<div role="list">
-		{#each items as a (a.id)}{@render jobRow(a, open === a.id, () => toggle(a.id))}{/each}
+		{#each items as a (a.id)}{@render taskRow(a, open === a.id, () => toggle(a.id))}{/each}
 	</div>
 {/snippet}
 
@@ -237,23 +238,23 @@
 				<div role="list">
 					{#each groups.accounts as g (g.kind + g.id)}
 						{@const key = `${g.kind}:${g.id}`}
-						{#if g.jobs.length === 1}
-							{@render jobRow({ ...g.jobs[0], name: accountName(g) }, open === key, () => toggle(key))}
+						{#if g.tasks.length === 1}
+							{@render taskRow({ ...g.tasks[0], name: accountName(g) }, open === key, () => toggle(key))}
 						{:else}
 							{@const line = accountLine(g)}
-							<div class="job" role="listitem">
+							<div class="task" role="listitem">
 								<button type="button" class="open" aria-expanded={open === key} onclick={() => toggle(key)}>
 									<span class="words">
 										<span class="name">{accountName(g)}</span>
-										<span class="what">{g.jobs.map((a) => a.name).join(', ')}</span>
+										<span class="what">{g.tasks.map((a) => a.name).join(', ')}</span>
 									</span>
 									<span class="line" class:warn={line.warn}>{line.text}</span>
 									{@render chevron(open === key)}
 								</button>
 								{#if open === key}
 									<div class="inside" role="list">
-										{#each g.jobs as a (a.id)}
-											{@render jobRow(a, openInside === a.id, () => (openInside = openInside === a.id ? null : a.id))}
+										{#each g.tasks as a (a.id)}
+											{@render taskRow(a, openInside === a.id, () => (openInside = openInside === a.id ? null : a.id))}
 										{/each}
 									</div>
 								{/if}
@@ -273,8 +274,13 @@
 
 		<div class="tail">
 			{#if groups.whenAsked.length}
-				<Fold label="Runs only when asked" sub="Nothing starts these on its own. You or the assistant start them from a chat.">
+				<Fold label="Runs only when asked" sub="Nothing starts these on its own. Your server runs one when you ask for it.">
 					{@render list(groups.whenAsked)}
+				</Fold>
+			{/if}
+			{#if groups.skills.length}
+				<Fold label="Skills" sub="What the assistant knows how to do. Type / in a chat to start one.">
+					{@render list(groups.skills)}
 				</Fold>
 			{/if}
 			{#if groups.finished.length}
@@ -317,7 +323,7 @@
 		padding: 32px 0 8px;
 	}
 
-	.job + .job {
+	.task + .task {
 		border-top: 1px solid var(--color-border);
 	}
 
@@ -379,7 +385,7 @@
 		color: var(--color-warning);
 	}
 
-	/* An account's jobs sit inside it, set in from its name. */
+	/* An account's tasks sit inside it, set in from its name. */
 	.inside {
 		padding: 0 0 8px 16px;
 		border-top: 1px solid var(--color-border);

@@ -8,6 +8,7 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { openSiteBeside } from '$lib/applets/sites.svelte';
 	import { homeRoute } from '$lib/applets/routes';
+	import { homeOf } from '$lib/applets/kind';
 
 	/**
 	 * The receipt for an applet the assistant made or changed: what it does,
@@ -65,7 +66,11 @@
 
 	function open() {
 		if (site) openSiteBeside(appletId, name);
-		else windowShellStore.openRouteBeside(homeRoute(appletId));
+		else {
+			// The list says what kind it is. Without it, the page corrects its own address.
+			const known = appletsStore.list.find((a) => a.id === appletId);
+			windowShellStore.openRouteBeside(known ? homeOf(known) : homeRoute(appletId));
+		}
 	}
 
 	// Setup's result names the schedule. A data trigger comes from the

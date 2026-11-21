@@ -384,6 +384,9 @@ export interface AppletLastRun {
  */
 export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
 
+/** A site, a skill, or a task that is the assistant's or the server's. */
+export type AppletKind = 'site' | 'server_task' | 'assistant_task' | 'skill';
+
 export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
@@ -405,6 +408,10 @@ export interface Applet {
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
+	/** What it is to the person who meets it. Absent from a server older
+	 *  than the field; read it through `kindOf` (lib/applets/kind.ts), which
+	 *  applies the same rule to the parts. */
+	kind?: AppletKind;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */

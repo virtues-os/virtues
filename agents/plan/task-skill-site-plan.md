@@ -98,7 +98,8 @@ None of this is on `staging`, and none has run against a real server.
 | Copy and the manual | `ed0551d0d`, `f06f50577` | "Applet" gone from about 40 files, the glossary and the backup page. |
 | Addresses | `df399386d`, `30abf3ef4`, `bf6f6055c` | `/sites`, `/site/<name>` and `/options`. Earlier addresses still open. |
 | The server's own work | `354920107` | Grouped by purpose, one row per account, rows open in place (`JobOpen.svelte`). |
-| The three words | slice A, 2026-11-21 | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
+| The three words | `f126783e1` | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
+| What a row is | slice B, 2026-11-21 | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
 
 ### What the built parts now say wrong
 
@@ -106,7 +107,7 @@ None of this is on `staging`, and none has run against a real server.
   chat prompt was named. Slice A fixed these.
 - **The Sites door lists things with no view.** A repeating prompt you set up
   shows there as a card with its description. Under the three words it is the
-  assistant's task and belongs in Tasks.
+  assistant's task and belongs in Tasks. It stays until slice D.
 - **The chat said "Setting up a site" for every setup, and the authoring
   guide and the applet tool told the assistant to say "site" for everything.**
   Slice A fixed these.
@@ -143,27 +144,45 @@ Built on wave on 2026-11-21 and seen in the dev app.
 
 ### Slice B: one function that says what a row is
 
-- A `kind` function in Rust applies the rule above and the applets list and
-  detail routes return it as a new JSON field. Installed apps ignore a field
-  they do not know.
-- The web app uses it in place of its three separate checks: the id prefix in
-  `applets/routes.ts`, `isYours` and `startsItself` in `applets/standing.ts`,
-  and `appletsStore.mine`.
-- An address is chosen from the kind. That places the dot cloud, which ships
-  with the server and has a view, as a site.
-- No migration and no stored column. A stored kind can disagree with the
-  fields it summarizes, which is why an earlier `runtime` field was removed
-  ([record/applets.md](../record/applets.md)).
+Built on wave on 2026-11-21. The web side was seen in the dev app against a
+server from before the field, so what ran there was the app's own copy of the
+rule. The server's side is covered by its test and has not answered a request.
+
+- `kind_of` in `scheduler/applets.rs` applies the rule and returns `site`,
+  `server_task`, `assistant_task` or `skill`. The applets list, the detail and
+  the PATCH reply carry it as `kind`. The third step of the rule checks only
+  that it starts itself, so a row with a check and no prompt still gets a kind.
+- The app reads it through `kindOf` (`applets/kind.ts`), which applies the
+  same rule to the parts when a server is too old to say. The two copies have
+  the same test table.
+- An address starts with the word for the kind: `/site/<name>`,
+  `/skill/<name>`, `/server-task/<name>`. The name drops whether you made it,
+  so an address can mean two ids, and the page asks the list which exists
+  before it asks the server. A page that opens under the wrong word corrects
+  its own address once it has loaded. The dot cloud opens at
+  `/site/dot_cloud`.
+- The switch on a page reads "Site", "Task" or "Skill" from the kind.
+- The Server tasks page lists rows whose kind is the server's task. The skills
+  that came with the server sit in their own fold, "Skills", and
+  "Runs only when asked" holds `chat-import` alone.
+- **A bug this fixed.** The PATCH reply was the bare row, without `has_face`.
+  The app replaces the applet it holds with that reply, so turning a site off
+  and on from its Options drew it as a list of runs until the page reloaded.
+  The GET and the PATCH now answer with one builder.
+- Two things are held where they were, each with a dated note in the code,
+  until slice D gives them a home. A task of the assistant's that you set up
+  still shows in the Sites door at a `/site` address, and one that came with
+  the server (the morning examen) still shows on the Server tasks page.
+- A skill you made still shows in the Sites door, because nothing else lists
+  it. See O8.
 
 ### Slice C: your server's tasks
 
-- The page keeps the layout it was built with, and slice A gave it its name
-  and addresses.
-- With the `kind` function, the skills folded under "Runs only when asked"
-  leave the page, and `chat-import`, the one server task nothing starts,
-  stays.
+- The page has its name and addresses (slice A) and lists by kind (slice B).
 - Whether an account's row opens in place or links to its source's page is
   open (O2).
+- The account group and the "Reaches" line have never been seen with a
+  connected account.
 
 ### Slice D: the assistant's tasks that repeat
 
@@ -262,6 +281,8 @@ view is a site".
 | O5 | What the assistant is told about waiting results | That some are waiting, with no number. |
 | O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
 | O7 | A softer word than "task" for one the server suggests, such as the morning examen | Not picked. A daily reflection listed as a task can read as an obligation. |
+| O8 | Where you manage skills: turn one off, change one you made, delete it | Not picked. A skill has no door, the `/` menu only starts one, and the Server tasks page is the wrong place for them. A "Skills" list under the assistant's settings is the smallest answer. |
+| O9 | Does a site that came with the server show in the Sites door? | No, as built. The door lists what you set up. The dot cloud opens by its address or in a page. |
 
 ## Personas
 

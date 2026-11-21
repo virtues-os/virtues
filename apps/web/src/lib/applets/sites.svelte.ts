@@ -25,7 +25,7 @@ export const siteBuilds = new SiteBuilds();
  */
 export function openSiteBeside(appletId: string, name?: string) {
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteBeside(homeRoute(appletId), name);
+	windowShellStore.openRouteBeside(homeRoute(appletId, 'site'), name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }
 
@@ -42,6 +42,6 @@ export function showBuiltSite(appletId: string, name?: string) {
 	siteBuilds.rebuilt(appletId);
 	if (mobileLayout.isMobile) return;
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteInSplitOrActive(homeRoute(appletId), name);
+	windowShellStore.openRouteInSplitOrActive(homeRoute(appletId, 'site'), name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }

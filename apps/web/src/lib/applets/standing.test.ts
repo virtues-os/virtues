@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { actionOf, appletLine, appletsLead, groupJobs, problemOf, troubleOf } from './standing';
+import { actionOf, appletLine, appletsLead, groupServerTasks, problemOf, troubleOf } from './standing';
 
 const NOW = new Date('2026-10-06T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -98,27 +98,32 @@ describe('appletLine', () => {
 	});
 });
 
-describe('groupJobs', () => {
-	it('lists the server\'s own jobs, gathers an account\'s jobs under it, and leaves yours to Sites', () => {
-		const groups = groupJobs(
+describe('groupServerTasks', () => {
+	it('lists the server\'s tasks by account, folds its skills, and leaves yours to Sites', () => {
+		const program = { command: ['run'] };
+		const groups = groupServerTasks(
 			[
 				applet({ id: 'a', name: 'Rent reminder' }),
 				applet({ id: 'b', name: 'Garden watering', ...failedRun('timed out') }),
-				applet({ id: 'c', name: 'Backup', origin: 'system', schedule: '0 0 4 * * *' }),
-				applet({ id: 'd', name: 'Mail sync', origin: 'source', credential_id: 'cred_1', schedule: '0 */15 * * * *' }),
-				applet({ id: 'e', name: 'Calendar sync', origin: 'source', credential_id: 'cred_1', ...failedRun('timed out') }),
-				applet({ id: 'f', name: 'Phone', origin: 'source', device_id: 'dev_1' }),
+				applet({ id: 'c', name: 'Backup', origin: 'system', schedule: '0 0 4 * * *', ...program }),
+				applet({ id: 'd', name: 'Mail sync', origin: 'source', credential_id: 'cred_1', schedule: '0 */15 * * * *', ...program }),
+				applet({ id: 'e', name: 'Calendar sync', origin: 'source', credential_id: 'cred_1', ...program, ...failedRun('timed out') }),
+				applet({ id: 'f', name: 'Phone', origin: 'source', device_id: 'dev_1', schedule: null, triggers: ['webhook'], ...program }),
 				applet({ id: 'g', name: 'Trip planner', origin: 'system', schedule: null }),
 				applet({ id: 'h', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
+				applet({ id: 'i', name: 'Chat import', origin: 'system', schedule: null, ...program }),
+				applet({ id: 'j', name: 'Morning examen', origin: 'system' }),
 			],
 			NOW,
 		);
-		expect(groups.accounts.map((g) => [g.kind, g.id, g.jobs.map((a) => a.id)])).toEqual([
+		expect(groups.accounts.map((g) => [g.kind, g.id, g.tasks.map((a) => a.id)])).toEqual([
 			['credential', 'cred_1', ['e', 'd']],
 			['device', 'dev_1', ['f']],
 		]);
-		expect(groups.server.map((a) => a.id)).toEqual(['c']);
-		expect(groups.whenAsked.map((a) => a.id)).toEqual(['g']);
+		// The shipped task of the assistant's sits here until Tasks can show it.
+		expect(groups.server.map((a) => a.id)).toEqual(['c', 'j']);
+		expect(groups.whenAsked.map((a) => a.id)).toEqual(['i']);
+		expect(groups.skills.map((a) => a.id)).toEqual(['g']);
 		expect(groups.finished.map((a) => a.id)).toEqual(['h']);
 		expect(groups.yoursNeedingYou.map((a) => a.id)).toEqual(['b']);
 	});

@@ -10,6 +10,7 @@
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
 import { needsYou } from './days';
+import { isYours, kindOf, startsItself } from './kind';
 import { describeTriggers, errorHeadline, runFix } from './palette';
 
 export interface Trouble {
@@ -88,48 +89,55 @@ export function appletLine(a: Applet, now = Date.now()): string {
 	return `${when}. Hasn't run yet.`;
 }
 
-/** Whether you set it up. Those are sites, and the Sites door lists them. */
-const isYours = (a: Applet) => a.origin === 'user' || a.origin === 'ai';
-
-/** Whether it starts on its own: on a schedule, or when new data arrives. */
-const startsItself = (a: Applet) => !!a.schedule || !!a.watch;
-
-/** The jobs one connected account or device brought with it. */
-export interface AccountJobs {
+/** The server's tasks that one connected account or device brought with it. */
+export interface AccountTasks {
 	kind: 'credential' | 'device';
 	/** The credential's or the device's id. */
 	id: string;
-	jobs: Applet[];
+	tasks: Applet[];
 }
 
-export interface JobGroups {
+export interface ServerTaskGroups {
 	/** One entry per connected account or device, in the order first met. */
-	accounts: AccountJobs[];
-	/** The server's own jobs that start themselves. */
+	accounts: AccountTasks[];
+	/** The server's own tasks that start themselves. */
 	server: Applet[];
-	/** The server's own that run only when asked: nothing starts them. */
+	/** The server's own tasks that nothing starts: they run when asked. */
 	whenAsked: Applet[];
+	/** The skills that came with the server. */
+	skills: Applet[];
 	/** One-time ones that already ran, yours included. */
 	finished: Applet[];
-	/** Sites of yours that need you. They are listed in Sites, not here. */
+	/** Things of yours that need you. They are listed in Sites, not here. */
 	yoursNeedingYou: Applet[];
 }
 
-/** Everything on the Jobs page that is the server's and still runs. */
-export function livingJobs(applets: Applet[]): Applet[] {
-	return applets.filter((a) => !a.archived_at && !isYours(a));
+/**
+ * Whether the Server tasks page lists it as a task: one of the server's own.
+ * TODO(2026-11-21): a task of the assistant's that came with the server (the
+ * morning examen) is listed here until Tasks shows repeating tasks
+ * (agents/plan/task-skill-site-plan.md, slice D).
+ */
+function isServerTask(a: Applet): boolean {
+	const kind = kindOf(a);
+	return kind === 'server_task' || (kind === 'assistant_task' && !isYours(a));
+}
+
+/** The server's tasks that still run. */
+export function serverTasks(applets: Applet[]): Applet[] {
+	return applets.filter((a) => !a.archived_at && isServerTask(a));
 }
 
 /**
- * The groups the Jobs page lists, each sorted by name. A job that needs you
- * stays in its group, so the list keeps its order when something breaks.
+ * The groups the Server tasks page lists, each sorted by name. A task that
+ * needs you stays in its group, so the list keeps its order when something
+ * breaks.
  */
-export function groupJobs(applets: Applet[], now = Date.now()): JobGroups {
+export function groupServerTasks(applets: Applet[], now = Date.now()): ServerTaskGroups {
 	const byName = (list: Applet[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
-	const jobs = byName(livingJobs(applets));
-	const accounts: AccountJobs[] = [];
+	const accounts: AccountTasks[] = [];
 	const own: Applet[] = [];
-	for (const a of jobs) {
+	for (const a of byName(serverTasks(applets))) {
 		const id = a.credential_id ?? a.device_id;
 		if (!id) {
 			own.push(a);
@@ -137,15 +145,16 @@ export function groupJobs(applets: Applet[], now = Date.now()): JobGroups {
 		}
 		const kind = a.credential_id ? 'credential' : 'device';
 		const group = accounts.find((g) => g.kind === kind && g.id === id);
-		if (group) group.jobs.push(a);
-		else accounts.push({ kind, id, jobs: [a] });
+		if (group) group.tasks.push(a);
+		else accounts.push({ kind, id, tasks: [a] });
 	}
 	return {
 		accounts,
 		server: own.filter(startsItself),
 		whenAsked: own.filter((a) => !startsItself(a)),
+		skills: byName(applets.filter((a) => !a.archived_at && !isYours(a) && kindOf(a) === 'skill')),
 		finished: byName(applets.filter((a) => a.archived_at)),
-		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && needsYou(a, now))),
+		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && !isServerTask(a) && needsYou(a, now))),
 	};
 }
 

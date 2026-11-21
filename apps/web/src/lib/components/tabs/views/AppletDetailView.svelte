@@ -34,7 +34,8 @@
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
-	import { homeRoute, optionsRoute, readAddress } from '$lib/applets/routes';
+	import { readAddress } from '$lib/applets/routes';
+	import { homeOf, optionsOf } from '$lib/applets/kind';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -76,19 +77,27 @@
 		};
 	});
 
+	let action = $state<Applet | null>(null);
 	const address = $derived(readAddress(tab.route));
-	const appletId = $derived(address?.id ?? null);
+	// An address that shows only a name can mean one you made or one that
+	// came with the server. Once one of them has loaded, it is the applet.
+	const loaded = $derived(action && (action.id === address?.id || action.id === address?.otherId) ? action : null);
+	const appletId = $derived(loaded?.id ?? address?.id ?? null);
 	const asked = $derived(address?.open ?? null);
 	const inInfo = $derived(address?.side === 'options');
 
 	function showInfo(open: boolean) {
-		if (!appletId) return;
-		windowShellStore.retarget(tab.id, open ? optionsRoute(appletId) : homeRoute(appletId), action?.name);
+		if (!loaded) return;
+		windowShellStore.retarget(tab.id, open ? optionsOf(loaded) : homeOf(loaded), loaded.name);
 	}
 
 	// A tab saved under an earlier address keeps working, and takes today's.
+	// Once the applet has loaded, the address also starts with the word for
+	// what it is: a site that came with the server opens under /site.
 	$effect(() => {
-		if (address && tab.route !== address.route) windowShellStore.updateTab(tab.id, { route: address.route });
+		if (!address) return;
+		const now = !loaded ? address.route : address.side === 'options' ? optionsOf(loaded, address.open ?? undefined) : homeOf(loaded);
+		if (tab.route !== now) windowShellStore.updateTab(tab.id, { route: now });
 	});
 
 	let historyOpen = $state(false);
@@ -98,7 +107,6 @@
 		if (asked === 'details') technicalOpen = true;
 	});
 
-	let action = $state<Applet | null>(null);
 	let log = $state<AppletLogEntry[]>([]);
 	let runDays = $state<RunDay[]>([]);
 	let daysErr = $state<string | null>(null);
@@ -160,17 +168,36 @@
 	}
 
 
+	// The ids the address can mean, as one string, so that an address which
+	// only changes its spelling does not start a second load.
+	const askedIds = $derived(address ? [address.id, address.otherId].filter(Boolean).join(' ') : '');
 	$effect(() => {
-		if (appletId) void load(appletId);
+		if (!askedIds || loaded) return;
+		void load(askedIds.split(' '));
 	});
 
-	async function load(id: string) {
+	/** The applet an address names. The list says which id exists; without it, each is asked for in turn. */
+	async function firstFound(ids: string[]): Promise<Applet> {
+		const known = ids.find((id) => appletsStore.list.some((a) => a.id === id));
+		let last: unknown = new Error('Your server has nothing at this address.');
+		for (const id of known ? [known] : ids) {
+			try {
+				return await getApplet(id);
+			} catch (e) {
+				last = e;
+			}
+		}
+		throw last;
+	}
+
+	async function load(ids: string[]) {
 		loading = true;
 		err = null;
 		try {
 			// The applet loads on its own. The log and the day counts are
 			// weaker requests: one of them failing must not blank the page.
-			const a = await getApplet(id);
+			const a = await firstFound(ids);
+			const id = a.id;
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
 			// Opening the page is reading what it made, so its "new" Inbox
@@ -253,7 +280,7 @@
 			} else {
 				stopPolling();
 				// The run may have finished the applet, or spent something.
-				await load(id);
+				await load([id]);
 			}
 		}, POLL_MS);
 	}
@@ -426,7 +453,7 @@
 			});
 		}
 		items.push(
-			pinMenuItem({ url: homeRoute(a.id), label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
+			pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
 		);
 		if (a.owner !== 'system') {
 			items.push({
@@ -453,12 +480,7 @@
 			     can tell it things or change it there. -->
 			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
-		<SiteSwitch
-			tabId={tab.id}
-			appletId={action.id}
-			name={action.name}
-			showing={inInfo ? 'options' : 'site'}
-		/>
+		<SiteSwitch tabId={tab.id} applet={action} showing={inInfo ? 'options' : 'site'} />
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
 		{#if action.archived_at}
 			<Button variant="secondary" onclick={() => setEnabled(true)} disabled={saving}>

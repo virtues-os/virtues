@@ -1,9 +1,9 @@
 <script lang="ts">
 	/**
-	 * One job, opened in place on the Jobs page: what it does, when it runs,
-	 * the hosts its last runs reached, and what those runs did. It answers
-	 * "what does this do on my server" without leaving the list. Its full
-	 * run history and its technical details are on the job's own page.
+	 * One server task, opened in place on the Server tasks page: what it does,
+	 * when it runs, the hosts its last runs reached, and what those runs did.
+	 * It answers "what does this do on my server" without leaving the list.
+	 * Its full run history and its technical details are on its own page.
 	 */
 	import Switch from '$lib/components/settings/Switch.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -11,11 +11,11 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeTriggers, hostsReached, runLine } from '$lib/applets/palette';
 	import { canRun } from '$lib/applets/standing';
-	import { optionsRoute } from '$lib/applets/routes';
+	import { optionsOf } from '$lib/applets/kind';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import { whenInWords } from '$lib/utils/dateUtils';
 
-	let { job, onchanged }: { job: Applet; onchanged: () => void } = $props();
+	let { task, onchanged }: { task: Applet; onchanged: () => void } = $props();
 
 	/** How many log lines to show. A line stands for one run, or a run of the same result. */
 	const LINES = 5;
@@ -36,7 +36,7 @@
 
 	$effect(() => {
 		log = null;
-		void read(job.id);
+		void read(task.id);
 	});
 
 	const hosts = $derived(log ? hostsReached(log) : []);
@@ -45,9 +45,9 @@
 		busy = true;
 		err = null;
 		try {
-			await runApplet(job.id);
+			await runApplet(task.id);
 			onchanged();
-			await read(job.id);
+			await read(task.id);
 		} catch (e) {
 			err = `Your server didn't start it: ${e instanceof Error ? e.message : String(e)}. Try again.`;
 		} finally {
@@ -59,7 +59,7 @@
 		busy = true;
 		err = null;
 		try {
-			await patchApplet(job.id, { enabled: on });
+			await patchApplet(task.id, { enabled: on });
 			onchanged();
 		} catch (e) {
 			err = `Your server didn't save that: ${e instanceof Error ? e.message : String(e)}. Try again.`;
@@ -69,23 +69,23 @@
 	}
 
 	function openHistory() {
-		windowShellStore.openRouteBeside(optionsRoute(job.id, 'history'), job.name);
+		windowShellStore.openRouteBeside(optionsOf(task, 'history'), task.name);
 	}
 </script>
 
-<div class="job-open">
-	{#if job.description}
-		<p class="what">{job.description}</p>
+<div class="task-open">
+	{#if task.description}
+		<p class="what">{task.description}</p>
 	{/if}
 
 	<div class="fact">
 		<span class="label">When it runs</span>
-		<span class="value">{describeTriggers(job)}</span>
+		<span class="value">{describeTriggers(task)}</span>
 		<span class="acts">
-			{#if canRun(job)}
+			{#if canRun(task)}
 				<TextAction quiet onclick={runNow} disabled={busy}>Run now</TextAction>
 			{/if}
-			<Switch checked={job.enabled} label="Run it" disabled={busy} onchange={setEnabled} />
+			<Switch checked={task.enabled} label="Run it" disabled={busy} onchange={setEnabled} />
 		</span>
 	</div>
 
@@ -127,7 +127,7 @@
 </div>
 
 <style>
-	.job-open {
+	.task-open {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;

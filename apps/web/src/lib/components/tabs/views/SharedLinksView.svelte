@@ -91,7 +91,7 @@
 				? `/page/${p.producer_id}`
 				: p.producer_kind === 'chat'
 					? `/chat/${p.producer_id}`
-					: homeRoute(p.producer_id);
+					: homeRoute(p.producer_id, 'site');
 		windowShellStore.openTabFromRoute(route, { label: p.title });
 	}
 
