@@ -5,6 +5,7 @@
  */
 import type { SettingsChange } from '$lib/api/client';
 import { getThemeDisplayName, isValidTheme } from '$lib/utils/theme';
+import { GOOGLE_WORDS } from '$lib/sources/capabilities';
 
 /** Values longer than this read as "Changed" rather than being quoted. */
 const QUOTE_MAX = 40;
@@ -19,6 +20,8 @@ function capabilityOf(tool: string): string | null {
 	if (tool === 'browse' || tool.startsWith('browser_')) return 'Use your browser';
 	if (tool === 'applet') return 'Make and change sites';
 	if (tool === 'create_page' || tool === 'edit_page') return 'Write in your pages';
+	if (tool === 'email_archive' || tool === 'email_label' || tool === 'email_draft') return GOOGLE_WORDS.email.label;
+	if (tool === 'calendar_event') return GOOGLE_WORDS.calendar.label;
 	return null;
 }
 

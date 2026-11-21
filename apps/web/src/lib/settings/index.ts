@@ -96,7 +96,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'subjects', title: 'Subjects {name} never raises', section: 'assistant', kind: 'control', words: ['rules', 'avoid', 'never bring up', 'topics'], route: '/virtues/assistant' },
 
 	// What the assistant can do
-	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
+	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'mail', 'email', 'calendar', 'google', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
 
 	// Models and spending
 	{ id: 'models', title: 'Models {name} runs on', section: 'spending', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant/spending' },

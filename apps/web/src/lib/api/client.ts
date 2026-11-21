@@ -3079,7 +3079,7 @@ export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
 
 /** One thing the assistant can do, as the owner switched it (`api/capabilities.rs`). */
 export interface Capability {
-	id: 'web_search' | 'browser' | 'applets' | 'pages';
+	id: 'web_search' | 'browser' | 'applets' | 'pages' | 'email' | 'calendar';
 	on: boolean;
 }
 

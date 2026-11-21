@@ -24,7 +24,11 @@
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
+	import SwitchList from '$lib/components/settings/SwitchList.svelte';
 	import {
+		getCapabilities,
+		setCapability,
+		type Capability,
 		getLakeStreams,
 		getStreamDays,
 		listApplets,
@@ -36,6 +40,7 @@
 	import { relativeTime } from '$lib/applets/palette';
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { sourceMark } from '$lib/sources/brands';
+	import { SOURCE_CAPABILITIES } from '$lib/sources/capabilities';
 	import type { LakeStream } from '$lib/sources/streams';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
 	import { openExternal } from '$lib/tauri/bridge';
@@ -154,6 +159,13 @@
 		const ago = values.length - 1 - i;
 		return ago === 0 ? 'Today' : ago === 1 ? 'Yesterday' : `${ago} days ago`;
 	}
+
+	// ── What your assistant can do ────────────────────────────────────────
+	// This source's own switches, from the same list Settings shows.
+	const switchWords = $derived(SOURCE_CAPABILITIES[sourceId] ?? null);
+	const ownSwitches = (all: Capability[]) => all.filter((c) => switchWords && c.id in switchWords);
+	const loadSwitches = async () => ownSwitches(await getCapabilities());
+	const saveSwitch = async (id: Capability['id'], on: boolean) => ownSwitches(await setCapability(id, on));
 
 	// ── Recent runs ───────────────────────────────────────────────────────
 	const runs = $derived.by(() => {
@@ -306,6 +318,19 @@
 	{:else if source?.provides?.length}
 		<h2 class="group">What your server would read</h2>
 		<p class="lead">{source.provides.join(', ')}.</p>
+	{/if}
+
+	{#if switchWords && accounts.length > 0}
+		<div class="switches">
+			<SwitchList
+				id="source-capabilities"
+				label="What your assistant can do"
+				help="It never sends mail. Anything it changes here can be undone."
+				words={switchWords as Record<Capability['id'], { label: string; help: string }>}
+				load={loadSwitches}
+				save={saveSwitch}
+			/>
+		</div>
 	{/if}
 
 	{#if runs.length > 0}
@@ -566,6 +591,10 @@
 		stroke-width: 1.5;
 		stroke-linejoin: round;
 		stroke-linecap: round;
+	}
+
+	.switches {
+		margin-top: 40px;
 	}
 
 	.another {

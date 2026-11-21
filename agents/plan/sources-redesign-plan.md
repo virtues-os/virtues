@@ -1,7 +1,7 @@
 # Sources redesign
 
 **Status:** drawn on 2026-11-20 and liked by the owner ("This looks
-fantastic!"). He then said "lets build", and slices 1 to 3 are built on wave
+fantastic!"). He then said "lets build", and slices 1 to 4 are built on wave
 with the proposals below as written, not yet run on a server. The decisions
 at the end are still open and can change what was built.
 
@@ -162,12 +162,13 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    has", which needs a deletion scoped to one source through
    `api::deletions` and the owner proof; today Disconnect says the data
    stays.
-4. **Assistant switches per source.** Add capabilities to the table in
-   `capabilities.rs` (for example `email` for `email_archive`,
-   `email_label` and `email_draft`, and `calendar` for `calendar_event`).
-   The source page shows the switches for its own tools; Settings keeps the
-   full list. This reuses the existing enforcement and adds no second
-   mechanism.
+4. **Assistant switches per source.** Built 2026-11-20: `capabilities.rs`
+   has `email` (`email_archive`, `email_label`, `email_draft`) and
+   `calendar` (`calendar_event`), with Settings draft fields and refusal
+   wording. The Google page shows those two switches with `SwitchList`, the
+   same component and API as Settings' Tools list, which shows all six. The
+   words live in `lib/sources/capabilities.ts`. A source's switches show only
+   while one of its accounts is connected.
 5. **Device pages.** The iPhone and Mac pages, with each stream's
    permission state as the phone reports it. Muted places link to their
    place pages. The schedule shows read-only until the box holds it (the

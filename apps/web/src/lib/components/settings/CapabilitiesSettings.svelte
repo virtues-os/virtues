@@ -7,6 +7,7 @@
 	 */
 	import SwitchList from './SwitchList.svelte';
 	import { getCapabilities, setCapability, type Capability } from '$lib/api/client';
+	import { GOOGLE_WORDS } from '$lib/sources/capabilities';
 
 	let { assistantName }: { assistantName: string } = $props();
 
@@ -15,6 +16,8 @@
 		browser: { label: 'Use your browser', help: 'Browses the web in the Virtues app on your Mac, while the app is open.' },
 		applets: { label: 'Make and change sites', help: 'Builds sites, including ones that run on their own, and edits them. Sites you already have keep running.' },
 		pages: { label: 'Write in your pages', help: 'Creates pages and edits them when you ask.' },
+		email: GOOGLE_WORDS.email,
+		calendar: GOOGLE_WORDS.calendar,
 	};
 </script>
 
