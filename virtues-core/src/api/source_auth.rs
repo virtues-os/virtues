@@ -170,26 +170,39 @@ pub async fn oauth_start_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    // Google: when virtues-api offers its own sign-in, use it. The browser
-    // comes back to the same callback, marked `via=api`, and the credential
-    // then holds no Google token (`api::google_api`). Otherwise the direct
-    // sign-in below runs, as it does for every other source.
-    if source_id == "google" {
+    // Google and Outlook: when virtues-api offers its own sign-in, use it.
+    // The browser comes back to the same callback, marked `via=api`, and the
+    // credential then holds no vendor token (`api::vendor_api`). Otherwise a
+    // Google sign-in runs the direct one below, as every other source does.
+    // Outlook has no direct sign-in.
+    if super::vendor_api::serves(&source_id) {
         if let Some(return_url) = req.return_url.as_deref().filter(|u| u.starts_with("http")) {
             let sep = if return_url.contains('?') { '&' } else { '?' };
             let redirect_uri = format!("{return_url}{sep}via=api&state={}", urlencoding::encode(&signed_state));
             let reconnecting = match &req.credential_id {
-                Some(id) => match api_connection_of(state.db.pool(), id).await {
+                Some(id) => match api_connection_of(state.db.pool(), id, &source_id).await {
                     Ok(connection) => connection,
                     Err(e) => return auth_error_response(e.into()),
                 },
                 None => None,
             };
             if let Some(redirect_url) =
-                super::google_api::sign_in_link(state.db.pool(), &redirect_uri, reconnecting.as_deref()).await
+                super::vendor_api::sign_in_link(state.db.pool(), &source_id, &redirect_uri, reconnecting.as_deref()).await
             {
                 return (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response();
             }
+        }
+        if super::vendor_api::only_through_api(&source_id) {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "{} can't be connected right now. Check that this server is linked to your Virtues account, then try again.",
+                        source.display_name
+                    )
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -318,7 +331,7 @@ pub struct OauthCallbackQuery {
     #[serde(default)]
     pub next: Option<String>,
     /// `"api"` when the sign-in was made through virtues-api
-    /// (`api::google_api`): there is no exchange token, and the box asks
+    /// (`api::vendor_api`): there is no exchange token, and the box asks
     /// virtues-api what was connected.
     #[serde(default)]
     pub via: Option<String>,
@@ -345,10 +358,10 @@ pub async fn oauth_callback_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    if q.via.as_deref() == Some("api") && claims.source_id == "google" {
+    if q.via.as_deref() == Some("api") && super::vendor_api::serves(&claims.source_id) {
         // The sign-in went through virtues-api. Store what it connected; a
         // sign-in the owner backed out of connected nothing, which is fine.
-        if let Err(e) = store_api_connections(pool, claims.existing_credential_id.as_deref()).await {
+        if let Err(e) = store_api_connections(pool, &claims.source_id, claims.existing_credential_id.as_deref()).await {
             return auth_error_response(e);
         }
     } else {
@@ -448,18 +461,19 @@ pub async fn oauth_callback_handler(
     (StatusCode::FOUND, headers).into_response()
 }
 
-/// The virtues-api connection behind a Google credential, if it has one.
-async fn api_connection_of(pool: &PgPool, credential_id: &str) -> sqlx::Result<Option<String>> {
+/// The virtues-api connection behind a credential of this source, if it has one.
+async fn api_connection_of(pool: &PgPool, credential_id: &str, source_id: &str) -> sqlx::Result<Option<String>> {
     let metadata: Option<serde_json::Value> =
-        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1 AND kind = 'source' AND key = 'google'")
+        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1 AND kind = 'source' AND key = $2")
             .bind(credential_id)
+            .bind(source_id)
             .fetch_optional(pool)
             .await?;
-    Ok(metadata.as_ref().and_then(super::google_api::connection_id).map(String::from))
+    Ok(metadata.as_ref().and_then(super::vendor_api::connection_id).map(String::from))
 }
 
-/// Store what a Google sign-in through virtues-api connected, and return how
-/// many credentials it added or repaired.
+/// Store what a sign-in through virtues-api connected, and return how many
+/// credentials it added or repaired.
 ///
 /// virtues-api lists this account's connections. One no credential names yet
 /// is new: it becomes a credential that holds no Google token, only the
@@ -469,21 +483,24 @@ async fn api_connection_of(pool: &PgPool, credential_id: &str) -> sqlx::Result<O
 /// one. Either way a credential that held Google's own tokens moves over
 /// with its applets and sync cursors. A connection a credential already names is marked active
 /// again, which is what reconnecting one that had ended asks for.
-async fn store_api_connections(pool: &PgPool, reconnecting: Option<&str>) -> virtues_helpers::auth::Result<usize> {
-    let connections = super::google_api::connections(pool).await.map_err(|e| AuthError::Proxy(e.to_string()))?;
-    store_connections(pool, reconnecting, &connections).await
+async fn store_api_connections(pool: &PgPool, source_id: &str, reconnecting: Option<&str>) -> virtues_helpers::auth::Result<usize> {
+    let connections =
+        super::vendor_api::connections(pool, source_id).await.map_err(|e| AuthError::Proxy(e.to_string()))?;
+    store_connections(pool, source_id, reconnecting, &connections).await
 }
 
 /// [`store_api_connections`], given what virtues-api listed.
 async fn store_connections(
     pool: &PgPool,
+    source_id: &str,
     reconnecting: Option<&str>,
-    connections: &[super::google_api::Connection],
+    connections: &[super::vendor_api::Connection],
 ) -> virtues_helpers::auth::Result<usize> {
     let known: Vec<(String, Option<String>, String, Option<String>)> = sqlx::query_as(
         "SELECT id, metadata->>'api_connection_id', status, metadata->>'email' FROM credentials \
-          WHERE kind = 'source' AND key = 'google' AND status <> 'revoked'",
+          WHERE kind = 'source' AND key = $1 AND status <> 'revoked'",
     )
+    .bind(source_id)
     .fetch_all(pool)
     .await?;
     let mut stored = 0;
@@ -513,17 +530,17 @@ async fn store_connections(
             .filter(|e| c.email.as_deref().is_some_and(|new| new.eq_ignore_ascii_case(e)))
             .or(c.email.as_deref());
         let grant = ProxyExchangeResponse {
-            // No Google token is kept here; virtues-api reaches Google.
+            // No vendor token is kept here; virtues-api reaches the vendor.
             secrets: serde_json::json!({}),
             metadata: serde_json::json!({
                 "email": email,
-                super::google_api::CONNECTION_KEY: c.id,
+                super::vendor_api::CONNECTION_KEY: c.id,
                 "granted_scopes": c.scope,
             }),
             expires_in: None,
             scopes: None,
         };
-        store_grant(pool, "google", target, &grant).await?;
+        store_grant(pool, source_id, target, &grant).await?;
         stored += 1;
     }
     Ok(stored)
@@ -1141,8 +1158,8 @@ mod tests {
             .unwrap();
     }
 
-    fn api_connection(id: &str, email: &str, status: &str) -> crate::api::google_api::Connection {
-        crate::api::google_api::Connection {
+    fn api_connection(id: &str, email: &str, status: &str) -> crate::api::vendor_api::Connection {
+        crate::api::vendor_api::Connection {
             id: id.into(),
             email: Some(email.into()),
             status: Some(status.into()),
@@ -1164,7 +1181,7 @@ mod tests {
     async fn a_connection_from_virtues_api_becomes_a_credential_once(pool: PgPool) {
         ensure_test_key();
         let listed = [api_connection("c-1", "nick@example.com", "active"), api_connection("c-2", "david@example.com", "needs_reauth")];
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 1, "only the active one");
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 1, "only the active one");
         assert_eq!(source_rows(&pool, "google").await, 1);
         let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
             .fetch_one(&pool)
@@ -1174,8 +1191,28 @@ mod tests {
         let secrets = read_credential_secrets(&pool, &id).await.unwrap();
         assert!(secrets.get("access_token").is_none(), "no Google token is kept: {secrets}");
 
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 0);
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 0);
         assert_eq!(source_rows(&pool, "google").await, 1);
+    }
+
+    /// An Outlook sign-in through virtues-api becomes an Outlook credential,
+    /// and a Google credential for the same address is left alone.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_outlook_connection_is_stored_under_outlook(pool: PgPool) {
+        ensure_test_key();
+        let google = [api_connection("c-g", "nick@example.com", "active")];
+        store_connections(&pool, "google", None, &google).await.unwrap();
+        let outlook = [api_connection("c-o", "nick@example.com", "active")];
+        assert_eq!(store_connections(&pool, "outlook", None, &outlook).await.unwrap(), 1);
+        assert_eq!(source_rows(&pool, "google").await, 1);
+        assert_eq!(source_rows(&pool, "outlook").await, 1);
+        let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'outlook'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-o".to_string()), true));
+        assert_eq!(api_connection_of(&pool, &id, "outlook").await.unwrap().as_deref(), Some("c-o"));
+        assert_eq!(api_connection_of(&pool, &id, "google").await.unwrap(), None, "not a Google credential");
     }
 
     /// Signing in again to an address that already has a credential holding
@@ -1186,7 +1223,7 @@ mod tests {
         ensure_test_key();
         let direct = store_grant(&pool, "google", None, &email_grant("at-direct", Some("nick@example.com"))).await.unwrap();
         let listed = [api_connection("c-1", "Nick@Example.com", "active"), api_connection("c-2", "david@example.com", "active")];
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 2);
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 2);
         assert_eq!(source_rows(&pool, "google").await, 2);
         assert_eq!(api_row(&pool, &direct).await, ("active".to_string(), Some("c-1".to_string()), true));
         let secrets = read_credential_secrets(&pool, &direct).await.unwrap();
@@ -1199,7 +1236,7 @@ mod tests {
     async fn reconnecting_an_ended_connection_revives_its_credential(pool: PgPool) {
         ensure_test_key();
         let listed = [api_connection("c-1", "nick@example.com", "active")];
-        store_connections(&pool, None, &listed).await.unwrap();
+        store_connections(&pool, "google", None, &listed).await.unwrap();
         let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
             .fetch_one(&pool)
             .await
@@ -1208,7 +1245,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store_connections(&pool, Some(&id), &listed).await.unwrap(), 1);
+        assert_eq!(store_connections(&pool, "google", Some(&id), &listed).await.unwrap(), 1);
         assert_eq!(source_rows(&pool, "google").await, 1);
         assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-1".to_string()), true));
     }

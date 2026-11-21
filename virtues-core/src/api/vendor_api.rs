@@ -1,18 +1,19 @@
-//! Google sign-ins that go through virtues-api.
+//! Google and Outlook sign-ins that go through virtues-api.
 //!
-//! A Google account is connected in one of two ways. The older way keeps
-//! Google's own tokens in the credential, and the box calls Google directly.
-//! The other way is used when virtues-api offers it: the sign-in is made
-//! through a verified Google app that virtues-api reaches (its
-//! `routes/google.rs` says which and why), the credential holds no Google
-//! token at all, and every Google call goes to a virtues-api route that
-//! answers as Google would.
+//! The sign-in is made through a vendor's verified app that virtues-api
+//! reaches (its `routes/vendor.rs` says which and why), the credential holds
+//! no vendor token at all, and every call goes to a virtues-api route that
+//! answers as the vendor's API would.
+//!
+//! A Google account can also be connected the older way, which keeps
+//! Google's own tokens in the credential so the box calls Google directly.
+//! Outlook has only the way through virtues-api.
 //!
 //! This module is the box's side of that. A credential made this way carries
-//! `api_connection_id` in its metadata; [`Route`] turns either kind of
-//! credential into where to send a Gmail or Calendar call and what to send as
-//! the bearer, so the sync applets and the assistant's Google tools make the
-//! same requests either way.
+//! `api_connection_id` in its metadata. For Google, [`Route`] turns either
+//! kind of credential into where to send a Gmail or Calendar call and what to
+//! send as the bearer, so the sync applets and the assistant's Google tools
+//! make the same requests either way.
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -20,6 +21,21 @@ use sqlx::PgPool;
 
 /// The metadata key that marks a credential as one virtues-api serves.
 pub const CONNECTION_KEY: &str = "api_connection_id";
+
+/// The sources whose sign-in virtues-api can make. Each name is also the
+/// route's segment there (`/v1/<source>/...`).
+pub const SOURCES: [&str; 2] = ["google", "outlook"];
+
+/// Whether virtues-api can make this source's sign-in.
+pub fn serves(source_id: &str) -> bool {
+    SOURCES.contains(&source_id)
+}
+
+/// Whether a source can only be signed in through virtues-api. A Google
+/// sign-in falls back to the direct one when virtues-api offers none.
+pub fn only_through_api(source_id: &str) -> bool {
+    source_id == "outlook"
+}
 
 const GMAIL_DIRECT: &str = "https://gmail.googleapis.com";
 const CALENDAR_DIRECT: &str = "https://www.googleapis.com";
@@ -44,7 +60,7 @@ impl Route {
 
     /// The route for a connection virtues-api serves.
     fn through_api(box_key: &str, api_url: &str, connection_id: &str) -> Route {
-        let base = api_base(api_url, connection_id);
+        let base = api_base(api_url, "google", connection_id);
         Route::at(box_key, &base, &base)
     }
 
@@ -57,9 +73,9 @@ impl Route {
     }
 }
 
-/// The virtues-api address that stands in for Google's hosts for one connection.
-fn api_base(api_url: &str, connection_id: &str) -> String {
-    format!("{}/v1/google/c/{}", api_url.trim_end_matches('/'), urlencoding::encode(connection_id))
+/// The virtues-api address that stands in for the vendor's hosts for one connection.
+fn api_base(api_url: &str, source_id: &str, connection_id: &str) -> String {
+    format!("{}/v1/{source_id}/c/{}", api_url.trim_end_matches('/'), urlencoding::encode(connection_id))
 }
 
 /// The connection id of a credential virtues-api serves, from its metadata.
@@ -74,7 +90,7 @@ async fn box_key(pool: &PgPool) -> Result<String> {
         .ok_or_else(|| anyhow!("this server is not linked to a Virtues account"))
 }
 
-/// Where a credential's Google calls go, from its metadata and its secrets.
+/// Where a Google credential's calls go, from its metadata and its secrets.
 pub async fn route(pool: &PgPool, metadata: &Value, secrets: &Value) -> Result<Route> {
     if let Some(id) = connection_id(metadata) {
         return Ok(Route::through_api(&box_key(pool).await?, &crate::virtues_api::api_url(), id));
@@ -87,14 +103,17 @@ pub async fn route(pool: &PgPool, metadata: &Value, secrets: &Value) -> Result<R
 }
 
 /// The secrets a sync applet is given for a credential virtues-api serves:
-/// the bearer to send and the address that stands in for Google's hosts.
+/// the bearer to send and the address that stands in for the vendor's hosts.
 /// `None` for a credential that holds Google's own tokens, which an applet
-/// is given as they are.
-pub async fn applet_secrets(pool: &PgPool, metadata: &Value) -> Result<Option<Value>> {
+/// is given as they are, and for a source virtues-api does not serve.
+pub async fn applet_secrets(pool: &PgPool, source_id: &str, metadata: &Value) -> Result<Option<Value>> {
+    if !serves(source_id) {
+        return Ok(None);
+    }
     let Some(id) = connection_id(metadata) else { return Ok(None) };
     Ok(Some(json!({
         "access_token": box_key(pool).await?,
-        "api_base": api_base(&crate::virtues_api::api_url(), id),
+        "api_base": api_base(&crate::virtues_api::api_url(), source_id, id),
     })))
 }
 
@@ -125,52 +144,53 @@ async fn send(pool: &PgPool, method: reqwest::Method, path: &str, body: Option<&
 /// A sign-in link from virtues-api, for a new account or (with `reconnecting`,
 /// a connection id) to repair one. `None` when virtues-api does not offer
 /// this: it has no such route, the route is switched off, or this box has no
-/// key or no plan for it. The caller then starts the direct sign-in.
-pub async fn sign_in_link(pool: &PgPool, redirect_uri: &str, reconnecting: Option<&str>) -> Option<String> {
+/// key or no plan for it. For Google the caller then starts the direct
+/// sign-in; Outlook has none.
+pub async fn sign_in_link(pool: &PgPool, source_id: &str, redirect_uri: &str, reconnecting: Option<&str>) -> Option<String> {
     let path = match reconnecting {
-        Some(id) => format!("/v1/google/connections/{}/reconnect", urlencoding::encode(id)),
-        None => "/v1/google/connect".to_string(),
+        Some(id) => format!("/v1/{source_id}/connections/{}/reconnect", urlencoding::encode(id)),
+        None => format!("/v1/{source_id}/connect"),
     };
     match send(pool, reqwest::Method::POST, &path, Some(&json!({ "redirect_uri": redirect_uri }))).await {
         Ok((200, body)) => body.get("url").and_then(|v| v.as_str()).map(String::from),
         Ok((status, _)) => {
-            tracing::info!(status, "virtues-api offers no Google sign-in; using the direct one");
+            tracing::info!(status, source_id, "virtues-api offers no sign-in for this source");
             None
         }
         Err(e) => {
-            tracing::info!(error = %e, "could not ask virtues-api for a Google sign-in; using the direct one");
+            tracing::info!(error = %e, source_id, "could not ask virtues-api for a sign-in");
             None
         }
     }
 }
 
-/// This account's connections at virtues-api.
-pub async fn connections(pool: &PgPool) -> Result<Vec<Connection>> {
-    let (status, body) = send(pool, reqwest::Method::GET, "/v1/google/connections", None).await?;
+/// This account's connections to one source at virtues-api.
+pub async fn connections(pool: &PgPool, source_id: &str) -> Result<Vec<Connection>> {
+    let (status, body) = send(pool, reqwest::Method::GET, &format!("/v1/{source_id}/connections"), None).await?;
     if status != 200 {
-        return Err(anyhow!("virtues-api answered {status} for the Google connections"));
+        return Err(anyhow!("virtues-api answered {status} for the {source_id} connections"));
     }
     Ok(serde_json::from_value(body.get("connections").cloned().unwrap_or_else(|| json!([])))?)
 }
 
 /// After a sync applet fails: if the credential is one virtues-api serves and
-/// its Google sign-in has ended there, mark it `reauth_required`. The box
-/// holds no token for such a credential, so nothing else on it can notice.
+/// its sign-in has ended there, mark it `reauth_required`. The box holds no
+/// token for such a credential, so nothing else on it can notice.
 /// `credentials` is what the applet was given (`id`, `source_id`, `metadata`).
 pub async fn mark_if_ended(pool: &PgPool, credentials: &Value) {
-    if credentials.get("source_id").and_then(|v| v.as_str()) != Some("google") {
+    let Some(source_id) = credentials.get("source_id").and_then(|v| v.as_str()).filter(|s| serves(s)) else {
         return;
-    }
+    };
     let (Some(credential_id), Some(connection)) = (
         credentials.get("id").and_then(|v| v.as_str()),
         credentials.get("metadata").and_then(connection_id),
     ) else {
         return;
     };
-    let listed = match connections(pool).await {
+    let listed = match connections(pool, source_id).await {
         Ok(l) => l,
         Err(e) => {
-            tracing::warn!(credential_id, error = %e, "could not ask virtues-api whether the Google sign-in ended");
+            tracing::warn!(credential_id, source_id, error = %e, "could not ask virtues-api whether the sign-in ended");
             return;
         }
     };
@@ -181,12 +201,12 @@ pub async fn mark_if_ended(pool: &PgPool, credentials: &Value) {
         pool,
         credential_id,
         virtues_helpers::auth::CredentialStatus::ReauthRequired,
-        Some("the Google sign-in ended"),
+        Some("the sign-in ended"),
     )
     .await
     {
-        Ok(()) => tracing::info!(credential_id, "the Google sign-in ended; marked reauth_required"),
-        Err(e) => tracing::warn!(credential_id, error = %e, "could not mark the Google sign-in as ended"),
+        Ok(()) => tracing::info!(credential_id, source_id, "the sign-in ended; marked reauth_required"),
+        Err(e) => tracing::warn!(credential_id, source_id, error = %e, "could not mark the sign-in as ended"),
     }
 }
 
@@ -199,13 +219,13 @@ fn sign_in_ended(listed: &[Connection], connection: &str) -> bool {
     }
 }
 
-/// Remove a connection at virtues-api, which removes the Google grant where
-/// it is kept. A connection already gone is the outcome asked for.
-pub async fn disconnect(pool: &PgPool, connection_id: &str) -> Result<()> {
-    let path = format!("/v1/google/connections/{}", urlencoding::encode(connection_id));
+/// Remove a connection at virtues-api, which removes the vendor's grant
+/// where it is kept. A connection already gone is the outcome asked for.
+pub async fn disconnect(pool: &PgPool, source_id: &str, connection_id: &str) -> Result<()> {
+    let path = format!("/v1/{source_id}/connections/{}", urlencoding::encode(connection_id));
     match send(pool, reqwest::Method::DELETE, &path, None).await? {
         (200..=299, _) | (404, _) => Ok(()),
-        (status, _) => Err(anyhow!("virtues-api answered {status} when removing the Google connection")),
+        (status, _) => Err(anyhow!("virtues-api answered {status} when removing the {source_id} connection")),
     }
 }
 
@@ -227,6 +247,13 @@ mod tests {
         assert_eq!(r.token, "box-key");
         assert_eq!(r.gmail, "https://api.example.com/v1/google/c/c-1/gmail/v1/users/me");
         assert_eq!(r.calendar, "https://api.example.com/v1/google/c/c-1/calendar/v3");
+    }
+
+    #[test]
+    fn an_outlook_applet_is_sent_to_its_own_route() {
+        assert_eq!(api_base("https://api.example.com/", "outlook", "c 1"), "https://api.example.com/v1/outlook/c/c%201");
+        assert!(serves("outlook") && serves("google") && !serves("notion"));
+        assert!(only_through_api("outlook") && !only_through_api("google"));
     }
 
     #[test]

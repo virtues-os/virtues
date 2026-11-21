@@ -36,6 +36,17 @@ icon = "ri:google-fill"
 description = "Your mail and calendar."
 auth = { kind = "via_proxy", start_path = "/google/start" }
 
+# Signed in only through virtues-api, which reaches Microsoft through a
+# verified app we do not run yet (`api::vendor_api`). The sign-in asks to read
+# mail and calendars only. There is no direct sign-in, so `start_path` is
+# never sent to the OAuth proxy.
+[[source]]
+id = "outlook"
+display_name = "Outlook"
+icon = "ri:mail-line"
+description = "Your mail and calendar."
+auth = { kind = "via_proxy", start_path = "/outlook/start" }
+
 [[source]]
 id = "notion"
 display_name = "Notion"

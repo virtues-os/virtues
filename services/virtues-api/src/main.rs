@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
         .merge(routes::push::router())
         // Gmail and Calendar for accounts connected through Truto's
         // verified Google app: the box calls here, this calls Truto.
-        .merge(routes::google::router())
+        .merge(routes::vendor::router())
         .merge(routes::ai::router())
         // Middleware. The span is at info so a failed request's log line
         // names its route; production filters out debug, where the default

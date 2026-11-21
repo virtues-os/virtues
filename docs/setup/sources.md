@@ -1,6 +1,6 @@
 ---
 title: How sources work
-description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Notion, Strava, banks, GitHub stars, X bookmarks, Instagram saves and past chats - and the tools your assistant can use, from the Sources page.
+description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, GitHub stars, X bookmarks, Instagram saves and past chats - and the tools your assistant can use, from the Sources page.
 updated: 2026-11-21
 ---
 
@@ -36,6 +36,8 @@ yet. Your iPhone sends more than any account.
   Virtues desktop app. What it may read depends on the permissions you grant
   in System Settings on that Mac.
 - **Google:** your mail and calendar.
+- **Outlook:** your mail and calendar, from an Outlook.com or Microsoft 365
+  account. Your server reads them and never changes them.
 - **Notion:** your pages and databases.
 - **Strava:** your runs, rides and swims.
 - **Banks:** spending, balances and investments, through Plaid.
@@ -47,6 +49,17 @@ yet. Your iPhone sends more than any account.
   in a window. In a browser you paste its cookies.
 - **Past chats:** your conversations from a Claude or ChatGPT export. A newer
   export adds only what is new.
+
+## Where Google and Outlook mail travels
+
+Google and Microsoft each ask an app that reads mail to pass their own
+review, and Virtues has not finished either yet. Until it has, an Outlook
+account, and a Google account on a server linked to a Virtues account, are
+signed in through a sign-in service that has passed them. Each request and
+answer for that account goes from your server through `api.virtues.com` and
+that service to Google or Microsoft, and back. Neither stores your mail or
+events, and the service keeps the sign-in. Outlook is read only: your server
+never changes your Outlook mail or calendar.
 
 ## Tools your assistant can use
 

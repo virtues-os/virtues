@@ -226,16 +226,17 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
 /// `user_revoked` when the owner disconnects, `subscription_ended` when the
 /// box releases a source after its subscription lapsed (`credentials::lapse`).
 pub async fn revoke_credential_because(db: &PgPool, credential_id: &str, reason: &str) -> Result<()> {
-    // A Google sign-in made through virtues-api keeps its grant there. Read
-    // which connection it is before the row is emptied, and remove it there
-    // once the row is revoked.
-    let api_connection: Option<String> = sqlx::query_scalar(
-        "SELECT metadata->>'api_connection_id' FROM credentials WHERE id = $1 AND kind = 'source' AND key = 'google'",
+    // A sign-in made through virtues-api keeps its grant there. Read which
+    // connection it is before the row is emptied, and remove it there once
+    // the row is revoked.
+    let api_connection: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT key, metadata->>'api_connection_id' FROM credentials \
+          WHERE id = $1 AND kind = 'source' AND key = ANY($2)",
     )
     .bind(credential_id)
+    .bind(&super::vendor_api::SOURCES[..])
     .fetch_optional(db)
-    .await?
-    .flatten();
+    .await?;
     // A grant the OAuth proxy issued may be one the provider bills for while
     // it exists (a linked bank). Read it before the row is emptied so the
     // proxy can release it below.
@@ -278,9 +279,9 @@ pub async fn revoke_credential_because(db: &PgPool, credential_id: &str, reason:
 
     // The box has let go either way. If virtues-api cannot be reached now the
     // grant stays there until it is removed by hand, so say so in the log.
-    if let Some(connection) = api_connection.filter(|c| !c.is_empty()) {
-        if let Err(e) = super::google_api::disconnect(db, &connection).await {
-            tracing::warn!(credential_id, error = %e, "revoked here, but virtues-api did not remove the Google connection");
+    if let Some((source_id, Some(connection))) = api_connection.filter(|(_, c)| c.as_deref().is_some_and(|c| !c.is_empty())) {
+        if let Err(e) = super::vendor_api::disconnect(db, &source_id, &connection).await {
+            tracing::warn!(credential_id, source_id, error = %e, "revoked here, but virtues-api did not remove the connection");
         }
     }
     if let Some((source_id, secrets)) = proxy_grant {

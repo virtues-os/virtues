@@ -72,6 +72,16 @@ path = "google_calendar_sync/main.rs"
 name = "google_gmail_sync"
 path = "google_gmail_sync/main.rs"
 
+# ── Outlook syncs (Microsoft Graph through virtues-api) ─────────────────────
+
+[[bin]]
+name = "outlook_calendar_sync"
+path = "outlook_calendar_sync/main.rs"
+
+[[bin]]
+name = "outlook_mail_sync"
+path = "outlook_mail_sync/main.rs"
+
 # ── Weather (Open-Meteo, no auth) ───────────────────────────────────────────
 
 [[bin]]

@@ -1,8 +1,10 @@
 # More sources
 
-**Status:** proposed 2026-11-21. Nothing is built. The owner picked the
-sources below; how each one connects comes from a read of each vendor's
-public docs on 2026-11-21 and has not been tried against a real account.
+**Status:** proposed 2026-11-21. Slice 1's Outlook half is built on wave
+(2026-11-21) and has not run against a real account; Google Contacts is
+waiting on decision 6. The owner picked the sources below; how each one
+connects comes from a read of each vendor's public docs on 2026-11-21 and has
+not been tried against a real account.
 
 The owner, on 2026-11-21: "lets do favorites on photos from iphone since ALL
 photos might be way too much right? but all photo metadata? thoughts? then
@@ -81,8 +83,27 @@ photo, and a picture for favorites only.**
 
 1. **Outlook and Google Contacts.** Outlook Mail and Calendar through
    Truto, routed box to api.virtues.com to Truto as Google is, writing the
-   existing email and calendar records. Contacts: first test whether one
-   more scope on the existing Google connection works through Truto.
+   existing email and calendar records.
+   - **Built on wave:** virtues-api's `routes/vendor.rs` serves Google and
+     Outlook from one table (`vendor_connections`, migration 0017), with a
+     read-only allow-list for Outlook (`/me`, folder message deltas,
+     calendars, calendar views). Truto's `outlook` and `outlookcalendar`
+     integrations share one Microsoft app on `graph.microsoft.com`, so one
+     connection through `outlook` asks for `Mail.Read` and `Calendars.Read`
+     together. The box's `api::vendor_api` routes both sources; the
+     `outlook-mail-sync` and `outlook-calendar-sync` applets write the
+     existing email and calendar records with `source_provider = 'outlook'`.
+   - **Before it can be used:** install the `outlook` integration in Truto's
+     Production environment (it is in neither environment today), deploy
+     virtues-api, ship the box side, then sign in a real Outlook.com and a
+     real Microsoft 365 account. Untested: whether Truto forwards the
+     `Prefer` header (the applets cope without it), what Truto records as the
+     account's address, and whether a work tenant lets a person consent.
+   - **Contacts:** one more scope on the existing Google connection does not
+     work. Truto's custom call is tied to the integration's base address,
+     `www.googleapis.com` for the Google connection, and Google serves the
+     People API only at `people.googleapis.com` (checked 2026-11-21). See
+     decision 6.
 2. **Meeting notes: Fathom, Fireflies.ai, Granola.** Three `api_key`
    sources with polling syncs. Decide where a meeting's transcript lives
    (decision 3).
@@ -113,3 +134,10 @@ Open, each needs the owner's words:
    proposed, or favorites only.
 5. **Spotify live plays:** import only, or also let someone paste their own
    Spotify app's keys for the 50 most recent plays between imports.
+6. **Google Contacts:** a second Truto connection through its
+   `googlecontacts` integration (a second Google sign-in and a second
+   per-account fee), a custom resource on our Truto environment's Google
+   integration that points at `people.googleapis.com` (no second sign-in,
+   needs testing on a real account), or leave contacts to the iPhone, which
+   already sends the contacts on the phone, Google's included when the phone
+   syncs them.

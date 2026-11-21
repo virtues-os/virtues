@@ -16,6 +16,7 @@ import siGithub from '@iconify-icons/simple-icons/github';
 import siGoogle from '@iconify-icons/simple-icons/google';
 import siInstagram from '@iconify-icons/simple-icons/instagram';
 import siLinear from '@iconify-icons/simple-icons/linear';
+import siOutlook from '@iconify-icons/simple-icons/microsoftoutlook';
 import siStrava from '@iconify-icons/simple-icons/strava';
 import siTodoist from '@iconify-icons/simple-icons/todoist';
 import siX from '@iconify-icons/simple-icons/x';
@@ -24,6 +25,7 @@ addIcon('simple-icons:github', siGithub);
 addIcon('simple-icons:google', siGoogle);
 addIcon('simple-icons:instagram', siInstagram);
 addIcon('simple-icons:linear', siLinear);
+addIcon('simple-icons:microsoftoutlook', siOutlook);
 addIcon('simple-icons:strava', siStrava);
 addIcon('simple-icons:todoist', siTodoist);
 addIcon('simple-icons:x', siX);
@@ -42,6 +44,7 @@ const SOURCE_MARKS: Record<string, Mark> = {
 	google: { icon: 'simple-icons:google', color: '#4285F4' },
 	instagram: { icon: 'simple-icons:instagram', color: '#E4405F' },
 	notion: { icon: 'simple-icons:notion' },
+	outlook: { icon: 'simple-icons:microsoftoutlook', color: '#0078D4' },
 	strava: { icon: 'simple-icons:strava', color: '#FC4C02' },
 	x: { icon: 'simple-icons:x' }
 };

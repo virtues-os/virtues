@@ -114,6 +114,165 @@ pub fn google_hosts(input: &AppletInput) -> GoogleHosts {
     }
 }
 
+/// The Microsoft Graph root an Outlook applet calls: `{secrets.api_base}/v1.0`.
+///
+/// Outlook connects only through virtues-api, which answers at `api_base`
+/// exactly as Graph does, so there is no Microsoft host to fall back to. A
+/// credential without `api_base` is an error.
+pub fn outlook_graph(input: &AppletInput) -> Result<String> {
+    let base = secret(input, "api_base")?.trim().trim_end_matches('/');
+    if base.is_empty() {
+        anyhow::bail!("credentials have an empty secrets.api_base; reconnect Outlook");
+    }
+    Ok(format!("{base}/v1.0"))
+}
+
+/// The request a Graph paging link (`@odata.nextLink`, `@odata.deltaLink`)
+/// names, rebuilt under `graph` (from [`outlook_graph`]).
+///
+/// Graph returns absolute `https://graph.microsoft.com/v1.0/...` links, often
+/// with keys in OData's `segment('X')` form, such as `mailFolders('inbox')`.
+/// virtues-api forwards only plain `segment/X` paths, so each key is moved
+/// into its own path segment. The query string, which carries Graph's paging
+/// tokens, is kept byte for byte. Only the path after `/v1.0/` is used, so the
+/// token is never sent to whatever host a link names.
+pub fn graph_link(graph: &str, link: &str) -> Result<String> {
+    let (path, query) = match link.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (link, None),
+    };
+    let at = path.find("/v1.0/").with_context(|| format!("not a Graph v1.0 link: {link}"))?;
+    let rest = &path[at + "/v1.0/".len()..];
+    let segments: Vec<String> = rest.split('/').filter(|s| !s.is_empty()).map(key_segment).collect();
+    let mut out = format!("{}/{}", graph.trim_end_matches('/'), segments.join("/"));
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(q);
+    }
+    Ok(out)
+}
+
+/// `name('key')`, `name(%27key%27)` or `name(key)` as `name/key`; any other
+/// segment unchanged.
+fn key_segment(seg: &str) -> String {
+    let Some(open) = seg.find('(') else { return seg.to_string() };
+    if open == 0 || !seg.ends_with(')') {
+        return seg.to_string();
+    }
+    let key = &seg[open + 1..seg.len() - 1];
+    let key = key
+        .strip_prefix('\'')
+        .and_then(|k| k.strip_suffix('\''))
+        .or_else(|| key.strip_prefix("%27").and_then(|k| k.strip_suffix("%27")))
+        .unwrap_or(key);
+    format!("{}/{key}", &seg[..open])
+}
+
+/// A non-2xx answer from Graph, or from virtues-api standing in for it.
+#[derive(Debug)]
+pub struct GraphError {
+    pub status: u16,
+    /// Graph's `error.code`, or virtues-api's top-level `code`.
+    pub code: Option<String>,
+    pub message: String,
+}
+
+impl GraphError {
+    /// Parse an error body. Graph sends `{"error":{"code","message"}}`;
+    /// virtues-api sends its own refusals as `{"code","message"}`.
+    pub fn from_body(status: u16, body: &str) -> GraphError {
+        let json: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+        let field = |k: &str| {
+            json.get("error")
+                .and_then(|e| e.get(k))
+                .or_else(|| json.get(k))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        };
+        let message = field("message").unwrap_or_else(|| body.chars().take(300).collect());
+        GraphError { status, code: field("code"), message }
+    }
+
+    /// The Outlook sign-in ended. Retrying cannot fix it; the owner has to
+    /// reconnect.
+    pub fn is_reauth(&self) -> bool {
+        self.status == 401 && self.code.as_deref() == Some("reauth_required")
+    }
+}
+
+impl std::fmt::Display for GraphError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.code {
+            Some(code) => write!(f, "Graph answered {} {code}: {}", self.status, self.message),
+            None => write!(f, "Graph answered {}: {}", self.status, self.message),
+        }
+    }
+}
+
+impl std::error::Error for GraphError {}
+
+/// The [`GraphError`] in an error's chain, if one is there.
+pub fn graph_error(err: &anyhow::Error) -> Option<&GraphError> {
+    err.chain().find_map(|c| c.downcast_ref::<GraphError>())
+}
+
+/// How many times one Graph request waits out a "too many requests" answer.
+const GRAPH_RATE_LIMIT_TRIES: u32 = 4;
+
+/// GET a Graph URL and return the JSON body. `prefer` is sent as the `Prefer`
+/// header. A 429 or 503 is waited out a few times, as `Retry-After` asks. Any
+/// other non-2xx is returned as a [`GraphError`], so a caller can act on the
+/// status or code.
+pub async fn graph_get(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+    prefer: Option<&str>,
+) -> Result<serde_json::Value> {
+    let mut tries = 0;
+    loop {
+        let mut req = client.get(url).bearer_auth(token);
+        if let Some(p) = prefer {
+            req = req.header("Prefer", p);
+        }
+        let resp = req.send().await.context("Graph request failed")?;
+        let status = resp.status();
+        if status.is_success() {
+            return resp.json().await.context("Graph answer was not JSON");
+        }
+        tries += 1;
+        let busy = status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::SERVICE_UNAVAILABLE;
+        if busy && tries < GRAPH_RATE_LIMIT_TRIES {
+            tokio::time::sleep(rate_limit_wait(resp.headers().get(reqwest::header::RETRY_AFTER))).await;
+            continue;
+        }
+        // The body only explains the failure; one that cannot be read leaves
+        // the status to say what happened.
+        let body = resp.text().await.unwrap_or_default();
+        let err = GraphError::from_body(status.as_u16(), &body);
+        if err.is_reauth() {
+            return Err(anyhow::Error::new(err).context("the Outlook sign-in ended; reconnect Outlook on the Sources page"));
+        }
+        return Err(err.into());
+    }
+}
+
+/// The longest single wait after "too many requests", whatever `Retry-After`
+/// says.
+pub const MAX_RATE_LIMIT_WAIT_SECS: u64 = 15;
+
+/// How long to wait after "too many requests": what `Retry-After` asks for in
+/// seconds, within [`MAX_RATE_LIMIT_WAIT_SECS`], or two seconds when it says
+/// nothing usable.
+pub fn rate_limit_wait(retry_after: Option<&reqwest::header::HeaderValue>) -> Duration {
+    let secs = retry_after
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(2)
+        .clamp(1, MAX_RATE_LIMIT_WAIT_SECS);
+    Duration::from_secs(secs)
+}
+
 /// The credential's browser session (`secrets.jar`), if a sign-in through the
 /// app stored one. Each entry has at least `name` and `value`.
 fn jar(input: &AppletInput) -> Option<&Vec<serde_json::Value>> {
@@ -258,6 +417,114 @@ mod tests {
 
     fn input(secrets: serde_json::Value) -> AppletInput {
         serde_json::from_value(json!({ "config": {}, "credentials": { "id": "cred_t", "secrets": secrets } })).unwrap()
+    }
+
+    #[test]
+    fn the_graph_root_is_the_api_base_plus_the_version() {
+        let app = input(json!({ "api_base": "https://api.example.com/v1/outlook/c/conn_1/" }));
+        assert_eq!(outlook_graph(&app).unwrap(), "https://api.example.com/v1/outlook/c/conn_1/v1.0");
+        assert!(outlook_graph(&input(json!({ "access_token": "t" }))).is_err(), "no direct sign-in to fall back to");
+        assert!(outlook_graph(&input(json!({ "api_base": " " }))).is_err());
+    }
+
+    #[test]
+    fn a_graph_link_is_rebuilt_under_the_api_base() {
+        let graph = "https://api.example.com/v1/outlook/c/conn_1/v1.0";
+        let next = "https://graph.microsoft.com/v1.0/me/mailFolders('inbox')/messages/delta?$skiptoken=AbC-1_2%3D%3D";
+        assert_eq!(
+            graph_link(graph, next).unwrap(),
+            "https://api.example.com/v1/outlook/c/conn_1/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=AbC-1_2%3D%3D"
+        );
+        let view = "https://graph.microsoft.com/v1.0/me/calendars('AAMkAGI2T_x-y=')/calendarView?startDateTime=2026-08-01T00%3A00%3A00Z&$skip=100";
+        assert_eq!(
+            graph_link(graph, view).unwrap(),
+            "https://api.example.com/v1/outlook/c/conn_1/v1.0/me/calendars/AAMkAGI2T_x-y=/calendarView?startDateTime=2026-08-01T00%3A00%3A00Z&$skip=100"
+        );
+        // Plain paths, encoded quotes and a trailing slash on the base.
+        let plain = "https://graph.microsoft.com/v1.0/me/calendars/AAMk%3D/calendarView?$skip=200";
+        assert_eq!(
+            graph_link(&format!("{graph}/"), plain).unwrap(),
+            "https://api.example.com/v1/outlook/c/conn_1/v1.0/me/calendars/AAMk%3D/calendarView?$skip=200"
+        );
+        let encoded = "https://graph.microsoft.com/v1.0/me/mailFolders(%27sentitems%27)/messages/delta?$deltatoken=x";
+        assert_eq!(
+            graph_link(graph, encoded).unwrap(),
+            "https://api.example.com/v1/outlook/c/conn_1/v1.0/me/mailFolders/sentitems/messages/delta?$deltatoken=x"
+        );
+        // Another host's link still goes to the api base, never to that host.
+        let elsewhere = "https://graph.example.net/v1.0/me/calendars";
+        assert_eq!(graph_link(graph, elsewhere).unwrap(), format!("{graph}/me/calendars"));
+        assert!(graph_link(graph, "https://graph.microsoft.com/beta/me").is_err());
+    }
+
+    #[test]
+    fn graph_errors_carry_the_code_from_either_body_shape() {
+        let graph = GraphError::from_body(410, r#"{"error":{"code":"syncStateNotFound","message":"Sync state expired."}}"#);
+        assert_eq!(graph.code.as_deref(), Some("syncStateNotFound"));
+        assert_eq!(graph.message, "Sync state expired.");
+        let api = GraphError::from_body(401, r#"{"code":"reauth_required","message":"Sign in again."}"#);
+        assert!(api.is_reauth());
+        let plain = GraphError::from_body(401, "Unauthorized");
+        assert!(!plain.is_reauth());
+        assert_eq!(plain.message, "Unauthorized");
+    }
+
+    #[test]
+    fn a_rate_limit_wait_follows_retry_after_within_bounds() {
+        let header = |v: &'static str| reqwest::header::HeaderValue::from_static(v);
+        assert_eq!(rate_limit_wait(Some(&header("5"))).as_secs(), 5);
+        assert_eq!(rate_limit_wait(Some(&header("600"))).as_secs(), MAX_RATE_LIMIT_WAIT_SECS);
+        assert_eq!(rate_limit_wait(Some(&header("0"))).as_secs(), 1);
+        assert_eq!(rate_limit_wait(Some(&header("Wed, 21 Oct 2026 07:28:00 GMT"))).as_secs(), 2);
+        assert_eq!(rate_limit_wait(None).as_secs(), 2);
+    }
+
+    /// A stand-in for virtues-api: each request takes the next canned answer.
+    async fn canned(answers: Vec<(&'static str, &'static str, &'static str)>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            for (status, extra, body) in answers {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let mut buf = vec![0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                log.lock().unwrap().push(String::from_utf8_lossy(&buf[..n]).to_string());
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        (base, seen)
+    }
+
+    #[tokio::test]
+    async fn a_graph_get_waits_out_too_many_requests_and_sends_prefer() {
+        let (base, seen) = canned(vec![
+            ("429 Too Many Requests", "Retry-After: 1\r\n", "{}"),
+            ("200 OK", "", r#"{"value":[]}"#),
+        ])
+        .await;
+        let got = graph_get(&reqwest::Client::new(), "tok", &format!("{base}/v1.0/me"), Some("odata.maxpagesize=50"))
+            .await
+            .unwrap();
+        assert_eq!(got, json!({ "value": [] }));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].to_ascii_lowercase().contains("prefer: odata.maxpagesize=50"));
+        assert!(requests[1].to_ascii_lowercase().contains("authorization: bearer tok"));
+    }
+
+    #[tokio::test]
+    async fn a_graph_get_fails_when_the_sign_in_ended() {
+        let (base, _) = canned(vec![("401 Unauthorized", "", r#"{"code":"reauth_required"}"#)]).await;
+        let err = graph_get(&reqwest::Client::new(), "tok", &format!("{base}/v1.0/me"), None).await.unwrap_err();
+        assert!(graph_error(&err).is_some_and(GraphError::is_reauth));
+        assert!(err.to_string().contains("reconnect Outlook"));
     }
 
     #[test]
