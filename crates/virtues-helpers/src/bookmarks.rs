@@ -1,7 +1,7 @@
 //! Bookmark normalization and writes for `data_content_bookmark`.
 //!
 //! Shared by every producer — the mac_ingest browser-bookmark transform, the
-//! github_stars_sync applet, and core's `POST /api/bookmarks` — so the row
+//! x_bookmarks_sync applet, and core's `POST /api/bookmarks` — so the row
 //! shape, identity rules, and tombstone semantics live in exactly one place
 //! (agents/record/bookmarks.md).
 //!

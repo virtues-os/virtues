@@ -19,24 +19,16 @@ use tokio::sync::Mutex;
 const REGISTRY: &str = "https://registry.modelcontextprotocol.io";
 
 /// Shown first, in this order: servers that the service itself publishes,
-/// for things people use day to day. Registry names, so each one's address
-/// and description come from the registry. Zapier is the way to Gmail and
-/// Google Calendar, since Google publishes no server for either.
+/// for tools people use day to day. Registry names, so each one's address and
+/// description come from the registry. The Sources page keeps this list short
+/// (agents/plan/sources-redesign-plan.md): Notion connects as a source, Google
+/// connects directly and the assistant has its own mail and calendar tools,
+/// and business tools are left out. Anything else is added by its address.
 ///
 /// Each one starts a sign-in with the box registering itself. GitHub, Figma
 /// and Zoom are left out because they refuse that registration; they need a
 /// client document hosted on the web (agents/plan/mcp-plan.md).
-pub const FEATURED: &[&str] = &[
-    "com.zapier/mcp",
-    "com.notion/mcp",
-    "net.todoist/mcp",
-    "app.linear/linear",
-    "com.airtable/mcp",
-    "com.canva.mcp/mcp",
-    "com.atlassian/atlassian-mcp-server",
-    "com.monday/monday.com",
-    "com.stripe/mcp",
-];
+pub const FEATURED: &[&str] = &["net.todoist/mcp", "app.linear/linear"];
 
 /// How long the featured list is kept before it is read again.
 const FEATURED_FOR: Duration = Duration::from_secs(6 * 60 * 60);

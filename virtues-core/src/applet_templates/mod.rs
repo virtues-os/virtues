@@ -1907,7 +1907,7 @@ mod tests {
         );
         // Two sources can fill one stream, and both should be offered.
         let bookmarks = sources_writing("content_bookmark");
-        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"github".to_string()));
+        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"x".to_string()));
         // And a stream nothing writes must stay empty rather than guess.
         // (data_activity_listening itself was deleted 2026-08-28 — no
         // collector ever existed — so the probe uses another absent name.)

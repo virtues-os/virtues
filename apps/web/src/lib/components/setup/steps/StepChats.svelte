@@ -8,7 +8,6 @@
 	    "Request export" opens the site's own export setting; the row then
 	    says it was asked for, on this device. When the zip arrives it is
 	    dropped anywhere on the page or chosen from the row.
-	  - Grok keeps up on its own once signed in (the grok source's login).
 	  - A site with chats on the server says the span of months they cover,
 	    with a dot for each month that has any, darker where there were more.
 
@@ -24,8 +23,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import ApiKeyConnectModal from "$lib/components/sources/ApiKeyConnectModal.svelte";
-	import { listSourceCatalog, type ChatHistory, type SourceCatalogItem } from "$lib/api/client";
+	import { type ChatHistory } from "$lib/api/client";
 	import { importChatExport, isAbort, type ImportPhase } from "$lib/chat-import";
 	import { openExternal } from "$lib/tauri/bridge";
 	import { isIOS, isPhoneBrowser } from "$lib/utils/platform";
@@ -127,20 +125,6 @@
 		}));
 	}
 
-	// ── Grok ──────────────────────────────────────────────────────────────
-	let grok = $state<SourceCatalogItem | null>(null);
-	let signingIn = $state(false);
-	const grokConnected = $derived((grok?.credential_count ?? 0) > 0);
-
-	async function readGrok() {
-		try {
-			grok = (await listSourceCatalog()).find((s) => s.id === "grok") ?? null;
-		} catch {
-			// A server without the catalog leaves Grok off the page.
-			grok = null;
-		}
-	}
-
 	// ── importing ─────────────────────────────────────────────────────────
 	let phase = $state<ImportPhase | null>(null);
 	let result = $state<string | null>(null);
@@ -191,7 +175,6 @@
 	}
 
 	onMount(() => {
-		void readGrok();
 		// The whole page takes a dropped export. `dragging` counts on the
 		// window so moving between children doesn't flicker the line.
 		let depth = 0;
@@ -233,7 +216,7 @@
 	});
 
 	// ── moving on ─────────────────────────────────────────────────────────
-	const anything = $derived(setup.chats.length > 0 || grokConnected || Object.keys(asked).length > 0);
+	const anything = $derived(setup.chats.length > 0 || Object.keys(asked).length > 0);
 
 	function moveOn() {
 		setup.passChats();
@@ -296,28 +279,6 @@
 			</article>
 		{/each}
 
-		{#if grok}
-			{@const h = historyOf("grok")}
-			<article class="row">
-				<div class="head">
-					<span class="glyph" aria-hidden="true">G</span>
-					<div class="text">
-						<h2>Grok</h2>
-						{#if grokConnected}
-							{#if h}<p>{spanLine(h)}</p>{@render dots(h)}{/if}
-							<p class="kept"><span class="light" aria-hidden="true"></span>Signed in. New chats arrive each morning and evening.</p>
-						{:else}
-							<p>Sign in once and your Grok chats keep arriving.</p>
-						{/if}
-					</div>
-				</div>
-				{#if !grokConnected}
-					<div class="act">
-						<button type="button" class="setup-go quiet" onclick={() => (signingIn = true)}>Sign in</button>
-					</div>
-				{/if}
-			</article>
-		{/if}
 	</div>
 
 	<p class="status" class:error={!!error} class:done={!!result && !error} role="status" aria-live="polite">
@@ -363,16 +324,6 @@
 		{/if}
 	{/snippet}
 </StepFrame>
-
-<ApiKeyConnectModal
-	source={signingIn ? grok : null}
-	open={signingIn}
-	onClose={() => (signingIn = false)}
-	onSuccess={() => {
-		signingIn = false;
-		void readGrok();
-	}}
-/>
 
 <style>
 	/* One row per site under a hairline, the way Connections lists the
@@ -485,20 +436,6 @@
 		margin-left: -3px;
 		border-radius: 50%;
 		background: var(--color-primary);
-	}
-
-	.kept {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-	.light {
-		flex: none;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--color-success);
-		outline: 3px solid color-mix(in srgb, var(--color-success) 18%, transparent);
 	}
 
 	.status {

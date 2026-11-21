@@ -1304,9 +1304,9 @@ mod tests {
         assert!(last_seen_recently(&pool, &oauth).await, "an OAuth connect");
         let pasted = finalize_apikey_credential(
             &pool,
-            "github",
-            "GitHub",
-            &serde_json::json!({ "token": "tok-example" }),
+            "x",
+            "X",
+            &serde_json::json!({ "auth_token": "tok-example", "ct0": "csrf-example" }),
         )
         .await
         .unwrap();
@@ -1319,8 +1319,8 @@ mod tests {
         vault::update_credential_secrets(&pool, &oauth, &grant("at-second", None).secrets, Some(3600))
             .await
             .unwrap();
-        let fields = serde_json::json!({ "token": "tok-second" });
-        assert!(vault::reauth_credential(&pool, &pasted, "github", &fields, None, None)
+        let fields = serde_json::json!({ "auth_token": "tok-second", "ct0": "csrf-second" });
+        assert!(vault::reauth_credential(&pool, &pasted, "x", &fields, None, None)
             .await
             .unwrap());
         assert!(last_seen_recently(&pool, &oauth).await, "new secrets");
