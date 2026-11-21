@@ -52,6 +52,10 @@
 	-->
 	<key>NSCameraUsageDescription</key>
 	<string>Virtues uses the camera when you attach a photo or video in chat — sent to your own box, not Virtues&apos; servers.</string>
+	<!-- With Limited access, iOS would otherwise ask to pick more photos on the
+	     first library read of each launch; the device screen says the access is limited. -->
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Virtues reads when and where your photos were taken and keeps a smaller copy of each favorite. It also uses photos you attach in chat.</string>
 	<key>NSBonjourServices</key>

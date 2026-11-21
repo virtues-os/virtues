@@ -58,7 +58,9 @@ use crate::AppState;
 
 /// One vendor whose sign-in goes through Truto.
 pub struct Provider {
-    /// The route segment and the `provider` column in `vendor_connections`.
+    /// The route segment and the `provider` column in `google_connections`,
+    /// which holds every provider's connections and keeps its first name so
+    /// an older image still works after a rollback (migration 0017).
     name: &'static str,
     /// How a message to a person names the vendor's sign-in.
     label: &'static str,
@@ -334,7 +336,7 @@ async fn list(p: &Provider, State(state): State<Arc<AppState>>, BearerAuth(walle
     }
     // A connection removed at Truto has nothing left to route to.
     if let Err(e) = sqlx::query(
-        "DELETE FROM vendor_connections WHERE account_id = $1 AND provider = $2 AND NOT (truto_account_id = ANY($3))",
+        "DELETE FROM google_connections WHERE account_id = $1 AND provider = $2 AND NOT (truto_account_id = ANY($3))",
     )
     .bind(&wallet.account_id)
     .bind(p.name)
@@ -367,7 +369,7 @@ fn context_email(context: &Value) -> Option<&Value> {
 /// another provider.
 async fn connection_id(db: &sqlx::PgPool, provider: &str, account_id: &str, truto_account_id: &str) -> sqlx::Result<Option<String>> {
     sqlx::query(
-        "INSERT INTO vendor_connections (id, account_id, provider, truto_account_id) VALUES ($1, $2, $3, $4)
+        "INSERT INTO google_connections (id, account_id, provider, truto_account_id) VALUES ($1, $2, $3, $4)
          ON CONFLICT (truto_account_id) DO NOTHING",
     )
     .bind(uuid::Uuid::new_v4().to_string())
@@ -377,7 +379,7 @@ async fn connection_id(db: &sqlx::PgPool, provider: &str, account_id: &str, trut
     .execute(db)
     .await?;
     sqlx::query_scalar(
-        "SELECT id FROM vendor_connections WHERE truto_account_id = $1 AND account_id = $2 AND provider = $3",
+        "SELECT id FROM google_connections WHERE truto_account_id = $1 AND account_id = $2 AND provider = $3",
     )
     .bind(truto_account_id)
     .bind(account_id)
@@ -389,7 +391,7 @@ async fn connection_id(db: &sqlx::PgPool, provider: &str, account_id: &str, trut
 /// The Truto account behind a connection, if the caller owns it and it
 /// belongs to this provider.
 async fn owned(db: &sqlx::PgPool, provider: &str, account_id: &str, connection: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT truto_account_id FROM vendor_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
+    sqlx::query_scalar("SELECT truto_account_id FROM google_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
         .bind(connection)
         .bind(account_id)
         .bind(provider)
@@ -445,7 +447,7 @@ async fn disconnect(p: &Provider, State(state): State<Arc<AppState>>, BearerAuth
         tracing::warn!(status, provider = p.name, "truto refused to delete a connection");
         return err(StatusCode::BAD_GATEWAY, "upstream_error", "the sign-in service did not remove the connection");
     }
-    if let Err(e) = sqlx::query("DELETE FROM vendor_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
+    if let Err(e) = sqlx::query("DELETE FROM google_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
         .bind(&connection)
         .bind(&wallet.account_id)
         .bind(p.name)
@@ -528,7 +530,13 @@ fn upstream_path(segments: &[&str], truto_account_id: &str, query: Option<&str>)
     let path: Vec<String> = segments.iter().map(|s| encode(s)).collect();
     let mut out = format!("/custom/{}?integrated_account_id={}", path.join("/"), encode(truto_account_id));
     for pair in query.unwrap_or("").split('&').filter(|p| !p.is_empty()) {
-        if pair.split('=').next() != Some("integrated_account_id") {
+        // Compare the decoded key, so `integrated%5Faccount%5Fid` cannot name
+        // another account either.
+        let key = pair.split('=').next().unwrap_or("");
+        let decoded = reqwest::Url::parse(&format!("http://x/?{key}"))
+            .ok()
+            .and_then(|u| u.query_pairs().next().map(|(k, _)| k.into_owned()));
+        if decoded.as_deref() != Some("integrated_account_id") {
             out.push('&');
             out.push_str(pair);
         }
@@ -689,6 +697,8 @@ mod tests {
              ?integrated_account_id=acct-1&syncToken=abc%3D&singleEvents=true"
         );
         assert_eq!(encode("a b&c=d/e?f"), "a%20b%26c%3Dd%2Fe%3Ff");
+        let smuggled = upstream_path(&segments, "acct-1", Some("integrated%5Faccount%5Fid=other&singleEvents=true"));
+        assert!(!smuggled.contains("other"), "{smuggled}");
 
         let segments = allowed(&OUTLOOK, "GET", "v1.0/me/calendars/AAMkAD-1=/calendarView").unwrap();
         let out = upstream_path(&segments, "acct-2", Some("startDateTime=2030-01-01T00:00:00Z&$top=100"));

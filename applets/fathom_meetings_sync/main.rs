@@ -11,7 +11,10 @@
 //!
 //! A Fathom key also returns meetings shared with the person's team, so only
 //! meetings the person recorded or was invited to are kept, matched on the
-//! address in `secrets.email`. Only those are archived to the lake.
+//! address in `secrets.email`. Only those are archived to the lake. A run
+//! that reads meetings, finds none listing that address, and has never kept a
+//! Fathom meeting before fails and leaves the watermark alone, because the
+//! address is almost certainly wrong and every later run would keep nothing.
 
 mod transform;
 
@@ -29,6 +32,18 @@ const OVERLAP_DAYS: i64 = 3;
 /// Runaway guard. A run that reaches it does not move the watermark, so the
 /// next run reads the same window again and the run summary says so.
 const MAX_PAGES: usize = 200;
+const WRONG_EMAIL: &str =
+    "None of your Fathom meetings list the email you entered. Enter the email you use in Fathom and connect it again.";
+
+/// Whether a run should fail because the email matches none of the meetings.
+/// `not_theirs` counts meetings dropped for not listing the email, `kept`
+/// counts meetings that did list it (ready or not), and `kept_before` is
+/// whether an earlier run stored a Fathom meeting. A person with the right
+/// email whose team met while they did not still has earlier meetings, so
+/// that case does not fail.
+fn email_matches_none(not_theirs: usize, kept: usize, kept_before: bool) -> bool {
+    not_theirs > 0 && kept == 0 && !kept_before
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,6 +66,8 @@ async fn main() -> Result<()> {
 
     let mut written = Written::default();
     let mut not_ready = 0usize;
+    let mut not_theirs = 0usize;
+    let mut kept = 0usize;
     let mut newest: Option<DateTime<Utc>> = None;
     let mut cursor: Option<String> = None;
     let mut finished = false;
@@ -83,13 +100,17 @@ async fn main() -> Result<()> {
             if let Some(at) = transform::created_at(item) {
                 newest = newest.max(Some(at));
             }
-            match transform::shape(item, &email) {
+            let shaped = transform::shape(item, &email);
+            if !matches!(shaped, transform::Shaped::NotTheirs) {
+                kept += 1;
+            }
+            match shaped {
                 transform::Shaped::Meeting(m) => {
                     meetings.push(*m);
                     theirs.push(item.clone());
                 }
                 transform::Shaped::NotReady => not_ready += 1,
-                transform::Shaped::NotTheirs => {}
+                transform::Shaped::NotTheirs => not_theirs += 1,
                 transform::Shaped::Invalid => tracing::warn!("Fathom sent a meeting without an id or a start time"),
             }
         }
@@ -109,6 +130,18 @@ async fn main() -> Result<()> {
         }
     }
 
+    if not_theirs > 0 && kept == 0 {
+        let kept_before: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM data_communication_transcription WHERE source_provider = $1)",
+        )
+        .bind(transform::PROVIDER)
+        .fetch_one(&pool)
+        .await?;
+        if email_matches_none(not_theirs, kept, kept_before) {
+            bail!(WRONG_EMAIL);
+        }
+    }
+
     if finished {
         meeting::advance(&mut input, newest, now);
     } else {
@@ -122,8 +155,27 @@ async fn main() -> Result<()> {
     if not_ready > 0 {
         summary.push_str(&format!("; {not_ready} not processed by Fathom yet"));
     }
+    if not_theirs > 0 {
+        summary.push_str(&format!("; skipped {not_theirs} shared meetings that do not list your email"));
+    }
     if !finished {
         summary.push_str(&format!("; stopped at the {MAX_PAGES}-page limit, the next run reads the same window"));
     }
     output_with_records(&summary, &input.config, (written.added + written.changed) as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_fails_only_when_the_email_matches_nothing_now_or_before() {
+        // Every meeting dropped for the email, nothing kept ever: wrong email.
+        assert!(email_matches_none(4, 0, false));
+        // The person kept a meeting this run, or an earlier one did.
+        assert!(!email_matches_none(4, 1, false));
+        assert!(!email_matches_none(4, 0, true));
+        // No meetings in the window at all.
+        assert!(!email_matches_none(0, 0, false));
+    }
 }

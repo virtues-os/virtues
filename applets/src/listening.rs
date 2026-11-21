@@ -146,6 +146,10 @@ pub async fn write_plays(pool: &PgPool, plays: &[Play], writer: Writer) -> Resul
     if plays.is_empty() {
         return Ok(Vec::new());
     }
+    let mut tx = pool.begin().await?;
+    if writer == Writer::Import {
+        replace_recent_matches(&mut tx, &plays).await?;
+    }
     let sql = insert_sql(writer, plays.len());
     let mut q = sqlx::query_scalar::<_, DateTime<Utc>>(&sql);
     for p in plays {
@@ -168,7 +172,44 @@ pub async fn write_plays(pool: &PgPool, plays: &[Play], writer: Writer) -> Resul
             .bind("spotify")
             .bind(&p.metadata);
     }
-    Ok(q.fetch_all(pool).await?)
+    let written = q.fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(written)
+}
+
+/// Remove the recently-played rows that an import's URI-less plays stand for.
+///
+/// The account data download has no URI and records the stop time to the
+/// minute, so its plays key on their text and never meet the sync's rows on
+/// `source_stream_id`. Without this, a play the sync added and a download
+/// later covered would be listed twice. A sync row matches when it stopped in
+/// the same minute with the same title and the same artist. The sync lists
+/// every artist joined by ", " and the download names only the first, so the
+/// sync's artist may also start with the download's artist and ", ".
+async fn replace_recent_matches(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, plays: &[&Play]) -> Result<()> {
+    let unkeyed: Vec<&&Play> = plays.iter().filter(|p| p.uri.is_none()).collect();
+    if unkeyed.is_empty() {
+        return Ok(());
+    }
+    let minutes: Vec<DateTime<Utc>> = unkeyed.iter().map(|p| p.ended_at).collect();
+    let titles: Vec<Option<String>> = unkeyed.iter().map(|p| p.title.clone()).collect();
+    let artists: Vec<Option<String>> = unkeyed.iter().map(|p| p.artist_name.clone()).collect();
+    sqlx::query(
+        "DELETE FROM data_activity_listening l \
+         USING UNNEST($1::timestamptz[], $2::text[], $3::text[]) AS u(ended_at, title, artist_name) \
+         WHERE l.source_table = $4 \
+           AND date_trunc('minute', l.ended_at) = date_trunc('minute', u.ended_at) \
+           AND l.title IS NOT DISTINCT FROM u.title \
+           AND (l.artist_name IS NOT DISTINCT FROM u.artist_name \
+                OR left(l.artist_name, length(u.artist_name) + 2) = u.artist_name || ', ')",
+    )
+    .bind(&minutes)
+    .bind(&titles)
+    .bind(&artists)
+    .bind(FROM_RECENT)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -193,5 +234,50 @@ mod tests {
         assert!(import.contains("metadata = EXCLUDED.metadata, updated_at = now()"), "{import}");
         assert!(import.ends_with("WHERE data_activity_listening.source_table = 'spotify_recent' RETURNING ended_at"), "{import}");
         assert!(!import.contains("id = EXCLUDED.id") && !import.contains("created_at"), "{import}");
+    }
+
+    fn play(ended_at: &str, uri: Option<&str>, artist: &str, writer: Writer) -> Play {
+        let ended_at: DateTime<Utc> = ended_at.parse().unwrap();
+        let title = "Paper Lanterns";
+        Play {
+            started_at: ended_at - chrono::Duration::seconds(60),
+            ended_at,
+            played_ms: 60_000,
+            kind: "track",
+            title: Some(title.into()),
+            artist_name: Some(artist.into()),
+            album_name: None,
+            uri: uri.map(String::from),
+            is_skipped: None,
+            is_shuffle: None,
+            reason_start: None,
+            reason_end: None,
+            source_stream_id: stream_id(ended_at, uri, &[title, artist, &format!("{writer:?}")]),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn an_account_download_replaces_the_recent_row_for_the_same_play(pool: PgPool) {
+        let uri = Some("spotify:track:0000000000000000000001");
+        let recent = play("2024-03-05T08:15:30.874Z", uri, "The Example Band, The Sample Choir", Writer::Recent);
+        let other = play("2024-03-05T08:20:10Z", uri, "The Example Band, The Sample Choir", Writer::Recent);
+        assert_eq!(write_plays(&pool, &[recent, other], Writer::Recent).await.unwrap().len(), 2);
+
+        // The account data names the first artist and stops at the minute.
+        let imported = play("2024-03-05T08:15:00Z", None, "The Example Band", Writer::Import);
+        let id = imported.source_stream_id.clone();
+        assert_eq!(write_plays(&pool, &[imported], Writer::Import).await.unwrap().len(), 1);
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT source_stream_id, source_table FROM data_activity_listening \
+             WHERE date_trunc('minute', ended_at) = '2024-03-05T08:15:00Z' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec![(id, FROM_IMPORT.to_string())]);
+        let total: i64 = sqlx::query_scalar("SELECT count(*) FROM data_activity_listening").fetch_one(&pool).await.unwrap();
+        assert_eq!(total, 2, "the play in another minute stays");
     }
 }

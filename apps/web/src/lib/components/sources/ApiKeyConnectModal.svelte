@@ -17,7 +17,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { Button, Input } from '$lib';
 	import { apikeyComplete, type SourceCatalogItem } from '$lib/api/client';
-	import { fieldLabel, isSecretField, keyHelp } from '$lib/sources/keys';
+	import { fieldLabel, fieldPhrase, isSecretField, keyHelp, missingField } from '$lib/sources/keys';
 	import {
 		browserLogin,
 		browserLoginUserAgent,
@@ -144,7 +144,7 @@
 		}
 		for (const f of fields) {
 			if (!values[f]?.trim()) {
-				error = `Paste your ${source ? fieldLabel(source.id, f).toLowerCase() : f}, then connect.`;
+				error = source ? missingField(source.id, f) : `Paste the ${f}, then connect.`;
 				return;
 			}
 		}
@@ -216,7 +216,7 @@
 					<Input
 						type={isSecretField(field) ? 'password' : 'email'}
 						bind:value={() => values[field] ?? '', (v) => (values[field] = v)}
-						placeholder={isSecretField(field) ? `Paste your ${fieldLabel(source.id, field).toLowerCase()}` : ''}
+						placeholder={isSecretField(field) ? `Paste the ${fieldPhrase(source.id, field)}` : ''}
 					/>
 				</label>
 			{/each}

@@ -438,17 +438,28 @@ pub async fn oauth_callback_handler(
     if let (Some("own_app"), Some(app)) = (q.via.as_deref(), own_app) {
         // The person's own app returned through virtues-api's bounce route.
         // Exchange the code here with the verifier only this box holds.
+        // The iOS sign-in sheet closes on every outcome, as it does for the
+        // proxy's sign-ins; elsewhere the page says what happened.
+        let incomplete = |reason: &str| {
+            if q.sheet.as_deref() == Some("1") {
+                return Redirect::to(CLOSE_SHEET).into_response();
+            }
+            oauth_incomplete_response(&claims.source_id, reason, q.shell.as_deref(), q.next.as_deref())
+        };
         let Some(pending) = take_own_app(&q.state) else {
-            return oauth_incomplete_response(&claims.source_id, "sign_in_expired", q.shell.as_deref(), q.next.as_deref());
+            return incomplete("sign_in_expired");
         };
         let Some(code) = q.code.as_deref().filter(|c| !c.is_empty()) else {
             let reason = q.error.as_deref().unwrap_or("no_code");
             tracing::info!(source_id = %claims.source_id, reason, "own-app sign-in returned without a code");
-            return oauth_incomplete_response(&claims.source_id, reason, q.shell.as_deref(), q.next.as_deref());
+            return incomplete(reason);
         };
         let mut grant = match app.exchange_code(&pending.client_id, code, &pending.verifier).await {
             Ok(g) => g,
-            Err(e) => return auth_error_response(e),
+            Err(e) => {
+                tracing::warn!(source_id = %claims.source_id, error = %e, "own-app code exchange failed");
+                return incomplete("token_exchange_failed");
+            }
         };
         name_the_account(&claims.source_id, &mut grant).await;
         if let Err(e) = store_grant(pool, &claims.source_id, claims.existing_credential_id.as_deref(), &grant).await {

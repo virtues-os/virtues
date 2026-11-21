@@ -103,11 +103,24 @@ impl OwnApp {
         let status = resp.status().as_u16();
         let body = resp.text().await.map_err(|e| transport_error("token response unreadable", e))?;
         if !(200..300).contains(&status) {
-            // A 4xx here (`invalid_grant`: the sign-in expired or was revoked)
-            // reads as a refused grant, so the credential asks to reconnect.
-            return Err(upstream_error(status, &body));
+            return Err(token_error(status, &body));
         }
         serde_json::from_str(&body).map_err(|e| AuthError::Proxy(format!("token response was not JSON: {e}")))
+    }
+}
+
+/// The error for a refused token request. Only a sign-in that has ended
+/// (`invalid_grant`: expired after six months or revoked) or an app that is
+/// gone (`invalid_client`) reads as a refused grant, so the credential asks
+/// to reconnect, where a new Client ID can be pasted. A rate limit or a
+/// server error is an ordinary failure, and the next run tries again.
+fn token_error(status: u16, body: &str) -> AuthError {
+    let error = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(String::from));
+    match error.as_deref() {
+        Some("invalid_grant" | "invalid_client") => upstream_error(status, r#"{"code":"invalid_grant"}"#),
+        _ => AuthError::Proxy(format!("the token endpoint answered {status}")),
     }
 }
 
@@ -177,6 +190,15 @@ mod tests {
         assert_eq!(g.expires_in, Some(3600));
         let g = grant("cid", &json!({ "access_token": "at3", "refresh_token": "rt2" }), Some("rt1")).unwrap();
         assert_eq!(g.secrets["refresh_token"], "rt2");
+    }
+
+    #[test]
+    fn only_an_ended_sign_in_asks_to_reconnect() {
+        use crate::auth::proxy::is_refused_grant;
+        assert!(is_refused_grant(&token_error(400, r#"{"error":"invalid_grant","error_description":"Refresh token revoked"}"#)));
+        assert!(is_refused_grant(&token_error(400, r#"{"error":"invalid_client"}"#)));
+        assert!(!is_refused_grant(&token_error(429, r#"{"error":"rate_limited"}"#)));
+        assert!(!is_refused_grant(&token_error(503, "upstream down")));
     }
 
     #[test]

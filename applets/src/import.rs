@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use serde::de::{Deserializer as _, SeqAccess, Visitor};
 use serde_json::Value;
 use uuid::Uuid;
@@ -396,28 +396,46 @@ pub fn field(record: &[String], index: Option<usize>) -> Option<&str> {
 /// A timestamp in any of the forms these exports have used. A time with no
 /// zone is UTC, which is what each of these services documents. A bare date
 /// is midnight UTC.
+///
+/// chrono's `%Y` accepts one to four digits, so "01/15/19" parses as the year
+/// 19 under `%m/%d/%Y`. Every format's result is therefore checked for a year
+/// of 1900 or later before it is taken, which lets the `%y` form that follows
+/// read the two-digit year.
 pub fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
     let s = raw.trim();
     if s.is_empty() {
         return None;
     }
-    if let Ok(t) = DateTime::parse_from_rfc3339(s) {
-        return Some(t.with_timezone(&Utc));
+    let plausible = |t: DateTime<Utc>| (t.year() >= 1900).then_some(t);
+    if let Some(t) = DateTime::parse_from_rfc3339(s).ok().and_then(|t| plausible(t.with_timezone(&Utc))) {
+        return Some(t);
     }
     for f in ["%Y-%m-%d %H:%M:%S%.f%:z", "%Y-%m-%d %H:%M:%S%.f%z", "%Y-%m-%dT%H:%M:%S%.f%z"] {
-        if let Ok(t) = DateTime::parse_from_str(s, f) {
-            return Some(t.with_timezone(&Utc));
+        if let Some(t) = DateTime::parse_from_str(s, f).ok().and_then(|t| plausible(t.with_timezone(&Utc))) {
+            return Some(t);
         }
     }
     let naive = s.strip_suffix(" UTC").or_else(|| s.strip_suffix('Z')).unwrap_or(s);
-    for f in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M"] {
-        if let Ok(t) = NaiveDateTime::parse_from_str(naive, f) {
-            return Some(t.and_utc());
+    for f in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%y %H:%M:%S",
+        "%m/%d/%y %H:%M",
+    ] {
+        if let Some(t) = NaiveDateTime::parse_from_str(naive, f).ok().and_then(|t| plausible(t.and_utc())) {
+            return Some(t);
         }
     }
     for f in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"] {
-        if let Ok(d) = NaiveDate::parse_from_str(naive, f) {
-            return d.and_hms_opt(0, 0, 0).map(|t| t.and_utc());
+        if let Some(t) = NaiveDate::parse_from_str(naive, f)
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .and_then(|t| plausible(t.and_utc()))
+        {
+            return Some(t);
         }
     }
     None
@@ -611,6 +629,10 @@ pub(crate) mod tests {
         assert_eq!(want("2023-05-01 18:23"), "2023-05-01T18:23:00+00:00");
         assert_eq!(want("2023-05-01 18:23:45 UTC"), "2023-05-01T18:23:45+00:00");
         assert_eq!(want("05/01/2023"), "2023-05-01T00:00:00+00:00");
+        // A two-digit year is read as %y, not as the year 19.
+        assert_eq!(want("01/15/19"), "2019-01-15T00:00:00+00:00");
+        assert_eq!(want("01/15/2019"), "2019-01-15T00:00:00+00:00");
+        assert_eq!(want("01/15/19 10:30:00"), "2019-01-15T10:30:00+00:00");
         assert!(parse_time("Not Available").is_none());
         assert!(parse_time("").is_none());
     }

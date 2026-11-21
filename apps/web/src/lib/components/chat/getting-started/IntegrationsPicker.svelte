@@ -15,6 +15,7 @@
 	import ApiKeyConnectModal from "$lib/components/sources/ApiKeyConnectModal.svelte";
 	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
 	import { copyFor } from "$lib/components/onboarding/document/sources-copy";
+	import { isImportSource } from "$lib/imports";
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem, type Credential } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { GETTING_STARTED_CHAT_ID } from "./getting-started";
@@ -53,7 +54,8 @@
 		const byId = new Map(catalog.map((s) => [s.id, s]));
 		const lead = LEAD.map((id) => byId.get(id)).filter((s): s is SourceCatalogItem => !!s);
 		if (!showAll) return lead;
-		const rest = catalog.filter((s) => !LEAD.includes(s.id));
+		// Imports take a file the person downloads, so they live in Sources.
+		const rest = catalog.filter((s) => !LEAD.includes(s.id) && !isImportSource(s.id));
 		return [...lead, ...rest];
 	});
 

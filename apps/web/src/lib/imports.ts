@@ -35,8 +35,10 @@ export interface ImportSource {
 	/** The source page's status line and the sentence under it. */
 	line: string;
 	why: string;
-	/** Label of an email field the import needs, when it needs one. */
+	/** Label of an email field the import needs, when it needs one, and the
+	 *  sentence when it is left empty. */
 	emailLabel?: string;
+	emailMissing?: string;
 	appletId: string;
 	upload: (
 		file: File,
@@ -104,6 +106,7 @@ export const IMPORT_SOURCES: Record<string, ImportSource> = {
 		line: 'Bring in a Slack workspace.',
 		why: "Ask the workspace's admin for an export, then import the zip here. Only conversations you are in are kept. A newer export adds only what is new.",
 		emailLabel: 'Your email in Slack',
+		emailMissing: 'Enter the email you use in Slack, then import.',
 		appletId: 'applet_slack_import',
 		upload: (file, onProgress, fields) => uploadImport('slack', file, onProgress, fields)
 	}

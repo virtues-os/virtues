@@ -3,7 +3,7 @@
  *
  * A brand mark keeps its brand's color, because the mark is how people find a
  * service in a list. Marks that are black in their own brand (Notion, X) use
- * the text ink, so they stay visible in Dark (Notion, X, GitHub, Amazon). Sources without a brand mark
+ * the text ink, so they stay visible in Dark (Notion, X, GitHub, Amazon, Slack). Sources without a brand mark
  * (devices, banks, past chats) fall back to the catalog's own icon in ink.
  *
  * The marks register here rather than in lib/icons.ts, so they load with the
@@ -55,7 +55,7 @@ const SOURCE_MARKS: Record<string, Mark> = {
 	instagram: { icon: 'simple-icons:instagram', color: '#E4405F' },
 	notion: { icon: 'simple-icons:notion' },
 	outlook: { icon: 'simple-icons:microsoftoutlook', color: '#0078D4' },
-	slack: { icon: 'simple-icons:slack', color: '#4A154B' },
+	slack: { icon: 'simple-icons:slack' },
 	spotify: { icon: 'simple-icons:spotify', color: '#1DB954' },
 	strava: { icon: 'simple-icons:strava', color: '#FC4C02' },
 	x: { icon: 'simple-icons:x' }

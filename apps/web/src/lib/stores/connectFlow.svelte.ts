@@ -11,7 +11,7 @@
  * app until the person presses Continue, so the window can say first what
  * your server will read and what your assistant may do there.
  */
-import { connectIntent } from '$lib/components/sources/connectDispatch';
+import { connectIntent, OWN_APP_SOURCES } from '$lib/components/sources/connectDispatch';
 import type { SourceCatalogItem } from '$lib/api/client';
 
 /** intro: what connecting does · opening: asking the server for the
@@ -23,6 +23,9 @@ type Pending =
 	| { kind: 'none' }
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
 	| { kind: 'import'; sourceId: string }
+	/** Signing in with an app the person made at the vendor (Spotify's recent
+	 *  plays), new or again for `credentialId`. */
+	| { kind: 'own_app'; sourceId: string; credentialId?: string }
 	| { kind: 'api_key'; source: SourceCatalogItem; credentialId?: string }
 	| {
 			kind: 'account';
@@ -40,6 +43,13 @@ class ConnectFlowStore {
 	 *  Both the api_key form and the OAuth dance repair that row in place. */
 	async start(source: SourceCatalogItem, credentialId?: string): Promise<void> {
 		this.error = null;
+		// A credential of a source that also imports is the own-app sign-in
+		// (Spotify's recent plays); signing it in again opens that window, not
+		// the import.
+		if (credentialId && OWN_APP_SOURCES.has(source.id)) {
+			this.startOwnApp(source.id, credentialId);
+			return;
+		}
 		if (source.auth_kind === 'via_proxy') {
 			this.pending = { kind: 'account', source, credentialId, step: 'intro' };
 			return;
@@ -88,6 +98,12 @@ class ConnectFlowStore {
 			step: 'error',
 			message: intent.kind === 'error' ? intent.message : undefined
 		};
+	}
+
+	/** Open the own-app sign-in for `sourceId`. */
+	startOwnApp(sourceId: string, credentialId?: string): void {
+		this.error = null;
+		this.pending = { kind: 'own_app', sourceId, credentialId };
 	}
 
 	/** The account the window is waiting on has arrived. */

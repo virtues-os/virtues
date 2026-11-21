@@ -5,11 +5,9 @@
 -- A box calls `/v1/<provider>/c/<id>/...`, and the route looks the Truto id
 -- up by id, provider AND the caller's account, so a Google connection cannot
 -- be reached through the Outlook route or the other way round.
-ALTER TABLE google_connections RENAME TO vendor_connections;
-ALTER TABLE vendor_connections RENAME CONSTRAINT google_connections_pkey TO vendor_connections_pkey;
-ALTER TABLE vendor_connections RENAME CONSTRAINT google_connections_truto_account_id_key TO vendor_connections_truto_account_id_key;
-ALTER INDEX google_connections_account_idx RENAME TO vendor_connections_account_idx;
-
--- Every row before this migration is a Google connection.
-ALTER TABLE vendor_connections ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';
-ALTER TABLE vendor_connections ALTER COLUMN provider DROP DEFAULT;
+--
+-- The table keeps its name, and `provider` keeps its default, because an
+-- older image must keep working on this schema after a rollback (db.rs): the
+-- image before this one reads and writes `google_connections` and knows
+-- nothing of `provider`. Rename it once no rollback can reach that image.
+ALTER TABLE google_connections ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';

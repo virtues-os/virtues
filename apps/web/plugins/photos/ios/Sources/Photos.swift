@@ -32,6 +32,9 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
   private static let firstPassDoneKey = "virtues.photos.firstPassDone"
   private static let cursorKey = "virtues.photos.firstPassCursor"
   private static let tokenKey = "virtues.photos.changeToken"
+  /// Whether the finished first pass ran with Limited access, so only the
+  /// photos the person picked were sent.
+  private static let firstPassLimitedKey = "virtues.photos.firstPassLimited"
 
   /// The longest side of a favorite's picture, in pixels.
   private static let pictureMaxPixel: CGFloat = 1024
@@ -177,6 +180,11 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
 
     if !firstPassDone {
       firstPass()
+    } else if defaults.bool(forKey: Self.firstPassLimitedKey) && !limited() {
+      // The person moved from Limited to Full Access. The photos they had
+      // not picked are not changes in PhotoKit's history, so read the whole
+      // library again; the server skips the rows that have not changed.
+      restartFirstPass()
     } else {
       sendChanges()
     }
@@ -246,6 +254,7 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     }
 
     defaults.set(true, forKey: Self.firstPassDoneKey)
+    defaults.set(limited(), forKey: Self.firstPassLimitedKey)
     defaults.removeObject(forKey: Self.cursorKey)
     NSLog("[Photos] first pass sent %ld assets", total)
     // Catch up on anything that changed while the pass ran. A pass that
@@ -253,9 +262,11 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     sendChanges(restartIfHistoryLost: false)
   }
 
-  /// Start the first pass over: the change history could not be read.
+  /// Start the first pass over: the change history could not be read, or
+  /// access widened from Limited to Full.
   private func restartFirstPass() {
     defaults.set(false, forKey: Self.firstPassDoneKey)
+    defaults.removeObject(forKey: Self.firstPassLimitedKey)
     defaults.removeObject(forKey: Self.cursorKey)
     defaults.removeObject(forKey: Self.tokenKey)
     firstPass()

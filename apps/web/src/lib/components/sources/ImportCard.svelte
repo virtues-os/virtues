@@ -31,7 +31,7 @@
 	async function doImport() {
 		if (!file) return;
 		if (source?.emailLabel && !email.trim()) {
-			error = `Enter ${source.emailLabel.toLowerCase()}, then import.`;
+			error = source.emailMissing ?? "Enter your email, then import.";
 			return;
 		}
 		error = null;

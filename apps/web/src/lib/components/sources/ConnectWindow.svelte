@@ -21,6 +21,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import ImportCard from './ImportCard.svelte';
+	import OwnAppConnect from './OwnAppConnect.svelte';
 	import { IMPORT_SOURCES } from '$lib/imports';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
@@ -140,6 +141,10 @@
 		</div>
 	{/if}
 </Modal>
+
+{#if pending.kind === 'own_app'}
+	<OwnAppConnect open credentialId={pending.credentialId} onClose={close} onReturn={() => void sourcesStore.load()} />
+{/if}
 
 {#if pending.kind === 'import'}
 	<Modal open onClose={close} title={IMPORT_SOURCES[pending.sourceId]?.title ?? 'Import'} width="md">

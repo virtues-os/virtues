@@ -510,7 +510,9 @@ pub(crate) mod tests {
             // read through it, and 50 on 2026-11-16 for app_tasks' thing and
             // recurrence columns. Raised 150 on 2026-11-17 for a task's
             // person, place and org homes and the app_task_links table.
-            ("sql_query", &["sql_query"], 6_850),
+            // Raised 300 on 2026-11-21 for the photo, listening and purchase
+            // tables and the note on meeting transcripts.
+            ("sql_query", &["sql_query"], 7_150),
             // Mode-only tools, each set just above its 2026-09-29 size. Sudo
             // raised on 2026-10-27 for its clean environment and the
             // recovery-key ask.
@@ -528,10 +530,10 @@ pub(crate) mod tests {
         // delete_data and the delete-data skill's line. Rose 4,900 on
         // 2026-11-19 for the Gmail and Calendar tools and the next-step
         // card. Rose 200 on 2026-11-20 for `use_applet` listing the
-        // insight-report applet. The rest sit just above their 2026-09-29
-        // size.
+        // insight-report applet. Rose 300 on 2026-11-21 with sql_query. The
+        // rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 30_250),
+            ("chat", 30_550),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -540,22 +542,23 @@ pub(crate) mod tests {
             // less what admin no longer lists. Clarity review just above its
             // size when it shipped on 2026-10-28. New applet is the applet
             // tool alone, so it follows that group's ceiling.
-            ("admin", 9_150),
+            ("admin", 9_450),
             // Each mode with sql_query rose 150 on 2026-11-17 with that
-            // group, and deep research 100 more on 2026-11-16. Each mode with
+            // group, and 300 on 2026-11-21 with it again; deep research 100
+            // more on 2026-11-16. Each mode with
             // create_page rose 150 more on 2026-11-18 for its `layout`.
-            ("clarity-review", 7_300),
-            ("deep-research", 13_650),
+            ("clarity-review", 7_600),
+            ("deep-research", 13_950),
             // sql_query, search and delete_data. Just above its size when it
             // shipped on 2026-11-18.
-            ("delete-data", 9_200),
+            ("delete-data", 9_500),
             // Just above its size when it shipped on 2026-11-20.
-            ("insight-report", 12_300),
-            ("meeting-prep", 8_550),
-            ("morning-brief", 8_850),
+            ("insight-report", 12_600),
+            ("meeting-prep", 8_850),
+            ("morning-brief", 9_150),
             ("new-applet", 3_550),
-            ("trip-planner", 9_300),
-            ("weekly-review", 9_000),
+            ("trip-planner", 9_600),
+            ("weekly-review", 9_300),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();

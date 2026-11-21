@@ -43,6 +43,19 @@ export function fieldLabel(sourceId: string, field: string): string {
 	return KEY_HELP[sourceId]?.labels?.[field] ?? field;
 }
 
+/** The field's label inside a sentence: its first letter lowercased unless
+ *  the label starts with an acronym ("API key"). */
+export function fieldPhrase(sourceId: string, field: string): string {
+	const label = fieldLabel(sourceId, field);
+	return /^[A-Z]{2}/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/** The sentence for a field left empty. */
+export function missingField(sourceId: string, field: string): string {
+	const phrase = fieldPhrase(sourceId, field);
+	return isSecretField(field) ? `Paste the ${phrase}, then connect.` : `Enter ${phrase}, then connect.`;
+}
+
 /** Fields that hold a secret are masked; an email is not a secret. */
 export function isSecretField(field: string): boolean {
 	return field !== 'email';

@@ -68,14 +68,16 @@ impl Layout {
     }
 }
 
-/// Numbers each order's lines in the order the files list them, so a line
-/// keeps its key when the same history is downloaded again.
+/// Numbers the lines of one item within one order, in the order the files
+/// list them. The number only tells apart repeated lines of the same item, so
+/// a line keeps its key when a later download lists the order's other items
+/// in a different order.
 #[derive(Default)]
-pub struct LineIndex(HashMap<String, usize>);
+pub struct LineIndex(HashMap<(String, String), usize>);
 
 impl LineIndex {
-    fn next(&mut self, order_id: &str) -> usize {
-        let n = self.0.entry(order_id.to_string()).or_insert(0);
+    fn next(&mut self, order_id: &str, item_key: &str) -> usize {
+        let n = self.0.entry((order_id.to_string(), item_key.to_string())).or_insert(0);
         let i = *n;
         *n += 1;
         i
@@ -89,8 +91,8 @@ pub fn parse_line(layout: &Layout, record: &[String], lines: &mut LineIndex) -> 
     let occurred_at = parse_time(field(record, layout.order_date)?)?;
     let asin = field(record, layout.asin).map(str::to_string);
     let item_name = field(record, layout.product).map(str::to_string).or_else(|| asin.clone())?;
-    let index = lines.next(&order_id);
     let item_key = asin.clone().unwrap_or_else(|| content_key(&[&item_name]));
+    let index = lines.next(&order_id, &item_key);
 
     let mut metadata = Map::new();
     for (key, col) in [("website", layout.website), ("ship_date", layout.ship_date), ("product_condition", layout.condition)] {
@@ -191,7 +193,7 @@ mod tests {
         assert_eq!(a.metadata["product_condition"], "New");
 
         let b = &rows[1];
-        assert_eq!(b.source_stream_id, "amazon:111-0000001-0000001:B000000002:1");
+        assert_eq!(b.source_stream_id, "amazon:111-0000001-0000001:B000000002:0");
         assert_eq!((b.unit_price_cents, b.total_cents), (None, Some(129_900)));
         assert_eq!(b.status.as_deref(), Some("Cancelled"));
     }
@@ -229,6 +231,24 @@ mod tests {
         assert!(rows[0].source_stream_id.ends_with(":0"));
         assert!(rows[1].source_stream_id.ends_with(":1"));
         assert_ne!(rows[0].source_stream_id, rows[1].source_stream_id);
+    }
+
+    #[test]
+    fn lines_keep_their_keys_when_a_download_lists_them_in_another_order() {
+        let header = "Order ID,Order Date,Product Name,ASIN\n";
+        let a = "114-1,2024-01-01T00:00:00Z,Example Desk Lamp,B000000004\n";
+        let b = "114-1,2024-01-01T00:00:00Z,Paper Lanterns,B000000005\n";
+        let keys = |csv: String| {
+            let mut k: Vec<String> = parse_all(&csv).into_iter().map(|p| p.source_stream_id).collect();
+            k.sort();
+            k
+        };
+        let first = keys(format!("{header}{a}{b}{a}"));
+        assert_eq!(first, keys(format!("{header}{b}{a}{a}")));
+        assert_eq!(
+            first,
+            vec!["amazon:114-1:B000000004:0", "amazon:114-1:B000000004:1", "amazon:114-1:B000000005:0"]
+        );
     }
 
     #[test]

@@ -43,7 +43,6 @@
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { sourceMark } from '$lib/sources/brands';
 	import { IMPORT_SOURCES, isImportSource } from '$lib/imports';
-	import OwnAppConnect from './OwnAppConnect.svelte';
 	import { SOURCE_CAPABILITIES } from '$lib/sources/capabilities';
 	import type { LakeStream } from '$lib/sources/streams';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
@@ -134,8 +133,10 @@
 				why: 'Nothing runs for it now. Disconnect what is left below if you no longer need it.'
 			};
 		}
+		// A broken sign-in comes first, even on a source that also imports
+		// (Spotify's recent plays), so its reason is on the page.
 		const importing = IMPORT_SOURCES[source.id];
-		if (importing) {
+		if (importing && !broken) {
 			return { line: importing.line, why: importing.why };
 		}
 		if (connections.length === 0) {
@@ -227,7 +228,9 @@
 		if (isThisDevice) return `Set up ${thisComputerLabel}`;
 		if (source.id === 'mac') return 'How to set up';
 		if (isDeviceSource) return connections.length > 0 ? 'Pair another' : 'Pair';
-		if (isImportSource(source.id)) return connections.length > 0 ? 'Import again' : 'Import';
+		// An import adds to what is there; a credential (Spotify's recent plays)
+		// says nothing about whether a file was ever imported.
+		if (isImportSource(source.id)) return 'Import';
 		return connections.length > 0 ? `Add another ${name} account` : `Connect ${name}`;
 	});
 
@@ -240,18 +243,8 @@
 		await connectFlow.start(source);
 	}
 
-	/** The own-app window for Spotify's recent plays: open with no id to
-	 *  connect, or with a credential's id to sign it in again. */
-	let ownApp = $state<{ credentialId?: string } | null>(null);
-
 	function fix(c: Connection) {
-		if (!source) return;
-		// Spotify's sign-in is the person's own app, not the import window.
-		if (source.id === 'spotify') {
-			ownApp = { credentialId: c.id };
-			return;
-		}
-		void connectFlow.start(source, c.id);
+		if (source) void connectFlow.start(source, c.id);
 	}
 
 	/** A device's own row, and for a Mac collector the app that installed it. */
@@ -353,7 +346,9 @@
 			It covers songs, not podcasts.
 		</p>
 		{#if accounts.length === 0}
-			<p class="another"><TextAction onclick={() => (ownApp = {})}>Connect your Spotify app</TextAction></p>
+			<p class="another">
+				<TextAction onclick={() => connectFlow.startOwnApp('spotify')}>Connect your Spotify app</TextAction>
+			</p>
 		{/if}
 	{/if}
 
@@ -542,13 +537,6 @@
 			</Button>
 		</section>
 	{/if}
-
-	<OwnAppConnect
-		open={ownApp !== null}
-		credentialId={ownApp?.credentialId}
-		onClose={() => (ownApp = null)}
-		onReturn={() => void store.load()}
-	/>
 
 	{#if source?.repo}
 		<p class="code"><TextAction onclick={readCode}>Read the code</TextAction> that collects from {name}.</p>

@@ -20,6 +20,7 @@ use sqlx::PgPool;
 use virtues::api::DriveConfig;
 use virtues::bookmark_media::{store_image_bytes_at, PHOTOS_DIR};
 use virtues::storage::Storage;
+use virtues_helpers::dedup::dedup_refs_keep_last;
 use virtues_helpers::ios::{row_id, IOS_PROVIDER, PHOTOS_STREAM_TABLE};
 
 use crate::bookmark::{take_shared_image, SharedImage};
@@ -148,25 +149,43 @@ pub struct Written {
 }
 
 /// Write a batch of photo records.
+///
+/// One batch can hold several records for one photo: the phone gives each
+/// version its own outbox id, and the row is keyed on `local_id`. Postgres
+/// refuses an `ON CONFLICT DO UPDATE` that meets one row twice, which would
+/// fail the batch on every retry, so only the last record per photo is kept.
+/// That includes a deletion: whichever of a version and a deletion comes
+/// later in the batch decides the row.
 pub async fn write_photos(db: &PgPool, records: &[Value]) -> Result<Written> {
-    let mut rows = Vec::new();
-    let mut gone = Vec::new();
+    let mut shaped = Vec::with_capacity(records.len());
     let mut out = Written::default();
     for rec in records {
         match shape(rec) {
-            Shaped::Row(r) => rows.push(*r),
-            Shaped::Deleted(id) => gone.push(id),
             Shaped::Skip(why) => {
                 tracing::warn!(why, "photo record skipped");
                 out.skipped += 1;
             }
+            s => shaped.push(s),
+        }
+    }
+    let mut rows: Vec<&PhotoRow> = Vec::new();
+    let mut gone: Vec<&str> = Vec::new();
+    for s in dedup_refs_keep_last(&shaped, |s| match s {
+        Shaped::Row(r) => r.stream_id.as_str(),
+        Shaped::Deleted(id) => id.as_str(),
+        Shaped::Skip(_) => unreachable!("skips are counted above"),
+    }) {
+        match s {
+            Shaped::Row(r) => rows.push(r),
+            Shaped::Deleted(id) => gone.push(id),
+            Shaped::Skip(_) => {}
         }
     }
 
     // One statement per column array, so a first pass of tens of thousands of
     // photos is a handful of round trips rather than one per photo.
     for chunk in rows.chunks(2000) {
-        let col = |f: fn(&PhotoRow) -> Option<String>| chunk.iter().map(f).collect::<Vec<_>>();
+        let col = |f: fn(&PhotoRow) -> Option<String>| chunk.iter().map(|r| f(r)).collect::<Vec<_>>();
         let ids = col(|r| Some(r.id.clone()));
         let streams = col(|r| Some(r.stream_id.clone()));
         let kinds = col(|r| Some(r.kind.clone()));
@@ -327,5 +346,47 @@ mod tests {
                 .await
                 .unwrap();
         assert!(gone.is_some());
+    }
+
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn two_versions_of_one_photo_in_one_batch_keep_the_later(pool: PgPool) {
+        let version = |n: &str, favorite: bool| {
+            let mut p = photo(&format!("A1B2/L0/001#{n}"));
+            p["local_id"] = json!("A1B2/L0/001");
+            p["is_favorite"] = json!(favorite);
+            p
+        };
+        let w = write_photos(&pool, &[version("1", false), version("2", true)]).await.unwrap();
+        assert_eq!(w, Written { written: 1, deleted: 0, skipped: 0 });
+        let is_favorite: bool =
+            sqlx::query_scalar("SELECT is_favorite FROM data_content_photo WHERE source_stream_id = 'ios:photo:A1B2/L0/001'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(is_favorite);
+
+        // A deletion later in the batch wins over a version before it.
+        let gone = json!({ "id": "A1B2/L0/001#deleted", "local_id": "A1B2/L0/001", "deleted": true });
+        let w = write_photos(&pool, &[version("3", false), gone.clone()]).await.unwrap();
+        assert_eq!((w.written, w.deleted), (0, 1));
+        let (is_favorite, deleted): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT is_favorite, deleted_at_source FROM data_content_photo WHERE source_stream_id = 'ios:photo:A1B2/L0/001'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(is_favorite, "the version before the deletion was not written");
+        assert!(deleted.is_some());
+
+        // A version after a deletion brings the photo back.
+        let w = write_photos(&pool, &[gone, version("4", false)]).await.unwrap();
+        assert_eq!((w.written, w.deleted), (1, 0));
+        let deleted: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT deleted_at_source FROM data_content_photo WHERE source_stream_id = 'ios:photo:A1B2/L0/001'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(deleted.is_none());
     }
 }

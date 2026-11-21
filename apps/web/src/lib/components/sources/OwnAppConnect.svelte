@@ -29,6 +29,15 @@
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 
+	// Each opening starts clean: no field or error left from the last try.
+	$effect(() => {
+		if (open) {
+			clientId = '';
+			busy = false;
+			error = null;
+		}
+	});
+
 	function openDashboard(e: MouseEvent) {
 		if (!isTauri) return;
 		e.preventDefault();

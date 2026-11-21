@@ -87,7 +87,7 @@ photo, and a picture for favorites only.**
    Truto, routed box to api.virtues.com to Truto as Google is, writing the
    existing email and calendar records.
    - **Built on wave:** virtues-api's `routes/vendor.rs` serves Google and
-     Outlook from one table (`vendor_connections`, migration 0017), with a
+     Outlook from one table (`google_connections` with a `provider` column, migration 0017; the name stays for rollback), with a
      read-only allow-list for Outlook (`/me`, folder message deltas,
      calendars, calendar views). Truto's `outlook` and `outlookcalendar`
      integrations share one Microsoft app on `graph.microsoft.com`, so one
@@ -175,6 +175,30 @@ photo, and a picture for favorites only.**
 6. **Zoom: not built.** Left to the meeting tools (decision 2).
 7. **The manual.** A line per source in `docs/setup/sources.md`, and what
    passes through Truto. Delete this plan when the last slice ships.
+
+## Left after the 2026-11-21 audit
+
+Three reviews read every slice; their serious findings are fixed (commit
+after 99bea44ef). Left, none blocking a first real run:
+
+- **Not run anywhere real.** No slice has run against a real account,
+  phone or download. Outlook also needs Truto's `outlook` integration
+  installed in its Production environment and virtues-api deployed.
+- **Return addresses.** virtues-api accepts a return address only on a
+  private network, `localhost`, `.local` or `virtues.com`, the same rule
+  Google's sign-in has. A box reached at its own domain or a tailnet name
+  cannot sign in to Outlook or Spotify, and Outlook then says to link the
+  server, which is the wrong reason.
+- **Spotify's redirect address** in the app window is written into the app
+  (`auth.virtues.com`); a box pointed at another OAuth proxy would show the
+  wrong one. Signing in again asks for the Client ID again although the box
+  has it.
+- **Spotify's two clocks.** A recent play and a download play merge only
+  when Spotify's `played_at` and the download's stop time agree to the
+  second, which Spotify does not document.
+- **Photos.** Editing a favorite stores its new picture and leaves the old
+  one in Drive with nothing pointing at it.
+- **Imports** check a staged file by its folder's name, not its full path.
 
 ## Decisions
 

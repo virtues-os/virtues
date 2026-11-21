@@ -22,6 +22,11 @@ export type ConnectIntent =
 
 /** `next`: where a browser connect lands afterwards. `credentialId`:
  *  reconnecting that credential, which the box repairs in place. */
+/** Sources signed in with an app the person makes at the vendor themselves
+ *  (`own_app` on the server). Spotify also imports, so its catalog entry is
+ *  the import's and the own-app window is opened by name. */
+export const OWN_APP_SOURCES = new Set(['spotify']);
+
 export interface ConnectOptions {
 	next?: string;
 	credentialId?: string;

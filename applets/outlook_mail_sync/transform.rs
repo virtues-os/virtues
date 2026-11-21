@@ -1,8 +1,12 @@
 //! Outlook messages from Microsoft Graph → `data_communication_email`.
 //!
-//! Same table and columns as the Gmail transform. A message is keyed by its
-//! `internetMessageId`, which stays the same when the message moves between
-//! folders; Graph's own `id` changes on every move, so it is only the fallback.
+//! Same table and columns as the Gmail transform. A message is keyed by the
+//! mailbox's own address and its `internetMessageId`:
+//! `outlook:{mailbox}:{internetMessageId}`. The message id stays the same when
+//! the message moves between folders; Graph's own `id` changes on every move,
+//! so it is only the fallback. The mailbox is in the key because two connected
+//! accounts can receive the same mail, and each keeps its own row with its own
+//! read state, flag and folder.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -79,7 +83,8 @@ pub fn shape_one(msg: &Value, user_email: &str, folder: &str) -> Option<EmailRow
     }
     let graph_id = str_field(msg, "id")?;
     let internet_id = str_field(msg, "internetMessageId");
-    let key = internet_id.clone().unwrap_or_else(|| graph_id.clone());
+    let message_id = internet_id.clone().unwrap_or_else(|| graph_id.clone());
+    let key = stream_key(user_email, &message_id);
 
     let (from_email, from_name) = msg.get("from").map(address).unwrap_or_default();
     let (to_emails, to_names) = recipients(msg.get("toRecipients"));
@@ -122,7 +127,7 @@ pub fn shape_one(msg: &Value, user_email: &str, folder: &str) -> Option<EmailRow
 
     Some(EmailRow {
         id: Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("outlook:mail:{key}").as_bytes()).to_string(),
-        message_id: key.clone(),
+        message_id,
         conversation_id,
         subject: str_field(msg, "subject"),
         body,
@@ -142,6 +147,12 @@ pub fn shape_one(msg: &Value, user_email: &str, folder: &str) -> Option<EmailRow
         source_stream_id: key,
         metadata,
     })
+}
+
+/// `outlook:{mailbox address, lowercased}:{message id}`. Insert and the
+/// state update both match on this.
+fn stream_key(user_email: &str, message_id: &str) -> String {
+    format!("outlook:{}:{message_id}", user_email.trim().to_lowercase())
 }
 
 fn str_field(v: &Value, key: &str) -> Option<String> {
@@ -444,7 +455,7 @@ mod tests {
     #[test]
     fn a_graph_message_becomes_an_email_row() {
         let row = shape_one(&message(), "david@example.com", "inbox").unwrap();
-        assert_eq!(row.source_stream_id, "<lunch-plans-1@example.com>");
+        assert_eq!(row.source_stream_id, "outlook:david@example.com:<lunch-plans-1@example.com>");
         assert_eq!(row.message_id, "<lunch-plans-1@example.com>");
         assert_eq!(row.conversation_id.as_deref(), Some("AAQkConv1"));
         assert_eq!(row.subject.as_deref(), Some("Lunch on Thursday?"));
@@ -496,7 +507,18 @@ mod tests {
         let mut m = message();
         m.as_object_mut().unwrap().remove("internetMessageId");
         let row = shape_one(&m, "david@example.com", "inbox").unwrap();
-        assert_eq!(row.source_stream_id, "AAMkAGraphId1");
+        assert_eq!(row.source_stream_id, "outlook:david@example.com:AAMkAGraphId1");
+        assert_eq!(row.message_id, "AAMkAGraphId1");
+    }
+
+    #[test]
+    fn the_key_names_the_mailbox_in_lowercase() {
+        let a = shape_one(&message(), "David@Example.com", "inbox").unwrap();
+        let b = shape_one(&message(), "team@example.com", "inbox").unwrap();
+        assert_eq!(a.source_stream_id, "outlook:david@example.com:<lunch-plans-1@example.com>");
+        assert_ne!(a.source_stream_id, b.source_stream_id);
+        assert_ne!(a.id, b.id);
+        assert_eq!(a.message_id, b.message_id);
     }
 
     #[test]
@@ -535,6 +557,34 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(got, vec![(true, json!(["Friends", "archive"]), "outlook_mail".into(), "outlook".into())]);
+    }
+
+    /// Two connected mailboxes that both received one message keep a row
+    /// each, and one mailbox reading it leaves the other's row unread.
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn two_mailboxes_keep_their_own_copy_of_one_message(pool: PgPool) {
+        let w = write_messages(&pool, "david@example.com", "inbox", &[message()]).await.unwrap();
+        assert_eq!((w.added, w.changed), (1, 0));
+        let w = write_messages(&pool, "team@example.com", "inbox", &[message()]).await.unwrap();
+        assert_eq!((w.added, w.changed), (1, 0));
+
+        let mut read = message();
+        read["isRead"] = json!(true);
+        let w = write_messages(&pool, "team@example.com", "inbox", &[read]).await.unwrap();
+        assert_eq!((w.added, w.changed), (0, 1));
+
+        let got: Vec<(String, bool)> =
+            sqlx::query_as("SELECT source_stream_id, is_read FROM data_communication_email ORDER BY source_stream_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                ("outlook:david@example.com:<lunch-plans-1@example.com>".into(), false),
+                ("outlook:team@example.com:<lunch-plans-1@example.com>".into(), true),
+            ]
+        );
     }
 
     #[test]

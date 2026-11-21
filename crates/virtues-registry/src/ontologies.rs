@@ -338,10 +338,13 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
         // A recorded chunk with nothing said is kept as a row with empty text,
         // so only a chunk holding something other than spaces and punctuation
         // is speech. A day of silent chunks is a real zero; a day with no
-        // chunks at all is a day the microphone was not recording.
+        // chunks at all is a day the microphone was not recording. A meeting
+        // from a meeting tool is not this server's audio, and the phone may
+        // have heard the same call, so it is left out.
         LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
             timestamp_column: "started_at", label: "speech heard", unit: "min",
-            agg: "sum(duration_seconds) / 60.0", filter: Some("text ~ '[^[:space:][:punct:]]'"),
+            agg: "sum(duration_seconds) / 60.0",
+            filter: Some("text ~ '[^[:space:][:punct:]]' AND source_table <> 'meeting'"),
             coverage: None, empty_is_zero: false, kind: Total },
         // ── financial ───────────────────────────────────────────────────────
         // Purchases: money that left for someone else. Not a transfer between
