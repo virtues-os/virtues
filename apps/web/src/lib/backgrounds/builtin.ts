@@ -16,24 +16,24 @@ export const DOTS: DotsStyle = {
 			id: 'current',
 			title: 'Current',
 			pictures: [
-				{ id: 'fine', title: 'Fine', dots: { motion: 'drift', gap: 14, radius: 1.1, reach: 6, period: 40 } },
-				{ id: 'wide', title: 'Wide', dots: { motion: 'drift', gap: 26, radius: 1.6, reach: 10, period: 60 } },
+				{ id: 'fine', title: 'Fine', params: { motion: 'drift', gap: 14, radius: 1.1, reach: 6, period: 40 } },
+				{ id: 'wide', title: 'Wide', params: { motion: 'drift', gap: 26, radius: 1.6, reach: 10, period: 60 } },
 			],
 		},
 		{
 			id: 'swell',
 			title: 'Swell',
 			pictures: [
-				{ id: 'tide', title: 'Tide', dots: { motion: 'swell', gap: 18, radius: 1.4, reach: 2, period: 14 } },
-				{ id: 'breath', title: 'Breath', dots: { motion: 'swell', gap: 24, radius: 1.8, reach: 3, period: 20 } },
+				{ id: 'tide', title: 'Tide', params: { motion: 'swell', gap: 18, radius: 1.4, reach: 2, period: 14 } },
+				{ id: 'breath', title: 'Breath', params: { motion: 'swell', gap: 24, radius: 1.8, reach: 3, period: 20 } },
 			],
 		},
 		{
 			id: 'rain',
 			title: 'Rain',
 			pictures: [
-				{ id: 'drizzle', title: 'Drizzle', dots: { motion: 'rain', gap: 16, radius: 1, reach: 3, period: 30 } },
-				{ id: 'snowfall', title: 'Snowfall', dots: { motion: 'rain', gap: 24, radius: 1.8, reach: 8, period: 50 } },
+				{ id: 'drizzle', title: 'Drizzle', params: { motion: 'rain', gap: 16, radius: 1, reach: 3, period: 30 } },
+				{ id: 'snowfall', title: 'Snowfall', params: { motion: 'rain', gap: 24, radius: 1.8, reach: 8, period: 50 } },
 			],
 		},
 	],

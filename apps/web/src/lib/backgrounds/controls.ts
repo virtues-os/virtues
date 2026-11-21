@@ -7,7 +7,7 @@
  */
 import { request } from '$lib/api/client';
 import { background, fileUrl } from '$lib/stores/background.svelte';
-import { find, formatAddress, isDots, parseSetting, pictureTitle, pool, srcset, widest, type Address, type Picture } from './resolve';
+import { find, formatAddress, isDrawn, parseSetting, pictureTitle, pool, srcset, widest, type Address, type DotsParams, type Picture } from './resolve';
 import { narrowest, stepFrom } from './browse';
 import { dotsPreview } from './dots';
 
@@ -53,20 +53,20 @@ export async function step(dir: 1 | -1): Promise<void> {
  * The sources of the pictures either side of today's, in the current
  * appearance, so the control can load them before an arrow asks for them.
  */
-export function neighbors(): { key: string; avif: string; webp: string; src: string }[] {
+export function neighbors(): { key: string; avif: string; src: string }[] {
 	const at = background.today?.address;
 	if (!at) return [];
 	const items = stepPool();
-	const out: { key: string; avif: string; webp: string; src: string }[] = [];
+	const out: { key: string; avif: string; src: string }[] = [];
 	for (const dir of [1, -1] as const) {
 		const a = stepFrom(items, at, dir);
 		const picture = a && find(background.allStyles, a);
-		if (!a || !picture || isDots(picture)) continue;
+		if (!a || !picture || isDrawn(picture)) continue;
 		const key = formatAddress(a);
 		if (key === at || out.some((n) => n.key === key)) continue;
 		const v = picture[background.appearance];
 		const url = fileUrl(a.style);
-		out.push({ key, avif: srcset(v, 'avif', url), webp: srcset(v, 'webp', url), src: widest(v, url) });
+		out.push({ key, avif: srcset(v, 'avif', url), src: widest(v, url) });
 	}
 	return out;
 }
@@ -77,9 +77,25 @@ export async function keep(): Promise<void> {
 	if (address) await background.set(address);
 }
 
+/**
+ * A still of a drawn picture, by its style's renderer. Each renderer in
+ * lib/backgrounds/renderers.ts has its thumbnail here, so the drawing code
+ * for thumbnails loads with the pickers and not at launch.
+ */
+function drawnThumbnail(style: string, id: string, params: unknown): string {
+	const renderer = background.allStyles.find((s) => s.style === style)?.renderer;
+	const dark = background.appearance === 'dark';
+	switch (renderer) {
+		case 'dots':
+			return dotsPreview(`${style}/${id}`, params as DotsParams, dark);
+		default:
+			return '';
+	}
+}
+
 /** A small picture for a thumbnail, in the current appearance. */
 export function thumbnail(style: string, picture: Picture): string {
-	if (isDots(picture)) return dotsPreview(`${style}/${picture.id}`, picture.dots, background.appearance === 'dark');
+	if (isDrawn(picture)) return drawnThumbnail(style, picture.id, picture.params);
 	return narrowest(picture[background.appearance], fileUrl(style));
 }
 

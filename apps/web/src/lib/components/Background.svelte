@@ -5,20 +5,23 @@
 	 * by default, or nothing under Plain (lib/stores/background.svelte.ts).
 	 * The parent places and sizes it, and owns its mask and animation.
 	 *
-	 * A picture from a style has its own dark version, so only the lake is
-	 * dimmed in Dark, through `--window-scene-filter`. The dots style is
-	 * drawn by the app in the theme's ink (DotsField).
+	 * A picture from a style has its own dark version. The lake, and a
+	 * picture from a pack with one version of each, are dimmed in Dark
+	 * through `--window-scene-filter`. A style the app draws itself (Dots)
+	 * comes from its renderer, loaded the first time a setting needs it
+	 * (lib/backgrounds/renderers.ts), and draws in the theme's ink.
 	 *
 	 * A change of picture crossfades. The new picture is a layer over the old
 	 * one, kept clear until it has loaded and decoded, then faded in; the old
 	 * layer goes once the fade ends. So stepping through pictures never shows
 	 * an empty frame, and quick steps only fade in the last one to arrive.
-	 * Dots and Plain are not opaque, so the old layer fades out under them.
+	 * Drawn styles and Plain are not opaque, so the old layer fades out under
+	 * them.
 	 */
 	import { onMount, untrack } from "svelte";
 	import { background, type Shown } from "$lib/stores/background.svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
-	import DotsField from "$lib/components/backgrounds/DotsField.svelte";
+	import { loadRenderer } from "$lib/backgrounds/renderers";
 
 	let {
 		position = "50% 100%",
@@ -114,13 +117,16 @@
 					<source srcset="/scenes/lake.webp" type="image/webp" />
 					<img use:loaded={layer.id} class:dim={dimLake} src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" style:object-position={position} />
 				</picture>
-			{:else if shown.kind === "dots"}
-				<DotsField params={shown.params} appearance={background.appearance} />
+			{:else if shown.kind === "drawn"}
+				{#await loadRenderer(shown.renderer) then Drawn}
+					<Drawn params={shown.params} appearance={background.appearance} />
+				{/await}
 			{:else if shown.kind === "picture"}
+				<!-- Styles are AVIF; the img's own src is the widest file, which is
+				     WebP only for a style built before AVIF only. -->
 				<picture>
 					<source srcset={shown.avif} sizes="100vw" type="image/avif" />
-					<source srcset={shown.webp} sizes="100vw" type="image/webp" />
-					<img use:loaded={layer.id} src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={position} />
+					<img use:loaded={layer.id} class:dim={shown.dim} src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={position} />
 				</picture>
 			{/if}
 		</div>

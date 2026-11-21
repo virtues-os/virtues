@@ -56,15 +56,19 @@ export interface ImagePicture {
 }
 
 /**
- * A picture of the dots style: how the field moves. The app draws it on a
- * canvas in the current theme's ink (components/backgrounds/DotsField.svelte),
- * so one picture serves Light and Dark.
+ * A picture of a style the app draws itself: parameters for its renderer,
+ * which draws them in the current theme (lib/backgrounds/renderers.ts), so
+ * one picture serves Light and Dark. The style's `renderer` says how to read
+ * `params`.
  */
-export interface DotsPicture {
+export interface DrawnPicture<P = unknown> {
 	id: string;
 	title: string;
-	dots: DotsParams;
+	params: P;
 }
+
+/** The renderers that draw a style themselves, by manifest `renderer`. */
+export type DrawnRenderer = 'dots';
 
 export interface DotsParams {
 	/** How the field moves: drifting on a slow current, swelling in and out, or falling. */
@@ -79,15 +83,15 @@ export interface DotsParams {
 	period: number;
 }
 
-export type Picture = ImagePicture | DotsPicture;
+export type Picture = ImagePicture | DrawnPicture;
 
-export function isDots(p: Picture): p is DotsPicture {
-	return 'dots' in p;
+export function isDrawn(p: Picture): p is DrawnPicture {
+	return 'params' in p;
 }
 
 /** A picture's name in the current appearance. */
 export function pictureTitle(p: Picture, appearance: Appearance): string {
-	return isDots(p) ? p.title : p[appearance].title;
+	return isDrawn(p) ? p.title : p[appearance].title;
 }
 
 export interface Collection<P extends Picture = Picture> {
@@ -110,12 +114,14 @@ export interface ImageStyle extends StyleBase {
 }
 
 /** A style drawn by the app itself, shipped with it (lib/backgrounds/builtin.ts). */
-export interface DotsStyle extends StyleBase {
-	renderer: 'dots';
-	collections: Collection<DotsPicture>[];
+export interface DrawnStyle<R extends DrawnRenderer = DrawnRenderer, P = unknown> extends StyleBase {
+	renderer: R;
+	collections: Collection<DrawnPicture<P>>[];
 }
 
-export type StyleManifest = ImageStyle | DotsStyle;
+export type DotsStyle = DrawnStyle<'dots', DotsParams>;
+
+export type StyleManifest = ImageStyle | DrawnStyle;
 
 /** A style the server can download (GET /api/backgrounds, `available`). */
 export interface AvailableStyle {

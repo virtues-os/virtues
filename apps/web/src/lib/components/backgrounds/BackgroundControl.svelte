@@ -180,7 +180,6 @@
 				{#each preload as p (p.key)}
 					<picture class="preload" aria-hidden="true">
 						<source srcset={p.avif} sizes="100vw" type="image/avif" />
-						<source srcset={p.webp} sizes="100vw" type="image/webp" />
 						<img src={p.src} alt="" decoding="async" />
 					</picture>
 				{/each}

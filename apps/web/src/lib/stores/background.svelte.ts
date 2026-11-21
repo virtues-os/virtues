@@ -21,7 +21,7 @@ import {
 	dayNumber,
 	find,
 	formatAddress,
-	isDots,
+	isDrawn,
 	parseSetting,
 	pickForDay,
 	pool,
@@ -30,7 +30,7 @@ import {
 	type Address,
 	type Appearance,
 	type AvailableStyle,
-	type DotsParams,
+	type DrawnRenderer,
 	type DownloadProgress,
 	type Picture,
 	type StyleManifest,
@@ -39,12 +39,17 @@ import {
 const SETTING_KEY = 'virtues-background';
 const PICTURE_KEY = 'virtues-background-picture';
 
-/** What to draw. `lake` is the bundled default; `none` draws nothing; `dots` is drawn by the app. */
+/**
+ * What to draw. `lake` is the bundled default; `none` draws nothing; a
+ * `picture` is files from an image style, `dim` when it stands in for a dark
+ * version it does not have; `drawn` is drawn by its renderer
+ * (lib/backgrounds/renderers.ts).
+ */
 export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
-	| { kind: 'picture'; key: string; avif: string; webp: string; src: string; title: string }
-	| { kind: 'dots'; key: string; params: DotsParams };
+	| { kind: 'picture'; key: string; avif: string; src: string; title: string; dim: boolean }
+	| { kind: 'drawn'; key: string; renderer: DrawnRenderer; params: unknown };
 
 /** Another picture for one day of a rotating setting. */
 interface DayChoice {
@@ -159,17 +164,21 @@ class BackgroundStore {
 			// cached for today: fall back to the lake.
 			return this.styles === null && !this.stylesUnavailable ? { kind: 'none' } : { kind: 'lake' };
 		}
-		if (isDots(today.picture)) return { kind: 'dots', key: today.address, params: today.picture.dots };
-		const v = today.picture[this.appearance];
 		const style = today.address.split('/')[0];
+		if (isDrawn(today.picture)) {
+			const manifest = this.allStyles.find((s) => s.style === style);
+			if (!manifest || manifest.renderer === 'image') return { kind: 'lake' };
+			return { kind: 'drawn', key: today.address, renderer: manifest.renderer, params: today.picture.params };
+		}
+		const v = today.picture[this.appearance];
 		const url = fileUrl(style);
 		return {
 			kind: 'picture',
 			key: `${today.address}:${this.appearance}`,
 			avif: srcset(v, 'avif', url),
-			webp: srcset(v, 'webp', url),
 			src: widest(v, url),
 			title: v.title,
+			dim: this.appearance === 'dark' && !!v.dim,
 		};
 	});
 

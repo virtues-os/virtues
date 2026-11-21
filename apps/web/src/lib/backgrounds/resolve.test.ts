@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, isDots, parseSetting, pickForDay, pool, srcset, widest, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, isDrawn, parseSetting, pickForDay, pool, srcset, widest, type StyleManifest, type Variant } from './resolve';
 import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
@@ -63,7 +63,7 @@ describe('pool', () => {
 
 	it('finds the picture an address names', () => {
 		const cove = find(styles, { style: 'paintings', collection: 'beach', picture: 'cove' });
-		expect(cove && !isDots(cove) ? cove.dark.source : undefined).toBe('cove-night');
+		expect(cove && !isDrawn(cove) ? cove.dark.source : undefined).toBe('cove-night');
 	});
 });
 
@@ -151,7 +151,7 @@ describe('the built-in dots style', () => {
 		const all: StyleManifest[] = [DOTS, ...styles];
 		expect(pool(all, parseSetting('dots')).length).toBe(DOTS.collections.reduce((n, c) => n + c.pictures.length, 0));
 		const tide = find(all, { style: 'dots', collection: 'swell', picture: 'tide' });
-		expect(tide && isDots(tide) ? tide.dots.motion : undefined).toBe('swell');
+		expect(tide && isDrawn(tide) ? (tide.params as { motion: string }).motion : undefined).toBe('swell');
 		expect(pool(all, parseSetting('paintings/forest')).length).toBe(3);
 	});
 });

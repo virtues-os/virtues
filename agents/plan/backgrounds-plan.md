@@ -146,7 +146,7 @@ the set's `prompts.txt`, and writes into an output folder:
   and which edge fades to transparent. The luminance lets glass and the
   header text adjust over a bright picture. The focus box is the middle of
   the picture's edge energy, a rough guide for cropping on a phone.
-- AVIF and WebP at 1792 and 896 wide. A rerun only re-encodes a picture whose
+- AVIF at 1792 and 896 wide (WebP was dropped on 2026-11-21). A rerun only re-encodes a picture whose
   source is newer.
 - `review.html`, each picture's light version over its dark one.
 
@@ -214,9 +214,13 @@ To publish a new or rebuilt style: run `package.py` over every style, upload
 the new archives, then `catalog.json` last. An archive no catalog names any
 more can be deleted after a day, once servers have refreshed their catalog.
 
-Each archive is about 100 MB because it holds AVIF and WebP at two widths.
-Every Apple device of the last few years shows AVIF, so dropping WebP would
-roughly halve it; not decided.
+Archives are AVIF only since 2026-11-21, the owner's call ("yes if it saves
+a lot"): Watercolors is 40.8 MB and Oil paintings 36.8 MB, down from 113.5
+and 95.0. The two older archives are still in the bucket, named by no
+catalog; deleting them waits for the owner.
+
+How a style is added, built in or downloaded, and what a renderer must do,
+is in [agents/build/backgrounds.md](../build/backgrounds.md).
 
 ## Moving styles
 
@@ -295,8 +299,7 @@ Each slice replaces the old way in the same change.
 ## Open decisions
 
 1. Daily rotation, as proposed above, or a different change point.
-2. Whether archives drop WebP and carry AVIF only.
-3. What the home control's arrows do under a rotating setting, and how
+2. What the home control's arrows do under a rotating setting, and how
    Follow the day finds sunrise and sunset (both built as proposed above).
 
 ## When this plan is done
