@@ -7,6 +7,7 @@
  */
 import type { AttentionItem, Note, Task } from '$lib/api/client';
 import { dueGroup, dueLabel } from '$lib/tasks/due';
+import type { Question } from './questions';
 
 /** How soon a thing matters, nearest first. */
 export const RINGS = ['Now', 'Today', 'This week', 'Later'] as const;
@@ -68,6 +69,17 @@ export interface InboxItem {
 	task?: Task;
 	note?: Note;
 	attention?: AttentionItem;
+	question?: Question;
+}
+
+/**
+ * A question from your server as a thing in the list. It waits on you, so
+ * it wears that mark. The signal control thins what your threads ask of
+ * you, and a question is not one of those, so the list always shows it.
+ * The other views do not draw it.
+ */
+export function questionItem(q: Question): InboxItem {
+	return { key: `ask:${q.key}`, kind: 'needs', ring: 0, noise: 0, title: q.text, meta: q.about, threadId: null, question: q };
 }
 
 /** Each kind's mark, in px across. */

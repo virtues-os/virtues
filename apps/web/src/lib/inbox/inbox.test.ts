@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AttentionItem, Note, Task } from '$lib/api/client';
 import type { TimelineDay } from '$lib/timeline/day';
-import { buildItems, noteRing, taskRing } from './items';
+import { buildItems, noteRing, questionItem, taskRing } from './items';
+import { placeQuestion, type PlaceQuestion } from './questions';
 import { buildGraph, hubId } from './graph';
 import { fitLabels, labelWidth, markBox } from './labels';
 import { CX, CY, LOOSE, RING_R, layout, placeLabels, polar, slots, type Dot } from './radar';
@@ -620,5 +621,70 @@ describe('the graph', () => {
 				expect(gap).toBeGreaterThan(1);
 			}
 		}
+	});
+});
+
+describe('server questions', () => {
+	const place = (over: Partial<PlaceQuestion> = {}): PlaceQuestion => ({
+		ask: 'place',
+		changed: false,
+		id: 'pl_1',
+		latitude: 29.95,
+		longitude: -90.07,
+		hours: 2.6,
+		overnight: false,
+		naming: { candidates: [], lodging: null },
+		rejected_match: null,
+		title: 'New Orleans',
+		best_day: '2026-03-10',
+		hours_a_week: 3,
+		nights_a_week: 0,
+		...over,
+	});
+	const cafe = { name: 'Corner Cup', meters: 22, category: 'dining' };
+	const shop = { name: 'Reed Hardware', meters: 41, category: 'shopping' };
+
+	it('asks about home and work with a yes or a no', () => {
+		const home = placeQuestion(place({ ask: 'home', nights_a_week: 5.6 }));
+		expect(home.text).toBe('Is this home?');
+		expect(home.context).toBe('About 6 nights a week there');
+		expect(home.replies.map((r) => r.answer.kind)).toEqual(['home', 'not_home']);
+		expect(home.typed).toBeNull();
+		const work = placeQuestion(place({ ask: 'work', changed: true, hours_a_week: 0.4 }));
+		expect(work.text).toBe('Is this where you work now?');
+		expect(work.context).toBe('Less than an hour a week there');
+		expect(work.replies.map((r) => r.answer.kind)).toEqual(['work', 'not_work']);
+	});
+
+	it('names a place only when one named place is close, and never one you turned down', () => {
+		const one = placeQuestion(place({ naming: { candidates: [cafe], lodging: null } }));
+		expect(one.text).toBe('Were you at Corner Cup?');
+		expect(one.replies[0].answer).toEqual({ kind: 'name', name: 'Corner Cup', category: 'dining' });
+		expect(one.replies[1].answer).toEqual({ kind: 'not_this', name: 'Corner Cup' });
+		const turnedDown = placeQuestion(place({ naming: { candidates: [cafe], lodging: null }, rejected_match: 'Corner Cup' }));
+		expect(turnedDown.text).toBe('Where were you?');
+		expect(turnedDown.typed).not.toBeNull();
+		expect(turnedDown.replies.map((r) => r.label)).toEqual(['Just passing through']);
+	});
+
+	it('offers the close places to pick from when there are several', () => {
+		const q = placeQuestion(place({ naming: { candidates: [cafe, shop], lodging: null } }));
+		expect(q.text).toBe('Which of these were you at?');
+		expect(q.replies.map((r) => r.label)).toEqual(['Corner Cup', 'Reed Hardware', 'Just passing through']);
+		expect(q.typed).not.toBeNull();
+	});
+
+	it('asks where you stayed after a night, and never offers passing through', () => {
+		const far = { name: 'Harbor Inn', meters: 180, category: 'lodging' };
+		const open = placeQuestion(place({ overnight: true, naming: { candidates: [cafe], lodging: far } }));
+		expect(open.text).toBe('Where did you stay that night?');
+		expect(open.replies).toEqual([]);
+		const close = placeQuestion(place({ overnight: true, naming: { candidates: [], lodging: { ...far, meters: 30 } } }));
+		expect(close.text).toBe('Were you at Harbor Inn?');
+	});
+
+	it('lists a question as a thing that waits on you and is always shown', () => {
+		const it = questionItem(placeQuestion(place({ ask: 'home' })));
+		expect(it).toMatchObject({ key: 'ask:place:pl_1', kind: 'needs', noise: 0, title: 'Is this home?', meta: 'New Orleans' });
 	});
 });

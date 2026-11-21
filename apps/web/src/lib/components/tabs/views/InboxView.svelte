@@ -1,13 +1,15 @@
 <script lang="ts">
 	/**
 	 * The Inbox: everything that asks something of you, in one place. That is
-	 * your open tasks, what your server noticed and what your server needs.
+	 * your open tasks, what your server noticed, and what your server asks or
+	 * needs.
 	 *
 	 * The page is always split. The left side is how you find a thing, and
 	 * the right side is the thing itself: a task's page, an insight's page or
 	 * a thread. The left side has six views of the same list:
 	 *
-	 *   List    one row each, nearest first. The page opens here.
+	 *   List    one row each: your server first, then insights, then the
+	 *           things in your threads, nearest first. The page opens here.
 	 *   Radar   you in the middle, sooner things closer, one slice per thread
 	 *   Cards   a column for now, today, this week and later
 	 *   Graph   what is linked to what, in the radar's frame
@@ -42,9 +44,11 @@
 	import InboxGraph from '$lib/components/inbox/InboxGraph.svelte';
 	import InboxMap from '$lib/components/inbox/InboxMap.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
+	import QuestionDetail from '$lib/components/inbox/QuestionDetail.svelte';
 	import SignalSlider from '$lib/components/inbox/SignalSlider.svelte';
 	import type { ExtraLink } from '$lib/inbox/graph';
-	import { buildItems, type InboxItem } from '$lib/inbox/items';
+	import { buildItems, questionItem, type InboxItem } from '$lib/inbox/items';
+	import type { PlaceAnswer } from '$lib/inbox/questions';
 	import { LOOSE } from '$lib/inbox/radar';
 	import { attention } from '$lib/stores/attention.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
@@ -53,6 +57,7 @@
 	import { newThreadDialog } from '$lib/stores/newThread.svelte';
 	import { notesStore } from '$lib/stores/notes.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
+	import { questionsStore } from '$lib/stores/questions.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { homeOf, subjectName } from '$lib/tasks/homes';
@@ -85,6 +90,7 @@
 		void tasksStore.load();
 		notesStore.start();
 		attention.start();
+		void questionsStore.load();
 		const tick = setInterval(() => (now = new Date()), 60_000);
 		return () => {
 			notesStore.stop();
@@ -128,8 +134,24 @@
 	const listed = $derived(items.filter(matches));
 	/** The things for now and today, which is what the map draws. */
 	const todays = $derived(items.filter((it) => it.ring <= 1));
-	/** What J and K walk: the things the view shows. */
-	const walked = $derived(view === 'map' ? todays.filter(matches) : view === 'list' ? listed.filter((it) => !it.attention) : listed);
+
+	/**
+	 * The list's first part: what your server asks, then what it needs. The
+	 * signal control thins what your threads ask of you, so it leaves this
+	 * part alone. A few show at a time, so the part stays short.
+	 */
+	const SERVER_SHOWN = 4;
+	const asks = $derived(questionsStore.items.map(questionItem));
+	const serverAll = $derived(show === 'all' ? [...asks, ...items.filter((it) => it.attention)] : []);
+	let serverOpen = $state(false);
+	const serverRows = $derived(serverOpen ? serverAll : serverAll.slice(0, SERVER_SHOWN));
+	/** Every part of the list has arrived once, so its rows do not move down as you start to read. */
+	const listReady = $derived(tasksStore.loaded && questionsStore.loaded && attention.loaded);
+	/** The rest of the list: insights, then the things in your threads. */
+	const listRows = $derived(listed.filter((it) => !it.attention));
+	const listOrder = $derived([...serverRows, ...listRows.filter((it) => it.kind === 'insight'), ...listRows.filter((it) => it.kind !== 'insight')]);
+	/** What J and K walk: the things the view shows, in the order it shows them. */
+	const walked = $derived(view === 'map' ? todays.filter(matches) : view === 'list' ? listOrder : listed);
 
 	/**
 	 * A task's links beyond its own active thread, for the graph: a home that
@@ -176,17 +198,20 @@
 
 	// A thing that has since gone (a task you finished) no longer counts as chosen.
 	const pickedKey = $derived(choice.kind === 'item' ? choice.key : null);
-	const picked = $derived(pickedKey ? (items.find((it) => it.key === pickedKey) ?? null) : null);
+	const picked = $derived(pickedKey ? ([...asks, ...items].find((it) => it.key === pickedKey) ?? null) : null);
 	const pickedThreadId = $derived(choice.kind === 'thread' ? choice.id : null);
 	const thread = $derived(pickedThreadId && pickedThreadId !== LOOSE ? (everyThread.find((p) => p.id === pickedThreadId) ?? null) : null);
 	const detail = $derived(thread ? (projectStore.getCached(thread.id) ?? null) : null);
 	const atRest = $derived(!picked && !thread && pickedThreadId !== LOOSE);
 	/**
-	 * What the right side shows. The list opens on its first thing of yours,
-	 * as a mail app opens on its first message, until you choose another or
-	 * let go. The other views show only what you chose.
+	 * What the right side shows. The list opens on its first row, as a mail
+	 * app opens on its first message, until you choose another or let go.
+	 * The other views show only what you chose.
+	 *
+	 * It waits for the server's part of the list, which arrives on its own
+	 * requests, so the right side does not open one thing and then another.
 	 */
-	const first = $derived(listed.find((it) => !it.attention) ?? listed[0] ?? null);
+	const first = $derived(listReady ? (listOrder[0] ?? null) : null);
 	const current = $derived(picked ?? (view === 'list' && wide && choice.kind === 'rest' && !released ? first : null));
 
 	// Letting go lasts until you leave the view.
@@ -208,12 +233,17 @@
 		else if (it.attention) windowShellStore.openTabFromRoute(it.attention.route, { focusExisting: true });
 	}
 
+	/** A question has no page of its own. In a narrow pane it opens under its row. */
 	function pick(key: string) {
-		const it = items.find((i) => i.key === key);
+		const it = [...asks, ...items].find((i) => i.key === key);
 		if (!it) return;
 		released = false;
-		if (wide) choice = { kind: 'item', key };
+		if (wide || it.question) choice = { kind: 'item', key };
 		else openItem(it);
+	}
+
+	function reply(it: InboxItem, answer: PlaceAnswer) {
+		if (it.question) void questionsStore.answer(it.question, answer);
 	}
 
 	function pickThread(id: string) {
@@ -374,6 +404,12 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#snippet questionUnder(it: InboxItem)}
+	{#if it.question}
+		<QuestionDetail question={it.question} onAnswer={(a) => reply(it, a)} />
+	{/if}
+{/snippet}
+
 <div class="door" bind:clientWidth={doorWidth}>
 	<Page title="Inbox" maxWidth="none" padding="none" scrollable={false} class="flex flex-col md:flex-row">
 		<div class="main" class:list={view === 'list' && wide}>
@@ -449,16 +485,29 @@
 						</p>
 					{/if}
 				</div>
-			{:else if view === 'list' && !tasksStore.loaded}
+			{:else if view === 'list' && !listReady}
 				<div class="body" aria-hidden="true">
 					{#each [0, 1, 2, 3] as i (i)}<div class="placeholder"></div>{/each}
 				</div>
-			{:else if listed.length === 0 && tasksStore.loaded}
+			{:else if (view === 'list' ? listOrder.length === 0 : listed.length === 0) && tasksStore.loaded}
 				<p class="empty">
 					{items.length === 0 ? 'Nothing is waiting for you. New task adds one.' : 'Nothing this close to Signal. Move toward Noise to see more.'}
 				</p>
 			{:else if view === 'list'}
-				<div class="body"><InboxList items={listed} picked={current?.key ?? null} serverLast {threadOf} onPick={pick} /></div>
+				<div class="body">
+					<InboxList
+						items={listRows}
+						server={serverRows}
+						serverMore={serverAll.length - serverRows.length}
+						picked={current?.key ?? null}
+						inbox
+						{threadOf}
+						onPick={pick}
+						onReply={reply}
+						onServerMore={() => (serverOpen = true)}
+						under={wide ? undefined : questionUnder}
+					/>
+				</div>
 			{:else}
 				<div class="body"><InboxCards items={listed} picked={picked?.key ?? null} {threadName} onPick={pick} /></div>
 			{/if}
@@ -507,7 +556,9 @@
 						<span class="acts">
 							<IconButton icon="mynaui:chevron-up" label="Previous" shortcut="K" onclick={() => step(-1)} />
 							<IconButton icon="mynaui:chevron-down" label="Next" shortcut="J" onclick={() => step(1)} />
-							<IconButton icon="mynaui:arrow-up-right" label="Open on its own" shortcut="↵" onclick={() => openItem(current)} />
+							{#if !current.question}
+								<IconButton icon="mynaui:arrow-up-right" label="Open on its own" shortcut="↵" onclick={() => openItem(current)} />
+							{/if}
 						</span>
 					{/if}
 				</div>
@@ -515,6 +566,9 @@
 					<TaskDetail taskId={current.task.id} layout="pane" />
 				{:else if current?.note}
 					<InsightDetail key={current.note.key} layout="pane" />
+				{:else if current?.question}
+					{@const q = current.question}
+					<div class="block"><QuestionDetail question={q} onAnswer={(a) => reply(current, a)} /></div>
 				{:else if current?.attention}
 					{@const a = current.attention}
 					<div class="block">
