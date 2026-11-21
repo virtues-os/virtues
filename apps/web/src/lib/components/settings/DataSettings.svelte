@@ -122,6 +122,13 @@
 		help="Records you deleted for good, such as a purchase or a visit. No sync brings them back."
 		href="/virtues/data/deleted"
 	/>
+	<LinkRow
+		id="streams"
+		label="Streams"
+		help="Everything your devices and accounts sent, exactly as it arrived."
+		href="/virtues/data/streams"
+	/>
+	<LinkRow id="query" label="Query" help="Read any table with SQL, and delete rows from your own records." href="/virtues/data/query" />
 </section>
 
 <section class="group">

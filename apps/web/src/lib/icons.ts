@@ -15,11 +15,21 @@ import myna from '$lib/myna-icons.json';
 addCollection(myna);
 
 // Simple Icons
+import siGoogle from '@iconify-icons/simple-icons/google';
+import siLinear from '@iconify-icons/simple-icons/linear';
 import siNotion from '@iconify-icons/simple-icons/notion';
+import siStrava from '@iconify-icons/simple-icons/strava';
+import siTodoist from '@iconify-icons/simple-icons/todoist';
 import siUnsplash from '@iconify-icons/simple-icons/unsplash';
+import siX from '@iconify-icons/simple-icons/x';
 
+addIcon('simple-icons:google', siGoogle);
+addIcon('simple-icons:linear', siLinear);
 addIcon('simple-icons:notion', siNotion);
+addIcon('simple-icons:strava', siStrava);
+addIcon('simple-icons:todoist', siTodoist);
 addIcon('simple-icons:unsplash', siUnsplash);
+addIcon('simple-icons:x', siX);
 
 // Custom Icons — Virtues ∴ triangle logo (three dots)
 // Sized to look good at 16px: centered in 24x24 viewBox with adequate dot radius

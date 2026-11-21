@@ -413,7 +413,7 @@ fn connection_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String)>)
             kind: "connection",
             title: format!("{name} needs you to sign in again"),
             body: "The assistant can't use it until you do. Open Sources to sign in.".to_string(),
-            route: "/sources/catalog".into(),
+            route: "/sources".into(),
         });
     }
 }
@@ -662,7 +662,7 @@ mod tests {
         let mut items = vec![];
         connection_items(&mut items, vec![("linear".into(), "Linear".into())]);
         assert_eq!(items[0].title, "Linear needs you to sign in again");
-        assert_eq!((items[0].key.as_str(), items[0].route.as_str()), ("connection:linear:reauth_required", "/sources/catalog"));
+        assert_eq!((items[0].key.as_str(), items[0].route.as_str()), ("connection:linear:reauth_required", "/sources"));
     }
 
     fn stream(name: &str, source: &str, status: &str, days_ago: i64) -> crate::api::stream_health::StreamHealth {

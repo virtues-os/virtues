@@ -526,15 +526,15 @@
 				id="query"
 				label="Query"
 				help="Read any table with SQL, and delete rows from your own records."
-				href="/sources/query"
-				tabLabel="Sources · Query"
+				href="/virtues/data/query"
+				tabLabel="Settings · Query"
 			/>
 			<LinkRow
 				id="streams"
 				label="Streams"
 				help="Everything your devices and accounts sent, exactly as it arrived."
-				href="/sources/streams"
-				tabLabel="Sources · Streams"
+				href="/virtues/data/streams"
+				tabLabel="Settings · Streams"
 			/>
 		</section>
 	{/if}

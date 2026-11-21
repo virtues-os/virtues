@@ -21,6 +21,8 @@
 	               /virtues/data/shared    — every link shared through the door
 	               /virtues/data/keys      — the named keys applets use
 	               /virtues/data/deleted   — every deletion of records, and one (/:id)
+	               /virtues/data/streams   — every stream your server keeps, and how full each is
+	               /virtues/data/query     — SQL against your own records
 	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
 	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
@@ -58,6 +60,8 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
+	import StreamsView from '$lib/components/tabs/views/StreamsView.svelte';
+	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
 	import DeletedRecordsPage from '$lib/components/settings/DeletedRecordsPage.svelte';
 	import DeletionPage from '$lib/components/settings/DeletionPage.svelte';
@@ -128,6 +132,13 @@
 		// Shared links and Keys open from Your data.
 		'/virtues/shared': '/virtues/data/shared',
 		'/virtues/keys': '/virtues/data/keys',
+		// Streams and SQL open from Your data, as Streams and Query.
+		'/virtues/lake': '/virtues/data/streams',
+		'/virtues/developer/lake': '/virtues/data/streams',
+		'/virtues/developer': '/virtues/data/query',
+		'/virtues/developer/sql': '/virtues/data/query',
+		'/virtues/developer/console': '/virtues/data/query',
+		'/virtues/sql': '/virtues/data/query',
 	};
 
 	// Sources left Settings for its own door. `/sources` is a different tab
@@ -140,28 +151,10 @@
 		'/virtues/tools',
 	];
 
-	// Streams and SQL are sections of Sources now (Streams, Query). Their old
-	// doors land there through `retarget`, like Sources' aliases. Terminal
-	// keeps its route; ⌘K opens it.
-	const STREAMS_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
-	const QUERY_ALIASES = ['/virtues/developer', '/virtues/developer/sql', '/virtues/developer/console', '/virtues/sql'];
-
 	$effect(() => {
-		// Services the assistant can act in are rows in the Sources catalog.
-		if (tab.route === '/virtues/connections') {
-			windowShellStore.retarget(tab.id, '/sources/catalog', 'Sources · Catalog');
-			return;
-		}
-		if (SOURCES_ALIASES.includes(tab.route)) {
+		// Settings' old Sources and connection pages all land on Sources.
+		if (tab.route === '/virtues/connections' || SOURCES_ALIASES.includes(tab.route)) {
 			windowShellStore.retarget(tab.id, '/sources', 'Sources');
-			return;
-		}
-		if (STREAMS_ALIASES.includes(tab.route)) {
-			windowShellStore.retarget(tab.id, '/sources/streams', 'Sources · Streams');
-			return;
-		}
-		if (QUERY_ALIASES.includes(tab.route)) {
-			windowShellStore.retarget(tab.id, '/sources/query', 'Sources · Query');
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
@@ -239,6 +232,10 @@
 				<SharedLinksView />
 			{:else if sub === 'keys'}
 				<KeysView />
+			{:else if sub === 'streams'}
+				<StreamsView />
+			{:else if sub === 'query'}
+				<DeveloperSqlView {tab} {active} />
 			{:else if sub === 'deleted'}
 				{@const deletionId = raw.split('/')[2]}
 				{#if deletionId}

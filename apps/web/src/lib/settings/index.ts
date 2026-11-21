@@ -111,6 +111,8 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'export', title: 'Export everything', section: 'data', kind: 'action', words: ['download', 'copy', 'takeout', 'leave', 'my data', 'json'], route: '/virtues/data' },
 	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
 	{ id: 'deleted-records', title: 'Deleted records', section: 'data', kind: 'page', words: ['delete', 'remove', 'erase', 'forget', 'purchase', 'visit', 'record', 'delete-data', 'tombstone', 'collect again', 'for good'], route: '/virtues/data/deleted' },
+	{ id: 'streams', title: 'Streams', section: 'data', kind: 'page', words: ['streams', 'raw', 'records', 'lake', 'arrived', 'storage', 'how full'], route: '/virtues/data/streams' },
+	{ id: 'query', title: 'Query', section: 'data', kind: 'page', words: ['sql', 'query', 'tables', 'console', 'developer', 'select'], route: '/virtues/data/query' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/data/shared' },
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/data/keys' },
 

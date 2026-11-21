@@ -55,7 +55,7 @@
 		return () => clearInterval(timer);
 	});
 
-	const openQuery = () => void windowShellStore.openTabFromRoute('/sources/query', { label: 'Sources · Query', focusExisting: true });
+	const openQuery = () => void windowShellStore.openTabFromRoute('/virtues/data/query', { label: 'Settings · Query', focusExisting: true });
 	const openTrash = () => windowShellStore.navigate('/storage/trash', { label: 'Recently deleted' });
 </script>
 

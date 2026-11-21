@@ -1,20 +1,12 @@
 <!--
-	SourcesView — the Sources room, opened from its button in the window's
+	SourcesView: the Sources room, opened from its button in the window's
 	corner (HeaderCorner), beside Search and Settings.
 
-	Five sections, across the top, in the order the questions get asked:
-
-	  Overview  — is anything broken right now, and is data still arriving
-	  Catalog   — what can I plug in, and what is already plugged in
-	  Activity  — what has actually been running
-	  Streams   — every stream your server keeps, and how full each is
-	  Query     — SQL against your own record
-
-	Section is a pure function of the route, and the reserved words live in
-	the registry beside the matcher (SOURCES_SECTIONS), so the router and this
-	file cannot disagree about whether `/sources/catalog` is a section or a
-	credential id. One source's page and one connection's page carry no strip:
-	they are reached from a section, and Back returns to it.
+	`/sources` is one page (SourcesPage). `/sources/<id>` is one source and
+	`/sources/cred_…` one connection, both reached from it, and Back returns
+	there. The words in SOURCES_SECTIONS were sections of this room; they now
+	only forward: Catalog and Activity to the page itself, Streams and Query to
+	Settings › Your data.
 -->
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
@@ -23,31 +15,27 @@
 	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
 	import DevicePairModal from './DevicePairModal.svelte';
 	import ApiKeyConnectModal from './ApiKeyConnectModal.svelte';
-	import SourcesOverview from './SourcesOverview.svelte';
-	import SourcesCatalog from './SourcesCatalog.svelte';
-	import SourcesActivity from './SourcesActivity.svelte';
+	import SourcesPage from './SourcesPage.svelte';
 	import SourceDetail from './SourceDetail.svelte';
-	import SubNav from '$lib/components/SubNav.svelte';
-	import StreamsView from '$lib/components/tabs/views/StreamsView.svelte';
-	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { reloadOnReturn } from './connectDispatch';
 
-	let { tab, active = true }: { tab: Tab; active?: boolean } = $props();
+	let { tab }: { tab: Tab; active?: boolean } = $props();
 
-	const SECTION_ITEMS = [
-		{ id: 'overview', label: 'Overview' },
-		{ id: 'catalog', label: 'Catalog' },
-		{ id: 'activity', label: 'Activity' },
-		{ id: 'streams', label: 'Streams' },
-		{ id: 'query', label: 'Query' },
-	];
+	/** Where each old section word goes now. */
+	const FORWARDS: Record<string, { route: string; label: string }> = {
+		catalog: { route: '/sources', label: 'Sources' },
+		activity: { route: '/sources', label: 'Sources' },
+		streams: { route: '/virtues/data/streams', label: 'Settings · Streams' },
+		query: { route: '/virtues/data/query', label: 'Settings · Query' }
+	};
 
 	// Three shapes share this slot, discriminated without a lookup:
-	//   ''                  → Overview
-	//   a reserved word     → that section
+	//   ''                  → the page
+	//   a reserved word     → forwarded (see FORWARDS)
 	//   `cred_…`            → one connection
 	//   anything else       → one source (catalog ids are bare slugs)
 	// Keying the connection case on the id prefix rather than on "is this in the
@@ -57,13 +45,19 @@
 	const seg = $derived(tab.route.split('?')[0].replace(/^\/sources\/?/, '').split('/')[0]);
 
 	const section = $derived.by(() => {
-		if (seg === '') return 'overview';
-		if ((SOURCES_SECTIONS as readonly string[]).includes(seg)) return seg;
+		if (seg === '') return 'page';
+		if ((SOURCES_SECTIONS as readonly string[]).includes(seg)) return 'forward';
 		return seg.startsWith('cred_') ? 'connection' : 'source';
 	});
 
-	// The modals live here rather than in a section so that finishing a connect
-	// doesn't depend on which section you started it from.
+	$effect(() => {
+		if (section !== 'forward') return;
+		const to = FORWARDS[seg];
+		if (to) windowShellStore.retarget(tab.id, to.route, to.label);
+	});
+
+	// The modals live here rather than in a page so that finishing a connect
+	// doesn't depend on which page you started it from.
 	const pending = $derived(connectFlow.pending);
 
 	function finish() {
@@ -81,29 +75,15 @@
 </script>
 
 <div class="sources-room">
-	{#if section !== 'connection' && section !== 'source'}
-		<SubNav tabId={tab.id} route={tab.route} base="/sources" default="overview" items={SECTION_ITEMS} divider ariaLabel="Sources sections" />
-	{/if}
-	{#if section === 'query'}
-		<!-- The SQL console fills the room and scrolls itself. -->
-		<div class="sources-fill"><DeveloperSqlView {tab} {active} /></div>
-	{:else}
 	<div class="sources-scroll">
-		{#if section === 'catalog'}
-			<SourcesCatalog />
-		{:else if section === 'activity'}
-			<SourcesActivity />
-		{:else if section === 'streams'}
-			<StreamsView />
-		{:else if section === 'connection'}
+		{#if section === 'connection'}
 			<CredentialDetailView {tab} />
 		{:else if section === 'source'}
 			<SourceDetail sourceId={seg} />
-		{:else}
-			<SourcesOverview {tab} />
+		{:else if section === 'page'}
+			<SourcesPage {tab} />
 		{/if}
 	</div>
-	{/if}
 </div>
 
 <DevicePairModal
@@ -138,12 +118,5 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-	}
-
-	.sources-fill {
-		flex: 1;
-		min-height: 0;
-		display: flex;
-		flex-direction: column;
 	}
 </style>

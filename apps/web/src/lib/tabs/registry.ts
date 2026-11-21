@@ -90,13 +90,10 @@ export const WIKI_SECTION_RE =
 	/^\/wiki\/(days|years|entities|identity|chapters|things|stories|lifeline|history|people|places|orgs|unlinked)$/;
 
 /**
- * Sections of the Sources room. Same one-list rule as the wiki above, and here
- * it also disambiguates: `/sources/<x>` is a credential detail unless `<x>` is
- * one of these words, so the router and the view must agree about which words
- * are reserved or a section silently becomes a lookup for a credential that
- * does not exist.
- *
- * Overview is the bare `/sources` and so is not in this list.
+ * Words that were sections of the Sources room and now only forward
+ * (SourcesView's FORWARDS): Catalog and Activity to `/sources`, Streams and
+ * Query to Settings › Your data. They stay reserved so `/sources/<x>` cannot
+ * read an old link as a source id. `/sources` itself is not in this list.
  */
 export const SOURCES_SECTIONS = ['catalog', 'activity', 'streams', 'query'] as const;
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
@@ -650,9 +647,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 
 	// ========================================================================
 	// SOURCE NAMESPACE: /sources, /sources/<section>, /sources/<credential_id>
-	//   - `/sources` (and `/source` legacy alias) → Overview
-	//   - `/sources/catalog`, `/sources/activity` → the other two sections
-	//   - `/sources/<id>` → CredentialDetailView for one connection
+	//   - `/sources` (and `/source` legacy alias) → the one Sources page
+	//   - `/sources/<word in SOURCES_SECTIONS>` → forwards (see SourcesView)
+	//   - `/sources/<id>` → one source, or one connection for `cred_…`
 	// "Source" in the URL is user-facing vocabulary; under the hood a connection
 	// is a credential (OAuth/API-key) or a paired device (iOS/Mac).
 	//
@@ -666,7 +663,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (path === '/sources' || path === '/source') {
 				// The OAuth callback lands here as `?connected=<id>` or
 				// `?source=<id>&error=<reason>`. Keep those on the tab route so
-				// the Overview can say how the connect went; it strips them once
+				// the Sources page can say how the connect went; it strips them once
 				// read, so a refresh does not repeat the notice.
 				const kept = new URLSearchParams();
 				for (const k of ['connected', 'source', 'error']) {
