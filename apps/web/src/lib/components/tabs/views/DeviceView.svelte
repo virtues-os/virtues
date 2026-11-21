@@ -1,6 +1,7 @@
 <!--
   One device's page, whichever device it is (/virtues/devices/:id), and This
-  device (/virtues/devices/this) for the device you're using.
+  device (/virtues/devices/this) for the device you're using. An iPhone or a
+  Mac you're not using forwards to its page in Sources (`sourcePageOf`).
 
   A device can be looked at from two places: what your server knows about it,
   and what the device knows about itself. The server holds each device's
@@ -38,6 +39,7 @@
 		reachedAgo,
 		reportedPermissions,
 		revokeDeviceFlow,
+		sourcePageOf,
 		type Device,
 		type DevicesResponse,
 	} from "$lib/devices/shared";
@@ -68,6 +70,14 @@
 			? (devices.find((d) => d.is_current) ?? null)
 			: (devices.find((d) => d.id === deviceId) ?? null),
 	);
+
+	// An iPhone or a Mac you're not using has its page in Sources; an old link
+	// to it here goes there.
+	$effect(() => {
+		if (!device || !tab) return;
+		const page = sourcePageOf(device, devices);
+		if (page) windowShellStore.retarget(tab.id, page, page === "/sources/ios" ? "iPhone" : "Mac");
+	});
 
 	// A Mac's collector folds into its page: one Mac, one page.
 	const collector = $derived<Device | null>(collectorOf(device, devices));

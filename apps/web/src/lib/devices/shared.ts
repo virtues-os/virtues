@@ -476,6 +476,22 @@ export function deviceHref(device: Pick<Device, 'id' | 'is_current'>): string {
 }
 
 /**
+ * The Sources page that is this device's page, for a device that sends data
+ * and is not the one you're using: an iPhone (`/sources/ios`), or a Mac app
+ * or its collector (`/sources/mac`). Device pages live in Sources (owner,
+ * 2026-11-20); Settings keeps This device and the devices that send nothing.
+ */
+export function sourcePageOf<D extends Pick<Device, 'id' | 'kind' | 'source_id' | 'installed_by' | 'is_current'>>(
+	d: D,
+	devices: D[]
+): string | null {
+	if (d.is_current) return null;
+	if (d.kind === 'mobile_app' && d.source_id === 'ios') return '/sources/ios';
+	if (isCollector(d) || collectorOf(d, devices)) return '/sources/mac';
+	return null;
+}
+
+/**
  * Where to land after revoking THIS device — the one true "return to pairing"
  * flow. In the browser, pairing is the SPA's cookie-redeem `/pair` page. In the
  * Tauri app, pairing is the native shell's concern: reloading the webview root

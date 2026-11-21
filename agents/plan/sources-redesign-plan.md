@@ -1,7 +1,7 @@
 # Sources redesign
 
 **Status:** drawn on 2026-11-20 and liked by the owner ("This looks
-fantastic!"). He then said "lets build", and slices 1 to 4 and 6 are built on wave
+fantastic!"). He then said "lets build", and slices 1 to 6 are built on wave
 with the proposals below as written, not yet run on a server. The decisions
 at the end are still open and can change what was built.
 
@@ -169,12 +169,17 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    same component and API as Settings' Tools list, which shows all six. The
    words live in `lib/sources/capabilities.ts`. A source's switches show only
    while one of its accounts is connected.
-5. **Device pages.** The iPhone and Mac pages, with each stream's
-   permission state as the phone reports it. Muted places link to their
-   place pages. The schedule shows read-only until the box holds it (the
-   deferred schedule-on-the-box item in
-   [audio-schedule-places-plan.md](audio-schedule-places-plan.md)). Needs
-   decision 6.
+5. **Device pages.** Built 2026-11-20 after decision 6. `/sources/ios` and
+   `/sources/mac` are the device pages: the source page gives each paired
+   device a section with when it was paired, when it was last reached, its
+   app, for a Mac what it may read, and Unpair (a Mac's app and collector go
+   together). The iPhone page adds When audio is off: the muted places from
+   `wiki_places`, and that the schedule is set on the phone. Settings ›
+   Devices opens an iPhone or Mac you aren't using in Sources, and an old
+   `/virtues/devices/<id>` link forwards (`sourcePageOf`). Settings keeps
+   This device, for the app in your hand, and devices that send nothing.
+   Not built: a per-kind permission list for the iPhone, which the server
+   does not hold, and the Wallet row.
 6. **The connect window.** Built 2026-11-20: an account (OAuth through the
    proxy, and Plaid) opens `ConnectWindow` in steps held by `connectFlow`:
    what your server will read and what your assistant may do, then the
@@ -200,8 +205,8 @@ Open, each needs the owner's words:
 4. **Brand marks:** in each brand's color (as drawn) or all in ink.
 5. **Query and the full streams list:** Settings › Data, as proposed, or
    somewhere else.
-6. **Device pages:** the Sources device page and Settings › Devices show the
-   same phone. Pick one home and link the other to it.
+6. **Device pages:** decided 2026-11-20, owner: "In Sources". Built as
+   slice 5.
 7. **Audio schedule on the web:** read-only for now, or build the schedule on
    the box first so the Change link works.
 8. **Wallet row:** shown only once FinanceKit ships on the phone.

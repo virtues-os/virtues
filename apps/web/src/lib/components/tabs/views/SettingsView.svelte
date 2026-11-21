@@ -30,6 +30,7 @@
 	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
+	                                         (an iPhone or Mac forwards to Sources)
 	  Jobs         /virtues/jobs           — what runs on its own, and how its last runs went
 	  Terminal     /virtues/developer/terminal — a shell on your server, from Your server or ⌘K
 

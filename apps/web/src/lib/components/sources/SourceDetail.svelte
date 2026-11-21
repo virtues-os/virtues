@@ -7,9 +7,11 @@
 	Accounts, and `/sources/cred_…` forwards here (SourcesView). Both kinds of
 	connection appear: OAuth and API-key sources keep a credential row, and
 	device sources (iPhone, Mac) pair into `app_device`. The store gives them
-	one shape, so this page only branches where they really differ: a device
-	opens its own page in Settings, and an account can be renamed and
-	disconnected here.
+	one shape, so this page only branches where they really differ: an
+	account can be renamed and disconnected, and a device has a section of
+	its own (decision 6, owner 2026-11-20: device pages live in Sources) with
+	when it was paired, its app, what a Mac may read, when the iPhone's audio
+	is off, and Unpair. Settings keeps This device, for the app in your hand.
 
 	Disconnecting keeps what your server already has. Deleting a source's
 	records goes through `api::deletions`, which is not offered here yet.
@@ -44,6 +46,16 @@
 	import type { LakeStream } from '$lib/sources/streams';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
 	import { openExternal } from '$lib/tauri/bridge';
+	import { listDevices } from '$lib/api/client';
+	import {
+		pairedOn,
+		reachedAgo,
+		reportedPermissions,
+		revokeDeviceFlow,
+		type Device,
+		type DevicesResponse
+	} from '$lib/devices/shared';
+	import { fetchMutedPlaces } from '$lib/mobile/audioPlaces';
 
 	let { sourceId, tabId }: { sourceId: string; tabId: string } = $props();
 
@@ -52,6 +64,9 @@
 	let applets = $state<Applet[]>([]);
 	let days = $state<StreamDays[]>([]);
 	let lake = $state<LakeStream[]>([]);
+	let deviceRows = $state<Device[]>([]);
+	/** Names of the places where the phone keeps no audio; null until read. */
+	let mutedPlaces = $state<string[] | null>(null);
 	let error = $state<string | null>(null);
 	let busy = $state<string | null>(null);
 	let renaming = $state<string | null>(null);
@@ -61,14 +76,18 @@
 
 	async function loadExtras() {
 		// Each part fails alone: a server without one endpoint still shows the rest.
-		const [a, d, l] = await Promise.allSettled([
+		const [a, d, l, dv, m] = await Promise.allSettled([
 			listApplets(),
 			getStreamDays(84),
-			getLakeStreams<LakeStream[]>()
+			getLakeStreams<LakeStream[]>(),
+			listDevices<DevicesResponse>(),
+			sourceId === 'ios' ? fetchMutedPlaces() : Promise.resolve(null)
 		]);
 		applets = a.status === 'fulfilled' ? a.value : [];
 		days = d.status === 'fulfilled' ? d.value.streams : [];
 		lake = l.status === 'fulfilled' && Array.isArray(l.value) ? l.value : [];
+		deviceRows = dv.status === 'fulfilled' ? dv.value.devices : [];
+		mutedPlaces = m.status === 'fulfilled' && m.value ? m.value.map((p) => p.name) : null;
 	}
 
 	$effect(() => {
@@ -225,9 +244,27 @@
 		if (source) void connectFlow.start(source, c.id);
 	}
 
-	function openDevice(c: Connection) {
-		const route = c.isCurrent ? '/virtues/devices/this' : `/virtues/devices/${c.id}`;
-		windowShellStore.navigate(route, { label: c.name });
+	/** A device's own row, and for a Mac collector the app that installed it. */
+	function rowsOf(c: Connection): { row: Device | null; app: Device | null } {
+		const row = deviceRows.find((d) => d.id === c.id) ?? null;
+		const app = row?.installed_by ? (deviceRows.find((d) => d.id === row.installed_by) ?? null) : null;
+		return { row, app };
+	}
+
+	function appVersion(c: Connection): string {
+		const { row, app } = rowsOf(c);
+		return app?.app_version ?? row?.app_version ?? row?.version ?? 'Not reported';
+	}
+
+	async function unpair(c: Connection) {
+		const { row, app } = rowsOf(c);
+		if (!row) return;
+		// A Mac is its app and the collector it installed: both go together.
+		const done = await revokeDeviceFlow(app ?? row, { with: app ? [row] : [] });
+		if (done) {
+			await store.load();
+			await loadExtras();
+		}
 	}
 
 	async function disconnect(c: Connection) {
@@ -304,6 +341,9 @@
 		{#if keptSince}
 			<p class="lead">Your server has kept what {name} sends since {keptSince}.</p>
 		{/if}
+		{#if isDeviceSource}
+			<p class="lead">You allow each kind on the device itself, in the Virtues app.</p>
+		{/if}
 		{#if streamRows.length === 0}
 			<p class="lead">Nothing has arrived in the last twelve weeks.</p>
 		{:else}
@@ -359,19 +399,75 @@
 	{/if}
 
 	{#if connections.length > 0}
-		<h2 class="group">{isDeviceSource ? 'Devices' : 'Accounts'}</h2>
+		{#each devices as c (c.id)}
+			{@const rows = rowsOf(c)}
+			<h2 class="group">{c.name}{c.isCurrent ? ' (this device)' : ''}</h2>
+			<dl class="facts">
+				{#if rows.row}
+					<div><dt>Paired</dt><dd>{pairedOn(rows.row.paired_at)}</dd></div>
+				{/if}
+				<div>
+					<dt>Last reached</dt>
+					<dd>{c.isCurrent ? 'Now' : c.lastSeenAt ? reachedAgo(c.lastSeenAt) : 'Never'}</dd>
+				</div>
+				<div><dt>Virtues app</dt><dd>{appVersion(c)}</dd></div>
+			</dl>
+			{#if sourceId === 'mac' && rows.row}
+				{@const perms = reportedPermissions(rows.row)}
+				{#if perms.length > 0}
+					<h3 class="sub-group">What it may read</h3>
+					<ul class="rows">
+						{#each perms as p (p.key)}
+							<li class="row perm">
+								<span class="text">
+									<span class="name">{p.label}</span>
+									{#if p.granted === false}<span class="about wrap">Off, so {p.costs}.</span>{/if}
+								</span>
+								<span class="when" class:failed={p.granted === false}>
+									{p.granted === null ? 'Not reported' : p.granted ? 'On' : 'Off'}
+								</span>
+							</li>
+						{/each}
+					</ul>
+					<p class="lead">To change one, open the Virtues app on {c.isCurrent ? 'this Mac' : 'that Mac'}.</p>
+				{/if}
+			{/if}
+			<div class="device-actions">
+				{#if c.isCurrent}
+					<TextAction onclick={() => windowShellStore.navigate('/virtues/devices/this', { label: 'Settings · This device' })}>
+						This device's app and settings
+					</TextAction>
+				{/if}
+				<Button variant="danger" disabled={!rows.row} onclick={() => void unpair(c)}>Unpair</Button>
+			</div>
+		{/each}
+
+		{#if sourceId === 'ios'}
+			<h2 class="group">When audio is off</h2>
+			<p class="lead">
+				While audio is off, nothing is recorded. Your day pages say it was off, so a quiet hour is not mistaken
+				for silence.
+			</p>
+			<dl class="facts">
+				<div><dt>On a schedule</dt><dd>Set in the Virtues app on your iPhone</dd></div>
+				<div>
+					<dt>At these places</dt>
+					<dd>
+						{#if mutedPlaces === null}
+							Your server couldn't read them.
+						{:else if mutedPlaces.length === 0}
+							None yet. You can turn audio off at a place from its page.
+						{:else}
+							{mutedPlaces.join(', ')}
+						{/if}
+					</dd>
+				</div>
+			</dl>
+		{/if}
+
+		{#if accounts.length > 0}
+		<h2 class="group">Accounts</h2>
 		<ul class="rows">
-			{#each devices as c (c.id)}
-				<li>
-					<button type="button" class="row link" onclick={() => openDevice(c)}>
-						<span class="text">
-							<span class="name">{c.name}{c.isCurrent ? ' (this device)' : ''}</span>
-							<span class="about">{c.lastSeenAt ? `Last sent something ${relativeTime(c.lastSeenAt)}` : 'Nothing sent yet'}</span>
-						</span>
-						<Icon icon="mynaui:chevron-right" width="16" class="chevron" />
-					</button>
-				</li>
-			{/each}
 			{#each accounts as c (c.id)}
 				<li class="row">
 					<span class="text">
@@ -406,6 +502,7 @@
 				</li>
 			{/each}
 		</ul>
+		{/if}
 		{#if source && !isThisDevice && source.id !== 'mac'}
 			<p class="another"><TextAction onclick={() => void connect()}>{connectLabel}</TextAction></p>
 		{/if}
@@ -531,27 +628,6 @@
 	.row.runs {
 		min-height: 52px;
 	}
-	.link {
-		padding: 0 8px;
-		margin: 0 -8px;
-		width: calc(100% + 16px);
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		color: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-	.link:hover {
-		background: var(--hover-bg);
-	}
-	.link:active {
-		background: var(--active-bg);
-	}
-	.row :global(.chevron) {
-		color: var(--color-foreground-subtle);
-	}
 
 	.text {
 		display: flex;
@@ -601,6 +677,39 @@
 
 	.switches {
 		margin-top: 40px;
+	}
+
+	.facts {
+		margin: 0;
+	}
+	.facts > div {
+		display: grid;
+		grid-template-columns: 140px minmax(0, 1fr);
+		gap: 20px;
+		align-items: center;
+		min-height: 48px;
+		border-bottom: 1px solid var(--color-border-subtle);
+		font-size: var(--text-label);
+	}
+	.facts dt {
+		color: var(--color-foreground-muted);
+	}
+	.facts dd {
+		margin: 0;
+		color: var(--color-foreground);
+	}
+	.sub-group {
+		margin: 24px 0 4px;
+		font-size: var(--text-label);
+		font-weight: 600;
+		color: var(--color-foreground);
+	}
+	.device-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 16px;
+		margin-top: 16px;
 	}
 
 	.another {
