@@ -654,7 +654,7 @@
 		align-items: center;
 		justify-content: center;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-lg);
 		background: var(--color-background);
 		color: var(--color-foreground);
 	}

@@ -32,7 +32,6 @@ const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/History
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
-const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
@@ -646,7 +645,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /sources, /sources/<section>, /sources/<credential_id>
+	// SOURCE NAMESPACE: /sources, /sources/<source_id>, /sources/<credential_id>
 	//   - `/sources` (and `/source` legacy alias) → the one Sources page
 	//   - `/sources/<word in SOURCES_SECTIONS>` → forwards (see SourcesView)
 	//   - `/sources/<id>` → one source, or one connection for `cred_…`

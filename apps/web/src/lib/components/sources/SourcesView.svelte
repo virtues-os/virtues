@@ -2,9 +2,9 @@
 	SourcesView: the Sources room, opened from its button in the window's
 	corner (HeaderCorner), beside Search and Settings.
 
-	`/sources` is one page (SourcesPage). `/sources/<id>` is one source and
-	`/sources/cred_…` one connection, both reached from it, and Back returns
-	there. The words in SOURCES_SECTIONS were sections of this room; they now
+	`/sources` is one page (SourcesPage) and `/sources/<id>` one source
+	(SourceDetail), reached from it. A connection has no page of its own:
+	`/sources/cred_…` forwards to its source once the store knows it. The words in SOURCES_SECTIONS were sections of this room; they now
 	only forward: Catalog and Activity to the page itself, Streams and Query to
 	Settings › Your data.
 -->
@@ -17,7 +17,6 @@
 	import ApiKeyConnectModal from './ApiKeyConnectModal.svelte';
 	import SourcesPage from './SourcesPage.svelte';
 	import SourceDetail from './SourceDetail.svelte';
-	import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
@@ -56,6 +55,17 @@
 		if (to) windowShellStore.retarget(tab.id, to.route, to.label);
 	});
 
+	$effect(() => {
+		if (section !== 'connection') return;
+		if (sourcesStore.loading) {
+			void sourcesStore.load();
+			return;
+		}
+		const c = sourcesStore.connections.find((x) => x.id === seg);
+		if (c) windowShellStore.retarget(tab.id, `/sources/${c.sourceId}`, sourcesStore.sourceLabel(c.sourceId));
+		else windowShellStore.retarget(tab.id, '/sources', 'Sources');
+	});
+
 	// The modals live here rather than in a page so that finishing a connect
 	// doesn't depend on which page you started it from.
 	const pending = $derived(connectFlow.pending);
@@ -76,10 +86,8 @@
 
 <div class="sources-room">
 	<div class="sources-scroll">
-		{#if section === 'connection'}
-			<CredentialDetailView {tab} />
-		{:else if section === 'source'}
-			<SourceDetail sourceId={seg} />
+		{#if section === 'source'}
+			<SourceDetail sourceId={seg} tabId={tab.id} />
 		{:else if section === 'page'}
 			<SourcesPage {tab} />
 		{/if}

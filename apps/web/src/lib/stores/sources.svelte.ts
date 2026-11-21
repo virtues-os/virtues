@@ -63,8 +63,6 @@ export interface Connection {
 	 * permission failure before it trusts this list.
 	 */
 	denied: string[];
-	/** Where clicking it goes, or null when the row has no detail surface. */
-	route: string | null;
 	/** Devices only: this is the device you're reading this on. */
 	isCurrent: boolean;
 }
@@ -108,7 +106,6 @@ function fromCredential(c: Credential, sourceName: string | undefined): Connecti
 		appletCount: c.applet_count,
 		broken: isBrokenStatus(c.status),
 		denied: [],
-		route: `/sources/${c.id}`,
 		isCurrent: false
 	};
 }
@@ -182,7 +179,6 @@ function fromDevice(d: DeviceRow): Connection {
 			appletCount: null,
 			broken: false,
 			denied,
-			route: null,
 			isCurrent: d.is_current
 		};
 	}
@@ -205,9 +201,6 @@ function fromDevice(d: DeviceRow): Connection {
 		appletCount: null,
 		broken: denied.length > 0,
 		denied,
-		// Devices have no per-connection page in this room yet; the current one
-		// has "This Mac" / "This device", the rest live under Settings → Devices.
-		route: null,
 		isCurrent: d.is_current
 	};
 }

@@ -1,8 +1,9 @@
 # Sources redesign
 
 **Status:** drawn on 2026-11-20 and liked by the owner ("This looks
-fantastic!"). Nothing is built. The cuts to the catalog are proposed and not
-confirmed one by one (see "Decisions").
+fantastic!"). He then said "lets build", and slices 1 to 3 are built on wave
+with the proposals below as written, not yet run on a server. The decisions
+at the end are still open and can change what was built.
 
 The design is four boards on one Claude Design canvas, private to the owner:
 <https://claude.ai/artifact/3fKB4LyFaS4qXwdT3ApAsK>. The boards are the
@@ -151,11 +152,16 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    and `/sources/activity` to `/sources`. Query and the full streams list
    move to Settings › Data, with `/sources/query` and `/sources/streams`
    redirecting there.
-3. **One page per source.** Merge `SourceDetail` and `CredentialDetailView`.
-   The page's streams are `StreamsView`'s rows filtered to this source, and
-   its runs are `SourcesActivity` filtered by source (its rail already has
-   that filter). Disconnect's "delete what it has" goes through
-   `api::deletions`, which every removal of `data_*` rows must use.
+3. **One page per source.** Built 2026-11-20: `SourceDetail` is the one
+   page and `CredentialDetailView` and `SourcesActivity` are deleted;
+   `/sources/cred_…` forwards to its source. Streams come from
+   `/api/streams/days` filtered to the source (a line of the last twelve
+   weeks each) and the earliest date from `/api/lake/streams`. Runs are the
+   last runs of the source's applets, with "All runs" opening Jobs. A device
+   row opens its page in Settings. Not built: Disconnect's "delete what it
+   has", which needs a deletion scoped to one source through
+   `api::deletions` and the owner proof; today Disconnect says the data
+   stays.
 4. **Assistant switches per source.** Add capabilities to the table in
    `capabilities.rs` (for example `email` for `email_archive`,
    `email_label` and `email_draft`, and `calendar` for `calendar_event`).
