@@ -15,7 +15,9 @@ import myna from '$lib/myna-icons.json';
 addCollection(myna);
 
 // Simple Icons
+import siGithub from '@iconify-icons/simple-icons/github';
 import siGoogle from '@iconify-icons/simple-icons/google';
+import siInstagram from '@iconify-icons/simple-icons/instagram';
 import siLinear from '@iconify-icons/simple-icons/linear';
 import siNotion from '@iconify-icons/simple-icons/notion';
 import siStrava from '@iconify-icons/simple-icons/strava';
@@ -23,7 +25,9 @@ import siTodoist from '@iconify-icons/simple-icons/todoist';
 import siUnsplash from '@iconify-icons/simple-icons/unsplash';
 import siX from '@iconify-icons/simple-icons/x';
 
+addIcon('simple-icons:github', siGithub);
 addIcon('simple-icons:google', siGoogle);
+addIcon('simple-icons:instagram', siInstagram);
 addIcon('simple-icons:linear', siLinear);
 addIcon('simple-icons:notion', siNotion);
 addIcon('simple-icons:strava', siStrava);

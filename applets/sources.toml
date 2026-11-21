@@ -60,6 +60,15 @@ auth = { kind = "via_proxy", start_path = "/plaid/start" }
 # whose subscription has lapsed for 30 days lets its banks go.
 release_on_lapse = true
 
+# PAT, not OAuth: the GitHub OAuth proxy app is dead, and a fine-grained token
+# with read-only scopes is the better fit for a personal appliance anyway.
+[[source]]
+id = "github"
+display_name = "GitHub"
+icon = "ri:github-fill"
+description = "The repositories you star."
+auth = { kind = "api_key", fields = ["token"] }
+
 # Session cookies, not OAuth: X has no read API for your own bookmarks that a
 # personal appliance can use (the v2 endpoint caps at ~800 and paginates
 # unreliably), so this replays the same authenticated GraphQL call the web
@@ -78,6 +87,27 @@ auth = { kind = "api_key", fields = ["auth_token", "ct0"] }
 # Logging in inside the app's browser window fills both fields from its cookie
 # jar (agents/record/webkit-agent-spike.md). Pasting them stays the fallback.
 login = { url = "https://x.com/i/flow/login", cookies = ["auth_token", "ct0"] }
+
+# Session cookies, like X: Instagram has no read API for your own saved posts,
+# so this replays the same authenticated call the web app makes for its Saved
+# feed. The whole cookie jar is the credential — the login `sessionid`, the
+# `csrftoken` (echoed in the `x-csrftoken` header), plus the device cookies the
+# server checks. A spike proved the box replays it (200 from the box's own IP);
+# whether `x-ig-www-claim` is also required is unresolved. Only `cookies` is
+# asked for — the connect form makes every field required, and that header is
+# painful to find by hand. If it proves necessary, the collector harvest (which
+# sees the live request) supplies it as an optional `www_claim` secret the
+# applet already reads. Each saved post's image is copied into Drive (its CDN
+# URL expires), so the image pass can read it (agents/record/bookmarks.md).
+[[source]]
+id = "instagram"
+display_name = "Instagram"
+icon = "ri:instagram-line"
+description = "The posts you save."
+auth = { kind = "api_key", fields = ["cookies"] }
+# The whole jar is the credential, so a login hands over every instagram.com
+# cookie once the two that mean "logged in" exist.
+login = { url = "https://www.instagram.com/accounts/login/", cookies = ["sessionid", "csrftoken"], jar_field = "cookies" }
 
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Claude and ChatGPT only: Gemini's

@@ -1,6 +1,6 @@
 ---
 title: How sources work
-description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Notion, Strava, banks, X bookmarks and past chats - and the tools your assistant can use, from the Sources page.
+description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Notion, Strava, banks, GitHub stars, X bookmarks, Instagram saves and past chats - and the tools your assistant can use, from the Sources page.
 updated: 2026-11-21
 ---
 
@@ -39,8 +39,12 @@ yet. Your iPhone sends more than any account.
 - **Notion:** your pages and databases.
 - **Strava:** your runs, rides and swims.
 - **Banks:** spending, balances and investments, through Plaid.
+- **GitHub:** the repositories you star, with a read-only access token you
+  create on GitHub.
 - **X:** the posts you bookmark. In the Mac app you sign in to x.com in a
   window. In a browser you paste the two cookies that hold your sign-in.
+- **Instagram:** the posts you save. In the Mac app you sign in to Instagram
+  in a window. In a browser you paste its cookies.
 - **Past chats:** your conversations from a Claude or ChatGPT export. A newer
   export adds only what is new.
 

@@ -28,10 +28,9 @@ for saving is never inferred.
 Ingest applets are named for their *source* and fan out into whatever
 ontologies the payload supports; there is no `bookmark_ingest`. Doors: in-app
 save (`POST /api/bookmarks`, identity = canonicalized URL, so a re-save
-upserts), Mac browser bookmarks via `mac_ingest`, `x_bookmarks_sync`, and an
-iOS share sheet whose box and app halves are built. `github_stars_sync` and
-`instagram_saves_sync` were removed on 2026-11-20 with the Sources redesign;
-the rows they wrote stay.
+upserts), Mac browser bookmarks via `mac_ingest`, `github_stars_sync`,
+`x_bookmarks_sync`, `instagram_saves_sync`, and an iOS share sheet whose box
+and app halves are built.
 
 The normalizer owns the row shape, identity and the deletion split: snapshot
 sources (a browser's bookmark file) tombstone what went missing, scoped to one

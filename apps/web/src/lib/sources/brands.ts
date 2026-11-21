@@ -3,7 +3,7 @@
  *
  * A brand mark keeps its brand's color, because the mark is how people find a
  * service in a list. Marks that are black in their own brand (Notion, X) use
- * the text ink, so they stay visible in Dark. Sources without a brand mark
+ * the text ink, so they stay visible in Dark (Notion, X, GitHub). Sources without a brand mark
  * (devices, banks, past chats) fall back to the catalog's own icon in ink.
  */
 
@@ -17,7 +17,9 @@ export interface Mark {
 }
 
 const SOURCE_MARKS: Record<string, Mark> = {
+	github: { icon: 'simple-icons:github' },
 	google: { icon: 'simple-icons:google', color: '#4285F4' },
+	instagram: { icon: 'simple-icons:instagram', color: '#E4405F' },
 	notion: { icon: 'simple-icons:notion' },
 	strava: { icon: 'simple-icons:strava', color: '#FC4C02' },
 	x: { icon: 'simple-icons:x' }

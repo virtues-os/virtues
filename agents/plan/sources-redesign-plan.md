@@ -65,11 +65,10 @@ No page marks anything as on or off your server.
 | Plaid | Keep, shown as "Banks" | Says what you get instead of the vendor |
 | Notion | Keep one row | It is listed twice today, as a sync source and as a featured tool |
 | X | Keep | Signs in through the app's own window |
+| GitHub stars, Instagram saves | Keep | Cut in slice 1, put back on 2026-11-21 (decision 1) |
 | Chat History | Keep, shown as "Past chats" with Import | It is a one-time import. After an import it says when, and Import becomes "Import again" |
 | Todoist, Linear | Keep, as tools | |
-| Instagram | Cut | Session cookies, fragile and hard to explain |
-| Grok | Cut | Session cookies, same reason |
-| GitHub stars | Cut | A niche way to get bookmarks |
+| Grok | Cut | Session cookies, fragile and hard to explain |
 | Zapier | Cut | It was there as the way to Gmail and Calendar. Google connects directly and the assistant has its own mail and calendar tools |
 | Airtable, Canva, Atlassian, monday.com, Stripe | Cut | Business tools, not parts of a person's life |
 | MCP Registry search | Cut | Replaced by one link, "Add it by its address" |
@@ -139,13 +138,12 @@ Every Connect button opens one window (`Modal`), whatever the kind:
 
 ## Slices
 
-1. **Trim the catalog.** Remove the three sources from `sources.toml` and
-   their applets, and cut `FEATURED` to Notion, Todoist and Linear. A box
-   that already connected a removed source keeps a connection whose source no
-   longer exists; the catalog's orphan rows already show those ("no longer
-   installed") so they can be disconnected. Update
-   [sign-ins-plan.md](sign-ins-plan.md), which plans session upkeep for
-   Instagram and Grok. Needs decisions 1 and 2.
+1. **Trim the catalog.** Built: Grok's sync is removed, `FEATURED` is
+   Todoist and Linear, and the MCP Registry search is gone from the page
+   (the "Add it by its address" link stays). GitHub stars and Instagram saves
+   were cut too and put back on 2026-11-21 (decision 1). A box that connected
+   Grok keeps a connection whose source no longer exists; the page lists it
+   as no longer installed so it can be disconnected.
 2. **One Sources page.** Delete the section strip and `SOURCES_SECTIONS`,
    add the attention sentence from the store's broken connections, rename
    Plaid and Chat History in the catalog, and redirect `/sources/catalog`
@@ -199,9 +197,12 @@ Every Connect button opens one window (`Modal`), whatever the kind:
 
 Open, each needs the owner's words:
 
-1. **The cut list** in the catalog table above, as a whole or entry by entry.
-2. **Data of a cut source** on boxes that connected it (saved posts, Grok
-   chats, starred repos): keep the rows, or offer to delete them through
+1. **The cut list:** decided 2026-11-21. The owner, on the cuts: "yes rm
+   szpier, airtable, canva, monday, stripe, atlassian, no idea how those got
+   in there, rm mcp registry but keep that one link. but add back gh stars
+   and instagram saves!" GitHub stars and Instagram saves are back; Grok
+   stays cut, since the owner did not ask for it.
+2. **Data of a cut source** on boxes that connected it (Grok chats): keep the rows, or offer to delete them through
    `api::deletions`.
 3. **Notion:** the sync source, the MCP tool, or one row that sets up both.
    They sign in separately today.
