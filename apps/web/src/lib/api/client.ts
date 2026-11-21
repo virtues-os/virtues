@@ -1292,7 +1292,7 @@ function pairStatus(id: string): Promise<PairStatusResponse> {
 	return apiGet<PairStatusResponse>(`/pair/status/${encodeURIComponent(id)}`);
 }
 
-export interface ChatImportResponse {
+export interface ImportResponse {
 	/** `running` once the import has started in the background. */
 	status: 'running' | 'success' | 'skipped' | 'error' | 'budget_exceeded';
 	summary: string | null;
@@ -1311,10 +1311,25 @@ export interface ChatImportResponse {
 export function uploadChatImport(
 	file: File,
 	onProgress?: (percent: number) => void
-): Promise<ChatImportResponse> {
+): Promise<ImportResponse> {
 	const form = new FormData();
 	form.append('file', file);
-	return postFormWithProgress<ChatImportResponse>('/chat-import/upload', form, onProgress);
+	return postFormWithProgress<ImportResponse>('/chat-import/upload', form, onProgress);
+}
+
+/**
+ * POST /api/imports/:source/upload — multipart upload of a service's data
+ * download (`spotify`, `amazon`, `discord`). Returns as soon as the import
+ * has started; `imports.ts` follows the run.
+ */
+export function uploadImport(
+	source: string,
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<ImportResponse> {
+	const form = new FormData();
+	form.append('file', file);
+	return postFormWithProgress<ImportResponse>(`/imports/${encodeURIComponent(source)}/upload`, form, onProgress);
 }
 
 /** One chat site's history on the server: the months with messages, oldest first. */

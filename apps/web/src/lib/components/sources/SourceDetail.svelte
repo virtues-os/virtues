@@ -42,6 +42,7 @@
 	import { relativeTime } from '$lib/applets/palette';
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { sourceMark } from '$lib/sources/brands';
+	import { IMPORT_SOURCES, isImportSource } from '$lib/imports';
 	import { SOURCE_CAPABILITIES } from '$lib/sources/capabilities';
 	import type { LakeStream } from '$lib/sources/streams';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
@@ -132,11 +133,9 @@
 				why: 'Nothing runs for it now. Disconnect what is left below if you no longer need it.'
 			};
 		}
-		if (source.id === 'chat_import') {
-			return {
-				line: 'Bring in your past chats.',
-				why: 'Export them from Claude or ChatGPT, then import the file here. A newer export adds only what is new.'
-			};
+		const importing = IMPORT_SOURCES[source.id];
+		if (importing) {
+			return { line: importing.line, why: importing.why };
 		}
 		if (connections.length === 0) {
 			return { line: `${name} isn't connected.`, why: '' };
@@ -227,7 +226,7 @@
 		if (isThisDevice) return `Set up ${thisComputerLabel}`;
 		if (source.id === 'mac') return 'How to set up';
 		if (isDeviceSource) return connections.length > 0 ? 'Pair another' : 'Pair';
-		if (source.id === 'chat_import') return connections.length > 0 ? 'Import again' : 'Import';
+		if (isImportSource(source.id)) return connections.length > 0 ? 'Import again' : 'Import';
 		return connections.length > 0 ? `Add another ${name} account` : `Connect ${name}`;
 	});
 
@@ -328,7 +327,7 @@
 		</div>
 		{#if broken && broken.kind === 'credential' && source}
 			<Button variant="primary" onclick={() => fix(broken)}>Sign in to {name}</Button>
-		{:else if source && (connections.length === 0 || source.id === 'chat_import')}
+		{:else if source && (connections.length === 0 || isImportSource(source.id))}
 			<Button variant="primary" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	</section>

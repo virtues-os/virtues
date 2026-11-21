@@ -8,10 +8,11 @@ import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
 import { canSignInSheet, openSignIn, SIGN_IN_CLOSED } from '$lib/tauri/bridge';
 import { isTauri } from '$lib/utils/platform';
+import { isImportSource } from '$lib/imports';
 
 export type ConnectIntent =
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
-	| { kind: 'chat_import' }
+	| { kind: 'import'; sourceId: string }
 	| { kind: 'api_key'; source: SourceCatalogItem }
 	// `external` = the OAuth dance was handed off to the *system browser*
 	// (Tauri); the SPA stays mounted and should refresh on return. `false` =
@@ -116,9 +117,10 @@ export async function connectIntent(
 	}
 
 	// One-time import sources open the upload card, not the api-key form.
-	// (chat_import is declared as api_key in the catalog, so test id first.)
-	if (source.id === 'chat_import') {
-		return { kind: 'chat_import' };
+	// (They are declared as api_key with no fields in the catalog, so test the
+	// id first.)
+	if (isImportSource(source.id)) {
+		return { kind: 'import', sourceId: source.id };
 	}
 
 	if (source.auth_kind === 'via_proxy') {

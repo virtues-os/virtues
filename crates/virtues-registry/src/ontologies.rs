@@ -566,6 +566,49 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
         },
         OntologyDescriptor {
+            name: "activity_listening",
+            display_name: "Listening",
+            description: "What you played on Spotify, one row per play, from a data download",
+            domain: "activity",
+            // No lane. A lane would plot plays on every day, which reads as a
+            // count, and the owner's history arrives in one import rather than
+            // as a daily rhythm.
+            lane: None,
+            table_name: "data_activity_listening",
+            source_streams: vec!["spotify_import"],
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
+            // Song and show names are not prose worth a search vector; the
+            // assistant reads them with SQL.
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "financial_purchase",
+            display_name: "Purchases",
+            description: "Items you ordered, one row per item, from an Amazon data download",
+            domain: "financial",
+            // No lane: bank transactions already carry spending, and these
+            // are the same purchases seen from the store.
+            lane: None,
+            table_name: "data_financial_purchase",
+            source_streams: vec!["amazon_orders_import"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
             name: "content_photo",
             display_name: "Photos",
             description: "Photos and videos from the iPhone's library: when, where, what kind, and a picture of each favorite",

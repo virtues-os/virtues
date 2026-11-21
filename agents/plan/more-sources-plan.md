@@ -1,8 +1,8 @@
 # More sources
 
-**Status:** proposed 2026-11-21. Slices 1 (Outlook), 2 (meeting notes) and
-3 (photos) are built on wave (2026-11-21); none has run against a real
-account or phone. Google Contacts is
+**Status:** proposed 2026-11-21. Slices 1 to 4 (Outlook, meeting notes,
+photos, imports) are built on wave (2026-11-21); none has run against a
+real account, phone or download. Google Contacts is
 left to the iPhone (decision 6, settled). The owner picked the sources below; how each one
 connects comes from a read of each vendor's public docs on 2026-11-21 and has
 not been tried against a real account.
@@ -145,6 +145,18 @@ photo, and a picture for favorites only.**
    shaped like Past chats: upload the file, a newer export adds only what is
    new. Each needs its record (listening, orders; Discord's messages fit
    the existing message records).
+   - **Built on wave:** migration 0100 adds `data_activity_listening` and
+     `data_financial_purchase` (ontologies with no lane and no day source,
+     so nothing shows a count); `POST /api/imports/:source/upload`
+     (`server::api::imports`) stages the file and starts
+     `spotify-import`, `amazon-orders-import` or `discord-import`; Past
+     chats now stages through the same code. One import card in the app
+     (`apps/web/src/lib/imports.ts`, `ImportCard.svelte`) serves all four.
+     Discord's messages go into `data_communication_message` as the
+     owner's own.
+   - **Not kept from the downloads:** Spotify's IP address and country per
+     play; Amazon's addresses, payment details, gift messages and tracking
+     numbers.
 5. **Slack,** once decision 1 is made.
 6. **Zoom,** once decision 2 is made.
 7. **The manual.** A line per source in `docs/setup/sources.md`, and what

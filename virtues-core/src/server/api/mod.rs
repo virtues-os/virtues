@@ -17,6 +17,7 @@ pub mod connections;
 pub mod console;
 pub mod deletions;
 pub mod drive;
+pub mod imports;
 pub mod library;
 pub mod mcp;
 pub mod pages;

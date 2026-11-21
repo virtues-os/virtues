@@ -93,8 +93,8 @@
 			if (intent.kind === "pair") pair = { deviceType: intent.deviceType, displayName: intent.displayName };
 			else if (intent.kind === "api_key") apiKey = intent.source;
 			else if (intent.kind === "oauth" && intent.external) reloadOnReturn(refresh);
-			else if (intent.kind === "chat_import")
-				error = "Chat history takes a file you export yourself, so it is done in Sources rather than here. Everything else on this list is one button.";
+			else if (intent.kind === "import")
+				error = "This takes a file you download yourself, so it is done in Sources rather than here. Everything else on this list is one button.";
 			else if (intent.kind === "error") error = intent.message;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

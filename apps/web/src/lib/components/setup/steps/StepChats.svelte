@@ -24,7 +24,7 @@
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { type ChatHistory } from "$lib/api/client";
-	import { importChatExport, isAbort, type ImportPhase } from "$lib/chat-import";
+	import { importFile, isAbort, type ImportPhase } from "$lib/imports";
 	import { openExternal } from "$lib/tauri/bridge";
 	import { isIOS, isPhoneBrowser } from "$lib/utils/platform";
 	import { setup, intoLabel } from "../setup.svelte";
@@ -144,7 +144,7 @@
 		const said: string[] = [];
 		try {
 			for (const file of files) {
-				said.push(await importChatExport(file, { onPhase: (p) => (phase = p), signal: stop.signal }));
+				said.push(await importFile("chat_import", file, { onPhase: (p) => (phase = p), signal: stop.signal }));
 				await setup.refresh();
 			}
 			result = said.join(" ");

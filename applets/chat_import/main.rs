@@ -35,7 +35,7 @@ use virtues_helpers::{connect_from_env, output_with_records, read_input};
 /// enough that the parser never holds much in memory.
 const BATCH: usize = 2_000;
 
-/// The folders the upload route stages into (`server::api::applets`): under
+/// The folders the upload route stages into (`server::api::imports`): under
 /// the state root on a box, under the temp folder in a dev checkout.
 const STAGING_FOLDERS: [&str; 2] = ["chat-import", "virtues-chat-import"];
 

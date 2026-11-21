@@ -705,6 +705,7 @@ fn public_routes() -> Router<AppState> {
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
+        .merge(api::imports::routes())
         .merge(api::connections::routes())
         .merge(api::console::routes())
         .merge(api::deletions::routes())

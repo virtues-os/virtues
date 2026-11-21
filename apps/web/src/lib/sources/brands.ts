@@ -3,7 +3,7 @@
  *
  * A brand mark keeps its brand's color, because the mark is how people find a
  * service in a list. Marks that are black in their own brand (Notion, X) use
- * the text ink, so they stay visible in Dark (Notion, X, GitHub). Sources without a brand mark
+ * the text ink, so they stay visible in Dark (Notion, X, GitHub, Amazon). Sources without a brand mark
  * (devices, banks, past chats) fall back to the catalog's own icon in ink.
  *
  * The marks register here rather than in lib/icons.ts, so they load with the
@@ -12,20 +12,26 @@
  */
 
 import { addIcon } from '@iconify/svelte';
+import siAmazon from '@iconify-icons/simple-icons/amazon';
+import siDiscord from '@iconify-icons/simple-icons/discord';
 import siGithub from '@iconify-icons/simple-icons/github';
 import siGoogle from '@iconify-icons/simple-icons/google';
 import siInstagram from '@iconify-icons/simple-icons/instagram';
 import siLinear from '@iconify-icons/simple-icons/linear';
 import siOutlook from '@iconify-icons/simple-icons/microsoftoutlook';
+import siSpotify from '@iconify-icons/simple-icons/spotify';
 import siStrava from '@iconify-icons/simple-icons/strava';
 import siTodoist from '@iconify-icons/simple-icons/todoist';
 import siX from '@iconify-icons/simple-icons/x';
 
+addIcon('simple-icons:amazon', siAmazon);
+addIcon('simple-icons:discord', siDiscord);
 addIcon('simple-icons:github', siGithub);
 addIcon('simple-icons:google', siGoogle);
 addIcon('simple-icons:instagram', siInstagram);
 addIcon('simple-icons:linear', siLinear);
 addIcon('simple-icons:microsoftoutlook', siOutlook);
+addIcon('simple-icons:spotify', siSpotify);
 addIcon('simple-icons:strava', siStrava);
 addIcon('simple-icons:todoist', siTodoist);
 addIcon('simple-icons:x', siX);
@@ -40,11 +46,14 @@ export interface Mark {
 }
 
 const SOURCE_MARKS: Record<string, Mark> = {
+	amazon: { icon: 'simple-icons:amazon' },
+	discord: { icon: 'simple-icons:discord', color: '#5865F2' },
 	github: { icon: 'simple-icons:github' },
 	google: { icon: 'simple-icons:google', color: '#4285F4' },
 	instagram: { icon: 'simple-icons:instagram', color: '#E4405F' },
 	notion: { icon: 'simple-icons:notion' },
 	outlook: { icon: 'simple-icons:microsoftoutlook', color: '#0078D4' },
+	spotify: { icon: 'simple-icons:spotify', color: '#1DB954' },
 	strava: { icon: 'simple-icons:strava', color: '#FC4C02' },
 	x: { icon: 'simple-icons:x' }
 };

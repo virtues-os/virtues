@@ -22,7 +22,7 @@ export type AccountStep = 'intro' | 'opening' | 'waiting' | 'done' | 'error';
 type Pending =
 	| { kind: 'none' }
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
-	| { kind: 'chat_import' }
+	| { kind: 'import'; sourceId: string }
 	| { kind: 'api_key'; source: SourceCatalogItem; credentialId?: string }
 	| {
 			kind: 'account';
@@ -53,8 +53,8 @@ class ConnectFlowStore {
 					displayName: intent.displayName
 				};
 				return;
-			case 'chat_import':
-				this.pending = { kind: 'chat_import' };
+			case 'import':
+				this.pending = { kind: 'import', sourceId: intent.sourceId };
 				return;
 			case 'api_key':
 				this.pending = { kind: 'api_key', source: intent.source, credentialId };

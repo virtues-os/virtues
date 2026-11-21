@@ -342,6 +342,20 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
         note: None,
     });
+    m.insert("data_activity_listening", TableMetadata {
+        description: "Spotify plays",
+        category: "activity",
+        key_columns: &["started_at", "played_ms", "kind", "title", "artist_name", "album_name", "is_skipped"],
+        join_hint: None,
+        note: None,
+    });
+    m.insert("data_financial_purchase", TableMetadata {
+        description: "Amazon order items",
+        category: "financial",
+        key_columns: &["occurred_at", "order_id", "item_name", "quantity", "total_cents", "currency", "status"],
+        join_hint: None,
+        note: None,
+    });
     m.insert("data_content_photo", TableMetadata {
         description: "iPhone photos and videos",
         category: "content",
@@ -580,13 +594,13 @@ mod tests {
 
     /// The block sits in every turn. The budget is the size of the prose
     /// list it replaced plus the columns, and a line for each table added
-    /// since (photos) — if it grows past this, something is being rendered
-    /// that belongs in `get_schema`.
+    /// since (photos, listening, purchases) — if it grows past this,
+    /// something is being rendered that belongs in `get_schema`.
     #[test]
     fn prompt_block_stays_within_budget() {
         let block = prompt_block();
         assert!(
-            block.len() < 5_200,
+            block.len() < 5_500,
             "prompt block is {} bytes; descriptions or join hints leaking in?",
             block.len()
         );

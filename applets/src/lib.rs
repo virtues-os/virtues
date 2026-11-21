@@ -12,6 +12,9 @@ use virtues_helpers::AppletInput;
 /// Meetings from Fathom, Fireflies.ai and Granola, and the row writer they share.
 pub mod meeting;
 
+/// The one-time imports' shared reading, staging check and summary.
+pub mod import;
+
 /// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`),
 /// and load the box environment — the same files, in the same order, as the
 /// server (`main.rs`).

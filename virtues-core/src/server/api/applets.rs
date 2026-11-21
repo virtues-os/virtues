@@ -154,135 +154,17 @@ pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let staged = match stage_chat_import(&mut multipart).await {
-        Ok(path) => path,
-        Err(e) => return error_response(e),
-    };
-    let file_path = staged.path.clone();
-
-    let deps = crate::applet_runner::RunnerDeps {
-        db: state.db.pool().clone(),
-        yjs: state.yjs_state.clone(),
-    };
-    let payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
-
-    match crate::applet_runner::run_applet_detached(
-        &deps,
-        "applet_chat_import",
-        "manual",
-        Some(&payload),
+    let staged = match super::imports::stage_upload(
+        &mut multipart,
+        "chat-import",
+        "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.",
     )
     .await
     {
-        Ok(result) => {
-            // A run that started reads the file and removes it; any other
-            // outcome leaves it to `staged`'s drop.
-            if matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
-                staged.keep();
-            }
-            run_status_response(result, "applet_chat_import")
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-/// An upload in the staging folder, removed when dropped unless kept for a
-/// run that has started. Covers every early return and a request the client
-/// drops mid-upload.
-struct StagedUpload {
-    path: std::path::PathBuf,
-    kept: bool,
-}
-
-impl StagedUpload {
-    fn keep(mut self) {
-        self.kept = true;
-    }
-}
-
-impl Drop for StagedUpload {
-    fn drop(&mut self) {
-        if !self.kept {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// Where uploads wait for the import: `chat-import` under the state root on a
-/// box, or `virtues-chat-import` in the temp folder in a dev checkout with no
-/// state root. `chat_import` reads only from a folder of one of these names.
-fn chat_import_staging_dir() -> std::path::PathBuf {
-    let root = crate::data_disk::data_dir();
-    if root.is_dir() {
-        root.join("chat-import")
-    } else {
-        std::env::temp_dir().join("virtues-chat-import")
-    }
-}
-
-/// Remove uploads an earlier server process left behind (killed mid-upload,
-/// or its import killed mid-read), once per process and before its first
-/// upload. Only this route writes the folder, and a run from an earlier
-/// process is not running any more.
-fn sweep_chat_import_staging(dir: &std::path::Path) {
-    static SWEPT: std::sync::Once = std::sync::Once::new();
-    SWEPT.call_once(|| {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
-        let removed = entries
-            .flatten()
-            .filter(|e| std::fs::remove_file(e.path()).is_ok())
-            .count();
-        if removed > 0 {
-            tracing::info!("removed {removed} chat export upload(s) an earlier server left in {}", dir.display());
-        }
-    });
-}
-
-/// Stream the upload's `file` field into the staging folder, mode 0600.
-async fn stage_chat_import(multipart: &mut axum::extract::Multipart) -> Result<StagedUpload, Error> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    use tokio::io::AsyncWriteExt;
-
-    let dir = chat_import_staging_dir();
-    sweep_chat_import_staging(&dir);
-    let stage_failed = |e: std::io::Error| Error::Other(format!("could not save the upload in {}: {e}", dir.display()));
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&dir)
-        .map_err(stage_failed)?;
-
-    let cut_off = |e: axum::extract::multipart::MultipartError| {
-        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            Error::InvalidInput(
-                "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.".into(),
-            )
-        } else {
-            Error::InvalidInput(format!("The upload was cut off. Try it again. ({e})"))
-        }
+        Ok(s) => s,
+        Err(e) => return error_response(e),
     };
-
-    while let Some(mut field) = multipart.next_field().await.map_err(cut_off)? {
-        if field.name() != Some("file") {
-            continue;
-        }
-        let path = dir.join(format!("{}.upload", uuid::Uuid::new_v4()));
-        let std_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(stage_failed)?;
-        // Owned from here, so any failure below removes the file.
-        let staged = StagedUpload { path, kept: false };
-        let mut out = tokio::fs::File::from_std(std_file);
-        while let Some(chunk) = field.chunk().await.map_err(cut_off)? {
-            out.write_all(&chunk).await.map_err(stage_failed)?;
-        }
-        out.flush().await.map_err(stage_failed)?;
-        return Ok(staged);
-    }
-    Err(Error::InvalidInput("No file was sent. Choose the export and try again.".into()))
+    super::imports::start_import(&state, "applet_chat_import", staged).await
 }
 
 /// One chat site's history on this server: the months that have messages,
@@ -535,7 +417,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
 /// One shape for "a run was requested" — shared by the manual-run and the
 /// message handlers so the two can never disagree about what a status means.
-fn run_status_response(
+pub(crate) fn run_status_response(
     result: crate::applet_runner::AppletRunResult,
     applet_id: &str,
 ) -> Response {

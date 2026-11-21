@@ -30,6 +30,7 @@
 	import { relativeTime } from '$lib/applets/palette';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
 	import { sourceMark, toolMark, type Mark } from '$lib/sources/brands';
+	import { isImportSource } from '$lib/imports';
 	import { reloadOnReturn } from './connectDispatch';
 	import type { Tab } from '$lib/tabs/types';
 
@@ -248,7 +249,7 @@
 		// A Mac is switched on inside that Mac's own app, never paired by a code.
 		if (source.id === 'mac') return 'How to set up';
 		if (source.auth_kind === 'self_issued_bearer') return 'Pair';
-		if (source.id === 'chat_import') return 'Import';
+		if (isImportSource(source.id)) return 'Import';
 		return 'Connect';
 	}
 

@@ -20,7 +20,8 @@
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
-	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
+	import ImportCard from './ImportCard.svelte';
+	import { IMPORT_SOURCES } from '$lib/imports';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -140,9 +141,11 @@
 	{/if}
 </Modal>
 
-<Modal open={pending.kind === 'chat_import'} onClose={close} title="Bring in past chats" width="md">
-	<ChatImportCard />
-</Modal>
+{#if pending.kind === 'import'}
+	<Modal open onClose={close} title={IMPORT_SOURCES[pending.sourceId]?.title ?? 'Import'} width="md">
+		<ImportCard sourceId={pending.sourceId} />
+	</Modal>
+{/if}
 
 <style>
 	.window {
