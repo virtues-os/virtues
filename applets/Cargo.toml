@@ -82,6 +82,20 @@ path = "outlook_calendar_sync/main.rs"
 name = "outlook_mail_sync"
 path = "outlook_mail_sync/main.rs"
 
+# ── Meeting tools (api_key): one transcript row per meeting ────────────────
+
+[[bin]]
+name = "fathom_meetings_sync"
+path = "fathom_meetings_sync/main.rs"
+
+[[bin]]
+name = "fireflies_meetings_sync"
+path = "fireflies_meetings_sync/main.rs"
+
+[[bin]]
+name = "granola_meetings_sync"
+path = "granola_meetings_sync/main.rs"
+
 # ── Weather (Open-Meteo, no auth) ───────────────────────────────────────────
 
 [[bin]]

@@ -17,6 +17,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { Button, Input } from '$lib';
 	import { apikeyComplete, type SourceCatalogItem } from '$lib/api/client';
+	import { fieldLabel, isSecretField, keyHelp } from '$lib/sources/keys';
 	import {
 		browserLogin,
 		browserLoginUserAgent,
@@ -47,6 +48,8 @@
 	const fields = $derived(
 		fieldsProp ?? (source?.fields?.length ? source.fields : ['token'])
 	);
+
+	const help = $derived(source ? keyHelp(source.id) : {});
 
 	let name = $state('');
 	let values = $state<Record<string, string>>({});
@@ -141,7 +144,7 @@
 		}
 		for (const f of fields) {
 			if (!values[f]?.trim()) {
-				error = `Paste your ${f}, then connect.`;
+				error = `Paste your ${source ? fieldLabel(source.id, f).toLowerCase() : f}, then connect.`;
 				return;
 			}
 		}
@@ -193,6 +196,9 @@
 					</Button>
 				</div>
 			{:else}
+			{#if help.where}
+				<p class="muted">{help.where}</p>
+			{/if}
 			{#if !credentialId}
 				<label>
 					<span>Name</span>
@@ -202,15 +208,15 @@
 
 			{#each fields as field (field)}
 				<label>
-					<span>{field}</span>
+					<span>{fieldLabel(source.id, field)}</span>
 					<!-- A getter, not `values[field]`: the effect that seeds `values`
 					     runs after this first renders, and binding `undefined` into
 					     Input's `$bindable("")` throws — the modal never mounted, so
 					     every api_key Connect did nothing. -->
 					<Input
-						type="password"
+						type={isSecretField(field) ? 'password' : 'email'}
 						bind:value={() => values[field] ?? '', (v) => (values[field] = v)}
-						placeholder={`Paste your ${field}`}
+						placeholder={isSecretField(field) ? `Paste your ${fieldLabel(source.id, field).toLowerCase()}` : ''}
 					/>
 				</label>
 			{/each}

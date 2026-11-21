@@ -226,11 +226,11 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: Some("direction is metadata->>'is_from_me'; the other person is via wiki_refs role sender/recipient"),
     });
     m.insert("data_communication_transcription", TableMetadata {
-        description: "Voice/audio transcriptions",
+        description: "Transcripts: your server's own audio recordings, and meetings from Fathom, Fireflies.ai and Granola",
         category: "communication",
-        key_columns: &["text", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
+        key_columns: &["text", "title", "summary", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
         join_hint: None,
-        note: None,
+        note: Some("source_table = 'meeting' marks a whole meeting from a meeting tool (source_provider names it), with named speakers and its attendees and action items in metadata; other rows are audio chunks"),
     });
     // Tables that hold real data and were never described, so the agent could
     // see them only because the old catalog listed everything matching

@@ -1,7 +1,7 @@
 # More sources
 
-**Status:** proposed 2026-11-21. Slice 1's Outlook half is built on wave
-(2026-11-21) and has not run against a real account. Google Contacts is
+**Status:** proposed 2026-11-21. Slices 1 (Outlook) and 2 (meeting notes)
+are built on wave (2026-11-21) and have not run against a real account. Google Contacts is
 left to the iPhone (decision 6, settled). The owner picked the sources below; how each one
 connects comes from a read of each vendor's public docs on 2026-11-21 and has
 not been tried against a real account.
@@ -106,8 +106,28 @@ photo, and a picture for favorites only.**
      `people.googleapis.com` (checked 2026-11-21). The owner left contacts
      to the iPhone (decision 6).
 2. **Meeting notes: Fathom, Fireflies.ai, Granola.** Three `api_key`
-   sources with polling syncs. Decide where a meeting's transcript lives
+   sources with polling syncs, one row per meeting in the transcript record
    (decision 3).
+   - **Built on wave:** catalog rows, the `fathom-meetings-sync`,
+     `fireflies-meetings-sync` and `granola-meetings-sync` applets with one
+     shared row writer, labels and a "where to make the key" line in the
+     paste form (`apps/web/src/lib/sources/keys.ts`), and readers taught
+     that a meeting row is not audio. Each run rereads three days before its
+     last mark so a meeting whose transcript finished late is picked up; the
+     first run reads 90 days.
+   - **Whose meetings:** Fathom's key also returns meetings shared with the
+     person's team, so Fathom asks for their email and keeps meetings they
+     recorded or were invited to. Fireflies.ai is asked for meetings the
+     key's own user organized or attended. Granola's key is made with only
+     Personal notes, which still includes notes shared directly with them.
+   - **Terms to read before shipping** (from each vendor's terms on
+     2026-11-21): Fathom's general terms forbid "any automated tool" and do
+     not except its own API. Fireflies.ai's terms ask for written consent
+     before building software that interacts with the service, which
+     conflicts with its public API. Granola's user terms forbid storing "any
+     significant portion" of content, and its platform terms forbid building
+     a competing product. None forbids a person sending their own data to a
+     model.
 3. **Photos from the iPhone,** as above.
 4. **Imports: Spotify, Amazon orders, Discord.** Three one-time imports
    shaped like Past chats: upload the file, a newer export adds only what is
@@ -128,9 +148,6 @@ Open, each needs the owner's words:
 2. **Zoom:** submit to Zoom's Marketplace review, ask each person to make
    their own Zoom app and paste its keys, or leave Zoom to the meeting tools
    that already record Zoom calls (Fathom, Fireflies.ai, Granola).
-3. **Where meeting transcripts live:** in the existing conversation records
-   beside past chats, or a new meeting record that day pages can place by
-   time and attendees.
 4. **Photos:** metadata for every photo plus pictures for favorites, as
    proposed, or favorites only.
 5. **Spotify live plays:** import only, or also let someone paste their own
@@ -138,6 +155,13 @@ Open, each needs the owner's words:
 
 Settled:
 
+3. **Where meeting transcripts live: the transcript record.** The owner,
+   on 2026-11-21, chose "Transcript record (Recommended)" over a new meeting
+   record and the past-chats record. A meeting is one row in
+   `data_communication_transcription` with `source_table = 'meeting'` and
+   the tool in `source_provider`, beside the iPhone's audio chunks. Day
+   pages call it a meeting; recorded minutes, audio sittings and session
+   titles leave meeting rows out so nothing counts twice.
 6. **Google Contacts: left to the iPhone.** The owner, on 2026-11-21:
    "Leave to iPhone". The iPhone already sends the contacts on the phone,
    Google's included when the phone syncs them. The options passed over

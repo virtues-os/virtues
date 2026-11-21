@@ -9,6 +9,9 @@ use serde::de::DeserializeOwned;
 use std::time::Duration;
 use virtues_helpers::AppletInput;
 
+/// Meetings from Fathom, Fireflies.ai and Granola, and the row writer they share.
+pub mod meeting;
+
 /// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`),
 /// and load the box environment — the same files, in the same order, as the
 /// server (`main.rs`).
@@ -411,7 +414,7 @@ pub async fn service_proxy_raw(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -479,8 +482,8 @@ mod tests {
         assert_eq!(rate_limit_wait(None).as_secs(), 2);
     }
 
-    /// A stand-in for virtues-api: each request takes the next canned answer.
-    async fn canned(answers: Vec<(&'static str, &'static str, &'static str)>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    /// A stand-in for an HTTP API: each request takes the next canned answer.
+    pub(crate) async fn canned(answers: Vec<(&'static str, &'static str, &'static str)>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

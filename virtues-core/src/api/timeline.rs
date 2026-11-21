@@ -250,7 +250,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
          LEFT JOIN LATERAL ( \
              SELECT title FROM data_communication_transcription \
              WHERE started_at >= s.started_at AND started_at < s.ended_at \
-               AND text <> '' AND title IS NOT NULL \
+               AND text <> '' AND title IS NOT NULL AND source_table <> 'meeting' \
                AND deleted_at_source IS NULL AND NOT is_archived \
              ORDER BY length(text) DESC LIMIT 1 \
          ) t ON TRUE \

@@ -79,6 +79,10 @@ pub(crate) struct Chunk {
     pub end: DateTime<Utc>,
     pub hm: String,
     pub text: String,
+    /// For a whole meeting from a meeting tool: its title and the tool, as
+    /// the writer reads them ("Quarterly planning, from Fathom"). `None` for
+    /// a chunk of this server's own audio.
+    pub meeting: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -178,7 +182,8 @@ pub(crate) async fn assemble(
 
     // ── transcripts ──
     let rows = sqlx::query(
-        "SELECT id, text, started_at, COALESCE(ended_at, started_at + interval '5 minutes') AS ended_at \
+        "SELECT id, text, started_at, COALESCE(ended_at, started_at + interval '5 minutes') AS ended_at, \
+                source_table, source_provider, title \
          FROM data_communication_transcription \
          WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
          ORDER BY started_at",
@@ -192,13 +197,19 @@ pub(crate) async fn assemble(
     for r in &rows {
         let s: DateTime<Utc> = r.try_get("started_at")?;
         let e: DateTime<Utc> = r.try_get("ended_at")?;
-        recorded.push((s, e));
+        let meeting = if r.try_get::<String, _>("source_table")? == crate::transcript::MEETING_TABLE {
+            Some(meeting_name(r.try_get("title")?, &r.try_get::<String, _>("source_provider")?))
+        } else {
+            // Only this server's own audio says when nothing was recorded.
+            recorded.push((s, e));
+            None
+        };
         let text: String = r.try_get("text")?;
         let text = crate::transcript::flatten_speaker_tags(text.trim()).into_owned();
         if text.chars().count() < MIN_CHUNK_CHARS {
             continue; // silence: counted as coverage above, carries no words
         }
-        chunks.push(Chunk { id: r.try_get("id")?, start: s, end: e, hm: hm(&s, tz), text });
+        chunks.push(Chunk { id: r.try_get("id")?, start: s, end: e, hm: hm(&s, tz), text, meeting });
     }
 
     // ── people ──
@@ -559,12 +570,41 @@ pub(crate) fn strip_footnotes(md: &str) -> String {
     re.replace_all(&joined, "").to_string()
 }
 
+/// How the writer reads a meeting's source: its title and the tool that
+/// recorded it.
+fn meeting_name(title: Option<String>, provider: &str) -> String {
+    let tool = match provider {
+        "fathom" => "Fathom",
+        "fireflies" => "Fireflies.ai",
+        "granola" => "Granola",
+        other => other,
+    };
+    match title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        Some(t) => format!("{t}, from {tool}"),
+        None => format!("a meeting, from {tool}"),
+    }
+}
+
 fn conversations_block(chunks: &[Chunk]) -> String {
     let mut out = String::new();
     let mut i = 0;
     while i < chunks.len() {
+        // A meeting is one whole call with its speakers named, so it stands
+        // alone instead of joining the audio chunks around it.
+        if let Some(name) = &chunks[i].meeting {
+            let c = &chunks[i];
+            out.push_str(&format!("## Meeting {}: {name}
+### [{}]
+{}
+\n", c.hm, c.hm, c.text));
+            i += 1;
+            continue;
+        }
         let mut j = i;
-        while j + 1 < chunks.len() && (chunks[j + 1].start - chunks[j].end).num_minutes() <= CONVERSATION_GAP_MIN {
+        while j + 1 < chunks.len()
+            && chunks[j + 1].meeting.is_none()
+            && (chunks[j + 1].start - chunks[j].end).num_minutes() <= CONVERSATION_GAP_MIN
+        {
             j += 1;
         }
         out.push_str(&format!("## Conversation {}–{}\n", chunks[i].hm, chunks[j].hm));
@@ -1131,7 +1171,8 @@ fn verify_quote(text: &str, tags: &[String], input: &DayInput) -> Option<Figure>
             input.chunks.iter().find(|c| c.hm == *tag && (verbatim(&c.text).contains(&words) || said_cleanly(&words, &c.text)))
         {
             // The recordings never say which voice is the owner's.
-            return Some(quote(&c.hm, "In a recording".into(), format!("data_communication_transcription:{}", c.id)));
+            let source = if c.meeting.is_some() { "In a meeting" } else { "In a recording" };
+            return Some(quote(&c.hm, source.into(), format!("data_communication_transcription:{}", c.id)));
         }
     }
     None
@@ -1457,7 +1498,8 @@ fn evidence_label(tag: &str, input: &DayInput) -> Option<(String, String)> {
         Some((format!("Chat · {}", twelve_hour(t)), String::new()))
     } else {
         let c = input.chunks.iter().find(|c| c.hm == tag)?;
-        Some((format!("Recording · {}", twelve_hour(tag)), format!("data_communication_transcription:{}", c.id)))
+        let kind = if c.meeting.is_some() { "Meeting" } else { "Recording" };
+        Some((format!("{kind} · {}", twelve_hour(tag)), format!("data_communication_transcription:{}", c.id)))
     }
 }
 
@@ -1667,10 +1709,13 @@ pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
     .fetch_one(pool)
     .await?;
 
+    // Recorded minutes measure this server's own audio, so a meeting tool's
+    // transcript (`transcript::MEETING_TABLE`) is not counted.
     let spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
         "SELECT started_at, COALESCE(ended_at, started_at + interval '5 minutes') \
          FROM data_communication_transcription \
          WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+           AND source_table <> 'meeting' \
          ORDER BY started_at",
     )
     .bind(&start)
@@ -1747,8 +1792,8 @@ mod tests {
         DayInput {
             user_prompt: String::new(),
             chunks: vec![
-                Chunk { id: "tr_a".into(), start: t(17, 14), end: t(17, 19), hm: "17:14".into(), text: "[Speaker 1]: cross Fifth and Main, Nick".into() },
-                Chunk { id: "tr_b".into(), start: t(17, 39), end: t(17, 44), hm: "17:39".into(), text: "[Speaker 2]: which way is the station?".into() },
+                Chunk { id: "tr_a".into(), start: t(17, 14), end: t(17, 19), hm: "17:14".into(), text: "[Speaker 1]: cross Fifth and Main, Nick".into(), meeting: None },
+                Chunk { id: "tr_b".into(), start: t(17, 39), end: t(17, 44), hm: "17:39".into(), text: "[Speaker 2]: which way is the station?".into(), meeting: None },
             ],
             messages: vec![
                 msg("msg_1", "th_dad", "19:40", "you", "home, walked the dog", true),
@@ -1883,8 +1928,40 @@ mod tests {
             end: t(15, 47),
             hm: "15:42".into(),
             text: "[Speaker]: There's no rye left at Mossy Godwit.  Wasn't it delivered\nthis morning? [Speaker]: Not today.".into(),
+            meeting: None,
         });
         inp
+    }
+
+    #[test]
+    fn a_meeting_stands_alone_and_is_labeled_as_one() {
+        let t = |h, m| Utc.with_ymd_and_hms(2026, 1, 7, h, m, 0).unwrap();
+        let audio = |id: &str, h, m| Chunk {
+            id: id.into(),
+            start: t(h, m),
+            end: t(h, m + 5),
+            hm: format!("{h:02}:{m:02}"),
+            text: "[Speaker]: the train was late again".into(),
+            meeting: None,
+        };
+        let meeting = Chunk {
+            id: "tr_m".into(),
+            start: t(10, 6),
+            end: t(10, 40),
+            hm: "10:06".into(),
+            text: "[David Okafor]: Let's move the launch to Thursday. [Nick]: Fine by me.".into(),
+            meeting: Some(meeting_name(Some("Launch review".into()), "fathom")),
+        };
+        let chunks = vec![audio("tr_a", 10, 0), meeting, audio("tr_b", 10, 41)];
+        let block = conversations_block(&chunks);
+        assert!(block.contains("## Meeting 10:06: Launch review, from Fathom\n### [10:06]"), "{block}");
+        assert_eq!(block.matches("## Conversation").count(), 2, "the audio on either side is not merged across it: {block}");
+
+        let mut inp = input();
+        inp.chunks = chunks;
+        assert_eq!(evidence_label("10:06", &inp).unwrap().0, "Meeting · 10:06 AM");
+        assert_eq!(evidence_label("10:00", &inp).unwrap().0, "Recording · 10:00 AM");
+        assert_eq!(meeting_name(None, "granola"), "a meeting, from Granola");
     }
 
     #[test]

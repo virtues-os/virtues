@@ -9,6 +9,13 @@
 //! tags here, at read time, rather than rewriting stored rows.
 
 use std::borrow::Cow;
+
+/// `source_table` of a transcript that a meeting tool wrote (Fathom,
+/// Fireflies.ai, Granola) rather than one transcribed from this server's own
+/// audio. A meeting row is one whole call with named speakers. Readers that
+/// measure recorded audio (coverage, sittings) leave these rows out; the SQL
+/// in those readers spells the value as `'meeting'`.
+pub const MEETING_TABLE: &str = "meeting";
 use std::sync::LazyLock;
 
 use regex::Regex;

@@ -1,6 +1,6 @@
 ---
 title: How sources work
-description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, GitHub stars, X bookmarks, Instagram saves and past chats - and the tools your assistant can use, from the Sources page.
+description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, meeting notes from Fathom, Fireflies.ai and Granola, GitHub stars, X bookmarks, Instagram saves and past chats - and the tools your assistant can use, from the Sources page.
 updated: 2026-11-21
 ---
 
@@ -41,6 +41,14 @@ yet. Your iPhone sends more than any account.
 - **Notion:** your pages and databases.
 - **Strava:** your runs, rides and swims.
 - **Banks:** spending, balances and investments, through Plaid.
+- **Fathom, Fireflies.ai and Granola:** your meetings, each with its
+  transcript, summary and attendees, and action items where the tool keeps
+  them. You paste a key you make in the tool; its connect window says where.
+  Your server reads from the tool directly with that key. Day pages place
+  each meeting at its time beside your recordings. Fathom also asks for your
+  email in Fathom, because its key can see meetings shared with your team,
+  and your server keeps only the ones you recorded or were invited to.
+  Granola makes keys on its Business and Enterprise plans.
 - **GitHub:** the repositories you star, with a read-only access token you
   create on GitHub.
 - **X:** the posts you bookmark. In the Mac app you sign in to x.com in a
