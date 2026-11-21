@@ -7,7 +7,7 @@
  */
 import { request } from '$lib/api/client';
 import { background, fileUrl } from '$lib/stores/background.svelte';
-import { formatAddress, isDots, parseSetting, pictureTitle, pool, type Picture } from './resolve';
+import { find, formatAddress, isDots, parseSetting, pictureTitle, pool, srcset, widest, type Address, type Picture } from './resolve';
 import { narrowest, stepFrom } from './browse';
 import { dotsPreview } from './dots';
 
@@ -27,22 +27,48 @@ export function current(): { address: string; title: string; collectionTitle: st
 }
 
 /**
+ * The pictures the arrows step through: today's pool under a rotating
+ * setting, the chosen picture's collection under one picture.
+ */
+function stepPool(): Address[] {
+	if (isRotating()) return background.pool;
+	const setting = parseSetting(background.setting);
+	if (setting.kind !== 'path') return [];
+	return pool(background.allStyles, { kind: 'path', style: setting.style, collection: setting.collection });
+}
+
+/**
  * The previous or next picture. Under a rotating setting it is today's
  * picture until midnight; under one picture it becomes the setting.
  */
 export async function step(dir: 1 | -1): Promise<void> {
 	await background.ensureStyles();
-	const at = background.today?.address ?? '';
-	if (isRotating()) {
-		const next = stepFrom(background.pool, at, dir);
-		if (next) await background.chooseForToday(formatAddress(next));
-		return;
+	const next = stepFrom(stepPool(), background.today?.address ?? '', dir);
+	if (!next) return;
+	if (isRotating()) await background.chooseForToday(formatAddress(next));
+	else await background.set(formatAddress(next));
+}
+
+/**
+ * The sources of the pictures either side of today's, in the current
+ * appearance, so the control can load them before an arrow asks for them.
+ */
+export function neighbors(): { key: string; avif: string; webp: string; src: string }[] {
+	const at = background.today?.address;
+	if (!at) return [];
+	const items = stepPool();
+	const out: { key: string; avif: string; webp: string; src: string }[] = [];
+	for (const dir of [1, -1] as const) {
+		const a = stepFrom(items, at, dir);
+		const picture = a && find(background.allStyles, a);
+		if (!a || !picture || isDots(picture)) continue;
+		const key = formatAddress(a);
+		if (key === at || out.some((n) => n.key === key)) continue;
+		const v = picture[background.appearance];
+		const url = fileUrl(a.style);
+		out.push({ key, avif: srcset(v, 'avif', url), webp: srcset(v, 'webp', url), src: widest(v, url) });
 	}
-	const setting = parseSetting(background.setting);
-	if (setting.kind !== 'path') return;
-	const siblings = pool(background.allStyles, { kind: 'path', style: setting.style, collection: setting.collection });
-	const next = stepFrom(siblings, at, dir);
-	if (next) await background.set(formatAddress(next));
+	return out;
 }
 
 /** Keep today's picture: the setting becomes that one picture. */

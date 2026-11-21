@@ -8,9 +8,16 @@
 	 * A picture from a style has its own dark version, so only the lake is
 	 * dimmed in Dark, through `--window-scene-filter`. The dots style is
 	 * drawn by the app in the theme's ink (DotsField).
+	 *
+	 * A change of picture crossfades. The new picture is a layer over the old
+	 * one, kept clear until it has loaded and decoded, then faded in; the old
+	 * layer goes once the fade ends. So stepping through pictures never shows
+	 * an empty frame, and quick steps only fade in the last one to arrive.
+	 * Dots and Plain are not opaque, so the old layer fades out under them.
 	 */
-	import { onMount } from "svelte";
-	import { background } from "$lib/stores/background.svelte";
+	import { onMount, untrack } from "svelte";
+	import { background, type Shown } from "$lib/stores/background.svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import DotsField from "$lib/components/backgrounds/DotsField.svelte";
 
 	let {
@@ -23,32 +30,119 @@
 		dimLake?: boolean;
 	} = $props();
 
+	/** How long a new picture takes to fade in. Matches `--fade` below. */
+	const FADE_MS = 700;
+
+	interface Layer {
+		id: number;
+		key: string;
+		shown: Shown;
+		ready: boolean;
+	}
+
+	let layers = $state<Layer[]>([]);
+	let nextId = 0;
+
 	onMount(() => background.start());
 
-	const shown = $derived(background.shown);
+	function keyOf(s: Shown): string {
+		return s.kind === "lake" || s.kind === "none" ? s.kind : `${s.kind}:${s.key}`;
+	}
+
+	const opaque = (s: Shown) => s.kind === "lake" || s.kind === "picture";
+
+	$effect(() => {
+		const shown = background.shown;
+		const key = keyOf(shown);
+		untrack(() => {
+			if (layers.at(-1)?.key === key) return;
+			const layer: Layer = { id: nextId++, key, shown, ready: false };
+			layers.push(layer);
+			// Nothing to load for these.
+			if (!opaque(shown)) settle(layer.id);
+		});
+	});
+
+	/** Fade a layer in, and drop the layers under it once the fade is done. */
+	function settle(id: number) {
+		const layer = layers.find((l) => l.id === id);
+		if (!layer || layer.ready) return;
+		layer.ready = true;
+		setTimeout(
+			() => (layers = layers.filter((l) => l.id >= id)),
+			reducedMotion() ? 0 : FADE_MS,
+		);
+	}
+
+	/** Settle once the image has loaded and decoded, or failed to. */
+	function loaded(img: HTMLImageElement, id: number) {
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			img.decode().catch(() => {}).finally(() => settle(id));
+		};
+		if (img.complete && img.naturalWidth > 0) finish();
+		img.addEventListener("load", finish);
+		img.addEventListener("error", finish);
+		return {
+			destroy() {
+				img.removeEventListener("load", finish);
+				img.removeEventListener("error", finish);
+			},
+		};
+	}
+
+	// The newest layer that has arrived. When it is not opaque, the ones
+	// under it fade out rather than staying behind it.
+	const top = $derived(layers.findLast((l) => l.ready));
+	const clearUnder = $derived(top ? !opaque(top.shown) : false);
 </script>
 
-{#if shown.kind === "lake"}
-	<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
-	     macOS (174 KB), the JPEG last (508 KB). -->
-	<picture>
-		<source srcset="/scenes/lake.avif" type="image/avif" />
-		<source srcset="/scenes/lake.webp" type="image/webp" />
-		<img class:dim={dimLake} src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" style:object-position={position} />
-	</picture>
-{:else if shown.kind === "dots"}
-	<DotsField params={shown.params} appearance={background.appearance} />
-{:else if shown.kind === "picture"}
-	{#key shown.key}
-		<picture>
-			<source srcset={shown.avif} sizes="100vw" type="image/avif" />
-			<source srcset={shown.webp} sizes="100vw" type="image/webp" />
-			<img src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={position} />
-		</picture>
-	{/key}
-{/if}
+<div class="stack" style:--fade="{FADE_MS}ms">
+	{#each layers as layer (layer.id)}
+		{@const shown = layer.shown}
+		<div
+			class="layer"
+			class:in={layer.ready && !(clearUnder && top && layer.id < top.id)}
+		>
+			{#if shown.kind === "lake"}
+				<!-- AVIF where the browser takes it (200 KB), WebP on iOS 15 and older
+				     macOS (174 KB), the JPEG last (508 KB). -->
+				<picture>
+					<source srcset="/scenes/lake.avif" type="image/avif" />
+					<source srcset="/scenes/lake.webp" type="image/webp" />
+					<img use:loaded={layer.id} class:dim={dimLake} src="/scenes/lake.jpg" alt="" aria-hidden="true" decoding="async" style:object-position={position} />
+				</picture>
+			{:else if shown.kind === "dots"}
+				<DotsField params={shown.params} appearance={background.appearance} />
+			{:else if shown.kind === "picture"}
+				<picture>
+					<source srcset={shown.avif} sizes="100vw" type="image/avif" />
+					<source srcset={shown.webp} sizes="100vw" type="image/webp" />
+					<img use:loaded={layer.id} src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={position} />
+				</picture>
+			{/if}
+		</div>
+	{/each}
+</div>
 
 <style>
+	.stack {
+		display: grid;
+		width: 100%;
+		height: 100%;
+	}
+	.layer {
+		grid-area: 1 / 1;
+		min-width: 0;
+		min-height: 0;
+		opacity: 0;
+		transition: opacity var(--fade) cubic-bezier(0.33, 0, 0.2, 1);
+	}
+	.layer.in {
+		opacity: 1;
+	}
 	picture {
 		display: contents;
 	}
