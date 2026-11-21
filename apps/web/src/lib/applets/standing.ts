@@ -116,7 +116,7 @@ export interface ServerTaskGroups {
  * Whether the Server tasks page lists it: one of the server's own tasks, or
  * a task of the assistant's that came with the server. Those have no row in
  * Tasks (the morning examen), so this page is where they show and where you
- * turn one off. Whether one should show in Tasks is open in the plan (O7).
+ * turn one off. They never show in your own task list.
  */
 function isServerTask(a: Applet): boolean {
 	const kind = kindOf(a);

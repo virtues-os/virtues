@@ -207,7 +207,7 @@ Built:
   the assistant's task, that has not finished, and that someone set up. One
   that came with the server has no row: the morning examen is on from the
   first day, and a row for it would put a task nobody asked for in every
-  task list (O7). It stays on the Server tasks page. The row opens at setup,
+  task list. It stays on the Server tasks page, which the owner confirmed. The row opens at setup,
   in the thread of the chat that made it, and when the server starts, for
   any that lack one.
 - **The worker never runs it.** `is_queued` is false for the row, its
@@ -286,6 +286,7 @@ In the owner's words where he said them.
 | 2026-11-21 | Syncs and upkeep are tasks. | "the 22 syncs and upkeep jobs -- I would label those tasks for sure" |
 | 2026-11-21 | Your tasks and the assistant's sit side by side. | "I like the idea a bit, human tasks vs ai tasks." |
 | 2026-11-21 | The page that lists your server's tasks is "Server tasks". | He picked it from four names. |
+| 2026-11-21 | A task that came with the server, such as the morning examen, shows on Server tasks and never in your own list. | "th server task list yes not the human one" |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -297,7 +298,6 @@ view is a site".
 |---|---|---|
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
 | O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
-| O7 | A softer word than "task" for one the server suggests, such as the morning examen | Not picked. A daily reflection listed as a task can read as an obligation. |
 | O8 | Where you manage skills: turn one off, change one you made, delete it | Not picked. A skill has no door, the `/` menu only starts one, and the Server tasks page is the wrong place for them. A "Skills" list under the assistant's settings is the smallest answer. |
 | O9 | Does a site that came with the server show in the Sites door? | No, as built. The door lists what you set up. The dot cloud opens by its address or in a page. |
 

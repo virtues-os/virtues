@@ -20,8 +20,8 @@ use crate::scheduler::applets::{self, Applet};
 /// that came with the server has no row, whether it is on or off: the
 /// morning examen is on from the first day, and a row for it would put a
 /// task nobody asked for in every task list. It stays on the Server tasks
-/// page. Whether a shipped one should ever show in Tasks is an open question
-/// in the plan (O7).
+/// page and never shows in the owner's own list (the owner's decision,
+/// 2026-11-21).
 fn wants_row(a: &Applet) -> bool {
     let has_view = crate::server::faces::face_for(&a.id).is_some();
     applets::derived_kind(a, has_view) == "assistant_task" && a.archived_at.is_none() && a.owner != "system"
