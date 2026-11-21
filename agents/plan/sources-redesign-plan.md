@@ -1,7 +1,7 @@
 # Sources redesign
 
 **Status:** drawn on 2026-11-20 and liked by the owner ("This looks
-fantastic!"). He then said "lets build", and slices 1 to 4 are built on wave
+fantastic!"). He then said "lets build", and slices 1 to 4 and 6 are built on wave
 with the proposals below as written, not yet run on a server. The decisions
 at the end are still open and can change what was built.
 
@@ -175,9 +175,15 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    deferred schedule-on-the-box item in
    [audio-schedule-places-plan.md](audio-schedule-places-plan.md)). Needs
    decision 6.
-6. **The connect window.** One window and its states for the four kinds,
-   including errors, replacing `ApiKeyConnectModal`, `DevicePairModal`'s
-   frame and the chat import modal.
+6. **The connect window.** Built 2026-11-20: an account (OAuth through the
+   proxy, and Plaid) opens `ConnectWindow` in steps held by `connectFlow`:
+   what your server will read and what your assistant may do, then the
+   provider's page (in the app, a waiting step that checks when you come
+   back), then done, or an error with Try again. Nothing leaves the app until
+   Continue. Past chats opens there too. Pairing a device and signing in to a
+   site (X) keep `DevicePairModal` and `ApiKeyConnectModal`, because
+   onboarding opens them as well; all of them use the same `Modal`. Not
+   built: folding those two into the one window.
 7. **Manual and cleanup.** A manual page for Sources, then delete this plan
    and leave a record if the reasoning is worth keeping.
 

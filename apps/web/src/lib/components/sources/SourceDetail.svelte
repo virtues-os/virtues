@@ -113,6 +113,12 @@
 				why: 'Nothing runs for it now. Disconnect what is left below if you no longer need it.'
 			};
 		}
+		if (source.id === 'chat_import') {
+			return {
+				line: 'Bring in your past chats.',
+				why: 'Export them from Claude or ChatGPT, then import the file here. A newer export adds only what is new.'
+			};
+		}
 		if (connections.length === 0) {
 			return { line: `${name} isn't connected.`, why: '' };
 		}
@@ -285,7 +291,7 @@
 		</div>
 		{#if broken && broken.kind === 'credential' && source}
 			<Button variant="primary" onclick={() => fix(broken)}>Sign in to {name}</Button>
-		{:else if source && connections.length === 0}
+		{:else if source && (connections.length === 0 || source.id === 'chat_import')}
 			<Button variant="primary" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	</section>

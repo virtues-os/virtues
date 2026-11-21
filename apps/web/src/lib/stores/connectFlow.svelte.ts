@@ -1,32 +1,49 @@
 /**
- * The connect flow's modal state, hoisted out of any one section.
+ * The connect flow's window state, hoisted out of any one page.
  *
- * Both Overview (Reconnect on a broken connection) and Catalog (Connect on a
- * tile) start the same flow, and the modals it opens have to be rendered
- * somewhere that outlives a section swap — so the room shell renders them once
- * and the sections only say *start this*. Without it each section would carry
- * its own copy of four modals, which is how the two connect dispatchers drifted
- * in the first place.
+ * The Sources page and a source's page both start the same flow, and the
+ * window it opens has to outlive a page swap, so SourcesView renders it once
+ * and the pages only say *start this* (agents/plan/sources-redesign-plan.md,
+ * slice 6).
+ *
+ * An account (OAuth through the proxy, and Plaid) opens in steps: what
+ * connecting does, then the provider's page, then done. Nothing leaves the
+ * app until the person presses Continue, so the window can say first what
+ * your server will read and what your assistant may do there.
  */
 import { connectIntent } from '$lib/components/sources/connectDispatch';
 import type { SourceCatalogItem } from '$lib/api/client';
+
+/** intro: what connecting does · opening: asking the server for the
+ *  provider's page · waiting: that page is open in the browser · done ·
+ *  error: the page could not be opened. */
+export type AccountStep = 'intro' | 'opening' | 'waiting' | 'done' | 'error';
 
 type Pending =
 	| { kind: 'none' }
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
 	| { kind: 'chat_import' }
-	| { kind: 'api_key'; source: SourceCatalogItem; credentialId?: string };
+	| { kind: 'api_key'; source: SourceCatalogItem; credentialId?: string }
+	| {
+			kind: 'account';
+			source: SourceCatalogItem;
+			credentialId?: string;
+			step: AccountStep;
+			message?: string;
+	  };
 
 class ConnectFlowStore {
 	pending = $state<Pending>({ kind: 'none' });
 	error = $state<string | null>(null);
-	/** Set when an OAuth dance was handed to the system browser (Tauri). */
-	awaitingExternal = $state(false);
 
 	/** `credentialId`: reconnecting that credential rather than adding one.
 	 *  Both the api_key form and the OAuth dance repair that row in place. */
 	async start(source: SourceCatalogItem, credentialId?: string): Promise<void> {
 		this.error = null;
+		if (source.auth_kind === 'via_proxy') {
+			this.pending = { kind: 'account', source, credentialId, step: 'intro' };
+			return;
+		}
 		const intent = await connectIntent(source, { credentialId });
 		switch (intent.kind) {
 			case 'pair':
@@ -43,15 +60,39 @@ class ConnectFlowStore {
 				this.pending = { kind: 'api_key', source: intent.source, credentialId };
 				return;
 			case 'oauth':
-				// Browser: we're navigating away and this store is about to be torn
-				// down. Tauri: the SPA stayed mounted, so the shell refreshes on the
-				// next window focus.
-				this.awaitingExternal = intent.external;
+				// Only via_proxy sources reach OAuth, and those went to the window above.
 				return;
 			case 'error':
 				this.error = intent.message;
 				return;
 		}
+	}
+
+	/**
+	 * The account window's Continue: opens the provider's page. In a browser
+	 * tab the page navigates away and this store is torn down. In the app the
+	 * page opens in the system browser and the window waits.
+	 */
+	async continueAccount(): Promise<void> {
+		const p = this.pending;
+		if (p.kind !== 'account') return;
+		this.pending = { ...p, step: 'opening', message: undefined };
+		const intent = await connectIntent(p.source, { credentialId: p.credentialId });
+		if (this.pending.kind !== 'account') return; // closed meanwhile
+		if (intent.kind === 'oauth') {
+			if (intent.external) this.pending = { ...this.pending, step: 'waiting' };
+			return;
+		}
+		this.pending = {
+			...this.pending,
+			step: 'error',
+			message: intent.kind === 'error' ? intent.message : undefined
+		};
+	}
+
+	/** The account the window is waiting on has arrived. */
+	accountConnected(): void {
+		if (this.pending.kind === 'account') this.pending = { ...this.pending, step: 'done' };
 	}
 
 	close(): void {

@@ -11,8 +11,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { SOURCES_SECTIONS } from '$lib/tabs/registry';
-	import Modal from '$lib/components/Modal.svelte';
-	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
+	import ConnectWindow from './ConnectWindow.svelte';
 	import DevicePairModal from './DevicePairModal.svelte';
 	import ApiKeyConnectModal from './ApiKeyConnectModal.svelte';
 	import SourcesPage from './SourcesPage.svelte';
@@ -20,7 +19,6 @@
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
-	import { reloadOnReturn } from './connectDispatch';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
@@ -66,22 +64,14 @@
 		else windowShellStore.retarget(tab.id, '/sources', 'Sources');
 	});
 
-	// The modals live here rather than in a page so that finishing a connect
-	// doesn't depend on which page you started it from.
+	// The connect windows live here rather than in a page so that finishing a
+	// connect doesn't depend on which page you started it from.
 	const pending = $derived(connectFlow.pending);
 
 	function finish() {
 		connectFlow.close();
 		void sourcesStore.load();
 	}
-
-	// Tauri hands OAuth to the system browser and the SPA stays mounted, so the
-	// box finalizes the credential while we're looking at a different app.
-	$effect(() => {
-		if (!connectFlow.awaitingExternal) return;
-		connectFlow.awaitingExternal = false;
-		reloadOnReturn(() => void sourcesStore.load());
-	});
 </script>
 
 <div class="sources-room">
@@ -110,9 +100,7 @@
 	onSuccess={finish}
 />
 
-<Modal open={pending.kind === 'chat_import'} onClose={finish} title="Import chat history" width="md">
-	<ChatImportCard />
-</Modal>
+<ConnectWindow />
 
 <style>
 	.sources-room {
