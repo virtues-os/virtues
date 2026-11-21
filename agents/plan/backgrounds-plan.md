@@ -216,8 +216,8 @@ more can be deleted after a day, once servers have refreshed their catalog.
 
 Archives are AVIF only since 2026-11-21, the owner's call ("yes if it saves
 a lot"): Watercolors is 40.8 MB and Oil paintings 36.8 MB, down from 113.5
-and 95.0. The two older archives are still in the bucket, named by no
-catalog; deleting them waits for the owner.
+and 95.0. The older archives were deleted from the bucket on 2026-11-21
+at the owner's request.
 
 How a style is added, built in or downloaded, and what a renderer must do,
 is in [agents/build/backgrounds.md](../build/backgrounds.md).
