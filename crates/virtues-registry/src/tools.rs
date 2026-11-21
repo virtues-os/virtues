@@ -510,7 +510,7 @@ fn show_tool() -> ToolConfig {
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
         llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or a next step. Before your first show call in a chat, load the charts skill (use_applet): which chart fits, and the columns each reads. Give `chart` and `sql`, one read-only SELECT; data is never typed in. It draws the rows where you call it and returns them to you; say what they show, and quote no figure that is not in them. Use it when seeing beats reading or the owner asks to see something, once or twice a reply at most. Make one call per figure: if show refuses it, call once more with the fix the refusal names; never draw a figure again once it has drawn. If show is closed for the turn, say in words what it would have shown; don't draw it another way, such as with shell. One number belongs in a sentence.
 
-A next step is `chart: "choices"`: a card at the end of your reply with a question (`title`), a sentence on why it comes up now (`context`), and 1-3 buttons (`options`, main one first). Offer one only when the reply leaves the owner something worth doing next, such as keeping the answer as a page or the next question about the same numbers. Don't repeat its question in words. Never use it to count, remind, or say what the owner hasn't done."#.to_string(),
+A next step is `chart: "choices"`: a card at the end of your reply with a question (`title`), a sentence on why it comes up now (`context`), and 1-3 buttons (`options`, main one first). Each button is 1-3 words that answer the question, such as "Add the task", "Note it" or "Not now"; the question and context carry the detail, so a label never restates them. Offer one only when the reply leaves the owner something worth doing next, such as keeping the answer as a page or the next question about the same numbers. Don't repeat its question in words. Never use it to count, remind, or say what the owner hasn't done."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -539,7 +539,7 @@ A next step is `chart: "choices"`: a card at the end of your reply with a questi
                 "options": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "choices only: 1-3 button labels in the owner's voice, at most 40 characters, the main action first; a tap sends the label as their message"
+                    "description": "choices only: 1-3 button labels in the owner's voice, 1-3 words each (at most 24 characters), the main action first; a tap sends the label as their message, read against the question"
                 },
                 "context": { "type": "string", "description": "choices only: why this next step comes up now, in one or two sentences from what you found" }
             }
@@ -1006,7 +1006,7 @@ fn create_page_tool() -> ToolConfig {
         id: "create_page".to_string(),
         name: "Create Page".to_string(),
         description: "Create a new page with content".to_string(),
-        llm_description: r#"Create a page with a title and optional markdown content."#.to_string(),
+        llm_description: r#"Create a page with a title and optional markdown content. The page shows its title as its heading, so start the content with the text, not a heading that repeats the title."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["title"],

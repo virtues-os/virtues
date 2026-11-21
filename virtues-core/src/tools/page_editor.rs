@@ -410,6 +410,9 @@ impl PageEditorTool {
             .content
             .map(|c| Self::strip_critic_markup(&c))
             .unwrap_or_default();
+        // The page draws its title as its heading, so a first line that
+        // repeats it would show the title twice.
+        let clean_content = drop_title_heading(&args.title, &clean_content);
         // A chart figure is drawn now and its rows kept with the page. A
         // markdown page (block pages switched off) has no figure to keep it.
         let clean_content = if pages::default_page_format() == PageFormat::Tree {
@@ -3060,6 +3063,58 @@ fn string_list(value: Value) -> Result<Vec<String>, ToolError> {
         }
     }
     Ok(out)
+}
+
+/// `content` without a first heading that says the same as `title`.
+/// Models open a page's markdown with `# <title>` however they are asked,
+/// and the page already shows its title above the text. Only a heading that
+/// matches, ignoring case, spacing, emphasis and end punctuation, is
+/// dropped; a different first heading is the page's own.
+fn drop_title_heading(title: &str, content: &str) -> String {
+    fn plain(s: &str) -> String {
+        s.chars()
+            .filter(|c| !matches!(c, '*' | '_' | '`'))
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_end_matches(|c: char| matches!(c, '.' | ':' | '!' | '?'))
+            .to_lowercase()
+    }
+    let body = content.trim_start_matches(['\n', '\r']);
+    let (first, rest) = body.split_once('\n').unwrap_or((body, ""));
+    let heading = first.trim();
+    let level = heading.chars().take_while(|c| *c == '#').count();
+    if !(1..=6).contains(&level) || !heading[level..].starts_with(' ') {
+        return content.to_string();
+    }
+    if plain(&heading[level..]) != plain(title) || plain(title).is_empty() {
+        return content.to_string();
+    }
+    rest.trim_start_matches(['\n', '\r']).to_string()
+}
+
+#[cfg(test)]
+mod title_heading_tests {
+    use super::drop_title_heading;
+
+    #[test]
+    fn a_first_heading_that_repeats_the_title_goes() {
+        let c = "# Kitchen remodel — notes\n\nA place for the decisions.";
+        assert_eq!(drop_title_heading("Kitchen remodel — notes", c), "A place for the decisions.");
+        assert_eq!(drop_title_heading("Garden plan", "\n## **Garden Plan:**\nBeds first."), "Beds first.");
+    }
+
+    #[test]
+    fn other_headings_and_text_stay() {
+        let c = "# Budget\n\nTile is the open item.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        let c = "Kitchen remodel\n\nNot a heading.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        let c = "#Kitchen remodel\nNo space, not a heading.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        assert_eq!(drop_title_heading("Notes", ""), "");
+    }
 }
 
 #[cfg(test)]
