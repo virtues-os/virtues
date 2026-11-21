@@ -1,7 +1,8 @@
 # More sources
 
-**Status:** proposed 2026-11-21. Slices 1 (Outlook) and 2 (meeting notes)
-are built on wave (2026-11-21) and have not run against a real account. Google Contacts is
+**Status:** proposed 2026-11-21. Slices 1 (Outlook), 2 (meeting notes) and
+3 (photos) are built on wave (2026-11-21); none has run against a real
+account or phone. Google Contacts is
 left to the iPhone (decision 6, settled). The owner picked the sources below; how each one
 connects comes from a read of each vendor's public docs on 2026-11-21 and has
 not been tried against a real account.
@@ -129,6 +130,17 @@ photo, and a picture for favorites only.**
      a competing product. None forbids a person sending their own data to a
      model.
 3. **Photos from the iPhone,** as above.
+   - **Built on wave:** migration 0099 adds `data_content_photo` (ontology
+     `content_photo`, no lane and no day source, so no day shows a count of
+     photos); the `photos` stream in `ios_ingest` keeps each favorite's
+     picture in Drive under `.photos/favorites` and upserts a row per photo;
+     a deletion on the phone sets `deleted_at_source`; unfavoriting keeps
+     the copy. The iPhone plugin `apps/web/plugins/photos` reads PhotoKit
+     with hidden assets excluded, sends metadata on a first pass that
+     resumes where it stopped, then only changes from PhotoKit's persistent
+     change history.
+   - **Not done:** day pages marking the hours you took photos, and a model
+     describing favorites. Neither was asked for in this slice.
 4. **Imports: Spotify, Amazon orders, Discord.** Three one-time imports
    shaped like Past chats: upload the file, a newer export adds only what is
    new. Each needs its record (listening, orders; Discord's messages fit
@@ -148,8 +160,6 @@ Open, each needs the owner's words:
 2. **Zoom:** submit to Zoom's Marketplace review, ask each person to make
    their own Zoom app and paste its keys, or leave Zoom to the meeting tools
    that already record Zoom calls (Fathom, Fireflies.ai, Granola).
-4. **Photos:** metadata for every photo plus pictures for favorites, as
-   proposed, or favorites only.
 5. **Spotify live plays:** import only, or also let someone paste their own
    Spotify app's keys for the 50 most recent plays between imports.
 
@@ -162,6 +172,10 @@ Settled:
    the tool in `source_provider`, beside the iPhone's audio chunks. Day
    pages call it a meeting; recorded minutes, audio sittings and session
    titles leave meeting rows out so nothing counts twice.
+4. **Photos: metadata for every photo, a picture for favorites.** The
+   owner first asked "lets do favorites on photos from iphone since ALL
+   photos might be way too much right? but all photo metadata? thoughts?",
+   and on 2026-11-21 answered the slice as proposed with "Yes, slice 3".
 6. **Google Contacts: left to the iPhone.** The owner, on 2026-11-21:
    "Leave to iPhone". The iPhone already sends the contacts on the phone,
    Google's included when the phone syncs them. The options passed over

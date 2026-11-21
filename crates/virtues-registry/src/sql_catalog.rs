@@ -226,11 +226,11 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: Some("direction is metadata->>'is_from_me'; the other person is via wiki_refs role sender/recipient"),
     });
     m.insert("data_communication_transcription", TableMetadata {
-        description: "Transcripts: your server's own audio recordings, and meetings from Fathom, Fireflies.ai and Granola",
+        description: "Transcripts of audio recordings and meetings",
         category: "communication",
-        key_columns: &["text", "title", "summary", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
+        key_columns: &["text", "title", "summary", "duration_seconds", "started_at", "ended_at", "speaker_count"],
         join_hint: None,
-        note: Some("source_table = 'meeting' marks a whole meeting from a meeting tool (source_provider names it), with named speakers and its attendees and action items in metadata; other rows are audio chunks"),
+        note: Some("source_table 'meeting' = a whole meeting"),
     });
     // Tables that hold real data and were never described, so the agent could
     // see them only because the old catalog listed everything matching
@@ -340,6 +340,13 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "content",
         key_columns: &["conversation_id", "message_id", "role", "content", "provider", "occurred_at"],
         join_hint: None,
+        note: None,
+    });
+    m.insert("data_content_photo", TableMetadata {
+        description: "iPhone photos and videos",
+        category: "content",
+        key_columns: &["occurred_at", "kind", "is_favorite", "latitude", "longitude", "asset_id"],
+        join_hint: Some("JOIN app_drive_files f ON f.id = data_content_photo.asset_id"),
         note: None,
     });
     m.insert("data_content_bookmark", TableMetadata {
@@ -572,13 +579,14 @@ mod tests {
     }
 
     /// The block sits in every turn. The budget is the size of the prose
-    /// list it replaced plus the columns — if it grows past this, something
-    /// is being rendered that belongs in `get_schema`.
+    /// list it replaced plus the columns, and a line for each table added
+    /// since (photos) — if it grows past this, something is being rendered
+    /// that belongs in `get_schema`.
     #[test]
     fn prompt_block_stays_within_budget() {
         let block = prompt_block();
         assert!(
-            block.len() < 5_000,
+            block.len() < 5_200,
             "prompt block is {} bytes; descriptions or join hints leaking in?",
             block.len()
         );

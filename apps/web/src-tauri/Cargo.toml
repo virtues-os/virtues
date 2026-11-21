@@ -88,7 +88,7 @@ virtues-reach-client = { path = "../../../crates/virtues-reach-client" }
 
 # iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
 # windows' overrideUserInterfaceStyle so the status bar / keyboard track the
-# app theme's darkness — tao's set_theme is a no-op on iOS), plus the six native
+# app theme's darkness — tao's set_theme is a no-op on iOS), plus the seven native
 # collectors. The collectors are iOS-ONLY on purpose: each is a Rust shim over a
 # Swift half under `plugins/*/ios/`, with no Android Kotlin counterpart yet. The
 # Android app is a VIEWER — gating them here means Android never has to compile
@@ -100,6 +100,7 @@ tauri-plugin-location-probe = { path = "../plugins/location-probe" }
 tauri-plugin-health = { path = "../plugins/health" }
 tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 tauri-plugin-contacts = { path = "../plugins/contacts" }
+tauri-plugin-photos = { path = "../plugins/photos" }
 tauri-plugin-finance = { path = "../plugins/finance" }
 tauri-plugin-audio = { path = "../plugins/audio" }
 

@@ -566,6 +566,28 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
         },
         OntologyDescriptor {
+            name: "content_photo",
+            display_name: "Photos",
+            description: "Photos and videos from the iPhone's library: when, where, what kind, and a picture of each favorite",
+            domain: "content",
+            // No lane. Taking photos is not a rhythm worth plotting beside sleep
+            // and movement, and a lane would show a count of them on every day.
+            lane: None,
+            table_name: "data_content_photo",
+            source_streams: vec!["stream_ios_photos"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // No words to embed: a photo row is a time, a place and a kind.
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Not a day source: a day with many photos is not a busier day.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
             name: "content_conversation",
             display_name: "AI Conversations",
             description: "Imported chat history from other AI providers — one row per turn",

@@ -18,6 +18,7 @@
     "health:default",
     "eventkit:default",
     "contacts:default",
+    "photos:default",
     "finance:default",
     "audio:default"
   ]

@@ -6106,6 +6106,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-photos"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.20",
+ "virtues-plugin-lockstep",
+]
+
+[[package]]
 name = "tauri-plugin-reach"
 version = "0.1.0"
 dependencies = [
@@ -6942,6 +6953,7 @@ dependencies = [
  "tauri-plugin-location-probe",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-plugin-photos",
  "tauri-plugin-reach",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",

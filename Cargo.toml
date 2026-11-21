@@ -29,6 +29,7 @@ exclude = [
     "apps/web/plugins/health",
     "apps/web/plugins/eventkit",
     "apps/web/plugins/contacts",
+    "apps/web/plugins/photos",
     "apps/web/plugins/finance",
     "apps/web/plugins/audio",
     # Build-dep of every plugin above (the COMMANDS lockstep enforcer).

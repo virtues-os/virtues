@@ -107,6 +107,7 @@ pub const MICROPHONE_STREAM_TABLE: &str = "stream_ios_microphone";
 pub const CONTACTS_STREAM_TABLE: &str = "stream_ios_contacts";
 pub const EVENTKIT_STREAM_TABLE: &str = "stream_ios_eventkit";
 pub const FINANCEKIT_STREAM_TABLE: &str = "stream_ios_financekit";
+pub const PHOTOS_STREAM_TABLE: &str = "stream_ios_photos";
 
 #[cfg(test)]
 mod tests {

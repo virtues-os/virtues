@@ -69,7 +69,7 @@ fn platform_of(source_app: Option<&str>) -> Option<String> {
 
 /// What a share's `image_data` turns into, decided without touching storage.
 #[derive(Debug)]
-enum SharedImage {
+pub(crate) enum SharedImage {
     /// No picture on this share.
     Absent,
     /// A picture to keep, with the type its sender claimed (a hint only).
@@ -84,7 +84,7 @@ enum SharedImage {
 /// Out unconditionally: the record is archived to the lake next, and the base64
 /// must not ride along — the Drive copy is the picture's one home, as the lake
 /// object is audio's.
-fn take_shared_image(rec: &mut Value) -> SharedImage {
+pub(crate) fn take_shared_image(rec: &mut Value) -> SharedImage {
     let Some(raw) = rec.as_object_mut().and_then(|o| o.remove("image_data")) else {
         return SharedImage::Absent;
     };

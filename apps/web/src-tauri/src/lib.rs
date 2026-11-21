@@ -516,7 +516,7 @@ pub fn run() {
       serve_ui_async(ctx.app_handle().clone(), request, responder)
     });
 
-  // The six collectors are iOS-only: Rust shims over Swift halves, with no
+  // The seven collectors are iOS-only: Rust shims over Swift halves, with no
   // Android counterpart yet (see Cargo.toml). Android boots reach + the webview
   // alone — a viewer. Chained conditionally rather than `cfg`-ing each line, the
   // same pattern main.rs uses for the single-instance plugin.
@@ -526,6 +526,7 @@ pub fn run() {
     .plugin(tauri_plugin_health::init())
     .plugin(tauri_plugin_eventkit::init())
     .plugin(tauri_plugin_contacts::init())
+    .plugin(tauri_plugin_photos::init())
     .plugin(tauri_plugin_finance::init())
     .plugin(tauri_plugin_audio::init());
 
@@ -548,6 +549,7 @@ pub fn run() {
         use tauri_plugin_finance::FinanceExt;
         use tauri_plugin_health::HealthExt;
         use tauri_plugin_location_probe::LocationProbeExt;
+        use tauri_plugin_photos::PhotosExt;
 
         // Background location: install the CLLocationManager delegate as early as
         // Tauri lets us (runs on every launch, incl. cold background relaunch).
@@ -568,6 +570,11 @@ pub fn run() {
         // Contacts: re-snapshot on launch if already authorized (never prompts).
         if let Err(e) = app.contacts().resume() {
           eprintln!("[contacts] resume failed: {e}");
+        }
+        // Photos: send what changed since the last pass, or finish an
+        // interrupted first pass, if already authorized (never prompts).
+        if let Err(e) = app.photos().resume() {
+          eprintln!("[photos] resume failed: {e}");
         }
         // Finance: re-sync on launch if already opted in (never prompts).
         if let Err(e) = app.finance().resume() {

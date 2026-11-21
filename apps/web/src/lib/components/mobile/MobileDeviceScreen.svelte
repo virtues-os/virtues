@@ -33,6 +33,7 @@
 		type AudioStatus,
 		type HealthStatus,
 		type OutboxStats,
+		type PhotosStatus,
 		type StreamKey,
 		type StreamStatus,
 	} from "$lib/mobile/deviceTypes";
@@ -84,6 +85,8 @@
 	let calSync = $state<OutboxStats | null>(null);
 	let contacts = $state<StreamStatus | null>(null);
 	let contactsSync = $state<OutboxStats | null>(null);
+	let photos = $state<PhotosStatus | null>(null);
+	let photosSync = $state<OutboxStats | null>(null);
 	let finance = $state<StreamStatus | null>(null);
 	let financeSync = $state<OutboxStats | null>(null);
 	let audio = $state<AudioStatus | null>(null);
@@ -104,6 +107,7 @@
 	let boxApi = $state<number | null>(null);
 	let enablingCal = $state(false);
 	let enablingContacts = $state(false);
+	let enablingPhotos = $state(false);
 	let enablingFinance = $state(false);
 	let error = $state<string | null>(null);
 	/** Which stream's page is open, if any. */
@@ -330,6 +334,8 @@
 				calSyncResp,
 				contactsResp,
 				contactsSyncResp,
+				photosResp,
+				photosSyncResp,
 				financeResp,
 				financeSyncResp,
 				audioResp,
@@ -354,6 +360,8 @@
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
 				invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
+				invoke<PhotosStatus>("plugin:photos|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "photos" }).catch(() => null),
 				invoke<StreamStatus>("plugin:finance|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
 				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
@@ -371,6 +379,8 @@
 			calSync = calSyncResp;
 			contacts = contactsResp;
 			contactsSync = contactsSyncResp;
+			photos = photosResp;
+			photosSync = photosSyncResp;
 			finance = financeResp;
 			financeSync = financeSyncResp;
 			audio = audioResp;
@@ -471,6 +481,19 @@
 			error = String(e);
 		} finally {
 			enablingContacts = false;
+		}
+	}
+
+	async function enablePhotos() {
+		enablingPhotos = true;
+		error = null;
+		try {
+			photos = await invoke<PhotosStatus>("plugin:photos|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingPhotos = false;
 		}
 	}
 
@@ -598,6 +621,7 @@
 			if (health?.authorized || health?.cycle) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
+			if (photos?.authorized) await invoke("plugin:photos|collect").catch(() => {});
 			if (finance?.authorized) await invoke("plugin:finance|collect").catch(() => {});
 			await invoke("plugin:reach|drain_now");
 			await load();
@@ -684,6 +708,15 @@
 			description: "Your address book, so your server knows the people in messages, calls and calendars by name.",
 		},
 		{
+			key: "photos",
+			title: "Photos",
+			icon: "mynaui:image",
+			what: "When and where your photos were taken",
+			description:
+				"Your server keeps when and where each photo and video was taken, and a copy of each photo you mark as a favorite.",
+			note: "Your Hidden album is never read.",
+		},
+		{
 			key: "finance",
 			title: "Finance",
 			icon: "mynaui:credit-card",
@@ -714,6 +747,8 @@
 				return !!cal?.authorized;
 			case "contacts":
 				return !!contacts?.authorized;
+			case "photos":
+				return !!photos?.authorized;
 			case "finance":
 				return !!finance?.authorized;
 			case "audio":
@@ -735,6 +770,9 @@
 				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
 			case "contacts":
 				return contacts?.authorized ? `On${syncWord(contactsSync)}` : meta.what;
+			case "photos":
+				if (!photos?.authorized) return meta.what;
+				return `On${photos.limited ? " · only the photos you picked" : ""}${syncWord(photosSync)}`;
 			case "finance":
 				return finance?.authorized ? `On${syncWord(financeSync)}` : meta.what;
 			case "audio":
@@ -754,6 +792,8 @@
 				return calSync;
 			case "contacts":
 				return contactsSync;
+			case "photos":
+				return photosSync;
 			case "finance":
 				return financeSync;
 			case "audio":
@@ -784,6 +824,10 @@
 				return contacts?.authorized
 					? null
 					: { label: enablingContacts ? "Enabling…" : "Enable", onclick: enableContacts, disabled: enablingContacts };
+			case "photos":
+				return photos?.authorized
+					? null
+					: { label: enablingPhotos ? "Enabling…" : "Enable", onclick: enablePhotos, disabled: enablingPhotos };
 			case "finance":
 				return finance?.authorized
 					? null
