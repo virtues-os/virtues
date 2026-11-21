@@ -25,7 +25,8 @@ only authentication, so there's no password to steal. See
 
 **Source** - a place where your life is already recorded that the server can
 pull from: a calendar, a mail account, a health app, a bank, your phone's
-location. Data starts coming in when you connect a source.
+location. Data starts coming in when you connect a source. See
+[How sources work](../setup/sources.md).
 
 **Record** - one thing a source observed: a message sent, a place visited, a
 song played, a transaction, a heart rate sample, a recording. Records are the

@@ -22,7 +22,7 @@
 				{
 					"title": "Connecting your sources",
 					"pages": [
-						{ "slug": "setup/sources", "title": "How sources work", "planned": true },
+						{ "slug": "setup/sources", "title": "How sources work" },
 						{ "slug": "setup/sources/google", "title": "Google", "planned": true },
 						{ "slug": "setup/sources/apple-health", "title": "Apple Health", "planned": true },
 						{ "slug": "setup/sources/finance", "title": "Banks & cards", "planned": true }

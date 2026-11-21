@@ -1,7 +1,7 @@
 # Sources redesign
 
 **Status:** drawn on 2026-11-20 and liked by the owner ("This looks
-fantastic!"). He then said "lets build", and slices 1 to 6 are built on wave
+fantastic!"). He then said "lets build", and slices 1 to 7 are built on wave
 with the proposals below as written, not yet run on a server. The decisions
 at the end are still open and can change what was built.
 
@@ -189,7 +189,10 @@ Every Connect button opens one window (`Modal`), whatever the kind:
    site (X) keep `DevicePairModal` and `ApiKeyConnectModal`, because
    onboarding opens them as well; all of them use the same `Modal`. Not
    built: folding those two into the one window.
-7. **Manual and cleanup.** A manual page for Sources, then delete this plan
+7. **Manual and cleanup.** The manual page is written: `docs/setup/sources.md`
+   (How sources work), listed in `docs/manifest.json` and linked from the
+   glossary. It publishes with the release that carries slices 1 to 6. Delete
+   this plan once that release ships and the decisions below are settled,
    and leave a record if the reasoning is worth keeping.
 
 ## Decisions
