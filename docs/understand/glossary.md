@@ -1,7 +1,7 @@
 ---
 title: Glossary
-description: The words Virtues uses for the parts of your life it stores - records, days, events, articles, things, projects, tasks, pages, sites, jobs - and what each one means.
-updated: 2026-11-20
+description: The words Virtues uses for the parts of your life it stores - records, days, events, articles, things, projects, tasks, pages, sites, skills - and what each one means.
+updated: 2026-11-21
 ---
 
 Virtues uses one word for each thing. This page defines those words, roughly
@@ -52,7 +52,7 @@ server collected.
 **Article** - the page the wiki writes about one subject: a day, a year, a
 chapter, a person, a place, an organization or a thing. Your server writes each
 day's article overnight. For a person, place, organization or year, choose
-Write the article on its page. If you turn on the Wiki Editor job, your
+Write the article on its page. If you turn on the Wiki Editor, your
 server also writes the articles for your chapters and things, and keeps every
 article current as new records arrive. Any sentence you write stays as you
 wrote it.
@@ -99,10 +99,15 @@ project keeps its chats, pages and files together, and chat inside it answers
 from what you collected instead of from your whole record. It can sit under a
 thing. Projects can't contain other projects.
 
-**Task** - one step. A task sits under a project, under a thing, or on its
-own. A task can recur: when you finish it, the next one is due that long after
-the day you finished, so one is open at a time. A task you hand to your
-assistant is a request, which it works in the background.
+**Task** - work that gets done. Most tasks are yours: one step, under a
+project, under a thing, or on its own. A task of yours can recur: when you
+finish it, the next one is due that long after the day you finished, so one
+is open at a time. A task you hand to your assistant is a request, which it
+works in the background. Your server has tasks of its own, such as keeping an
+account in sync, building the search index and making a backup. Each one
+starts, does its work and stops, and every run is recorded. Server tasks,
+under Your server in Settings, lists them and says when each last ran, so you
+can see when one stops working. They never appear in your own list.
 
 **Page** - a document you write. It keeps versions as you go and can be
 shared.
@@ -115,13 +120,10 @@ Sites door keeps every one you have made. A site can keep records of its own
 and can refresh on a schedule. Its Options say when it runs, what it may
 spend and how its last runs went. A site is private until you share it.
 
-## What your server runs
-
-**Job** - work your server does on its own on a schedule: keeping an account
-in sync, building the search index, making a backup. Each run starts, does
-its work and stops, and every run is recorded. Jobs, under Your server in
-Settings, lists them and says when each last ran, so you can see when one
-stops working.
+**Skill** - written instructions your assistant follows to do a task the same
+way each time, such as preparing you for a meeting or planning a trip. Type
+`/` in a chat to start one. Your assistant also picks one up on its own when
+what you ask calls for it.
 
 ## Terms with specific meanings
 

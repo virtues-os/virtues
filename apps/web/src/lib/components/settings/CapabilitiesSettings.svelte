@@ -14,7 +14,7 @@
 	const WORDS: Record<Capability['id'], { label: string; help: string }> = {
 		web_search: { label: 'Search the web', help: 'Looks things up online when a question needs it.' },
 		browser: { label: 'Use your browser', help: 'Browses the web in the Virtues app on your Mac, while the app is open.' },
-		applets: { label: 'Make and change sites', help: 'Builds sites, including ones that run on their own, and edits them. Sites you already have keep running.' },
+		applets: { label: 'Make sites, skills and tasks that repeat', help: 'Builds sites, skills and tasks that repeat, and edits them. What you already have keeps running.' },
 		pages: { label: 'Write in your pages', help: 'Creates pages and edits them when you ask.' },
 		email: GOOGLE_WORDS.email,
 		calendar: GOOGLE_WORDS.calendar,
@@ -24,7 +24,7 @@
 <SwitchList
 	id="capabilities"
 	label="Tools"
-	help="Turn a tool off and {assistantName} won't use it, in a chat or in a site."
+	help="Turn a tool off and {assistantName} won't use it, in a chat or in a task."
 	words={WORDS}
 	load={getCapabilities}
 	save={setCapability}

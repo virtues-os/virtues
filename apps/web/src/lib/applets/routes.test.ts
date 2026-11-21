@@ -2,21 +2,21 @@
 import { describe, expect, it } from 'vitest';
 import { homeRoute, optionsRoute, readAddress } from './routes';
 
-describe('a site or job address', () => {
+describe('a site or server task address', () => {
 	it('shows the name without the id prefix, and says whose it is', () => {
 		expect(homeRoute('applet_user__water_log')).toBe('/site/water_log');
-		expect(homeRoute('applet_embedding_index')).toBe('/job/embedding_index');
+		expect(homeRoute('applet_embedding_index')).toBe('/server-task/embedding_index');
 		expect(optionsRoute('applet_user__water_log')).toBe('/site/water_log/options');
-		expect(optionsRoute('applet_embedding_index', 'history')).toBe('/job/embedding_index/options?panel=history');
+		expect(optionsRoute('applet_embedding_index', 'history')).toBe('/server-task/embedding_index/options?panel=history');
 	});
 
 	it('reads back to the same id and side', () => {
 		expect(readAddress('/site/water_log')).toEqual({ id: 'applet_user__water_log', side: 'home', open: null, route: '/site/water_log' });
-		expect(readAddress('/job/embedding_index/options?panel=details')).toEqual({
+		expect(readAddress('/server-task/embedding_index/options?panel=details')).toEqual({
 			id: 'applet_embedding_index',
 			side: 'options',
 			open: 'details',
-			route: '/job/embedding_index/options?panel=details',
+			route: '/server-task/embedding_index/options?panel=details',
 		});
 	});
 
@@ -24,8 +24,9 @@ describe('a site or job address', () => {
 		expect(readAddress('/applet/applet_user__water_log/view')?.route).toBe('/site/water_log');
 		expect(readAddress('/applet/applet_user__water_log')?.route).toBe('/site/water_log');
 		expect(readAddress('/applet/applet_user__water_log?panel=info')?.route).toBe('/site/water_log/options');
-		expect(readAddress('/applet/applet_embedding_index?panel=history')?.route).toBe('/job/embedding_index/options?panel=history');
-		expect(readAddress('/action/applet_embedding_index')?.route).toBe('/job/embedding_index');
+		expect(readAddress('/applet/applet_embedding_index?panel=history')?.route).toBe('/server-task/embedding_index/options?panel=history');
+		expect(readAddress('/action/applet_embedding_index')?.route).toBe('/server-task/embedding_index');
+		expect(readAddress('/job/embedding_index/options')?.route).toBe('/server-task/embedding_index/options');
 	});
 
 	it('is null for anything else', () => {

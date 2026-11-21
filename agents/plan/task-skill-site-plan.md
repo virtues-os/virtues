@@ -96,37 +96,50 @@ None of this is on `staging`, and none has run against a real server.
 | The Sites door | `d917b38b1`, `76ec793ad`, `4683d4780` | Cards four across with a live preview, a list as the other view, New site as the first tile. |
 | A site's page | `4edbd9b18`, `bf6f6055c` | One component. A "Site / Options" switch in the toolbar, options in the page's own column. |
 | Copy and the manual | `ed0551d0d`, `f06f50577` | "Applet" gone from about 40 files, the glossary and the backup page. |
-| Addresses | `df399386d`, `30abf3ef4`, `bf6f6055c` | `/sites`, `/site/<name>`, `/job/<name>`, `/options`, `/virtues/jobs`. Earlier addresses still open. |
+| Addresses | `df399386d`, `30abf3ef4`, `bf6f6055c` | `/sites`, `/site/<name>` and `/options`. Earlier addresses still open. |
 | The server's own work | `354920107` | Grouped by purpose, one row per account, rows open in place (`JobOpen.svelte`). |
+| The three words | slice A, 2026-11-21 | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
 
 ### What the built parts now say wrong
 
-- **"Job" and "Jobs".** The Settings page title, `/virtues/jobs`, `/job/<name>`,
-  the "Job / Options" switch, and strings in Keys, Sources, credentials, the
-  server status line and the glossary.
-- **"Slash command".** Two strings and one tool-line noun. The word is "skill".
+- **"Job", "Jobs" and "slash command"** were everywhere the server's work or a
+  chat prompt was named. Slice A fixed these.
 - **The Sites door lists things with no view.** A repeating prompt you set up
   shows there as a card with its description. Under the three words it is the
   assistant's task and belongs in Tasks.
-- **The chat says "Setting up a site" for every setup,** including one that
-  makes a repeating task.
-- **`applets/AGENTS.md` and the applet tool** tell the assistant to say "site"
-  for everything it makes.
+- **The chat said "Setting up a site" for every setup, and the authoring
+  guide and the applet tool told the assistant to say "site" for everything.**
+  Slice A fixed these.
 
 ## What is left
 
 ### Slice A: the words
 
-Small, and first.
+Built on wave on 2026-11-21 and seen in the dev app.
 
-- "Job" becomes "task" wherever it is one of your server's, and the strings
-  that say "jobs and sites" are reworded.
-- "Slash command" becomes "skill".
-- The glossary defines Task with its three doers, Skill and Site, and drops
-  Job. `tools/check-manual.py` must pass.
-- `applets/AGENTS.md` and the applet tool's setup line say which word to use:
-  a view is a site, a prompt on a schedule is a task, a prompt started from
-  chat is a skill. The chat's tool lines follow.
+- The page that lists your server's tasks is titled "Server tasks" (the
+  owner's pick) at `/virtues/server-tasks`, and one of them opens at
+  `/server-task/<name>`, which cannot collide with `/task/<id>`. Its switch
+  reads "Task / Options". `/virtues/jobs`, `/job/<name>` and the addresses
+  before them still open and take today's form.
+- "Job" is gone from the app's strings and "slash command" is "skill". Where
+  a string covers a site and a task it names both ("What your sites and tasks
+  sign in with"), and where it covers anything that came with the server it
+  names none.
+- The chat's line for a setup says what is being made when the call's own
+  keys say so: "Setting up a site", "a task" or "a skill"
+  (`applets/words.ts`). A call that changes one key of something made earlier
+  says "Setting it up". "In this chat" labels what was made the same way.
+- The glossary's Task entry covers your tasks, requests and your server's
+  tasks. Skill is new, and Job is gone. It does not yet say the assistant's
+  tasks can repeat, because that is slice D.
+- `applets/AGENTS.md` opens with the three words, and the applet tool's setup
+  line tells the assistant which word to use. That line was 47 characters
+  over the tool budget, so the view guidance beside it was shortened.
+- Left: the page still folds the server's skills under "Runs only when
+  asked", and the Sites door still lists a repeating task as a site. Both
+  wait for the `kind` function (slice B). Server error messages and the Mac
+  app's six files still say "applet".
 
 ### Slice B: one function that says what a row is
 
@@ -144,11 +157,11 @@ Small, and first.
 
 ### Slice C: your server's tasks
 
-- The page built as "Jobs" keeps its layout and loses the word. Its title and
-  address are open (O1).
-- A server task's own page moves off `/job/<name>`. `/task/<id>` already
-  belongs to your own tasks, so it needs an address that cannot collide.
-  `/virtues/jobs` and `/job/<name>` keep resolving.
+- The page keeps the layout it was built with, and slice A gave it its name
+  and addresses.
+- With the `kind` function, the skills folded under "Runs only when asked"
+  leave the page, and `chat-import`, the one server task nothing starts,
+  stays.
 - Whether an account's row opens in place or links to its source's page is
   open (O2).
 
@@ -233,6 +246,7 @@ In the owner's words where he said them.
 | 2026-11-21 | A whole app on a port is a site. | "Full apps that stay running on ports are just sites, lovely." |
 | 2026-11-21 | Syncs and upkeep are tasks. | "the 22 syncs and upkeep jobs -- I would label those tasks for sure" |
 | 2026-11-21 | Your tasks and the assistant's sit side by side. | "I like the idea a bit, human tasks vs ai tasks." |
+| 2026-11-21 | The page that lists your server's tasks is "Server tasks". | He picked it from four names. |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -242,7 +256,6 @@ view is a site".
 
 | # | Question | Pick |
 |---|---|---|
-| O1 | The title and address of the page that lists your server's tasks | Not picked. It needs the owner's words. |
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
 | O3 | How a repeating task's row names its applet | One nullable column on `app_tasks`, so the task list reads it in SQL. |
 | O4 | Does a repeating task's result need Accept? | No. Opening it clears it. |

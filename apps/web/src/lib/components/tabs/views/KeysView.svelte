@@ -142,7 +142,7 @@
 <SettingsPage
 	title="Keys"
 	back={{ route: '/virtues/data', label: 'Your data' }}
-	lede="What your sites sign in with, such as an API key. A site gets only the keys it lists, and the assistant sees their names, never their values."
+	lede="What your sites and tasks sign in with, such as an API key. Each gets only the keys it lists, and the assistant sees their names, never their values."
 	width="medium"
 >
 	{#snippet actions()}
@@ -159,7 +159,7 @@
 			{loading}
 			{error}
 			emptyIcon="mynaui:key"
-			emptyMessage="No keys yet. Add one when a site asks for it."
+			emptyMessage="No keys yet. Add one when a site or a task asks for it."
 			loadingMessage="Loading keys…"
 			searchPlaceholder="Search keys…"
 			defaultViewMode="table"
@@ -230,7 +230,7 @@
 					label="Name"
 					bind:value={editing.name}
 					placeholder="OPENAI_API_KEY"
-					helperText="Capitals, digits and underscores, as the site names it."
+					helperText="Capitals, digits and underscores, as the site or task names it."
 					autocomplete="off"
 				/>
 			{/if}

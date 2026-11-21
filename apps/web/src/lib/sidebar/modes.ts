@@ -80,7 +80,7 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/devices/this': { icon: 'mynaui:desktop' },
 	'/virtues/backup': { icon: 'mynaui:archive' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
-	'/virtues/jobs': { icon: 'atlas:applets', glyph: 'applets' },
+	'/virtues/server-tasks': { icon: 'atlas:applets', glyph: 'applets' },
 	'/virtues/developer/terminal': { icon: 'mynaui:terminal' },
 };
 
@@ -116,7 +116,7 @@ function settingsRows(): ModeRow[] {
 	// of its own, so its row is here rather than in LANDING.
 	rows.push(
 		settingsRow('/virtues/search', 'Search', 'Your server'),
-		settingsRow('/virtues/jobs', 'Jobs', 'Your server'),
+		settingsRow('/virtues/server-tasks', 'Server tasks', 'Your server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);

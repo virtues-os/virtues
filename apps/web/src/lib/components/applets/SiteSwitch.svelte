@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * The two sides of a site's or a job's page: the thing itself, and its
+	 * The two sides of a site's or a server task's page: the thing itself, and its
 	 * options (when it runs, what it may spend, its runs, its prompt). Both
 	 * are the same tab.
 	 * Switching replaces the tab's place in history, so Back leaves the site
@@ -22,9 +22,9 @@
 		showing: 'site' | 'options';
 	} = $props();
 
-	// A job is your server's own, so its first side is not called a site.
+	// A server task is your server's own, so its first side is not called a site.
 	const options = $derived([
-		{ value: 'site' as const, label: isSiteId(appletId) ? 'Site' : 'Job' },
+		{ value: 'site' as const, label: isSiteId(appletId) ? 'Site' : 'Task' },
 		{ value: 'options' as const, label: 'Options' }
 	]);
 

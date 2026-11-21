@@ -139,7 +139,7 @@
 		help="Every page, chat or site you've shared. Turn a link off and it stops opening at once."
 		href="/virtues/data/shared"
 	/>
-	<LinkRow id="keys" label="Keys" help="What your sites sign in with, such as an API key." href="/virtues/data/keys" />
+	<LinkRow id="keys" label="Keys" help="What your sites and tasks sign in with, such as an API key." href="/virtues/data/keys" />
 </section>
 
 <p class="settings-aside">

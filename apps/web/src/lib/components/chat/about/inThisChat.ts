@@ -7,6 +7,10 @@
 
 import { buildCitationContextFromParts, getToolName, isToolCallPart, webKey } from '$lib/citations/builder';
 import { getEntityTypeFromRoute, isRecordRoute, linkTarget, refIcon } from '$lib/utils/refRoutes';
+import { wordForMade } from '$lib/applets/words';
+
+/** What the chat made with the applet tool, as the row's label says it. */
+const WORD = { site: 'Site', task: 'Task', skill: 'Skill' } as const;
 
 export interface AsideItem {
 	/** Route or URL; one row per thing however often it appears. */
@@ -314,7 +318,7 @@ export function inThisChat(messages: readonly unknown[]): InThisChat {
 					if (name === 'applet' && input.action !== 'setup') break;
 					const appletId = str(out.applet_id);
 					if (appletId && out.status !== 'check_failed') {
-						made.add({ key: `applet:${appletId}`, label: str(out.name) ?? 'Site', icon: 'mynaui:sparkles', detail: out.status === 'updated' ? 'Site changed' : 'Site' }, id);
+						made.add({ key: `applet:${appletId}`, label: str(out.name) ?? WORD[wordForMade(out)], icon: 'mynaui:sparkles', detail: out.status === 'updated' ? `${WORD[wordForMade(out)]} changed` : WORD[wordForMade(out)] }, id);
 					}
 					break;
 				}

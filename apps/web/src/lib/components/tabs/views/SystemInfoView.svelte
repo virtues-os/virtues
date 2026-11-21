@@ -377,9 +377,9 @@
 			/>
 			<LinkRow
 				id="applets"
-				label="Jobs"
+				label="Server tasks"
 				help="What runs on its own, and how its last runs went."
-				href="/virtues/jobs"
+				href="/virtues/server-tasks"
 				value={appletsValue(appletsNeedingYou)}
 			/>
 		</section>

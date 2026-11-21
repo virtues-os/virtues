@@ -163,7 +163,7 @@
 				     how you get back to what ships. -->
 				<div class="prompt-drift">
 					<span>
-						You've changed this built-in job. Fixes to what you changed don't reach you.
+						You've changed something that came with your server. Fixes to what you changed don't reach you.
 					</span>
 					<TextAction inline onclick={useShipped}>Use the version that ships</TextAction>
 				</div>

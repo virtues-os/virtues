@@ -105,8 +105,8 @@ virtues volumes ls                   # registered drives, and when each was last
 sudo virtues backup --volume all     # write to every attached drive
 ```
 
-**Backups to drives run automatically.** A nightly job at 04:00 backs up to
-every registered drive that is attached. Drives that aren't plugged in are
+**Backups to drives run automatically.** Every night at 04:00 your server
+backs up to every registered drive that is attached. Drives that aren't plugged in are
 skipped without an error. Registering a drive is all the setup you need.
 
 Only encrypted archives are written to the drive. The database dump that

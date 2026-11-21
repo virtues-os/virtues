@@ -366,7 +366,7 @@
 					{@render fact("Your pages", "Read any page.")}
 					<p class="kind">It can change</p>
 					{@render fact("Your pages", "Create pages and edit them.")}
-					{@render fact("Sites", "Set up sites, run them, and write to their own tables. It can't edit or delete one.")}
+					{@render fact("Sites, skills and tasks", "Set them up, run them, and write to their own tables. It can't edit or delete one.")}
 				</section>
 			{/if}
 

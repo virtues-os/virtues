@@ -59,7 +59,7 @@ export const SLOTS: SlotConfig[] = [
 		label: 'Background work',
 		phrase: 'background work',
 		mark: 'background',
-		caption: 'Titles, summaries, and scheduled work',
+		caption: 'Titles, summaries, and scheduled tasks',
 		language: true,
 		dbField: 'lite_model_id',
 	},

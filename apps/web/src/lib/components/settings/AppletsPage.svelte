@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Settings · Jobs (/virtues/jobs): what your server runs on its own, and
+	 * Settings · Server tasks (/virtues/server-tasks): what your server runs on its own, and
 	 * how its last runs went. People come here when something stopped, or to
 	 * see exactly what their server does.
 	 *
@@ -197,14 +197,14 @@
 {/snippet}
 
 <SettingsPage
-	title="Jobs"
+	title="Server tasks"
 	lede="What runs on its own on your server, and how its last runs went."
 	back={{ route: '/virtues/system', label: 'Your server' }}
 >
 	{#if failed}
-		<LoadError message="Your server couldn’t send its jobs." onretry={load} />
+		<LoadError message="Your server couldn’t send its tasks." onretry={load} />
 	{:else if !loaded}
-		<p class="settings-sub">Asking your server about its jobs…</p>
+		<p class="settings-sub">Asking your server about its tasks…</p>
 	{:else}
 		<p class="settings-lead">{lead.sentence}</p>
 		<p class="settings-sub">{lead.sub}</p>
@@ -278,11 +278,11 @@
 				</Fold>
 			{/if}
 			{#if groups.finished.length}
-				<Fold label="Finished" sub="One-time jobs and sites that already ran. They keep what they made.">
+				<Fold label="Finished" sub="One-time tasks and sites that already ran. They keep what they made.">
 					{@render list(groups.finished)}
 				</Fold>
 			{/if}
-			<Fold label="For troubleshooting" sub="Pick up job and site folders that changed outside the app.">
+			<Fold label="For troubleshooting" sub="Pick up site, task and skill folders that changed outside the app.">
 				<Button variant="secondary" disabled={reconciling} onclick={reconcile}>
 					{reconciling ? 'Reading…' : 'Re-read folders'}
 				</Button>
@@ -291,7 +291,7 @@
 		</div>
 
 		<p class="settings-aside">
-			Jobs and sites sign in with the
+			Tasks and sites sign in with the
 			<button type="button" class="settings-link" onclick={() => openSettingsPage('/virtues/data/keys', DEFAULT_ASSISTANT_NAME)}
 				>keys</button
 			> on Your data. What you set up yourself is in Sites.

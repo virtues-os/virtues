@@ -10,7 +10,7 @@ const NAMES: Record<string, string> = {
 	chat_opening: 'Chat openings',
 	day_summary: 'Day pages',
 	task: 'Tasks',
-	applet: 'Sites and jobs',
+	applet: 'Sites and scheduled tasks',
 	settings_draft: 'Settings',
 	style_preview: 'Style samples',
 	bookmark_enrichment: 'Bookmarks',

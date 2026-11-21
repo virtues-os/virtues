@@ -18,7 +18,7 @@ function capitalize(text: string): string {
 function capabilityOf(tool: string): string | null {
 	if (tool === 'web_search') return 'Search the web';
 	if (tool === 'browse' || tool.startsWith('browser_')) return 'Use your browser';
-	if (tool === 'applet') return 'Make and change sites';
+	if (tool === 'applet') return 'Make sites, skills and tasks that repeat';
 	if (tool === 'create_page' || tool === 'edit_page') return 'Write in your pages';
 	if (tool === 'email_archive' || tool === 'email_label' || tool === 'email_draft') return GOOGLE_WORDS.email.label;
 	if (tool === 'calendar_event') return GOOGLE_WORDS.calendar.label;

@@ -21,7 +21,7 @@ export function browserLabel(url: string | null): string {
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { THREAD_ICON } from '$lib/utils/iconHelpers';
-import { JOBS_ROUTE, SITES_ROUTE, homeRoute, isSiteId, readAddress } from '$lib/applets/routes';
+import { SERVER_TASKS_ROUTE, SITES_ROUTE, homeRoute, isSiteId, readAddress } from '$lib/applets/routes';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -755,7 +755,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			const address = readAddress(query ? `${path}?${query}` : path);
 			return {
 				type: 'applet',
-				label: address && !isSiteId(address.id) ? 'Job' : 'Site',
+				label: address && !isSiteId(address.id) ? 'Server task' : 'Site',
 				icon: 'atlas:applets',
 				entityId: address?.id,
 				normalizedRoute: address?.route,
@@ -997,14 +997,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	virtues: {
 		match: (path) => path === '/virtues' || path.startsWith('/virtues/'),
 		parse: (path) => {
-			// The Jobs page was at /virtues/applets.
-			const page = path === '/virtues' ? 'you' : path === '/virtues/applets' ? 'jobs' : path.replace('/virtues/', '');
+			// The Server tasks page was at /virtues/applets, then /virtues/jobs.
+			const moved = path === '/virtues/applets' || path === '/virtues/jobs';
+			const page = path === '/virtues' ? 'you' : moved ? 'server-tasks' : path.replace('/virtues/', '');
 			return {
 				type: 'virtues',
 				label: 'Settings',
 				icon: 'mynaui:cog',
 				virtuesPage: page,
-				...(path === '/virtues/applets' ? { normalizedRoute: JOBS_ROUTE } : {}),
+				...(moved ? { normalizedRoute: SERVER_TASKS_ROUTE } : {}),
 			};
 		},
 		serialize: (id) => (id ? `virtues_${id}` : 'virtues'),
@@ -1056,7 +1057,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
 		'applets', // The Sites door
-		'applet', // A site's or a job's page
+		'applet', // A site's or a server task's page
 		'record', // /record/<ontology>/<id> — single raw record
 		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern

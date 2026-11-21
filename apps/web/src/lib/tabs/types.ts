@@ -44,7 +44,7 @@ export type TabType =
 	| 'design' // /design
 	// System namespace
 	| 'browser' // The in-app browser, beside the current view (Mac): /browser?url=…
-	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
+	| 'virtues'; // System pages: /virtues/{account|assistant|usage|server-tasks|sql|terminal}
 
 /**
  * Tab interface - flat structure with optional type-specific properties.

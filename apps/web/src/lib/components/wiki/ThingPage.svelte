@@ -227,7 +227,7 @@
 					</p>
 				{:else if thing.has_article}
 					<p class="aside">
-						Its page has your sentence so far. With the Wiki Editor job on, your server
+						Its page has your sentence so far. With the Wiki Editor on, your server
 						searches your data and adds what it finds.
 						<TextAction inline onclick={openArticle}>Open its page</TextAction>
 					</p>
@@ -239,7 +239,7 @@
 						</TextAction>
 					</p>
 					<p class="aside">
-						It starts with your sentence. With the Wiki Editor job on, your server searches
+						It starts with your sentence. With the Wiki Editor on, your server searches
 						your data and adds what it finds.
 					</p>
 				{/if}

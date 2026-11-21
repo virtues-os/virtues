@@ -98,7 +98,7 @@
 		bind:this={listEl}
 		onscroll={updateFade}
 		role="listbox"
-		aria-label="Slash commands"
+		aria-label="Skills"
 	>
 		{#each matches as s, i (s.name)}
 			<button

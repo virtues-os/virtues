@@ -382,7 +382,7 @@
 	{#if runs.length > 0}
 		<div class="group-row">
 			<h2 class="group">Recent runs</h2>
-			<TextAction onclick={() => windowShellStore.navigate('/virtues/jobs', { label: 'Settings · Jobs' })}>All runs</TextAction>
+			<TextAction onclick={() => windowShellStore.navigate('/virtues/server-tasks', { label: 'Settings · Server tasks' })}>All runs</TextAction>
 		</div>
 		<ul class="rows">
 			{#each runs as a (a.id)}

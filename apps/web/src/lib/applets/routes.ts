@@ -1,21 +1,23 @@
 /**
- * The addresses of sites and jobs.
+ * The addresses of sites and server tasks.
  *
- * A site is something you set up, and a job is something your server runs
- * for itself. Both are rows of the same kind on the server, and the id says
- * which: `applet_user__water_log` is yours, `applet_embedding_index` is the
- * server's. An address shows only the name: `/site/water_log`,
- * `/job/embedding_index`, with `/options` for the other side of the page.
+ * A site is something you set up, and a server task is something your server
+ * runs for itself. Both are rows of the same kind on the server, and the id
+ * says which: `applet_user__water_log` is yours, `applet_embedding_index` is
+ * the server's. An address shows only the name: `/site/water_log`,
+ * `/server-task/embedding_index`, with `/options` for the other side of the
+ * page.
  *
  * The addresses used before these (`/applet/<id>`, `/applet/<id>/view`,
- * `?panel=info`, and `/action/…` before that) are in pins, saved tabs and
- * links the assistant wrote, so `readAddress` still reads them.
+ * `?panel=info`, `/job/<name>`, and `/action/…` before those) are in pins,
+ * saved tabs and links the assistant wrote, so `readAddress` still reads
+ * them.
  */
 
 /** The Sites door. */
 export const SITES_ROUTE = '/sites';
-/** The Jobs page in Settings. */
-export const JOBS_ROUTE = '/virtues/jobs';
+/** The Server tasks page in Settings. */
+export const SERVER_TASKS_ROUTE = '/virtues/server-tasks';
 
 const YOURS = 'applet_user__';
 const ANY = 'applet_';
@@ -23,9 +25,9 @@ const ANY = 'applet_';
 /** Whether an id is something you set up. Anything else is the server's own. */
 export const isSiteId = (id: string) => id.startsWith(YOURS);
 
-/** A site's or a job's page. */
+/** A site's or a server task's page. */
 export function homeRoute(id: string): string {
-	return isSiteId(id) ? `/site/${id.slice(YOURS.length)}` : `/job/${id.slice(ANY.length)}`;
+	return isSiteId(id) ? `/site/${id.slice(YOURS.length)}` : `/server-task/${id.slice(ANY.length)}`;
 }
 
 /** The options side of that page, with Run history or Technical details open when asked. */
@@ -43,7 +45,7 @@ export interface Address {
 	route: string;
 }
 
-/** Read a site's or a job's address, in today's form or an earlier one. Null for any other route. */
+/** Read a site's or a server task's address, in today's form or an earlier one. Null for any other route. */
 export function readAddress(route: string): Address | null {
 	const url = new URL(route, 'http://localhost');
 	const panel = url.searchParams.get('panel');
@@ -51,7 +53,8 @@ export function readAddress(route: string): Address | null {
 
 	let id: string;
 	let side: Address['side'];
-	const now = url.pathname.match(/^\/(site|job)\/([^/]+)(\/options)?$/);
+	// `/job/<name>` was a server task's address for a day.
+	const now = url.pathname.match(/^\/(site|server-task|job)\/([^/]+)(\/options)?$/);
 	if (now) {
 		id = (now[1] === 'site' ? YOURS : ANY) + now[2];
 		side = now[3] ? 'options' : 'home';

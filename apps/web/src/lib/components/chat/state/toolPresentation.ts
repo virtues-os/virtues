@@ -14,6 +14,8 @@
  * Keeping those orthogonal is what stops this needing twenty states.
  */
 
+import { wordForSetup } from "$lib/applets/words";
+
 export interface ToolPart {
 	type: string;
 	toolCallId?: string;
@@ -70,11 +72,11 @@ interface Presentation {
 const APPLET_SAY: Record<string, [string, string]> = {
 	list: ["Checking what's set up", "Checked what's set up"],
 	get: ["Checking what's set up", "Checked what's set up"],
-	guide: ["Reading how sites work", "Read how sites work"],
-	setup: ["Setting up a site", "Set up a site"],
-	edit: ["Changing a site", "Changed a site"],
-	run: ["Running a site", "Ran a site"],
-	delete: ["Removing a site", "Removed a site"],
+	guide: ["Reading how to set things up", "Read how to set things up"],
+	setup: ["Setting it up", "Set it up"],
+	edit: ["Changing what's set up", "Changed what's set up"],
+	run: ["Running it", "Ran it"],
+	delete: ["Removing it", "Removed it"],
 };
 
 const TOOLS: Record<string, Presentation> = {
@@ -321,22 +323,25 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	skip_step: { noun: "setup", depth: 4, say: ["Skipping a setup step", "Skipped a setup step"] },
 	applet: {
-		noun: "a site",
+		noun: "what's set up",
 		depth: 4,
 		say: (input, live) => {
 			// Chats from before 2026-10-28 called setup with `{guide: true}`,
 			// which only read the authoring guide and set nothing up.
 			const key = input.action === "setup" && input.guide === true ? "guide" : String(input.action ?? "");
-			const [now, then] = APPLET_SAY[key] ?? ["Working on a site", "Worked on a site"];
+			// A setup names what it makes when its own keys say: a site, a task or a skill.
+			const word = key === "setup" ? wordForSetup(input) : null;
+			if (word) return live ? `Setting up a ${word}` : `Set up a ${word}`;
+			const [now, then] = APPLET_SAY[key] ?? ["Working on what's set up", "Worked on what's set up"];
 			return live ? now : then;
 		},
 	},
 	// An applet's instructions loaded into the turn, or one of its files.
 	use_applet: {
-		noun: "a slash command",
+		noun: "a skill",
 		depth: 4,
 		say: (input, live) => {
-			const name = typeof input.name === "string" && input.name ? input.name : "a slash command";
+			const name = typeof input.name === "string" && input.name ? input.name : "a skill";
 			if (typeof input.file === "string" && input.file) {
 				return live ? `Reading ${input.file} from ${name}` : `Read ${input.file} from ${name}`;
 			}
@@ -344,7 +349,7 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	update_applet_memory: {
-		noun: "a site",
+		noun: "its notes",
 		depth: 4,
 		say: ["Noting something for next time", "Noted something for next time"],
 	},
@@ -365,7 +370,7 @@ const RETIRED: Record<string, Presentation> = {
 	// Folded into `shell` on 2026-10-27.
 	code_interpreter: TOOLS.shell,
 	// Folded into the applet tool's `setup` on 2026-10-27.
-	save_skill: { noun: "a site", depth: 4, say: ["Saving your site", "Saved your site"] },
+	save_skill: { noun: "a skill", depth: 4, say: ["Saving your skill", "Saved your skill"] },
 };
 
 function presentation(name: string): Presentation | undefined {
