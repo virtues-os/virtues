@@ -169,6 +169,24 @@ Open, each needs the owner's words:
 1. **Slack:** submit our app to the Slack Marketplace (review, terms,
    security questions), or start with importing a Slack export (only a
    workspace's admins can make one), or wait.
+   - On 2026-11-21 the owner chose "Apply to Slack's directory". A read of
+     Slack's own pages the same day found that a listing would very likely
+     be returned, so this is open again until the owner answers with that
+     in front of them:
+     - Slack's Marketplace guidelines list apps that "export or backup
+       message data" as unsuitable, and apps with no functionality inside
+       Slack. A read-only copy of your messages is both.
+     - Submitting needs the app installed on 10 or more active workspaces
+       first, and new submissions take up to 10 weeks of review.
+     - Slack's API terms (effective 2025-10-10) forbid bulk export of
+       message data except where expressly allowed, and limit what an app
+       used outside its own organization keeps to the minimum it needs.
+     - An app outside the Marketplace is capped at one history request a
+       minute, 15 messages each. Asking each person to make their own app
+       from our manifest appears to be covered by the same terms, since
+       Virtues is a paid product.
+     - Untouched by this: importing an export the workspace's admins make,
+       which is Slack's own feature and goes through no API.
 2. **Zoom:** submit to Zoom's Marketplace review, ask each person to make
    their own Zoom app and paste its keys, or leave Zoom to the meeting tools
    that already record Zoom calls (Fathom, Fireflies.ai, Granola).
