@@ -67,6 +67,16 @@
 	text-decoration: none;
 	cursor: pointer;
 	transition: border-color 0.15s ease;
+	/* A <button> cannot be display: inline; browsers draw it inline-block.
+	   A title longer than the line then became a centered block as wide as
+	   the column, its underline across the bottom. One line, left-aligned,
+	   cut with an ellipsis instead; the full title is in the tooltip. */
+	max-width: 100%;
+	text-align: left;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	vertical-align: bottom;
 }
 
 .ref-link:hover {
@@ -91,6 +101,11 @@
 .ref-link.ref-link--quiet {
 	color: inherit;
 	border-bottom: 1px dotted color-mix(in srgb, currentColor 45%, transparent);
+	/* An <a> (Ref.svelte): it wraps with the sentence instead of cutting. */
+	max-width: none;
+	white-space: normal;
+	overflow: visible;
+	vertical-align: baseline;
 	transition:
 		color 0.15s ease,
 		border-color 0.15s ease;

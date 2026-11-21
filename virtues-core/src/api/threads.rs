@@ -757,7 +757,8 @@ pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&st
         .await
         .map_err(|e| Error::Database(format!("Failed to start transaction: {}", e)))?;
 
-    sqlx::query(r#"UPDATE app_chats SET thread_id = $2 WHERE id = $1"#)
+    // Filing the chat, or taking it out, answers any open suggestion.
+    sqlx::query(r#"UPDATE app_chats SET thread_id = $2, suggested_thread_id = NULL WHERE id = $1"#)
         .bind(chat_id)
         .bind(thread_id)
         .execute(&mut *tx)

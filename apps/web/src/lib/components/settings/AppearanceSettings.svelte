@@ -3,10 +3,10 @@
 	 * Appearance after the theme and accent, under "On this device": Glass
 	 * (stores/glass), the background behind pages (stores/pageBackground),
 	 * reading font and text size, which are the page display settings a
-	 * page's Aa menu also sets (stores/pageDisplay), and Reduce motion
-	 * (stores/motion). All five are kept in this browser, so a phone and a
-	 * Mac can differ; the theme and accent above are saved to your profile
-	 * and follow you.
+	 * page's Aa menu also sets (stores/pageDisplay), Reduce motion
+	 * (stores/motion), and the chat essay layout (stores/chatEssay). All six
+	 * are kept in this browser, so a phone and a Mac can differ; the theme
+	 * and accent above are saved to your profile and follow you.
 	 */
 	import SettingRow from './SettingRow.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
@@ -16,6 +16,7 @@
 	import { glass, type GlassLevel } from '$lib/stores/glass.svelte';
 	import { pageBackground } from '$lib/stores/pageBackground.svelte';
 	import Slider from './Slider.svelte';
+	import { chatEssay } from '$lib/stores/chatEssay.svelte';
 	import { titleOf, findSetting } from '$lib/settings';
 
 	let { assistantName }: { assistantName: string } = $props();
@@ -67,6 +68,10 @@
 
 	<SettingRow id="text-size" label={title('text-size')} help="How large text is on your pages.">
 		<Segmented id="text-size-choice" label={title('text-size')} value={pageDisplay.textSize} options={SIZES} onchange={(v) => pageDisplay.setTextSize(v)} />
+	</SettingRow>
+
+	<SettingRow id="chat-essay" label="Essay layout for chats" help="Replies are set in the serif under the chat's name, with charts and tables framed. You can also switch it from a chat's menu.">
+		<Switch checked={chatEssay.on} label="Essay layout for chats" onchange={(on) => chatEssay.set(on)} />
 	</SettingRow>
 
 	<SettingRow id="reduce-motion" label={title('reduce-motion')} help={motionHelp}>

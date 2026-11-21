@@ -3267,6 +3267,10 @@ export function markChatSeen(id: string): Promise<unknown> {
 export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/chats/title', body);
 }
+/** Say no to the thread your server suggested for this chat. It is never suggested for it again. */
+export function declineThreadSuggestion(chatId: string): Promise<unknown> {
+	return apiSend('POST', `/chats/${encodeURIComponent(chatId)}/thread-suggestion/decline`, {});
+}
 export function cancelChat<T = unknown>(chatId: string): Promise<T> {
 	return apiSend<T>('POST', '/chat/cancel', { chatId });
 }

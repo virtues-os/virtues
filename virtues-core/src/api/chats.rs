@@ -170,6 +170,9 @@ pub struct ConversationMeta {
     /// list holds only the most recent chats, and an older chat opened from a
     /// thread could not otherwise say where it lives.
     pub thread_id: Option<String>,
+    /// A thread your server suggests for a chat in none, until you file the
+    /// chat or say no. Picked by the title call.
+    pub suggested_thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -275,6 +278,9 @@ pub struct GenerateTitleResponse {
     /// No automatic title will ever be written to this chat again: the person
     /// named it, or the one re-title has happened. The client stops asking.
     pub done: bool,
+    /// The thread this call suggested for the chat, when it suggested one.
+    /// It is also on the chat (`suggested_thread_id`), so a reload shows it.
+    pub suggested_thread_id: Option<String>,
 }
 
 /// User turns a chat needs before its generated title is replaced, once, by
@@ -397,6 +403,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             title,
             icon,
             thread_id,
+            suggested_thread_id,
             message_count,
             created_at,
             updated_at
@@ -415,6 +422,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let title: String = row.get("title");
     let icon: Option<String> = row.get("icon");
     let thread_id: Option<String> = row.get("thread_id");
+    let suggested_thread_id: Option<String> = row.get("suggested_thread_id");
     let message_count: i64 = row.get("message_count");
     let created_at: Timestamp = row.get("created_at");
     let updated_at: Timestamp = row.get("updated_at");
@@ -497,6 +505,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
         model: last_message.and_then(|m| m.model.clone()),
         provider: None, // Provider not stored in MessageResponse
         thread_id,
+        suggested_thread_id,
     };
 
     Ok(ChatDetailResponse {
@@ -989,7 +998,7 @@ pub async fn generate_title(
                     "In your own words".to_string()
                 }
             });
-        return Ok(GenerateTitleResponse { chat_id, title, done: true });
+        return Ok(GenerateTitleResponse { suggested_thread_id: None, chat_id, title, done: true });
     }
 
     // Who wrote the current title decides whether to write another. The
@@ -1013,9 +1022,9 @@ pub async fn generate_title(
         "seed" => "generated",
         "generated" if user_turns >= SETTLE_AFTER_USER_TURNS => "settled",
         "generated" => {
-            return Ok(GenerateTitleResponse { chat_id, title: current, done: false });
+            return Ok(GenerateTitleResponse { suggested_thread_id: None, chat_id, title: current, done: false });
         }
-        _ => return Ok(GenerateTitleResponse { chat_id, title: current, done: true }),
+        _ => return Ok(GenerateTitleResponse { suggested_thread_id: None, chat_id, title: current, done: true }),
     };
 
     // The first title reads the opening. The re-title reads the opening and
@@ -1044,6 +1053,8 @@ pub async fn generate_title(
     let prompt = format!(
         r#"Based on this conversation, generate a very short title (3-6 words maximum) that captures the main topic or theme.
 
+Name the subject, not the question. For "who is David Okafor" write "David Okafor" or "Finding David Okafor", never "Who Is David Okafor". Don't repeat the person's first message.
+
 Return the title as plain text only. No markdown, no asterisks, no bold, no quotation marks, no trailing punctuation, no preamble — just the words of the title.
 
 Conversation:
@@ -1051,11 +1062,41 @@ Conversation:
         conversation_summary
     );
 
+    // The same call suggests a thread for a chat that is in none, so a
+    // suggestion costs no model call of its own. Empty when the chat is
+    // filed, already has a suggestion, or there is nothing left to suggest.
+    let options = thread_options(pool, &chat_id).await?;
+    let prompt = if options.is_empty() {
+        prompt
+    } else {
+        let list = options
+            .iter()
+            .enumerate()
+            .map(|(i, t)| match &t.about {
+                Some(about) => format!("{}. {}: {}", i + 1, t.name, about),
+                None => format!("{}. {}", i + 1, t.name),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            r#"{prompt}
+
+Then pick the thread this conversation belongs in, from the person's threads below, or none. Pick one only when the conversation is plainly about that thread. Most conversations belong in none.
+
+Threads:
+{list}
+
+Answer in exactly two lines:
+Title: the title
+Thread: the thread's number, or none"#
+        )
+    };
+
     // Through the shared background helper: the Lite slot via the owner's
     // background pin, thinking off, no cap. The prompt bounds the title; the
     // 50-token cap that sat here was spent thinking on a model that thinks
     // and returned no title at all.
-    let mut title = crate::virtues_api::completion::system_completion(
+    let answer = crate::virtues_api::completion::system_completion(
         pool,
         virtues_registry::models::ModelSlot::Lite,
         "chat_title",
@@ -1070,9 +1111,26 @@ Conversation:
         // rate limit); only the bucket name changes.
         crate::Error::ExternalApi(m) => crate::Error::ExternalApi(m),
         other => crate::Error::Network(format!("title generation failed: {other}")),
-    })?
-    .trim()
-    .to_string();
+    })?;
+    let (mut title, picked) = split_title_answer(&answer, options.len());
+
+    // Written before the title so a suggestion survives an empty title. Only
+    // onto a chat still in no thread, with no open suggestion, and never a
+    // thread the person said no to: any of those can change while the model
+    // answers.
+    let suggested_thread_id = match picked.map(|i| options[i].id.clone()) {
+        Some(thread_id) => sqlx::query_scalar::<_, String>(
+            "UPDATE app_chats SET suggested_thread_id = $2 \
+              WHERE id = $1 AND thread_id IS NULL AND suggested_thread_id IS NULL \
+                AND NOT ($2 = ANY(declined_thread_ids)) \
+          RETURNING suggested_thread_id",
+        )
+        .bind(&chat_id)
+        .bind(&thread_id)
+        .fetch_optional(pool)
+        .await?,
+        None => None,
+    };
 
     // Strip the costume the model put on the title: markdown emphasis, a
     // leading heading marker, quotes. Trimmed as a set and repeatedly, because
@@ -1104,7 +1162,7 @@ Conversation:
     // Writing a placeholder over it would replace the first message's words
     // with "New Chat".
     if title.is_empty() {
-        return Ok(GenerateTitleResponse { chat_id, title: current, done: false });
+        return Ok(GenerateTitleResponse { suggested_thread_id, chat_id, title: current, done: false });
     }
 
     // Only if the title is still the one this call read: a rename that
@@ -1120,7 +1178,7 @@ Conversation:
     .fetch_optional(pool)
     .await?;
     match written {
-        Some(title) => Ok(GenerateTitleResponse { chat_id, title, done: next_source == "settled" }),
+        Some(title) => Ok(GenerateTitleResponse { suggested_thread_id, chat_id, title, done: next_source == "settled" }),
         None => {
             let (title, source): (String, String) =
                 sqlx::query_as("SELECT title, title_source FROM app_chats WHERE id = $1")
@@ -1128,8 +1186,110 @@ Conversation:
                     .fetch_one(pool)
                     .await?;
             let done = matches!(source.as_str(), "user" | "settled");
-            Ok(GenerateTitleResponse { chat_id, title, done })
+            Ok(GenerateTitleResponse { suggested_thread_id, chat_id, title, done })
         }
+    }
+}
+
+/// A thread the title call may suggest for a chat.
+struct ThreadOption {
+    id: String,
+    name: String,
+    /// Where the thread stands, or its instructions: a line that tells the
+    /// model what the thread is about when its name alone does not.
+    about: Option<String>,
+}
+
+/// The threads the title call may suggest for this chat, most recently
+/// changed first. Empty when the chat is filed, already has an open
+/// suggestion, or every thread is ended or one the person said no to.
+async fn thread_options(pool: &PgPool, chat_id: &str) -> Result<Vec<ThreadOption>> {
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT t.id, t.name, \
+                left(coalesce(nullif(t.current_status, ''), nullif(t.instructions, '')), 140) \
+           FROM app_chats c \
+           JOIN app_threads t \
+             ON t.deleted_at IS NULL AND t.archived_at IS NULL \
+            AND NOT (t.id = ANY(c.declined_thread_ids)) \
+          WHERE c.id = $1 AND c.thread_id IS NULL AND c.suggested_thread_id IS NULL \
+          ORDER BY t.updated_at DESC \
+          LIMIT 40",
+    )
+    .bind(chat_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, about)| ThreadOption { id, name, about })
+        .collect())
+}
+
+/// Splits the title call's answer into the title and the index of the
+/// picked thread. With no threads offered the answer is the title alone.
+/// With threads it is two lines, `Title: ...` and `Thread: <n or none>`; a
+/// model that drops the labels still yields its first line as the title,
+/// and a number outside the list picks nothing.
+fn split_title_answer(answer: &str, offered: usize) -> (String, Option<usize>) {
+    if offered == 0 {
+        return (answer.trim().to_string(), None);
+    }
+    let mut title: Option<String> = None;
+    let mut picked = None;
+    for line in answer.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("thread:") {
+            let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+            picked = digits.parse::<usize>().ok().filter(|n| (1..=offered).contains(n)).map(|n| n - 1);
+        } else if lower.starts_with("title:") {
+            title = Some(line["title:".len()..].trim().to_string());
+        } else if title.is_none() {
+            title = Some(line.to_string());
+        }
+    }
+    (title.unwrap_or_default(), picked)
+}
+
+/// The person said no to the chat's suggested thread. It is never suggested
+/// for this chat again, and the chat stays where it is.
+pub async fn decline_thread_suggestion(pool: &PgPool, chat_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE app_chats \
+            SET declined_thread_ids = array_append(declined_thread_ids, suggested_thread_id), \
+                suggested_thread_id = NULL \
+          WHERE id = $1 AND suggested_thread_id IS NOT NULL",
+    )
+    .bind(chat_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod title_answer_tests {
+    use super::split_title_answer;
+
+    #[test]
+    fn title_alone_when_no_threads_offered() {
+        assert_eq!(split_title_answer("  Garden Plan  ", 0), ("Garden Plan".into(), None));
+    }
+
+    #[test]
+    fn reads_both_lines() {
+        let a = "Title: Kitchen Tile Choices\nThread: 2";
+        assert_eq!(split_title_answer(a, 5), ("Kitchen Tile Choices".into(), Some(1)));
+    }
+
+    #[test]
+    fn none_and_out_of_range_pick_nothing() {
+        assert_eq!(split_title_answer("Title: A\nThread: none", 3).1, None);
+        assert_eq!(split_title_answer("Title: A\nThread: 9", 3).1, None);
+        assert_eq!(split_title_answer("Title: A\nThread: 0", 3).1, None);
+    }
+
+    #[test]
+    fn unlabeled_first_line_is_the_title() {
+        let a = "Rainy Day Ideas\nThread: 1";
+        assert_eq!(split_title_answer(a, 1), ("Rainy Day Ideas".into(), Some(0)));
     }
 }
 

@@ -25,6 +25,7 @@
 	// A record is cited, not visited: a click opens its RecordCard where the
 	// link is, which the text around it draws (Markdown, the page editor).
 	const cite = $derived(isRecordRoute(url));
+	const quietLink = $derived(variant === "quiet" && !cite);
 
 	// Type drives the leading icon; derive from the url if not passed explicitly.
 	const resolvedType = $derived(entityType ?? getEntityTypeFromRoute(url));
@@ -72,7 +73,14 @@
      on a click, so reading across a paragraph of them never pops cards up.
      The text that opens the card marks the link open (`is-open`,
      aria-expanded), since it owns which link that is. -->
-<button
+<!-- A quiet ref is words inside a sentence, so it is a real link: an <a>
+     wraps across lines like the text around it. A <button> cannot be
+     inline, so a long title would jump to a line of its own. -->
+<svelte:element
+	this={quietLink ? "a" : "button"}
+	href={quietLink ? url : undefined}
+	type={quietLink ? undefined : "button"}
+	role={quietLink ? "link" : undefined}
 	class="ref-link {variant === 'quiet' && !cite ? 'ref-link--quiet' : ''} {cite ? 'ref-link--cite' : ''}"
 	onclick={handleClick}
 	oncontextmenu={handleContextMenu}
@@ -80,15 +88,15 @@
 	data-cite-route={cite ? url : undefined}
 	data-ref-url={url}
 	aria-haspopup={cite ? "dialog" : undefined}
-	onmouseenter={(e) => !cite && hover.enter(e.currentTarget)}
+	onmouseenter={(e: MouseEvent) => !cite && hover.enter(e.currentTarget as HTMLElement)}
 	onmouseleave={() => !cite && hover.leave()}
-	onfocus={(e) => !cite && hover.enter(e.currentTarget)}
+	onfocus={(e: FocusEvent) => !cite && hover.enter(e.currentTarget as HTMLElement)}
 	onblur={() => !cite && hover.leave()}
 	>{#if variant === "link" && !cite}<Icon
 			icon={refIcon(resolvedType, { mimeType, filename: displayName })}
 			width="11"
 			class="ref-pill-icon"
-		/>@{/if}{shown}</button
+		/>@{/if}{shown}</svelte:element
 ><!-- No whitespace before the preview block: it would render as a space
      after the name, before the punctuation that follows it. -->{#if hover.visible && hover.anchor}
 	<RefPreview

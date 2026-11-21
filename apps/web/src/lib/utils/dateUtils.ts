@@ -168,3 +168,15 @@ export function parseDateSlug(slug: string): Date {
 	const [year, month, day] = slug.split('-').map(Number);
 	return new Date(year, month - 1, day);
 }
+
+/**
+ * The day and its part, as home's headline says it: "Friday afternoon".
+ * Home shows it for now; a new chat in the essay layout carries it as its
+ * name until a real one is written.
+ */
+export function dayPartHeadline(date: Date): string {
+	const day = date.toLocaleDateString(undefined, { weekday: 'long' });
+	const h = date.getHours();
+	const part = h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : 'night';
+	return `${day} ${part}`;
+}

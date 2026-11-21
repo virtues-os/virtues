@@ -91,7 +91,7 @@
 			return;
 		}
 		const thread = d.subjects.find((s) => s.startsWith('/thread/'))?.slice('/thread/'.length) ?? null;
-		askVirtues(`/insight-report Write up this insight as a report: "${d.text}" (/insight/${encodeURIComponent(d.key)})`, thread);
+		askVirtues(`/insight-report Write up this insight as a report: [${d.text.replace(/[[\]]/g, "")}](/insight/${encodeURIComponent(d.key)})`, thread);
 	}
 
 	function run() {

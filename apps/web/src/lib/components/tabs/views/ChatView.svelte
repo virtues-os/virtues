@@ -99,7 +99,7 @@
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
-	import { projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
+	import { fileIntoProject, projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
@@ -107,6 +107,7 @@
 		getChat,
 		getAssistantProfile,
 		setChatTitle,
+		declineThreadSuggestion,
 		cancelChat,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -141,7 +142,10 @@
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { threadCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
-	import { untitled } from "$lib/refs/identity.svelte";
+	import { untitled, renameRef } from "$lib/refs/identity.svelte";
+	import ProjectChip from "$lib/components/ProjectChip.svelte";
+	import { chatEssay } from "$lib/stores/chatEssay.svelte";
+	import EssayTitle, { type CarryFrom } from "$lib/components/chat/EssayTitle.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { REVEAL_MESSAGE, type RevealMessageDetail } from "$lib/components/chat/about/InThisChat.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
@@ -290,6 +294,30 @@
 	// picker; filing happens from "Move to project".
 	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
 
+	// A thread your server suggests for a chat in none. The title call picks
+	// it; filing the chat anywhere or saying no ends it.
+	let suggestedThreadId = $state<string | null>(null);
+	const suggestedThread = $derived(
+		!chatProject && suggestedThreadId ? projectStore.byId(suggestedThreadId) : undefined,
+	);
+
+	async function acceptSuggestion() {
+		if (!suggestedThread) return;
+		const thread = suggestedThread;
+		suggestedThreadId = null;
+		await fileIntoProject(thread, `/chat/${conversationId}`);
+	}
+
+	async function declineSuggestion() {
+		const id = conversationId;
+		suggestedThreadId = null;
+		try {
+			await declineThreadSuggestion(id);
+		} catch (e) {
+			console.error("[ChatView] declining the thread suggestion failed:", e);
+		}
+	}
+
 	// A chat filed in a project names it in the action toolbar's path. The
 	// tab already says the chat's own name, so the path stops at the project.
 	$effect(() => {
@@ -302,6 +330,18 @@
 	});
 
 	/** The project's own menu, from the chip: right-click here, a tap on the phone's bar. */
+	/** The essay layout's "Add to thread": the thread list from the chat menu's filing item. */
+	function openAddToThread(e: MouseEvent) {
+		const target = targetForTab(tab);
+		const items = projectMenuItems(target)[0]?.submenu ?? [];
+		if (!items.length) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show({ x: rect.left, y: rect.bottom }, items, {
+			anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+			placement: "bottom-start",
+		});
+	}
+
 	function showProjectChipMenu(e: MouseEvent) {
 		e.preventDefault();
 		const target = targetForTab(tab);
@@ -388,7 +428,7 @@
 	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
 		const data = await getChat<{
 			messages?: any[];
-			conversation?: { thread_id?: string | null };
+			conversation?: { thread_id?: string | null; suggested_thread_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
 		// A reply still arriving on this instance is newer than the stored
@@ -402,6 +442,7 @@
 		if (data.conversation && data.conversation.thread_id !== undefined) {
 			chatSessions.noteProject(id, data.conversation.thread_id ?? null);
 		}
+		suggestedThreadId = data.conversation?.suggested_thread_id ?? null;
 		// A reload of the chat on screen keeps what the reader had drawn.
 		const drawnBefore = undrawnFor === id ? uniqueMessages.length - undrawn : 0;
 		chat.messages = deduplicateMessages(data.messages || []).map(
@@ -696,6 +737,8 @@
 		messageMetadata = new Map();
 		liveReplies.clear();
 		titleDone = false;
+		titleRetried = false;
+		suggestedThreadId = null;
 		isAwaitingResponse = false;
 		turnPhase.reset();
 		isGhost = isTemporaryRoute(route);
@@ -1056,39 +1099,12 @@
 	);
 
 
-	// Which message's Copy just fired, so the tick can replace the icon briefly.
-	let copiedMessageId = $state<string | null>(null);
-
 	function messageText(message: any): string {
 		return (message.parts ?? [])
 			.filter((p: any) => p.type === "text")
 			.map((p: any) => p.text)
 			.join("");
 	}
-
-	async function copyMessage(message: any) {
-		const text = messageText(message).trim();
-		if (!text) return;
-		try {
-			await navigator.clipboard.writeText(text);
-			copiedMessageId = message.id;
-			setTimeout(() => {
-				if (copiedMessageId === message.id) copiedMessageId = null;
-			}, 1500);
-		} catch {
-			/* clipboard unavailable (insecure origin, denied) — say nothing */
-		}
-	}
-
-	// Get the last assistant message
-	const lastAssistantMessage = $derived.by(() => {
-		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
-			if (uniqueMessages[i].role === "assistant") {
-				return uniqueMessages[i];
-			}
-		}
-		return null;
-	});
 
 	// Local input state
 	let input = $state("");
@@ -1143,6 +1159,7 @@
 	// chat again. Reset per chat; the server decides from who wrote the
 	// title, so asking once after opening an old chat costs a no-op call.
 	let titleDone = $state(false);
+	let titleRetried = false;
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// The applet chip in the composer, and the applet the last sent message
@@ -1288,6 +1305,24 @@
 	const chatTitle = $derived(
 		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.title ?? "",
 	);
+	const chatStartedAt = $derived(
+		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.first_message_at || undefined,
+	);
+	// The essay title must not repeat this (EssayTitle).
+	const firstUserText = $derived.by(() => {
+		const first = uniqueMessages.find((m) => m.role === "user");
+		return first ? first.parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("") : "";
+	});
+	// Home's headline, measured as you send the first message, so the essay
+	// title can fly from it. Cleared when the flight ends.
+	let carryFrom = $state<CarryFrom | null>(null);
+	function measureHomeHeadline() {
+		if (!isEmpty || !chatEssay.on || inRoom || inInterview || isGhost) return;
+		const h = scrollContainer?.closest(".page-container")?.querySelector<HTMLElement>(".init-hero .headline");
+		if (!h) return;
+		const r = h.getBoundingClientRect();
+		carryFrom = { left: r.left, top: r.top, fontSize: parseFloat(getComputedStyle(h).fontSize) };
+	}
 
 	// Adopt the stored title into the tab label.
 	//
@@ -1436,6 +1471,14 @@
 			});
 		}
 		items.push({
+			id: "essay",
+			label: "Essay layout",
+			description: "Replies set like a written page",
+			icon: "mynaui:book-open",
+			checked: chatEssay.on,
+			action: () => chatEssay.toggle(),
+		});
+		items.push({
 			id: "pin",
 			label: pinned ? "Unpin tab" : "Pin tab",
 			icon: pinned ? "mynaui:pin" : "mynaui:pin",
@@ -1475,7 +1518,11 @@
 		}
 
 		try {
-			const data = await setChatTitle<{ title?: string; done?: boolean }>({
+			const data = await setChatTitle<{
+				title?: string;
+				done?: boolean;
+				suggested_thread_id?: string | null;
+			}>({
 				chatId: conversationId,
 				messages: chat.messages.map((m) => ({
 					role: m.role,
@@ -1487,6 +1534,7 @@
 			// kept, and `done` once it will never write another. A server that
 			// predates `done` generated on every ask, so its answer stops us.
 			titleDone = data.done ?? true;
+			if (data.suggested_thread_id) suggestedThreadId = data.suggested_thread_id;
 			if (data.title) {
 				windowShellStore.updateTab(tab.id, { label: data.title });
 				// Optimistically seed the shared session store so the header
@@ -1495,7 +1543,16 @@
 				chatSessions.applyTitle(conversationId, data.title);
 			}
 		} catch (error) {
-			// Title generation is non-critical
+			// Non-critical, but a chat left with its first message as its name
+			// stays that way, since the next ask only comes with the next send.
+			// One retry, for this chat only.
+			if (!titleRetried) {
+				titleRetried = true;
+				const id = conversationId;
+				setTimeout(() => {
+					if (conversationId === id) void generateTitle();
+				}, 4000);
+			}
 		}
 	}
 
@@ -1718,6 +1775,7 @@
 
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
+		if (messageToSend) measureHomeHeadline();
 
 		// The one slash command, and it does exactly what the door does: leave.
 		// It used to also skip connect_ai, which was the key out of a locked
@@ -1941,6 +1999,15 @@
 	});
 </script>
 
+<!-- The thread your server suggests for a chat in none: under the title in
+     the essay layout, above the first message otherwise. -->
+{#snippet threadSuggestion(name: string)}
+	<span class="suggestion-words">Add to <span class="suggestion-name">{name || untitled("thread")}</span>?</span>
+	<button type="button" class="suggestion-button suggestion-yes" onclick={acceptSuggestion}>Add</button>
+	<button type="button" class="suggestion-button" onclick={declineSuggestion}>No</button>
+	<button type="button" class="suggestion-button" onclick={openAddToThread}>Other thread</button>
+{/snippet}
+
 {#if conversationId && canManageChat}
 	<ShareSheet
 		open={sharing}
@@ -2009,7 +2076,7 @@
 						</button>
 					{/if}
 				</div>
-				<div class="page-container" class:is-empty={isEmpty} class:home={showsHome} class:intro bind:clientWidth={pageWidth}>
+				<div class="page-container" class:is-empty={isEmpty} class:home={showsHome} class:intro class:essay={chatEssay.on && !inRoom && !inInterview} class:carrying={carryFrom !== null} bind:clientWidth={pageWidth}>
 					<!-- Messages area -->
 					<div
 						bind:this={scrollContainer}
@@ -2029,6 +2096,42 @@
 								     painting and made the room read as two products
 								     stacked. -->
 								<RoomCover />
+							{/if}
+							{#if chatEssay.on && !inRoom && !inInterview && !isGhost && uniqueMessages.length > 0}
+								<!-- The essay layout's head: the chat's name as the page's
+								     one title, and a details line under it. -->
+								<header class="essay-head">
+									{#key conversationId}
+										<EssayTitle
+											title={chatTitle}
+											firstMessage={firstUserText}
+											startedAt={chatStartedAt}
+											from={carryFrom}
+											oncarried={() => (carryFrom = null)}
+											onrename={(t) => void renameRef(`/chat/${conversationId}`, t)}
+										/>
+									{/key}
+									<p class="essay-details">
+										{#if chatProject}
+											<span>Thread:</span>
+											<ProjectChip
+												project={chatProject}
+												title={`${chatProject.name}: thread options`}
+												onclick={showProjectChipMenu}
+												oncontextmenu={showProjectChipMenu}
+											/>
+										{:else if suggestedThread}
+											{@render threadSuggestion(suggestedThread.name)}
+										{:else}
+											<button type="button" class="essay-add-thread" onclick={openAddToThread}>
+												<Icon icon="mynaui:plus" width="14" />Add to thread
+											</button>
+										{/if}
+									</p>
+								</header>
+							{/if}
+							{#if !chatEssay.on && suggestedThread && !inRoom && !inInterview && !isGhost && uniqueMessages.length > 0}
+								<p class="suggestion-line">{@render threadSuggestion(suggestedThread.name)}</p>
 							{/if}
 							{#if undrawn > 0}
 								<div class="earlier-edge" bind:this={earlierEdge}>
@@ -2136,6 +2239,7 @@
 															isStreaming={isStreaming || shown.arriving}
 															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
 															citations={citationContext}
+															refVariant={chatEssay.on && !inRoom && !inInterview ? "quiet" : "link"}
 														/>
 														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && reveal.plateReady)}
 															<!-- Right under the heading, wider than the column:
@@ -2377,51 +2481,6 @@
 												<StoppedNotice reason={stop} />
 											{/if}
 
-											<!-- What to do with an answer once it exists.
-											     `chat.regenerate()` was reachable ONLY through the
-											     error card, so an answer that is wrong but did not
-											     FAIL had no re-roll at all, and copying one meant
-											     dragging a selection across rendered markdown.
-											     Only on a finished turn — controls under a
-											     sentence still being written invite a click that
-											     races the stream. Re-roll is offered on the last
-											     answer alone, because regenerating an earlier one
-											     would silently discard every turn after it, which
-											     is an edit-and-branch feature and not this. -->
-											{#if chat.status === "ready" && messageText(message).trim()}
-												<div class="message-actions">
-													<button
-														type="button"
-														class="message-action"
-														aria-label="Copy this reply"
-														title="Copy"
-														onclick={() => copyMessage(message)}
-													>
-														<Icon
-															icon={copiedMessageId === message.id
-																? "mynaui:check"
-																: "mynaui:copy"}
-															width="14"
-														/>
-													</button>
-													<!-- Not in the rooms: their last line is the room's own
-													     narration, and a re-roll there re-asks a step. -->
-													{#if message.id === lastAssistantMessage?.id && !isGhost && !inInterview}
-														<button
-															type="button"
-															class="message-action"
-															aria-label="Ask for another answer"
-															title="Try another answer"
-															onclick={() => {
-																danglingTurn = false;
-																void chat.regenerate();
-															}}
-														>
-															<Icon icon="mynaui:refresh" width="14" />
-														</button>
-													{/if}
-												</div>
-											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
 											{#if fileParts.length > 0}
@@ -3309,43 +3368,157 @@
 		text-decoration: underline;
 	}
 
-	/* Quiet until the answer is hovered — an answer should read as prose, not
-	   as a toolbar with text above it. Always visible on a touch screen, where
-	   there is no hover to reveal them. */
-	.message-actions {
-		display: flex;
-		gap: 0.125rem;
-		margin-top: 0.375rem;
-		opacity: 0;
-		transition: opacity 0.12s ease;
-	}
 
-	.message-wrapper:hover .message-actions,
-	.message-actions:focus-within {
-		opacity: 1;
-	}
 
-	@media (hover: none) {
-		.message-actions {
-			opacity: 1;
-		}
+	/* ── Essay layout (prototype; stores/chatEssay.svelte.ts) ──
+	   The reply is set like the Labs essay pages: the article serif a step
+	   up, the chat's name as one title with a details line, and figures,
+	   tables and page cards in the card-in-card frame. Your turns keep their
+	   bubble, in the serif. Only type and frames change here; the column,
+	   rail and composer stay where they are. */
+	.page-container.essay {
+		--md-body-family: var(--md-article-family);
+		--md-body-size: 1.125rem;
+		--md-body-lh: 1.65;
 	}
-
-	.message-action {
+	.page-container.essay .essay-head {
+		display: grid;
+		gap: 0.5rem;
+		padding: 2rem 0 1.25rem;
+	}
+	/* While the essay title flies up from home's headline, the headline
+	   itself is gone, so the words are never on screen twice. */
+	.page-container.essay.carrying :global(.init-hero) {
+		visibility: hidden;
+	}
+	.page-container.essay .essay-add-thread {
 		display: inline-flex;
 		align-items: center;
-		justify-content: center;
-		padding: 0.25rem;
-		border: none;
+		gap: 0.25rem;
+		height: 28px;
+		margin-left: -8px;
+		padding: 0 12px 0 8px;
+		border: 0;
+		border-radius: var(--radius-lg);
 		background: none;
-		border-radius: var(--radius-md);
-		color: var(--foreground-subtle);
+		font: inherit;
+		color: var(--color-foreground-muted);
 		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
 	}
-
-	.message-action:hover {
-		color: var(--foreground);
-		background: var(--surface-elevated);
+	.page-container.essay .essay-add-thread:hover {
+		background: var(--color-surface-overlay);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
 	}
-
+	/* The thread suggestion, in either layout. In the default one it is its
+	   own line above the first message; in the essay one it sits in the
+	   details line, which sets its size and color. */
+	.suggestion-line {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem;
+		margin: 0 0 0.5rem;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
+	.suggestion-words {
+		margin-right: 0.25rem;
+	}
+	.suggestion-name {
+		color: var(--color-foreground);
+	}
+	.suggestion-button {
+		display: inline-flex;
+		align-items: center;
+		height: 28px;
+		padding: 0 8px;
+		border: 0;
+		border-radius: var(--radius-lg);
+		background: none;
+		font: inherit;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
+	}
+	.suggestion-button:hover {
+		background: var(--color-surface-overlay);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+	.suggestion-yes {
+		color: var(--color-foreground);
+		background: var(--color-surface-overlay);
+	}
+	.page-container.essay .essay-details {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
+	/* Your turn reads in the same serif as the reply, in its bubble. */
+	.page-container.essay .message-wrapper[data-role="user"] :global(.user-message-content) {
+		font-family: var(--font-serif);
+		font-size: 1.125rem;
+		line-height: 1.45;
+	}
+	/* The created page card closes the turn, under the answer, so the page
+	   is not announced at the top and again in the reply's first line. */
+	.page-container.essay .message-wrapper[data-role="assistant"] {
+		display: flex;
+		flex-direction: column;
+		padding-top: 1rem;
+	}
+	.page-container.essay .message-wrapper[data-role="assistant"] > :global(.page-edit-result) {
+		order: 1;
+	}
+	/* The created and edited page cards take the same card-in-card frame as
+	   the figures, with the page's name in the serif. The frame is a hairline
+	   and a second hairline 6px out (an outline), since the grammar draws a
+	   card with lines, never a shadow. */
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(.page-edit-result) {
+		background: var(--color-surface);
+		border-radius: var(--radius-xl);
+		padding: 0.75rem 1rem;
+		border: 1px solid var(--color-border-subtle);
+		outline: 1px solid var(--color-border-subtle);
+		outline-offset: 6px;
+		margin: 1.75rem 8px 1.25rem;
+	}
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(.page-edit-result .result-title) {
+		font-family: var(--font-serif);
+		font-size: 1.0625rem;
+		color: var(--color-foreground);
+	}
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(.page-edit-result .result-label) {
+		color: var(--color-foreground-muted);
+	}
+	/* Not around a choice card: it draws its own panel, and a frame around
+	   it made three nested boxes. */
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(> .show:not(.choices)) {
+		background: var(--color-surface);
+		border-radius: var(--radius-xl);
+		padding: 1rem 1.125rem 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		outline: 1px solid var(--color-border-subtle);
+		outline-offset: 6px;
+		margin: 0.75rem 8px 1.25rem;
+	}
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(.markdown table) {
+		font-family: var(--font-sans);
+		background: var(--color-surface);
+		border-radius: var(--radius-xl);
+		border: 1px solid var(--color-border-subtle);
+		outline: 1px solid var(--color-border-subtle);
+		outline-offset: 6px;
+		margin: 1.5rem 8px;
+	}
+	.page-container.essay :global(.chat-input) {
+		font-family: var(--font-serif);
+		font-size: 1.125rem;
+	}
 </style>
