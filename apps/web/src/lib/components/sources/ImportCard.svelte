@@ -1,6 +1,6 @@
 <!--
-  A one-time import: Past chats, Spotify listening, Amazon orders or Discord
-  messages.
+  A one-time import: Past chats, Spotify listening, Amazon orders, Discord
+  messages or a Slack workspace.
 
   Says how to get the file from the service, takes it, and uploads it.
   `importFile` follows the background run to its summary or its error.
@@ -8,13 +8,14 @@
 -->
 <script lang="ts">
 	import { onDestroy } from "svelte";
-	import { Button } from "$lib";
+	import { Button, Input } from "$lib";
 	import { IMPORT_SOURCES, importFile, isAbort, type ImportPhase } from "$lib/imports";
 
 	let { sourceId }: { sourceId: string } = $props();
 	const source = $derived(IMPORT_SOURCES[sourceId]);
 
 	let file = $state<File | null>(null);
+	let email = $state("");
 	let busy = $state<ImportPhase | null>(null);
 	let result = $state<string | null>(null);
 	let error = $state<string | null>(null);
@@ -29,10 +30,18 @@
 
 	async function doImport() {
 		if (!file) return;
+		if (source?.emailLabel && !email.trim()) {
+			error = `Enter ${source.emailLabel.toLowerCase()}, then import.`;
+			return;
+		}
 		error = null;
 		result = null;
 		try {
-			result = await importFile(sourceId, file, { onPhase: (p) => (busy = p), signal: stop.signal });
+			result = await importFile(sourceId, file, {
+				onPhase: (p) => (busy = p),
+				signal: stop.signal,
+				fields: source?.emailLabel ? { email: email.trim() } : {}
+			});
 			file = null;
 		} catch (e) {
 			if (isAbort(e)) return;
@@ -65,6 +74,13 @@
 						class="mt-1 block w-full text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-surface-elevated file:px-3 file:py-1.5 file:text-sm file:text-foreground"
 					/>
 				</label>
+
+				{#if source.emailLabel}
+					<label class="block">
+						<span class="text-sm text-foreground-muted">{source.emailLabel}</span>
+						<Input type="email" bind:value={email} disabled={busy !== null} />
+					</label>
+				{/if}
 
 				<Button variant="primary" onclick={doImport} disabled={!file || busy !== null}>
 					{busy?.step === "uploading" ? `Uploading, ${busy.percent}%` : busy?.step === "reading" ? source.reading : "Import"}

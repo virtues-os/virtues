@@ -1,11 +1,13 @@
 //! One-time imports: a file the owner downloaded from a service, uploaded
 //! here and read by that service's import applet.
 //!
-//!   POST /api/imports/:source/upload — `spotify`, `amazon` or `discord`
+//!   POST /api/imports/:source/upload — `spotify`, `amazon`, `discord` or `slack`
 //!
 //! The upload streams into a staging folder, so a large download never sits
 //! in memory, and the source's applet starts in the background with
-//! `payload = { "file_path": ... }`. The answer is the run's status, the same
+//! `payload = { "file_path": ... }`, plus the form's text fields the source
+//! asks for (Slack's `email`, which says who the owner is in a workspace
+//! export). The answer is the run's status, the same
 //! shape a manual run gets; the app follows the run for its summary or error.
 //! The applet reads only files in its staging folder and removes the file
 //! when it is done.
@@ -43,7 +45,16 @@ fn applet_for(source: &str) -> Option<&'static str> {
         "spotify" => Some("applet_spotify_import"),
         "amazon" => Some("applet_amazon_orders_import"),
         "discord" => Some("applet_discord_import"),
+        "slack" => Some("applet_slack_import"),
         _ => None,
+    }
+}
+
+/// The text fields a source's upload may carry, sent before the file.
+fn fields_for(source: &str) -> &'static [&'static str] {
+    match source {
+        "slack" => &["email"],
+        _ => &[],
     }
 }
 
@@ -63,10 +74,11 @@ pub async fn import_upload_handler(
     let Some(applet_id) = applet_for(&source) else {
         return error_response(Error::NotFound(format!("no import for {source}")));
     };
-    let staged = match stage_upload(&mut multipart, IMPORTS_FOLDER, "This file is larger than 2 GB.").await {
-        Ok(s) => s,
-        Err(e) => return error_response(e),
-    };
+    let staged =
+        match stage_upload(&mut multipart, IMPORTS_FOLDER, "This file is larger than 2 GB.", fields_for(&source)).await {
+            Ok(s) => s,
+            Err(e) => return error_response(e),
+        };
     start_import(&state, applet_id, staged).await
 }
 
@@ -76,7 +88,10 @@ pub(crate) async fn start_import(state: &AppState, applet_id: &str, staged: Stag
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
-    let payload = serde_json::json!({ "file_path": staged.path.to_string_lossy() });
+    let mut payload = serde_json::json!({ "file_path": staged.path.to_string_lossy() });
+    for (k, v) in &staged.fields {
+        payload[k] = serde_json::Value::from(v.clone());
+    }
     match crate::applet_runner::run_applet_detached(&deps, applet_id, "manual", Some(&payload)).await {
         Ok(result) => {
             // A run that started reads the file and removes it; any other
@@ -95,6 +110,8 @@ pub(crate) async fn start_import(state: &AppState, applet_id: &str, staged: Stag
 /// drops mid-upload.
 pub(crate) struct StagedUpload {
     pub path: PathBuf,
+    /// The text fields the source asked for, as sent.
+    pub fields: Vec<(String, String)>,
     kept: bool,
 }
 
@@ -143,7 +160,14 @@ fn sweep_once(dir: &FsPath) {
 
 /// Stream the upload's `file` field into the staging folder `folder`, mode
 /// 0600. `too_large` is the sentence for an upload over the route's limit.
-pub(crate) async fn stage_upload(multipart: &mut Multipart, folder: &str, too_large: &str) -> Result<StagedUpload, Error> {
+/// Text fields named in `fields` are kept when they come before the file;
+/// other fields are skipped.
+pub(crate) async fn stage_upload(
+    multipart: &mut Multipart,
+    folder: &str,
+    too_large: &str,
+    fields: &[&str],
+) -> Result<StagedUpload, Error> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     use tokio::io::AsyncWriteExt;
 
@@ -160,8 +184,15 @@ pub(crate) async fn stage_upload(multipart: &mut Multipart, folder: &str, too_la
         }
     };
 
+    let mut texts: Vec<(String, String)> = Vec::new();
     while let Some(mut field) = multipart.next_field().await.map_err(cut_off)? {
-        if field.name() != Some("file") {
+        let name = field.name().unwrap_or_default().to_string();
+        if name != "file" {
+            if fields.contains(&name.as_str()) {
+                let value = field.text().await.map_err(cut_off)?;
+                // A field this route asks for is a short line, never a file.
+                texts.push((name, value.trim().chars().take(320).collect()));
+            }
             continue;
         }
         let path = dir.join(format!("{}.upload", uuid::Uuid::new_v4()));
@@ -172,7 +203,7 @@ pub(crate) async fn stage_upload(multipart: &mut Multipart, folder: &str, too_la
             .open(&path)
             .map_err(stage_failed)?;
         // Owned from here, so any failure below removes the file.
-        let staged = StagedUpload { path, kept: false };
+        let staged = StagedUpload { path, fields: texts, kept: false };
         let mut out = tokio::fs::File::from_std(std_file);
         while let Some(chunk) = field.chunk().await.map_err(cut_off)? {
             out.write_all(&chunk).await.map_err(stage_failed)?;
@@ -192,6 +223,9 @@ mod tests {
         assert_eq!(applet_for("spotify"), Some("applet_spotify_import"));
         assert_eq!(applet_for("amazon"), Some("applet_amazon_orders_import"));
         assert_eq!(applet_for("discord"), Some("applet_discord_import"));
+        assert_eq!(applet_for("slack"), Some("applet_slack_import"));
+        assert_eq!(fields_for("slack"), ["email"]);
+        assert!(fields_for("spotify").is_empty());
         assert_eq!(applet_for("chat_import"), None);
         assert_eq!(applet_for("../etc"), None);
     }
@@ -202,12 +236,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let dropped = dir.join("a.upload");
         std::fs::write(&dropped, b"x").unwrap();
-        drop(StagedUpload { path: dropped.clone(), kept: false });
+        drop(StagedUpload { path: dropped.clone(), fields: Vec::new(), kept: false });
         assert!(!dropped.exists());
 
         let kept = dir.join("b.upload");
         std::fs::write(&kept, b"x").unwrap();
-        StagedUpload { path: kept.clone(), kept: false }.keep();
+        StagedUpload { path: kept.clone(), fields: Vec::new(), kept: false }.keep();
         assert!(kept.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }

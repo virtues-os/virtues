@@ -158,6 +158,7 @@ pub async fn chat_import_upload_handler(
         &mut multipart,
         "chat-import",
         "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.",
+        &[],
     )
     .await
     {

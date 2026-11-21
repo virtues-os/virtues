@@ -162,6 +162,10 @@ path = "amazon_orders_import/main.rs"
 name = "discord_import"
 path = "discord_import/main.rs"
 
+[[bin]]
+name = "slack_import"
+path = "slack_import/main.rs"
+
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }

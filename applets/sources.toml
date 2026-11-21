@@ -182,3 +182,13 @@ display_name = "Discord"
 icon = "ri:discord-line"
 description = "The messages you sent, from a Discord data download."
 auth = { kind = "api_key", fields = [] }
+
+# A workspace export, which only the workspace's admins can make. Slack's
+# directory turns away apps that keep a copy of messages, and its API is too
+# slow for one outside the directory, so an export is the way in.
+[[source]]
+id = "slack"
+display_name = "Slack"
+icon = "ri:slack-line"
+description = "The conversations you're in, from a workspace export."
+auth = { kind = "api_key", fields = [] }

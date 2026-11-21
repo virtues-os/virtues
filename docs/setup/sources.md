@@ -1,6 +1,6 @@
 ---
 title: How sources work
-description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, meeting notes from Fathom, Fireflies.ai and Granola, GitHub stars, X bookmarks, Instagram saves, past chats, and downloads from Spotify, Amazon and Discord - and the tools your assistant can use, from the Sources page.
+description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, meeting notes from Fathom, Fireflies.ai and Granola, GitHub stars, X bookmarks, Instagram saves, past chats, and downloads from Spotify, Amazon, Discord and Slack - and the tools your assistant can use, from the Sources page.
 updated: 2026-11-21
 ---
 
@@ -67,6 +67,10 @@ yet. Your iPhone sends more than any account.
   payment details. Discord's brings the messages you sent; it has no one
   else's. The import window says where to request each file. A newer
   download adds only what is new.
+- **Slack:** a workspace export, which only the workspace's admins can make.
+  The import window asks for your email in Slack, and your server keeps only
+  the conversations you are in. On Slack's free plan an export reaches back
+  90 days.
 
 ## Where Google and Outlook mail travels
 

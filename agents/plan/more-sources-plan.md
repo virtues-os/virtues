@@ -1,8 +1,9 @@
 # More sources
 
-**Status:** proposed 2026-11-21. Slices 1 to 4 (Outlook, meeting notes,
-photos, imports) are built on wave (2026-11-21); none has run against a
-real account, phone or download. Google Contacts is
+**Status:** proposed 2026-11-21. Slices 1 to 5 (Outlook, meeting notes,
+photos, imports, Slack) are built on wave (2026-11-21); none has run
+against a real account, phone or download. Zoom is left to the meeting
+tools (decision 2), so slice 6 has nothing to build. Google Contacts is
 left to the iPhone (decision 6, settled). The owner picked the sources below; how each one
 connects comes from a read of each vendor's public docs on 2026-11-21 and has
 not been tried against a real account.
@@ -157,8 +158,14 @@ photo, and a picture for favorites only.**
    - **Not kept from the downloads:** Spotify's IP address and country per
      play; Amazon's addresses, payment details, gift messages and tracking
      numbers.
-5. **Slack,** once decision 1 is made.
-6. **Zoom,** once decision 2 is made.
+5. **Slack,** as an import of a workspace export (decision 1).
+   - **Built on wave:** the `slack-import` applet through the imports route
+     (`/api/imports/slack/upload`), which also carries the owner's email in
+     Slack so the import can find them in `users.json` and keep only
+     conversations they are in. Messages go into
+     `data_communication_message` with channel `slack`. File links are not
+     kept: they need a Slack login and expire.
+6. **Zoom: not built.** Left to the meeting tools (decision 2).
 7. **The manual.** A line per source in `docs/setup/sources.md`, and what
    passes through Truto. Delete this plan when the last slice ships.
 
@@ -166,35 +173,27 @@ photo, and a picture for favorites only.**
 
 Open, each needs the owner's words:
 
-1. **Slack:** submit our app to the Slack Marketplace (review, terms,
-   security questions), or start with importing a Slack export (only a
-   workspace's admins can make one), or wait.
-   - On 2026-11-21 the owner chose "Apply to Slack's directory". A read of
-     Slack's own pages the same day found that a listing would very likely
-     be returned, so this is open again until the owner answers with that
-     in front of them:
-     - Slack's Marketplace guidelines list apps that "export or backup
-       message data" as unsuitable, and apps with no functionality inside
-       Slack. A read-only copy of your messages is both.
-     - Submitting needs the app installed on 10 or more active workspaces
-       first, and new submissions take up to 10 weeks of review.
-     - Slack's API terms (effective 2025-10-10) forbid bulk export of
-       message data except where expressly allowed, and limit what an app
-       used outside its own organization keeps to the minimum it needs.
-     - An app outside the Marketplace is capped at one history request a
-       minute, 15 messages each. Asking each person to make their own app
-       from our manifest appears to be covered by the same terms, since
-       Virtues is a paid product.
-     - Untouched by this: importing an export the workspace's admins make,
-       which is Slack's own feature and goes through no API.
-2. **Zoom:** submit to Zoom's Marketplace review, ask each person to make
-   their own Zoom app and paste its keys, or leave Zoom to the meeting tools
-   that already record Zoom calls (Fathom, Fireflies.ai, Granola).
 5. **Spotify live plays:** import only, or also let someone paste their own
    Spotify app's keys for the 50 most recent plays between imports.
 
 Settled:
 
+1. **Slack: import a workspace export.** The owner first chose "Apply to
+   Slack's directory" on 2026-11-21. Slack's own pages showed a listing
+   would very likely be returned: the guidelines list apps that "export or
+   backup message data" and apps with nothing inside Slack as unsuitable,
+   submitting needs 10 active workspaces, the API terms forbid bulk export,
+   and an app outside the directory reads 15 messages a minute. With that in
+   front of them the owner chose "Import an export". Only a workspace's
+   admins can make one.
+2. **Zoom: left to the meeting tools.** The owner, on 2026-11-21, chose
+   "Leave to meeting tools (Recommended)" after a read of Zoom's own pages:
+   anyone outside our Zoom account can sign in only after Marketplace review
+   (security test results, a design document, a test plan); the API terms
+   forbid creating copies of data read through the API; and the API reaches
+   only meetings the person hosted, on Pro plans or above. Fathom,
+   Fireflies.ai and Granola record Zoom calls, including ones the person
+   only attended. No Zoom source is built.
 3. **Where meeting transcripts live: the transcript record.** The owner,
    on 2026-11-21, chose "Transcript record (Recommended)" over a new meeting
    record and the past-chats record. A meeting is one row in

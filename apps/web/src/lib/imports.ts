@@ -1,7 +1,7 @@
 /**
  * One-time imports: a file the owner downloads from a service and brings in.
- * Past chats (a Claude or ChatGPT export), Spotify listening, Amazon orders
- * and Discord messages.
+ * Past chats (a Claude or ChatGPT export), Spotify listening, Amazon orders,
+ * Discord messages and a Slack workspace export.
  *
  * The upload returns as soon as the import has started; the import runs as
  * that source's applet. `importFile` follows the run until it ends and
@@ -35,8 +35,14 @@ export interface ImportSource {
 	/** The source page's status line and the sentence under it. */
 	line: string;
 	why: string;
+	/** Label of an email field the import needs, when it needs one. */
+	emailLabel?: string;
 	appletId: string;
-	upload: (file: File, onProgress: (percent: number) => void) => Promise<ImportResponse>;
+	upload: (
+		file: File,
+		onProgress: (percent: number) => void,
+		fields: Record<string, string>
+	) => Promise<ImportResponse>;
 }
 
 export const IMPORT_SOURCES: Record<string, ImportSource> = {
@@ -87,6 +93,19 @@ export const IMPORT_SOURCES: Record<string, ImportSource> = {
 		why: 'Request your data from Discord, then import the zip here. It has only the messages you sent. A newer download adds only what is new.',
 		appletId: 'applet_discord_import',
 		upload: (file, onProgress) => uploadImport('discord', file, onProgress)
+	},
+	slack: {
+		title: 'Bring in a Slack workspace',
+		how: "A workspace admin makes the export: in Slack, open the workspace's settings, then Import and export data, then Export. Slack emails a link to a zip. Upload it here as it is.",
+		fileLabel: 'Slack export',
+		accept: '.zip,application/zip',
+		reading: 'Reading your messages…',
+		done: 'Your messages are in.',
+		line: 'Bring in a Slack workspace.',
+		why: "Ask the workspace's admin for an export, then import the zip here. Only conversations you are in are kept. A newer export adds only what is new.",
+		emailLabel: 'Your email in Slack',
+		appletId: 'applet_slack_import',
+		upload: (file, onProgress, fields) => uploadImport('slack', file, onProgress, fields)
 	}
 };
 
@@ -126,12 +145,12 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
 export async function importFile(
 	sourceId: string,
 	file: File,
-	opts: { onPhase?: (phase: ImportPhase) => void; signal?: AbortSignal } = {}
+	opts: { onPhase?: (phase: ImportPhase) => void; signal?: AbortSignal; fields?: Record<string, string> } = {}
 ): Promise<string> {
 	const source = IMPORT_SOURCES[sourceId];
 	if (!source) throw new Error(`There is no import for ${sourceId}.`);
 	opts.onPhase?.({ step: 'uploading', percent: 0 });
-	const started = await source.upload(file, (percent) => opts.onPhase?.({ step: 'uploading', percent }));
+	const started = await source.upload(file, (percent) => opts.onPhase?.({ step: 'uploading', percent }), opts.fields ?? {});
 	if (started.status === 'success') return started.summary ?? source.done;
 	// The server runs one import of each kind at a time and turns the next away.
 	if (started.status === 'skipped') {

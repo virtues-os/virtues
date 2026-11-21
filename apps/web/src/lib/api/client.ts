@@ -1319,15 +1319,19 @@ export function uploadChatImport(
 
 /**
  * POST /api/imports/:source/upload — multipart upload of a service's data
- * download (`spotify`, `amazon`, `discord`). Returns as soon as the import
- * has started; `imports.ts` follows the run.
+ * download (`spotify`, `amazon`, `discord`, `slack`). `fields` are text
+ * fields the source asks for (Slack's `email`); they go before the file,
+ * because the server reads them only until the file starts. Returns as soon
+ * as the import has started; `imports.ts` follows the run.
  */
 export function uploadImport(
 	source: string,
 	file: File,
-	onProgress?: (percent: number) => void
+	onProgress?: (percent: number) => void,
+	fields: Record<string, string> = {}
 ): Promise<ImportResponse> {
 	const form = new FormData();
+	for (const [k, v] of Object.entries(fields)) form.append(k, v);
 	form.append('file', file);
 	return postFormWithProgress<ImportResponse>(`/imports/${encodeURIComponent(source)}/upload`, form, onProgress);
 }
