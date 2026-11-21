@@ -87,15 +87,14 @@ A renderer must:
 1. Lay the source out as `<source>/new-chat-light/<collection>/<name>.<jpg|png|webp>`,
    and `new-chat-dark/` beside it when each picture has a night version. With
    no dark folder, each picture's dark version is the light one dimmed.
-2. Build it: `python3 tools/backgrounds/build.py --style <id> --title "<Name>" --source <dir> --out ~/virtues-backgrounds/<id>`,
+2. Build it: `python3 tools/backgrounds/build.py --style <id> --title "<Name>" --source <dir> --out <styles dir>/<id>`,
    with `--prompts` when there is a prompts file for titles. With a dark
    folder whose pictures are different places, the tool proposes pairs in
    `tools/backgrounds/pairs/<id>.tsv`; check them in `review.html` and fix
    the file. Pictures are AVIF at 1792 and 896 wide.
-3. Package every style: `python3 tools/backgrounds/package.py --styles <each style dir> --out ~/virtues-backgrounds-dist`.
+3. Package every style: `python3 tools/backgrounds/package.py --styles <each style dir> --out <dist dir>`.
 4. Upload the new archives to the bucket under `backgrounds/`, then
-   `catalog.json` last, with the maps writer key on the cloud server
-   ([deployment.md](deployment.md)). A server with the style already
+   `catalog.json` last ([deployment.md](deployment.md)). A server with the style already
    updates to a rebuilt archive on its own.
 
 ### A drawn style (dots, a shader, ASCII)
@@ -118,8 +117,8 @@ it needs streaming with ranges first, and a still frame under Reduce motion.
 ## Rules every style keeps
 
 - **Nothing to unlock, count or collect.** No "new" marks, no count of
-  pictures seen, no streaks; someone in recovery sees home every day
-  ([personas.md](personas.md)).
+  pictures seen, no streaks. Home is seen every day, and its picture should
+  never ask for attention.
 - **No mark of where a style comes from in the pickers.** A card may say
   its size and its download progress; where it comes from is in the
   manual.

@@ -82,7 +82,7 @@ fixed setting.
 
 ### The home control
 
-From the owner, 2026-11-20: in the bottom right corner of a new tab or new
+Proposed 2026-11-20: in the bottom right corner of a new tab or new
 chat, a small glass button with an icon that suggests appearance. Clicking it
 opens a popover with:
 
@@ -94,8 +94,8 @@ opens a popover with:
 Settings › Appearance keeps the full picker (styles, collections, pictures,
 Plain). The popover is the quick way in from where the picture is.
 
-Built in slice 3 as proposed. The owner has not confirmed the first and
-third points:
+Built in slice 3 as proposed. The first and third points below are still
+open decisions (see the end of this plan):
 
 - Under a rotating setting, the arrows change the picture for the rest of
   today (`ui_preferences.background_today`), and rotation resumes the next
@@ -115,19 +115,15 @@ third points:
 ### Decisions made 2026-11-20
 
 - **Both painting sets ship, as two styles.** The muted set is Watercolors
-  (`watercolors`) and the original set is Oil paintings (`oil-paintings`),
-  the owner's choice of names and ids on 2026-11-20.
+  (`watercolors`) and the original set is Oil paintings (`oil-paintings`).
 - **Light and dark are paired now, night versions later.** Each collection's
   12 light pictures are matched with its 12 dark ones by curation. Later, each
   light painting gets a night version of the same place.
-- **Only home, for now.** The owner: "rm picture from day page for now. lets
-  focus on the new chat / homepage bgs". The `day-page-*` folders are not
-  used. The `new-chat-*` folders are the home pictures, which on a computer is
+- **Only home, for now.** The day page keeps its own picture, and the
+  `day-page-*` folders are not used. The `new-chat-*` folders are the home pictures, which on a computer is
   also the window's picture.
-- **The lake is not a choice.** The owner, after slice 4: "rm the lake as
-  an option / standalone collection thing". It stays as what home shows
-  until a background is chosen, and as the fallback when a chosen style is
-  missing.
+- **The lake is not a choice.** It stays as what home shows until a
+  background is chosen, and as the fallback when a chosen style is missing.
 - **The levels are called Style › Collection.** "Theme" keeps meaning Light
   and Dark.
 
@@ -158,8 +154,7 @@ does not use every picture exactly once. The proposals are rough: pictures
 marked "(earlier)" in the prompts file have no prompt, and words cannot see a
 composition.
 
-The two styles are built in `~/virtues-backgrounds/watercolors` and
-`~/virtues-backgrounds/oil-paintings`. A style's id is part of every stored
+The styles are built into folders outside the repo. A style's id is part of every stored
 setting that names it, so renaming one after release breaks those settings.
 
 What the measurement showed:
@@ -184,12 +179,12 @@ the box. Built in slice 4; the manual page is
 - `tools/backgrounds/package.py` writes `catalog.json` and one
   `<style>-<sha12>.tar` per style. The catalog carries each style's size,
   sha256 and a small preview per appearance.
-- The archives live in the maps bucket under `backgrounds/`, the owner's
-  choice of "the OVH bucket" on 2026-11-20. `deploy/maps/prune.sh` deletes
-  only eight-digit build folders, so it leaves them alone. virtues-api serves
-  them at `/v1/backgrounds/catalog.json` and `/v1/backgrounds/<archive>`
-  with a subscriber's bearer, reading the bucket with its maps key, and logs
-  nothing (`services/virtues-api/src/routes/backgrounds.rs`).
+- The archives live in the same object storage as the map files, under
+  `backgrounds/`. `deploy/maps/prune.sh` deletes only eight-digit build
+  folders, so it leaves them alone. virtues-api serves them at
+  `/v1/backgrounds/catalog.json` and `/v1/backgrounds/<archive>` to a
+  subscriber's key and logs nothing
+  (`services/virtues-api/src/routes/backgrounds.rs`).
 - The box (`virtues-core/src/api/backgrounds.rs`) caches the catalog for a
   day (a failed fetch waits an hour before the next), never makes a listing
   wait for it, lists styles it does not have as `available`, and on
@@ -202,33 +197,28 @@ the box. Built in slice 4; the manual page is
   self-hosted copy of the same layout. Download and unpack are shared with
   the map files (`virtues-core/src/downloads.rs`).
 
-Published 2026-11-20 at the owner's go-ahead: both archives and
-`catalog.json` are in the bucket under `backgrounds/` (uploaded with the maps
-writer key, archives first, sizes checked), and virtues-api runs the route
-from wave at 4a8e8d82b. Without a key both routes answer 401, and the API's
-read key reads the files. A download through the live API with a real
-subscriber key has not been tried yet. Servers get the download with the
-next release that carries slice 4.
+Published 2026-11-20: both archives and `catalog.json` are in storage under
+`backgrounds/`, and virtues-api serves the route. Without a key both routes
+answer 401. A download through the live API with a real subscriber key has
+not been tried yet. Servers get the download with the next release that
+carries slice 4.
 
 To publish a new or rebuilt style: run `package.py` over every style, upload
 the new archives, then `catalog.json` last. An archive no catalog names any
 more can be deleted after a day, once servers have refreshed their catalog.
 
-Archives are AVIF only since 2026-11-21, the owner's call ("yes if it saves
-a lot"): Watercolors is 40.8 MB and Oil paintings 36.8 MB, down from 113.5
-and 95.0. The older archives were deleted from the bucket on 2026-11-21
-at the owner's request.
+Archives are AVIF only since 2026-11-21, which cut Watercolors to 40.8 MB
+and Oil paintings to 36.8 MB, down from 113.5 and 95.0. The older archives
+were deleted from storage the same day.
 
-Photographs (`photographs`) was published on 2026-11-21 at the owner's
-go-ahead: 189 free Unsplash photographs (Unsplash+ photos left out) in five
+Photographs (`photographs`) was published on 2026-11-21: 189 free Unsplash
+photographs (Unsplash+ photos left out) in five
 collections, Animals, National parks, Nature, Sea and Space, two per subject
 and three in the last three. It is a single-version pack, so Dark dims the
 Light picture. Each picture's title names its subject and photographer, the
 credit Unsplash asks for. The archive is 29.2 MB; the other two archives did
-not change. The source photos, the picks and the titles file are not
-tracked, so photographers' names stay out of the repo. The picks are the
-photos marked Keep on the owner's shortlist page, which keeps each photo's
-Unsplash id.
+not change. The source photos and the list of picks
+are kept outside the repo.
 
 How a style is added, built in or downloaded, and what a renderer must do,
 is in [agents/build/backgrounds.md](../build/backgrounds.md).
@@ -244,8 +234,7 @@ Shaders, loops and drawn styles have three costs an image does not:
 - A moving style pauses when the window is hidden and drops its frame rate
   when nothing on screen is changing.
 
-Dots, the first, was built in slice 5 (the owner's pick of "drifting dots"
-over a shader). It ships in the app (`lib/backgrounds/builtin.ts`), so it
+Dots, the first, was built in slice 5. It ships in the app (`lib/backgrounds/builtin.ts`), so it
 needs no download, and its pictures are parameters, not files: three
 collections (Current, Swell, Rain) of two pictures each. The resolver's
 types split `ImageStyle` and `DotsStyle`, and the store lists built-in
@@ -255,25 +244,24 @@ window is hidden, and holds one frame under Reduce motion; the pickers'
 thumbnails are stills of the same drawing (`lib/backgrounds/dots.ts`). It
 does not yet lower its frame rate when nothing else on screen moves.
 
-## What each persona gets
+## What every style keeps to
 
-- **Narrative seeker:** a painting that belongs to the day, behind the place
-  where you ask about your life.
-- **Quantified self:** Plain at the top of the picker, so nothing sits behind
-  a chart if you don't want it to.
-- **Tech prosumer:** styles to choose from, moving ones later, and night
-  versions of the same place when you switch to Dark.
-- **Recovery:** nothing to unlock, earn or collect. No "new" marks on styles,
-  no count of pictures seen.
-- **Data sovereign:** styles install on the box and the apps fetch only from
-  it. The manual says what the box downloads and from where.
+- **A picture that belongs to the day,** behind the place where you start a
+  chat.
+- **Plain at the top of the picker,** so nothing sits behind a chart if you
+  don't want it to.
+- **Nothing to unlock, earn or collect.** No "new" marks on styles, no count
+  of pictures seen.
+- **Pictures come from your own server.** Styles install on the box and the
+  apps fetch only from it. The manual says what the box downloads and from
+  where.
 
 ## Order of work
 
 Each slice replaces the old way in the same change.
 
 1. **The asset tool and the pairs.** Built 2026-11-20 for both painting
-   styles. The owner accepted the proposed pairs ("good enough").
+   styles. The proposed pairs were reviewed and kept.
 2. **One component and the setting.** Built 2026-11-20:
    - The server lists installed styles at `GET /api/backgrounds` and serves
      their pictures at `GET /api/backgrounds/files/<style>/…`
