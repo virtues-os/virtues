@@ -35,7 +35,7 @@
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
-	import { optionsOf, pageOf } from '$lib/applets/kind';
+	import { homeOf, optionsOf, pageOf } from '$lib/applets/kind';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -96,6 +96,13 @@
 	// what it is: a site that came with the server opens under /site.
 	$effect(() => {
 		if (!address) return;
+		// A task of the assistant's that repeats shows in Tasks. This page is
+		// only its options, so its own address opens the task: a pin or a
+		// link from before it had a task still lands on it.
+		if (loaded && address.side === 'home' && homeOf(loaded) !== pageOf(loaded)) {
+			windowShellStore.retarget(tab.id, homeOf(loaded), loaded.name);
+			return;
+		}
 		const now = !loaded ? address.route : address.side === 'options' ? optionsOf(loaded, address.open ?? undefined) : pageOf(loaded);
 		if (tab.route !== now) windowShellStore.updateTab(tab.id, { route: now });
 	});

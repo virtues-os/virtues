@@ -224,8 +224,8 @@ Built:
 - **The task list.** A new result sits under "Ready for you" as "New".
   Otherwise the row sits under "With the assistant" and says when it runs,
   that it is off, or what went wrong. Its page shows the newest result, that
-  line, the fix when there is one, and Options. It has no box to tick and no
-  due date.
+  line, the fix when there is one, and Options, then the pages its earlier
+  runs wrote under "Earlier". It has no box to tick and no due date.
 - **It leaves Sites.** An applet with a row is not listed in the Sites door
   or on the Server tasks page, and opening it anywhere opens its task.
 - **The assistant's prompt is not told how many results wait,** and a
@@ -236,7 +236,9 @@ Left:
 - **How it runs is not on the task's page.** Options opens the applet's
   options beside it, at an address that still starts with `/site` or
   `/server-task`.
-- **Earlier results** are listed on the applet's page, not on the task's.
+- **Earlier results that were not pages.** The task's page lists the pages
+  its earlier runs wrote. A run that only said something leaves its words in
+  the run history under Options.
 - **The chat's row** for a new one is still the receipt it had. Its Open
   goes to the task.
 - **A site as a task's home,** and making one with `create_task`.
@@ -248,10 +250,17 @@ Left:
 
 ### Slice E: Sites holds only sites
 
-- The door lists rows whose kind is site. A repeating task leaves it for
-  Tasks, and its `/site/<name>` address opens its task.
+The small parts are built on wave (2026-11-21) and seen in a scratch app.
+
+- A repeating task left the door in slice D. Its old `/site/<name>` address,
+  in a pin or a link from before it had a task, now opens its task.
+- The New site sheet asks what you want to see or keep track of, and its four
+  examples are sites: a sleep chart, a water log, a reading list and a trip
+  budget. The examples that were tasks are gone.
 - A site that refreshes keeps its schedule in its own Options.
-- The New site sheet asks what you want to see or keep track of.
+- Left: a skill you made still shows in the door, until skills have somewhere
+  to be managed (O8). Nothing in the app suggests a repeating task any more;
+  it is asked for in a chat until Tasks can make one (slice D, Left).
 
 ### Slice F: finish the site
 

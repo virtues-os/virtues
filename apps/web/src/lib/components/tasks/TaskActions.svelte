@@ -43,7 +43,9 @@
 	import { actionOf, problemOf } from '$lib/applets/standing';
 	import { optionsOf } from '$lib/applets/kind';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { runApplet } from '$lib/api/client';
+	import { getAppletPages, runApplet, type AppletPage } from '$lib/api/client';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import { whenInWords } from '$lib/utils/dateUtils';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { recurrenceOf } from '$lib/tasks/recur';
 	import { formatMicrosUSD } from '$lib/utils/currency';
@@ -64,6 +66,34 @@
 
 	function openOptions() {
 		if (applet) windowShellStore.openRouteBeside(optionsOf(applet), applet.name);
+	}
+
+	// The pages its earlier runs wrote, newest first. The newest result is
+	// already shown above, so its page is left out of this list.
+	const EARLIER = 6;
+	let wrote = $state<AppletPage[]>([]);
+	$effect(() => {
+		const id = task.applet_id;
+		// Read so that a new result reads the list again.
+		void task.result_url;
+		wrote = [];
+		if (!id) return;
+		let gone = false;
+		getAppletPages(id)
+			.then((pages) => {
+				if (!gone) wrote = pages;
+			})
+			.catch(() => {
+				// The result above still shows. Its earlier pages are in Pages.
+			});
+		return () => {
+			gone = true;
+		};
+	});
+	const earlier = $derived(wrote.filter((p) => `/page/${p.page_id}` !== task.result_url).slice(0, EARLIER));
+
+	function openPage(id: string, title: string) {
+		windowShellStore.openRouteBeside(`/page/${id}`, title);
 	}
 
 	async function actOnTrouble() {
@@ -175,6 +205,19 @@
 					<Button variant="secondary" onclick={openOptions}>Options</Button>
 				{/if}
 			</div>
+			{#if earlier.length > 0}
+				<div class="earlier">
+					<h4 class="earlier-head">Earlier</h4>
+					<ul role="list">
+						{#each earlier as p (p.page_id)}
+							<li>
+								<TextAction onclick={() => openPage(p.page_id, p.title)}>{p.title}</TextAction>
+								<span class="earlier-when">{whenInWords(p.written_at)}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
 		{:else if request && task.status === 'ready'}
 			<div class="result">
 				<Markdown content={task.result ?? ''} />
@@ -241,6 +284,30 @@
 		font-size: var(--text-body);
 		line-height: 24px;
 		color: var(--color-foreground);
+	}
+	.earlier-head {
+		margin: 0 0 4px;
+		font-size: var(--text-small);
+		font-weight: 400;
+		color: var(--color-foreground-subtle);
+	}
+	.earlier ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.earlier li {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 4px 0;
+		font-size: var(--text-label);
+	}
+	.earlier-when {
+		flex-shrink: 0;
+		font-size: var(--text-small);
+		color: var(--color-foreground-muted);
 	}
 	.state {
 		margin: 0;
