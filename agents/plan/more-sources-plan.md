@@ -1,8 +1,8 @@
 # More sources
 
 **Status:** proposed 2026-11-21. Slice 1's Outlook half is built on wave
-(2026-11-21) and has not run against a real account; Google Contacts is
-waiting on decision 6. The owner picked the sources below; how each one
+(2026-11-21) and has not run against a real account. Google Contacts is
+left to the iPhone (decision 6, settled). The owner picked the sources below; how each one
 connects comes from a read of each vendor's public docs on 2026-11-21 and has
 not been tried against a real account.
 
@@ -99,11 +99,12 @@ photo, and a picture for favorites only.**
      real Microsoft 365 account. Untested: whether Truto forwards the
      `Prefer` header (the applets cope without it), what Truto records as the
      account's address, and whether a work tenant lets a person consent.
-   - **Contacts:** one more scope on the existing Google connection does not
-     work. Truto's custom call is tied to the integration's base address,
-     `www.googleapis.com` for the Google connection, and Google serves the
-     People API only at `people.googleapis.com` (checked 2026-11-21). See
-     decision 6.
+   - **Contacts: not built.** One more scope on the existing Google
+     connection does not work. Truto's custom call is tied to the
+     integration's base address, `www.googleapis.com` for the Google
+     connection, and Google serves the People API only at
+     `people.googleapis.com` (checked 2026-11-21). The owner left contacts
+     to the iPhone (decision 6).
 2. **Meeting notes: Fathom, Fireflies.ai, Granola.** Three `api_key`
    sources with polling syncs. Decide where a meeting's transcript lives
    (decision 3).
@@ -134,10 +135,12 @@ Open, each needs the owner's words:
    proposed, or favorites only.
 5. **Spotify live plays:** import only, or also let someone paste their own
    Spotify app's keys for the 50 most recent plays between imports.
-6. **Google Contacts:** a second Truto connection through its
-   `googlecontacts` integration (a second Google sign-in and a second
-   per-account fee), a custom resource on our Truto environment's Google
-   integration that points at `people.googleapis.com` (no second sign-in,
-   needs testing on a real account), or leave contacts to the iPhone, which
-   already sends the contacts on the phone, Google's included when the phone
-   syncs them.
+
+Settled:
+
+6. **Google Contacts: left to the iPhone.** The owner, on 2026-11-21:
+   "Leave to iPhone". The iPhone already sends the contacts on the phone,
+   Google's included when the phone syncs them. The options passed over
+   were a second Truto connection through `googlecontacts` (a second
+   sign-in and fee) and a custom Truto resource pointing at
+   `people.googleapis.com`.
