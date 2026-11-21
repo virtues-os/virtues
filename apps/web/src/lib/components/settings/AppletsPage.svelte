@@ -9,8 +9,8 @@
 	 * they are for: the ones that keep an account or a device current, one
 	 * row per account, and the ones that build and keep your record. A task
 	 * that needs you stays in its place. A row opens in place
-	 * (`ServerTaskOpen.svelte`). The skills that came with the server are
-	 * folded at the foot. What you set up yourself is in Sites.
+	 * (`ServerTaskOpen.svelte`). What you set up yourself is in Sites, and
+	 * skills are under your assistant in Settings.
 	 */
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
@@ -276,11 +276,6 @@
 			{#if groups.whenAsked.length}
 				<Fold label="Runs only when asked" sub="Nothing starts these on its own. Your server runs one when you ask for it.">
 					{@render list(groups.whenAsked)}
-				</Fold>
-			{/if}
-			{#if groups.skills.length}
-				<Fold label="Skills" sub="What the assistant knows how to do. Type / in a chat to start one.">
-					{@render list(groups.skills)}
 				</Fold>
 			{/if}
 			{#if groups.finished.length}

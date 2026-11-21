@@ -10,7 +10,7 @@
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
 import { needsYou } from './days';
-import { isYours, kindOf, startsItself } from './kind';
+import { inSitesDoor, isYours, kindOf, startsItself } from './kind';
 import { describeTriggers, errorHeadline, runFix } from './palette';
 
 export interface Trouble {
@@ -104,11 +104,9 @@ export interface ServerTaskGroups {
 	server: Applet[];
 	/** The server's own tasks that nothing starts: they run when asked. */
 	whenAsked: Applet[];
-	/** The skills that came with the server. */
-	skills: Applet[];
 	/** One-time ones that already ran, yours included. */
 	finished: Applet[];
-	/** Things of yours in Sites that need you. Your tasks that repeat say so in Tasks. */
+	/** Sites of yours that need you. Your tasks that repeat say so in Tasks. */
 	yoursNeedingYou: Applet[];
 }
 
@@ -152,9 +150,8 @@ export function groupServerTasks(applets: Applet[], now = Date.now()): ServerTas
 		accounts,
 		server: own.filter(startsItself),
 		whenAsked: own.filter((a) => !startsItself(a)),
-		skills: byName(applets.filter((a) => !a.archived_at && !isYours(a) && kindOf(a) === 'skill')),
 		finished: byName(applets.filter((a) => a.archived_at)),
-		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && !isServerTask(a) && !a.task_id && needsYou(a, now))),
+		yoursNeedingYou: byName(applets.filter((a) => inSitesDoor(a) && needsYou(a, now))),
 	};
 }
 

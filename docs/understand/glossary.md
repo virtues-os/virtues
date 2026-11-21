@@ -123,7 +123,9 @@ spend and how its last runs went. A site is private until you share it.
 **Skill** - written instructions your assistant follows to do a task the same
 way each time, such as preparing you for a meeting or planning a trip. Type
 `/` in a chat to start one. Your assistant also picks one up on its own when
-what you ask calls for it.
+what you ask calls for it. Skills, under What it can do in Settings, lists
+the ones that came with your server and the ones you made. Open one there to
+turn it off, change it or delete it.
 
 ## Terms with specific meanings
 

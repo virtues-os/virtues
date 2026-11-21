@@ -39,6 +39,18 @@ export const KIND_WORD: Record<AppletKind, 'Site' | 'Task' | 'Skill'> = {
 /** Whether you set it up, or the assistant did for you, and it did not come with the server or an account. */
 export const isYours = (a: Pick<Applet, 'origin'>) => a.origin === 'user' || a.origin === 'ai';
 
+/**
+ * Whether the Sites door lists it: a site you set up. A skill you made is
+ * under Skills in Settings, and a task of the assistant's is in Tasks once
+ * it has its row there. One without a row, on a server from before those
+ * rows, stays in the door so that it is still somewhere.
+ */
+export function inSitesDoor(a: Parts & Pick<Applet, 'origin' | 'archived_at'> & { task_id?: string | null }): boolean {
+	if (!isYours(a) || a.archived_at) return false;
+	const kind = kindOf(a);
+	return kind === 'site' || (kind === 'assistant_task' && !a.task_id);
+}
+
 type Addressed = Parts & Pick<Applet, 'id'> & { task_id?: string | null };
 
 /** An applet's own page: its view or what it made, with its options on the other side. */

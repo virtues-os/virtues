@@ -99,7 +99,7 @@ describe('appletLine', () => {
 });
 
 describe('groupServerTasks', () => {
-	it('lists the server\'s tasks by account, folds its skills, and leaves yours to Sites', () => {
+	it('lists the server\'s tasks by account, and leaves skills and what you set up to their own pages', () => {
 		const program = { command: ['run'] };
 		const groups = groupServerTasks(
 			[
@@ -123,7 +123,6 @@ describe('groupServerTasks', () => {
 		// The shipped task of the assistant's sits here until Tasks can show it.
 		expect(groups.server.map((a) => a.id)).toEqual(['c', 'j']);
 		expect(groups.whenAsked.map((a) => a.id)).toEqual(['i']);
-		expect(groups.skills.map((a) => a.id)).toEqual(['g']);
 		expect(groups.finished.map((a) => a.id)).toEqual(['h']);
 		expect(groups.yoursNeedingYou.map((a) => a.id)).toEqual(['b']);
 	});

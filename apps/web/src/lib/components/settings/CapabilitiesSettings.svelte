@@ -6,6 +6,7 @@
 	 * chat, and the tool runner refuses them for applets too.
 	 */
 	import SwitchList from './SwitchList.svelte';
+	import LinkRow from './LinkRow.svelte';
 	import { getCapabilities, setCapability, type Capability } from '$lib/api/client';
 	import { GOOGLE_WORDS } from '$lib/sources/capabilities';
 
@@ -28,4 +29,11 @@
 	words={WORDS}
 	load={getCapabilities}
 	save={setCapability}
+/>
+
+<LinkRow
+	id="skills"
+	label="Skills"
+	help="What it knows how to do the same way each time. Turn one off, or change one you made."
+	href="/virtues/assistant/skills"
 />

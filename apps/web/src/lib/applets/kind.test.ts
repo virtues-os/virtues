@@ -1,7 +1,7 @@
 // What an applet is to the person who meets it. The same table as the
 // server's `a_kind_follows_from_the_parts_in_order`. Every name is invented.
 import { describe, expect, it } from 'vitest';
-import { homeOf, kindOf, optionsOf, pageOf } from './kind';
+import { homeOf, inSitesDoor, kindOf, optionsOf, pageOf } from './kind';
 
 const parts = (over: Record<string, unknown> = {}) =>
 	({ schedule: null, watch: null, triggers: ['manual', 'message'], command: null, has_face: false, ...over }) as Parameters<typeof kindOf>[0];
@@ -31,6 +31,19 @@ describe('the kind of an applet', () => {
 		expect(optionsOf({ ...parts({ kind: 'skill' }), id: 'applet_user__packing_list' }, 'history')).toBe(
 			'/skill/packing_list/options?panel=history'
 		);
+	});
+
+	it('lists only your sites in the Sites door', () => {
+		const yours = (over: Record<string, unknown>) => ({ ...parts(over), origin: 'ai', archived_at: null }) as Parameters<typeof inSitesDoor>[0];
+		expect(inSitesDoor(yours({ kind: 'site' }))).toBe(true);
+		// A skill is under Skills, and a task with its row is in Tasks.
+		expect(inSitesDoor(yours({ kind: 'skill' }))).toBe(false);
+		expect(inSitesDoor({ ...yours({ kind: 'assistant_task' }), task_id: 'task_1' })).toBe(false);
+		// On a server from before task rows, a task of yours is still somewhere.
+		expect(inSitesDoor(yours({ kind: 'assistant_task' }))).toBe(true);
+		// What came with the server, and what has finished, are not listed.
+		expect(inSitesDoor({ ...yours({ kind: 'site' }), origin: 'system' })).toBe(false);
+		expect(inSitesDoor({ ...yours({ kind: 'site' }), archived_at: '2026-11-01T09:00:00Z' })).toBe(false);
 	});
 
 	it('opens a task of the assistant\'s as its task once it has a row, and keeps its own page for its options', () => {

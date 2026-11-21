@@ -174,8 +174,8 @@ rule. The server's side is covered by its test and has not answered a request.
   until slice D gives them a home. A task of the assistant's that you set up
   still shows in the Sites door at a `/site` address, and one that came with
   the server (the morning examen) still shows on the Server tasks page.
-- A skill you made still shows in the Sites door, because nothing else lists
-  it. See O8.
+- A skill you made still showed in the Sites door until the Skills page was
+  built (slice E).
 
 ### Slice C: your server's tasks
 
@@ -258,9 +258,20 @@ The small parts are built on wave (2026-11-21) and seen in a scratch app.
   examples are sites: a sleep chart, a water log, a reading list and a trip
   budget. The examples that were tasks are gone.
 - A site that refreshes keeps its schedule in its own Options.
-- Left: a skill you made still shows in the door, until skills have somewhere
-  to be managed (O8). Nothing in the app suggests a repeating task any more;
-  it is asked for in a chat until Tasks can make one (slice D, Left).
+- Skills left the door and the Server tasks page. They are listed on a
+  Skills page under the assistant's settings (`SkillsPage.svelte`, at
+  `/virtues/assistant/skills`): the ones you made, then the ones that came
+  with your server. A row opens the skill's page, where it is turned off,
+  changed or deleted. What it can do links to it.
+- The door lists your sites and nothing else (`inSitesDoor` in
+  `applets/kind.ts`). A task of yours stays in it only on a server from
+  before task rows.
+- Left: the Skills page is not on the Settings landing page or in Settings
+  search, because `settings/index.ts` held another change in progress. The
+  shipped skill that writes skills is still named "New applet"; renaming its
+  folder changes its id and needs a migration to drop the old row. Nothing
+  in the app suggests a repeating task any more; it is asked for in a chat
+  until Tasks can make one (slice D, Left).
 
 ### Slice F: finish the site
 
@@ -296,6 +307,7 @@ In the owner's words where he said them.
 | 2026-11-21 | Your tasks and the assistant's sit side by side. | "I like the idea a bit, human tasks vs ai tasks." |
 | 2026-11-21 | The page that lists your server's tasks is "Server tasks". | He picked it from four names. |
 | 2026-11-21 | A task that came with the server, such as the morning examen, shows on Server tasks and never in your own list. | "th server task list yes not the human one" |
+| 2026-11-21 | Skills are managed on a Skills list under the assistant's settings. | "Add Skills list" |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -307,7 +319,6 @@ view is a site".
 |---|---|---|
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
 | O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
-| O8 | Where you manage skills: turn one off, change one you made, delete it | Not picked. A skill has no door, the `/` menu only starts one, and the Server tasks page is the wrong place for them. A "Skills" list under the assistant's settings is the smallest answer. |
 | O9 | Does a site that came with the server show in the Sites door? | No, as built. The door lists what you set up. The dot cloud opens by its address or in a page. |
 
 ## Personas

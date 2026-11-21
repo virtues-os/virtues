@@ -11,6 +11,7 @@
 	  Profile      /virtues/profile        — you: name, birthday, work, home
 	  How it talks /virtues/assistant      — its name, its manner, what it never raises
 	  Can do       /virtues/assistant/tools — its tools
+	  Skills       /virtues/assistant/skills — what it knows how to do, yours and the server's
 	  Spending     /virtues/assistant/spending — models, and what tasks may spend
 	               /virtues/assistant/spending/models — the model list (?role= picks one)
 	               /virtues/assistant/spending/cost   — what AI has cost, and every call
@@ -64,6 +65,7 @@
 	import StreamsView from '$lib/components/tabs/views/StreamsView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
+	import SkillsPage from '$lib/components/settings/SkillsPage.svelte';
 	import DeletedRecordsPage from '$lib/components/settings/DeletedRecordsPage.svelte';
 	import DeletionPage from '$lib/components/settings/DeletionPage.svelte';
 	import SearchPage from '$lib/components/settings/SearchPage.svelte';
@@ -252,6 +254,8 @@
 		{:else if section === 'assistant'}
 			{#if sub === 'tools'}
 				<SettingsSection section="tools" />
+			{:else if sub === 'skills'}
+				<SkillsPage />
 			{:else if sub === 'spending' && subPage === 'models'}
 				<ModelCatalogView {role} />
 			{:else if sub === 'spending' && subPage === 'cost'}

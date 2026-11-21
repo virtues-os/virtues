@@ -6,7 +6,7 @@
  */
 import { listApplets, type Applet } from '$lib/api/client';
 import { needsYou } from '$lib/applets/days';
-import { isYours } from '$lib/applets/kind';
+import { inSitesDoor, isYours } from '$lib/applets/kind';
 
 class AppletsStore {
 	list = $state<Applet[]>([]);
@@ -22,13 +22,8 @@ class AppletsStore {
 			.sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name))
 	);
 
-	/**
-	 * What the Sites door lists: what you set up, without the tasks of the
-	 * assistant's that have their row in Tasks.
-	 * TODO(2026-11-21): a skill you made is still listed here, because
-	 * nothing else lists it (agents/plan/task-skill-site-plan.md, O8).
-	 */
-	sites = $derived(this.mine.filter((a) => !a.task_id));
+	/** What the Sites door lists: the sites you set up (`inSitesDoor`). */
+	sites = $derived(this.mine.filter(inSitesDoor));
 
 	/** Load, or join the load already in flight. */
 	load(): Promise<void> {

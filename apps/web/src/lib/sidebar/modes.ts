@@ -69,6 +69,7 @@ export interface SidebarMode {
 const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/assistant': { icon: 'mynaui:sparkles', glyph: 'assistant' },
 	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
+	'/virtues/assistant/skills': { icon: 'mynaui:zap' },
 	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
 	'/virtues/data': { icon: 'mynaui:database' },
 	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
@@ -111,10 +112,12 @@ function settingsRows(): ModeRow[] {
 			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
 		}
 	}
-	// Pages Your server links to rather than the site map: Search, Applets
-	// and Terminal. This device's line appears only on a device with a page
-	// of its own, so its row is here rather than in LANDING.
+	// Pages another page links to rather than the site map: Skills (from
+	// What it can do), and Search, Server tasks and Terminal (from Your
+	// server). This device's line appears only on a device with a page of
+	// its own, so its row is here rather than in LANDING.
 	rows.push(
+		settingsRow('/virtues/assistant/skills', 'Skills', 'Your assistant'),
 		settingsRow('/virtues/search', 'Search', 'Your server'),
 		settingsRow('/virtues/server-tasks', 'Server tasks', 'Your server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
