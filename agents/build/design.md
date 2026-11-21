@@ -218,7 +218,7 @@ CDN or a system font.
 |---|---|---|---|
 | `--font-serif` | EB Garamond | 400 only | Reading text and titles. |
 | `--font-serif-ui` | EB Garamond UI | 400 only | The serif in a row beside an icon or a control. |
-| `--font-serif-lead` | EB Garamond Lead | 600, Latin only | The first word of a day's Abstract, and nothing else. |
+| `--font-serif-lead` | EB Garamond Lead | 600, Latin only | The first word of a day's Abstract, and bold in a chat reply set in the essay layout. Nothing else. |
 | `--font-sans` | Avenir | 400, 500, 700 | The chrome: labels, buttons, menus, captions. |
 | `--font-mono` | IBM Plex Mono | 400, 500, 600 | Code, and a chart's own labels. |
 | `--font-hand` | Nothing You Could Do | 400 | The owner's notes in a day page's margin, and nothing else. |
@@ -273,7 +273,9 @@ italic asked of `--font-serif`.
 
 `--font-serif-lead` is its own family so that the 600 cut is reached only by
 name. Inside `EB Garamond` it would be handed to every `<strong>` and table
-header that asks the serif for bold.
+header that asks the serif for bold. The essay layout's reply bold names it
+on purpose: a reply's bold lead-ins are how it is scanned, and in the regular
+cut they read as plain text. The owner chose this on 2026-11-21.
 
 #### Two serif tokens for one font
 

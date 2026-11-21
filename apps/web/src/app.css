@@ -299,8 +299,9 @@
    The 300 and 400 registrations exist so that either number in a
    `font-weight` resolves without synthesis; they are the same ink.
 
-   SemiBold 600 exists for ONE job: the first word of a day's Abstract, after
-   its drop cap (DayPage). Nothing else uses it. It is registered as its own
+   SemiBold 600 exists for two jobs: the first word of a day's Abstract,
+   after its drop cap (DayPage), and bold in a chat reply set in the essay
+   layout (ChatView). Nothing else uses it. It is registered as its own
    family, `EB Garamond Lead`, not as a 600 inside `EB Garamond`: inside the
    family, every bold the app already asks the serif for (a table header's
    600, a `<strong>`) would quietly start rendering semibold. Latin only; a

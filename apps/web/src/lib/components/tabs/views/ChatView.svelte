@@ -3460,6 +3460,15 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
+	/* The serif ships one regular cut, so a bold lead-in would read as plain
+	   text. Bold names the semibold the Abstract's lead word uses
+	   (agents/build/design.md, Type), with synthesis off as there. A bolded
+	   link is set apart by its color and line already, so it stays regular. */
+	.page-container.essay .message-wrapper[data-role="assistant"] :global(.markdown strong:not(:has(.ref-link))) {
+		font-family: var(--font-serif-lead);
+		font-weight: 600;
+		font-synthesis-weight: none;
+	}
 	/* Your turn reads in the same serif as the reply, in its bubble. */
 	.page-container.essay .message-wrapper[data-role="user"] :global(.user-message-content) {
 		font-family: var(--font-serif);
