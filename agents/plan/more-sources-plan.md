@@ -175,6 +175,24 @@ Open, each needs the owner's words:
 
 5. **Spotify live plays:** import only, or also let someone paste their own
    Spotify app's keys for the 50 most recent plays between imports.
+   - On 2026-11-21 the owner chose "Add recent plays". A read of Spotify's
+     own pages the same day found problems that leave this open until the
+     owner answers with them in front of them:
+     - Spotify's Developer Policy (effective 2025-05-15) says not to use
+       Spotify Content "to train a machine learning or AI model" or
+       "otherwise ingest Spotify Content into a machine learning or AI
+       model", and its terms define Spotify Content to include user data
+       read through the API. Your assistant reading your plays is ingest on
+       a literal reading. The policy also forbids analyzing Spotify Content,
+       with "usage statistics" and listening metrics as examples, and says
+       not to store Spotify Content indefinitely.
+     - A development-mode app works only while its owner pays for Spotify
+       Premium, takes at most five users, and each must be added by email.
+     - The sign-in lasts six months; refreshing does not extend it.
+     - The recent-plays call skips podcasts and reaches only about the last
+       50 plays.
+     - None of this touches the import: a person's own data download comes
+       from Spotify's privacy page, not through its developer platform.
 
 Settled:
 
