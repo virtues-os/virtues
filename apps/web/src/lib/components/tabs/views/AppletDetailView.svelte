@@ -35,7 +35,7 @@
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
-	import { homeOf, optionsOf } from '$lib/applets/kind';
+	import { optionsOf, pageOf } from '$lib/applets/kind';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -88,7 +88,7 @@
 
 	function showInfo(open: boolean) {
 		if (!loaded) return;
-		windowShellStore.retarget(tab.id, open ? optionsOf(loaded) : homeOf(loaded), loaded.name);
+		windowShellStore.retarget(tab.id, open ? optionsOf(loaded) : pageOf(loaded), loaded.name);
 	}
 
 	// A tab saved under an earlier address keeps working, and takes today's.
@@ -96,7 +96,7 @@
 	// what it is: a site that came with the server opens under /site.
 	$effect(() => {
 		if (!address) return;
-		const now = !loaded ? address.route : address.side === 'options' ? optionsOf(loaded, address.open ?? undefined) : homeOf(loaded);
+		const now = !loaded ? address.route : address.side === 'options' ? optionsOf(loaded, address.open ?? undefined) : pageOf(loaded);
 		if (tab.route !== now) windowShellStore.updateTab(tab.id, { route: now });
 	});
 
@@ -453,7 +453,7 @@
 			});
 		}
 		items.push(
-			pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
+			pinMenuItem({ url: pageOf(a), label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
 		);
 		if (a.owner !== 'system') {
 			items.push({

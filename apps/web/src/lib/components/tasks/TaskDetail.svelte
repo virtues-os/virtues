@@ -60,6 +60,11 @@
 	// stay one task; else this view's own read.
 	let fetched = $state<Task | null>(null);
 	const task = $derived((taskId ? tasksStore.find(taskId) : undefined) ?? (fetched?.id === taskId ? fetched : null));
+
+	// Showing a task that repeats is opening it: its new result stops waiting.
+	$effect(() => {
+		if (task) void tasksStore.seen(task);
+	});
 	$effect(() => {
 		current = task;
 	});

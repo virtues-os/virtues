@@ -44,7 +44,7 @@
 	// Yours, the ones that need you first, then the ones that are on. A
 	// built-in applet that needs you marks Settings instead.
 	const applets = $derived(
-		[...appletsStore.mine].sort(
+		[...appletsStore.sites].sort(
 			(a, b) =>
 				Number(needsYou(b)) - Number(needsYou(a)) ||
 				Number(!a.enabled) - Number(!b.enabled) ||

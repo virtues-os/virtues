@@ -38,7 +38,7 @@
 		type AccountTasks,
 		type AppletAction,
 	} from '$lib/applets/standing';
-	import { homeOf, optionsOf } from '$lib/applets/kind';
+	import { optionsOf, pageOf } from '$lib/applets/kind';
 
 	let loaded = $state(false);
 	let now = $state(Date.now());
@@ -107,7 +107,7 @@
 		windowShellStore.openAside({
 			type: 'applet',
 			label: a.name,
-			route: panel ? optionsOf(a, panel) : homeOf(a),
+			route: panel ? optionsOf(a, panel) : pageOf(a),
 			icon: 'atlas:applets',
 		});
 	}
@@ -150,7 +150,7 @@
 		items.push({ id: 'open', label: 'Open', icon: 'atlas:applets', action: () => openApplet(a) });
 		items.push({ id: 'history', label: 'Run history', icon: 'mynaui:clock-circle', action: () => openApplet(a, 'history') });
 		if (canRun(a)) items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void run(a) });
-		items.push(pinMenuItem({ url: homeOf(a), label: a.name, icon: 'atlas:applets' }));
+		items.push(pinMenuItem({ url: pageOf(a), label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 

@@ -189,6 +189,13 @@ async fn preflight(client: &Virtues) {
     if let Err(e) = crate::applet_templates::reconcile_templates(pool).await {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
+
+    // An applet that is a task of the assistant's has one row in the task
+    // list. Open the row of any that lacks one: made before the rows
+    // existed, or put in place by hand.
+    if let Err(e) = crate::api::repeating_tasks::ensure_all(pool).await {
+        tracing::warn!("Failed to open the task rows of repeating tasks: {}", e);
+    }
 }
 
 /// Everything that runs beside the server for the life of the process.

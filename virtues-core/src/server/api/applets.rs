@@ -356,6 +356,9 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             -- requests PER APPLET — around fifty on a page — for two small
             -- facts that the database can hand over in the same pass.
             p.pulse,
+            -- The row in the task list that stands for it, when it is a task
+            -- of the assistant's that repeats.
+            (SELECT st.id FROM app_tasks st WHERE st.applet_id = t.id) AS task_id,
             s.summary AS last_success_summary,
             w.cost_micros AS spend_week_micros
            FROM app_applets t
@@ -458,6 +461,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
+                    let task_id: Option<String> = r.try_get("task_id").unwrap_or(None);
                     // The SQL COALESCEs to 0, so a real "spent nothing" arrives
                     // as 0 and NULL can only mean the decode failed. Those must
                     // not collapse into each other: this is a money figure, and
@@ -505,6 +509,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "device_id": device_id,
                         "origin": origin,
                         "kind": kind,
+                        "task_id": task_id,
                         "command": command,
                         "until": until,
                         "watch": watch,
@@ -662,6 +667,7 @@ async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::
         .await
         .map_err(|e| Error::Other(format!("{e:#}")))?;
     let has_view = crate::server::faces::face_for(&action.id).is_some();
+    let task_id = crate::api::tasks::standing_task_id(pool, &action.id).await?;
     Ok(serde_json::json!({
         "id": action.id,
         "owner": action.owner,
@@ -678,6 +684,7 @@ async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::
         "device_id": action.device_id,
         "origin": crate::scheduler::applets::derived_origin(action),
         "kind": crate::scheduler::applets::derived_kind(action, has_view),
+        "task_id": task_id,
         "until": action.until,
         "watch": action.watch,
         "archived_at": action.archived_at,
@@ -738,6 +745,9 @@ pub async fn patch_applet_handler(
     }
     let pool = state.db.pool();
     let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
+    // Turning on a task of the assistant's that came with the server opens
+    // its row in the task list.
+    crate::api::repeating_tasks::ensure(pool, &applet, None).await?;
     // The row as it serializes, with the detail's fields over it. The app
     // replaces the applet it holds with this reply, so a reply without
     // `has_face` or `kind` would turn a site's page into a list of runs.

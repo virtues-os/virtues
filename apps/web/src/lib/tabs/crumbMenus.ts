@@ -63,7 +63,7 @@ export function crumbMenuItems(
 	const list = LISTS[menu.kind];
 	const rows =
 		menu.kind === 'applets'
-			? appletsStore.mine.slice(0, LIST_ROWS).map(
+			? appletsStore.sites.slice(0, LIST_ROWS).map(
 					(a): ContextMenuItem => ({
 						id: a.id,
 						label: a.name,

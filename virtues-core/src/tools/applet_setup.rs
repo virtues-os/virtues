@@ -327,7 +327,7 @@ fn key_named(problem: &str) -> &'static str {
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
-    _context: &ToolContext,
+    context: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
     let draft = Draft::parse(&arguments)?;
     let checked = plan(pool, &draft).await;
@@ -421,7 +421,20 @@ pub async fn execute(
     if plan.existed {
         let _ = applets::unarchive_applet(pool, &applet_id).await;
     }
-    let enabled = applets::get_applet(pool, &applet_id).await.map(|a| a.enabled).unwrap_or(true);
+    let made = applets::get_applet(pool, &applet_id).await.ok();
+    let enabled = made.as_ref().map(|a| a.enabled).unwrap_or(true);
+    // A prompt that starts on its own is a task the assistant does. It gets
+    // its row in the task list, filed in the thread of the chat that made it.
+    let task_id = match &made {
+        Some(a) => match crate::api::repeating_tasks::ensure(pool, a, context.thread_id.as_deref()).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(applet_id, error = %e, "could not open the task row of a repeating task");
+                None
+            }
+        },
+        None => None,
+    };
 
     // ---- What the card shows -----------------------------------------------
     let has_prompt = crate::applet_templates::key_value(&plan.text, "prompt").is_some();
@@ -452,6 +465,7 @@ pub async fn execute(
         "lifecycle": until.as_deref().map(|u| if u.eq_ignore_ascii_case("once") { "once" } else { "until" }).unwrap_or("forever"),
         "capabilities": capabilities,
         "has_view": has_view,
+        "task_id": task_id,
         "estimated_cost_per_day": est_cost_per_day,
         "run_it_with": chat_started.then(|| format!("/{spec}")),
         "skill_md": plan.text,

@@ -99,7 +99,8 @@ None of this is on `staging`, and none has run against a real server.
 | Addresses | `df399386d`, `30abf3ef4`, `bf6f6055c` | `/sites`, `/site/<name>` and `/options`. Earlier addresses still open. |
 | The server's own work | `354920107` | Grouped by purpose, one row per account, rows open in place (`JobOpen.svelte`). |
 | The three words | `f126783e1` | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
-| What a row is | slice B, 2026-11-21 | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
+| What a row is | `3dee2a53f` | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
+| A task that repeats | slice D, 2026-11-21 | One task row per repeating applet, its newest result on it, cleared by opening it. |
 
 ### What the built parts now say wrong
 
@@ -186,45 +187,59 @@ rule. The server's side is covered by its test and has not answered a request.
 
 ### Slice D: the assistant's tasks that repeat
 
-This is the one new thing to build. The four studies of 2026-11-21 agreed on
-its shape: show it as a task, and keep the applet and its runner underneath.
+The first cut is built on wave (2026-11-21). The server side is covered by
+tests that run the migration. It has not run on a server, and no real run has
+filed a result.
 
-- **The applet row stays, and the applet runner keeps running it.** Tasks
-  cannot start on a clock time, on new data or behind a check, and they have
-  no memory between runs, no tables of their own and no limit of their own.
-  Applets have all of these.
-- **One task row stands for the whole repeating task.** A new result replaces
-  the unread one. It is never one row per run, or a daily task ignored for a
-  week becomes seven rows.
-- **Opening it clears it.** There is no Accept on a repeating task. Accept
-  stays on a one-time request.
-- **The row links to its applet** (O3). Its `next_run_at` stays empty for
-  good, so the request worker never claims it (see Traps).
-- **Its result is the run's summary and the page it wrote.** Earlier results
-  are listed on the task's page from the run's recorded outputs, so every past
-  review stays in one place in order.
-- **Its home is a thread, a thing, a person, a place or an organization,**
-  like any task, and it shows on each. A site as a home is a later addition.
-- **"Every Sunday at 18:00" comes from the applet's trigger.** The task's own
-  repeat fields stay empty. They mean "so many days after you finish it",
-  which is right for your own tasks and wrong here.
-- **It spends under the applet's limit on the applet's model,** which is the
-  cheaper one unless the applet says otherwise. It does not go through the
-  request worker's single queue or its server-wide limits.
-- **A run with nothing to say changes nothing.** The row keeps its last
-  result.
-- **A failed run says what happened in a sentence with its fix.**
-- **The task's page holds how it runs:** when, what it may spend, the switch,
-  its runs and what it was asked to do. These are the options a site has now,
-  drawn on the task.
-- **The assistant makes one with the applet tool's setup,** and the server
-  opens the task row. The chat shows a task row. A repeating task made with
-  `create_task` is later.
-- **For applets people already made,** the server opens the task row the
-  first time it reads the folder, once per applet.
-- **The assistant's prompt stops receiving counts.** `tasks_line` in
-  `api/circumstances.rs` gives it "{n} overdue" and "Results waiting for them:
-  {n}", so it can say a number aloud (O5).
+What it is: the applet row stays and the applet runner keeps running it.
+Tasks cannot start on a clock time, on new data or behind a check, and they
+have no memory between runs, no tables of their own and no limit of their
+own. Applets have all of these. One row in `app_tasks` stands for the whole
+repeating task.
+
+Built:
+
+- **The link.** Migration 0098 adds `app_tasks.applet_id`, one row per
+  applet, deleted with its applet.
+- **Which applets have a row** (`api/repeating_tasks.rs`). One whose kind is
+  the assistant's task, that has not finished, and that someone set up or
+  that is on. The morning examen has no row until it is turned on. The row
+  opens at setup, in the thread of the chat that made it, when a shipped one
+  is turned on, and when the server starts, for any that lack one.
+- **The worker never runs it.** `is_queued` is false for the row, its
+  `next_run_at` stays empty, and the claim and the restart requeue both check
+  `applet_id IS NULL`.
+- **Each result replaces the last.** A run that ends with something to say
+  files its summary and the page it wrote on the row, which waits as
+  `ready`. A quiet run and a failed run change nothing on the row.
+- **Opening it clears it.** `POST /api/tasks/:id/seen` puts it back to
+  `open` and keeps the result. There is no Accept. The owner cannot take the
+  task or mark it done; it is turned off or deleted from its options.
+- **The applet's own limit and model apply,** because the applet runner runs
+  it.
+- **The task list.** A new result sits under "Ready for you" as "New".
+  Otherwise the row sits under "With the assistant" and says when it runs,
+  that it is off, or what went wrong. Its page shows the newest result, that
+  line, the fix when there is one, and Options.
+- **It leaves Sites.** An applet with a row is not listed in the Sites door
+  or on the Server tasks page, and opening it anywhere opens its task.
+- **The assistant's prompt is not told how many results wait,** and a
+  repeating task is not counted as a request assigned to it.
+
+Left:
+
+- **How it runs is not on the task's page.** Options opens the applet's
+  options beside it, at an address that still starts with `/site` or
+  `/server-task`.
+- **Earlier results** are listed on the applet's page, not on the task's.
+- **The chat's row** for a new one is still the receipt it had. Its Open
+  goes to the task.
+- **A site as a task's home,** and making one with `create_task`.
+- **An applet that stops being a task** (it gains a view) keeps its row.
+- **The overdue and due-today counts** are still in the assistant's prompt
+  line. They are about your own tasks and belong to
+  [tasks-plan.md](tasks-plan.md).
+- **`sql_query`'s catalog** does not list `applet_id`.
 
 ### Slice E: Sites holds only sites
 
@@ -276,9 +291,6 @@ view is a site".
 | # | Question | Pick |
 |---|---|---|
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
-| O3 | How a repeating task's row names its applet | One nullable column on `app_tasks`, so the task list reads it in SQL. |
-| O4 | Does a repeating task's result need Accept? | No. Opening it clears it. |
-| O5 | What the assistant is told about waiting results | That some are waiting, with no number. |
 | O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
 | O7 | A softer word than "task" for one the server suggests, such as the morning examen | Not picked. A daily reflection listed as a task can read as an obligation. |
 | O8 | Where you manage skills: turn one off, change one you made, delete it | Not picked. A skill has no door, the `/` menu only starts one, and the Server tasks page is the wrong place for them. A "Skills" list under the assistant's settings is the smallest answer. |
@@ -314,6 +326,10 @@ view is a site".
 - **A repeating task assigned to the assistant is refused today** in three
   places in `api/tasks.rs`. Slice D does not lift that. It leaves the task's
   repeat fields empty and reads the schedule from the applet.
+- **A release from before slice D does not know the row.** After a rollback
+  it shows as a request that has not started, with Take it back and Dismiss.
+  Neither loses anything: the applet still runs, and the next release reads
+  the row again.
 - **The tool definitions have a size budget** that a test enforces
   (`tool_definitions_stay_inside_their_budgets`). New wording in the applet
   tool has to fit.

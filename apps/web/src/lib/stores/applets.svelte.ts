@@ -22,6 +22,14 @@ class AppletsStore {
 			.sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name))
 	);
 
+	/**
+	 * What the Sites door lists: what you set up, without the tasks of the
+	 * assistant's that have their row in Tasks.
+	 * TODO(2026-11-21): a skill you made is still listed here, because
+	 * nothing else lists it (agents/plan/task-skill-site-plan.md, O8).
+	 */
+	sites = $derived(this.mine.filter((a) => !a.task_id));
+
 	/** Load, or join the load already in flight. */
 	load(): Promise<void> {
 		this.inflight ??= listApplets()

@@ -412,6 +412,9 @@ export interface Applet {
 	 *  than the field; read it through `kindOf` (lib/applets/kind.ts), which
 	 *  applies the same rule to the parts. */
 	kind?: AppletKind;
+	/** The row in the task list that stands for it, when it is a task of the
+	 *  assistant's that repeats. The Tasks page shows it, and Sites does not. */
+	task_id?: string | null;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
@@ -2559,6 +2562,10 @@ export interface Task {
 	next_run_at: string | null;
 	/** Failed runs in a row. */
 	attempts: number;
+	/** Set on the one row that stands for a task of the assistant's that
+	 *  repeats: the applet that runs it. Its result is replaced by each run,
+	 *  and opening it is all it asks. Absent from a server older than it. */
+	applet_id?: string | null;
 	/** The model the request's latest run used. Only reads carry it. */
 	run_model?: string | null;
 	/** Who paid for that run's calls: `wallet` or `byo`. */
@@ -2632,6 +2639,11 @@ export function getTask(id: string): Promise<Task> {
 
 export function createTask(task: NewTask): Promise<Task> {
 	return apiSend('POST', '/tasks', task);
+}
+
+/** The owner opened the task. A task that repeats stops waiting and keeps its result. */
+export function markTaskSeen(id: string): Promise<Task> {
+	return apiSend('POST', `/tasks/${encodeURIComponent(id)}/seen`, {});
 }
 
 export function updateTask(id: string, patch: TaskPatch): Promise<Task> {

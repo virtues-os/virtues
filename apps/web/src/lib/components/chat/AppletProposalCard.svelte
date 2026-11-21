@@ -73,11 +73,12 @@
 		}
 	}
 
-	// Setup's result names the schedule. A data trigger comes from the
-	// applets list, loaded once when this applet is not in it yet.
+	// The applets list says what setup's result does not: a data trigger, and
+	// the task row of a task that repeats, which is where Open goes. The list
+	// held before this setup has neither, so it loads once more.
 	let looked = false;
 	$effect(() => {
-		if (looked || (schedule && hasView !== null) || appletsStore.list.some((a) => a.id === appletId)) return;
+		if (looked) return;
 		looked = true;
 		void appletsStore.load();
 	});

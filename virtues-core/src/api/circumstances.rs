@@ -102,7 +102,8 @@ fn chapters_line(
 }
 
 /// The task list in one line: theirs by when it is due, and yours, with
-/// the requests whose results are waiting for them.
+/// whether any results are waiting for them. "Yours" leaves out the tasks
+/// that repeat: their applets run them, so they are not requests to work.
 fn tasks_line(overdue: i64, due_today: i64, mine: i64, theirs: i64, ready: i64) -> Option<String> {
     if mine == 0 && theirs == 0 && ready == 0 {
         return None;
@@ -118,8 +119,10 @@ fn tasks_line(overdue: i64, due_today: i64, mine: i64, theirs: i64, ready: i64) 
     if theirs > 0 {
         line.push_str(&format!(" Assigned to you: {theirs} open."));
     }
+    // No number here. A result that waits is not a backlog to report, and
+    // a count is something the assistant could say back to them.
     if ready > 0 {
-        line.push_str(&format!(" Results waiting for them: {ready} (status ready)."));
+        line.push_str(" Results are waiting for them (status ready).");
     }
     Some(line)
 }
@@ -359,7 +362,7 @@ async fn build_section(
                        COUNT(*) FILTER (WHERE assignee = 'owner' AND status <> 'ready' AND due_on < $1),
                        COUNT(*) FILTER (WHERE assignee = 'owner' AND status <> 'ready' AND due_on = $1),
                        COUNT(*) FILTER (WHERE assignee = 'owner' AND status <> 'ready'),
-                       COUNT(*) FILTER (WHERE assignee = 'assistant' AND status <> 'ready'),
+                       COUNT(*) FILTER (WHERE assignee = 'assistant' AND status <> 'ready' AND applet_id IS NULL),
                        COUNT(*) FILTER (WHERE status = 'ready')
                    FROM app_tasks WHERE status IN ('open', 'active', 'ready')"#,
             )

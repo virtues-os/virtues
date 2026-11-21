@@ -10,11 +10,13 @@ import {
 	addTaskNote,
 	createTask,
 	listTasks,
+	markTaskSeen,
 	updateTask,
 	type NewTask,
 	type Task,
 	type TaskPatch,
 } from '$lib/api/client';
+import { appletsStore } from '$lib/stores/applets.svelte';
 
 class TasksStore {
 	open = $state<Task[]>([]);
@@ -30,12 +32,18 @@ class TasksStore {
 		try {
 			this.open = await listTasks('open');
 			this.loaded = true;
+			this.loadApplets();
 			if (this.closedLoaded) this.closed = await listTasks('closed');
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'Could not load tasks';
 		} finally {
 			this.loading = false;
 		}
+	}
+
+	/** A task that repeats says when it runs from its applet, so the applets load with it. */
+	private loadApplets() {
+		if (this.open.some((t) => t.applet_id) && !appletsStore.loaded) void appletsStore.load();
 	}
 
 	/**
@@ -47,10 +55,26 @@ class TasksStore {
 		try {
 			this.open = await listTasks('open');
 			this.loaded = true;
+			this.loadApplets();
 			if (this.closedLoaded) this.closed = await listTasks('closed');
 			this.error = null;
 		} catch {
 			// The next refresh tries again; the list keeps what it showed.
+		}
+	}
+
+	/**
+	 * You opened a task that repeats and its newest result was waiting. It
+	 * stops waiting and keeps the result. Nothing has to be accepted.
+	 */
+	async seen(task: Pick<Task, 'id' | 'applet_id' | 'status'>): Promise<void> {
+		if (!task.applet_id || task.status !== 'ready') return;
+		const id = task.id;
+		this.open = this.open.map((t) => (t.id === id ? { ...t, status: 'open' } : t));
+		try {
+			await markTaskSeen(id);
+		} catch {
+			// The next refresh shows what the server has.
 		}
 	}
 

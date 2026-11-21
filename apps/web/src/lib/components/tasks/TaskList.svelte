@@ -275,6 +275,8 @@
 
 	function pick(t: Task) {
 		focused = t.id;
+		// Choosing a task that repeats is opening it: its new result stops waiting.
+		void tasksStore.seen(t);
 		if (onPick) onPick(t);
 		else openPage(t);
 	}

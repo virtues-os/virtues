@@ -17,6 +17,8 @@
 	/**
 	 * What can be done with a task, on its page and in the door's preview.
 	 *
+	 *   A task that repeats  its newest result, when it runs, and Options.
+	 *                     Nothing to accept: opening it is all it asks.
 	 *   A ready request   the assistant's result, then Accept and Reply.
 	 *   A request at work where it runs and what it has cost, Start or Take it
 	 *                     back, and a note for its next run.
@@ -36,7 +38,13 @@
 	import { modelSlots } from '$lib/stores/modelSlots.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { isClosed } from '$lib/tasks/actions';
-	import { requestState } from '$lib/tasks/requests';
+	import { appletOf, isRepeating, requestState } from '$lib/tasks/requests';
+	import { describeTriggers } from '$lib/applets/palette';
+	import { actionOf, problemOf } from '$lib/applets/standing';
+	import { optionsOf } from '$lib/applets/kind';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { runApplet } from '$lib/api/client';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { recurrenceOf } from '$lib/tasks/recur';
 	import { formatMicrosUSD } from '$lib/utils/currency';
 	import { toast } from 'svelte-sonner';
@@ -45,6 +53,35 @@
 	let { task, onChanged }: { task: Task; onChanged?: () => void } = $props();
 
 	const request = $derived(task.assignee === 'assistant');
+
+	// A task that repeats is run by its applet, which says when it runs and
+	// whether its last run went wrong.
+	const repeating = $derived(isRepeating(task));
+	const applet = $derived(appletOf(task));
+	const trouble = $derived(applet ? problemOf(applet) : null);
+	const fix = $derived(applet ? actionOf(applet) : null);
+	let starting = $state(false);
+
+	function openOptions() {
+		if (applet) windowShellStore.openRouteBeside(optionsOf(applet), applet.name);
+	}
+
+	async function actOnTrouble() {
+		if (!applet || !fix) return;
+		if (fix.kind === 'fix') {
+			windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+			return;
+		}
+		starting = true;
+		try {
+			await runApplet(applet.id);
+			await appletsStore.load();
+		} catch (e) {
+			toast.error("Your server didn't start it", { description: e instanceof Error ? e.message : undefined });
+		} finally {
+			starting = false;
+		}
+	}
 	let replying = $state(false);
 	let place = $state('on your own account');
 
@@ -110,7 +147,35 @@
 
 {#if !isClosed(task)}
 	<div class="task-actions">
-		{#if request && task.status === 'ready'}
+		{#if repeating}
+			{#if task.result}
+				<div class="result">
+					<Markdown content={task.result} />
+					{#if task.result_url}
+						<RefCard type={task.result_url.split('/')[1] ?? null} label={resultLabel(task.result_url)} url={task.result_url} />
+					{/if}
+				</div>
+			{/if}
+			<p class="state">
+				{#if !applet}
+					It repeats on its own.
+				{:else if !applet.enabled}
+					It is off. Turn it on in Options.
+				{:else if trouble}
+					{trouble}.
+				{:else}
+					Runs {describeTriggers(applet).replace(/^./, (c) => c.toLowerCase())}.{#if !task.result}{' '}Its first result shows here.{/if}
+				{/if}
+			</p>
+			<div class="buttons">
+				{#if applet?.enabled && fix}
+					<Button onclick={actOnTrouble} loading={starting}>{fix.label}</Button>
+				{/if}
+				{#if applet}
+					<Button variant="secondary" onclick={openOptions}>Options</Button>
+				{/if}
+			</div>
+		{:else if request && task.status === 'ready'}
 			<div class="result">
 				<Markdown content={task.result ?? ''} />
 				{#if task.result_url}

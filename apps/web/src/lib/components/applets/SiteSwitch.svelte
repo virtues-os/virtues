@@ -8,7 +8,7 @@
 	import Segmented from '$lib/components/Segmented.svelte';
 	import type { Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { KIND_WORD, homeOf, kindOf, optionsOf } from '$lib/applets/kind';
+	import { KIND_WORD, kindOf, optionsOf, pageOf } from '$lib/applets/kind';
 
 	let {
 		tabId,
@@ -28,7 +28,7 @@
 
 	function show(next: 'site' | 'options') {
 		if (next === showing) return;
-		windowShellStore.retarget(tabId, next === 'options' ? optionsOf(applet) : homeOf(applet), applet.name);
+		windowShellStore.retarget(tabId, next === 'options' ? optionsOf(applet) : pageOf(applet), applet.name);
 	}
 </script>
 

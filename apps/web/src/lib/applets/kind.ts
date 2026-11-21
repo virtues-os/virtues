@@ -39,10 +39,16 @@ export const KIND_WORD: Record<AppletKind, 'Site' | 'Task' | 'Skill'> = {
 /** Whether you set it up, or the assistant did for you, and it did not come with the server or an account. */
 export const isYours = (a: Pick<Applet, 'origin'>) => a.origin === 'user' || a.origin === 'ai';
 
-type Addressed = Parts & Pick<Applet, 'id'>;
+type Addressed = Parts & Pick<Applet, 'id'> & { task_id?: string | null };
 
-/** Where an applet's page opens. */
-export const homeOf = (a: Addressed) => homeRoute(a.id, kindOf(a));
+/** An applet's own page: its view or what it made, with its options on the other side. */
+export const pageOf = (a: Addressed) => homeRoute(a.id, kindOf(a));
+
+/**
+ * Where an applet opens. A task of the assistant's that repeats opens as
+ * its task, in Tasks. Anything else opens on its own page.
+ */
+export const homeOf = (a: Addressed) => (kindOf(a) === 'assistant_task' && a.task_id ? `/task/${a.task_id}` : pageOf(a));
 
 /** The options side of that page, with Run history or Technical details open when asked. */
 export const optionsOf = (a: Addressed, open?: 'history' | 'details') => optionsRoute(a.id, open, kindOf(a));

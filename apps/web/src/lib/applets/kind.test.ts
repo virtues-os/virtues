@@ -1,7 +1,7 @@
 // What an applet is to the person who meets it. The same table as the
 // server's `a_kind_follows_from_the_parts_in_order`. Every name is invented.
 import { describe, expect, it } from 'vitest';
-import { homeOf, kindOf, optionsOf } from './kind';
+import { homeOf, kindOf, optionsOf, pageOf } from './kind';
 
 const parts = (over: Record<string, unknown> = {}) =>
 	({ schedule: null, watch: null, triggers: ['manual', 'message'], command: null, has_face: false, ...over }) as Parameters<typeof kindOf>[0];
@@ -31,5 +31,15 @@ describe('the kind of an applet', () => {
 		expect(optionsOf({ ...parts({ kind: 'skill' }), id: 'applet_user__packing_list' }, 'history')).toBe(
 			'/skill/packing_list/options?panel=history'
 		);
+	});
+
+	it('opens a task of the assistant\'s as its task once it has a row, and keeps its own page for its options', () => {
+		const review = { ...parts({ kind: 'assistant_task' }), id: 'applet_user__week_in_review' };
+		expect(homeOf(review)).toBe('/site/week_in_review');
+		expect(homeOf({ ...review, task_id: 'task_1' })).toBe('/task/task_1');
+		expect(pageOf({ ...review, task_id: 'task_1' })).toBe('/site/week_in_review');
+		expect(optionsOf({ ...review, task_id: 'task_1' })).toBe('/site/week_in_review/options');
+		// A site that refreshes keeps its own page even with a row.
+		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_user__water_log', task_id: 'task_2' })).toBe('/site/water_log');
 	});
 });

@@ -108,19 +108,19 @@ export interface ServerTaskGroups {
 	skills: Applet[];
 	/** One-time ones that already ran, yours included. */
 	finished: Applet[];
-	/** Things of yours that need you. They are listed in Sites, not here. */
+	/** Things of yours in Sites that need you. Your tasks that repeat say so in Tasks. */
 	yoursNeedingYou: Applet[];
 }
 
 /**
- * Whether the Server tasks page lists it as a task: one of the server's own.
- * TODO(2026-11-21): a task of the assistant's that came with the server (the
- * morning examen) is listed here until Tasks shows repeating tasks
- * (agents/plan/task-skill-site-plan.md, slice D).
+ * Whether the Server tasks page lists it: one of the server's own tasks, or
+ * a task of the assistant's that came with the server and has no row in
+ * Tasks. That is one that is off (the morning examen until you turn it on),
+ * and this page is where you turn it on. Once on, it shows in Tasks.
  */
 function isServerTask(a: Applet): boolean {
 	const kind = kindOf(a);
-	return kind === 'server_task' || (kind === 'assistant_task' && !isYours(a));
+	return kind === 'server_task' || (kind === 'assistant_task' && !isYours(a) && !a.task_id);
 }
 
 /** The server's tasks that still run. */
@@ -154,7 +154,7 @@ export function groupServerTasks(applets: Applet[], now = Date.now()): ServerTas
 		whenAsked: own.filter((a) => !startsItself(a)),
 		skills: byName(applets.filter((a) => !a.archived_at && !isYours(a) && kindOf(a) === 'skill')),
 		finished: byName(applets.filter((a) => a.archived_at)),
-		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && !isServerTask(a) && needsYou(a, now))),
+		yoursNeedingYou: byName(applets.filter((a) => !a.archived_at && isYours(a) && !isServerTask(a) && !a.task_id && needsYou(a, now))),
 	};
 }
 

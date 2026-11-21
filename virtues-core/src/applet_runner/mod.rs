@@ -624,6 +624,11 @@ async fn execute_prepared_inner(
                         {
                             tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
                         }
+                        // A task of the assistant's that repeats shows its newest
+                        // result on its row in the task list.
+                        if let Err(e) = crate::api::repeating_tasks::file_result(&deps.db, &action, &run_id, &summary).await {
+                            tracing::error!(applet_id, error = %e, "could not file the run's result on its task");
+                        }
                         maybe_archive_on_until(&deps.db, &action).await;
                         return AppletRunResult {
                             run_id: Some(run_id),
