@@ -24,8 +24,28 @@ export interface Variant {
 	fade: 'top' | 'bottom' | 'none';
 	width: number;
 	height: number;
-	/** Format, then width as a string, then the path under /api/backgrounds/files/<style>/. */
-	files: { avif: Record<string, string>; webp: Record<string, string> };
+	/**
+	 * Format, then width as a string, then the path under
+	 * /api/backgrounds/files/<style>/. Styles are built as AVIF only; a style
+	 * built before that also carries WebP.
+	 */
+	files: Partial<Record<ImageFormat, Record<string, string>>>;
+	/**
+	 * Set on the dark version of a pack that has one version of each
+	 * picture: it is the light one, dimmed as the lake is in Dark
+	 * (`--window-scene-filter`).
+	 */
+	dim?: boolean;
+}
+
+export type ImageFormat = 'avif' | 'webp';
+
+/** A variant's files from narrowest to widest, AVIF before WebP. */
+export function filesOf(v: Variant): { width: number; rel: string }[] {
+	const format = v.files.avif && Object.keys(v.files.avif).length ? 'avif' : 'webp';
+	return Object.entries(v.files[format] ?? {})
+		.map(([w, rel]) => ({ width: Number(w), rel }))
+		.sort((a, b) => a.width - b.width);
 }
 
 /** A picture of an image style: one file set per appearance. */
@@ -217,18 +237,18 @@ export function pickForDay<T>(items: T[], key: string, day: number): T | undefin
 	return items[order[((day % n) + n) % n]];
 }
 
-/** A `srcset` for one format of a variant, widest last. */
-export function srcset(v: Variant, format: 'avif' | 'webp', url: (rel: string) => string): string {
-	return Object.entries(v.files[format])
+/** A `srcset` for one format of a variant, widest last; empty when the style has no files in it. */
+export function srcset(v: Variant, format: ImageFormat, url: (rel: string) => string): string {
+	return Object.entries(v.files[format] ?? {})
 		.map(([w, rel]) => ({ w: Number(w), rel }))
 		.sort((a, b) => a.w - b.w)
 		.map(({ w, rel }) => `${url(rel)} ${w}w`)
 		.join(', ');
 }
 
-/** The widest WebP, for the `<img>` fallback. */
+/** The widest file, AVIF before WebP, for the `<img>` itself. */
 export function widest(v: Variant, url: (rel: string) => string): string {
-	const [, rel] = Object.entries(v.files.webp).sort((a, b) => Number(b[0]) - Number(a[0]))[0];
-	return url(rel);
+	const files = filesOf(v);
+	return url(files[files.length - 1].rel);
 }
 

@@ -23,8 +23,8 @@ archive not uploaded yet.
         --styles ~/virtues-backgrounds/watercolors ~/virtues-backgrounds/oil-paintings \\
         --out ~/virtues-backgrounds-dist
 
-The archives are plain tar: the pictures are AVIF and WebP, which do not
-compress further.
+The archives are plain tar: the pictures are AVIF, which does not compress
+further.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageEnhance
 
 PREVIEW_WIDTH = 480
 
@@ -57,10 +57,13 @@ def files_of(manifest: dict) -> list[str]:
 def preview(style_dir: Path, manifest: dict, theme: str) -> str:
     """A small WebP of the style's first picture in one theme, as a data URL."""
     picture = manifest["collections"][0]["pictures"][0][theme]
-    widths = sorted(picture["files"]["webp"], key=int)
-    src = style_dir / picture["files"]["webp"][widths[0]]
+    files = picture["files"].get("avif") or picture["files"]["webp"]
+    src = style_dir / files[min(files, key=int)]
     with Image.open(src) as im:
         im = im.convert("RGBA")
+        if picture.get("dim"):
+            # As the apps draw a dimmed picture in Dark.
+            im = ImageEnhance.Color(ImageEnhance.Brightness(im).enhance(0.55)).enhance(0.8)
         h = round(im.height * PREVIEW_WIDTH / im.width)
         im = im.resize((PREVIEW_WIDTH, h), Image.LANCZOS)
         buf = io.BytesIO()

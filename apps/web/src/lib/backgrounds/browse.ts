@@ -3,12 +3,11 @@
  * thumbnail. Kept apart from resolve.ts, which the home picture needs at
  * launch, so this loads with the pickers instead.
  */
-import { formatAddress, type Address, type Variant } from './resolve';
+import { filesOf, formatAddress, type Address, type Variant } from './resolve';
 
-/** The narrowest WebP, for a thumbnail. */
+/** The narrowest file, AVIF before WebP, for a thumbnail. */
 export function narrowest(v: Variant, url: (rel: string) => string): string {
-	const [, rel] = Object.entries(v.files.webp).sort((a, b) => Number(a[0]) - Number(b[0]))[0];
-	return url(rel);
+	return url(filesOf(v)[0].rel);
 }
 
 /**

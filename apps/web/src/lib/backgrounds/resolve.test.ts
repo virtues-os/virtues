@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, isDots, parseSetting, pickForDay, pool, srcset, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, isDots, parseSetting, pickForDay, pool, srcset, widest, type StyleManifest, type Variant } from './resolve';
 import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
@@ -122,7 +122,7 @@ describe('stepFrom', () => {
 
 describe('narrowest', () => {
 	it('picks the smallest WebP', () => {
-		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.webp');
+		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.avif');
 	});
 });
 
@@ -153,5 +153,21 @@ describe('the built-in dots style', () => {
 		const tide = find(all, { style: 'dots', collection: 'swell', picture: 'tide' });
 		expect(tide && isDots(tide) ? tide.dots.motion : undefined).toBe('swell');
 		expect(pool(all, parseSetting('paintings/forest')).length).toBe(3);
+	});
+});
+
+describe('AVIF-only styles', () => {
+	const avifOnly: Variant = { ...variant('elm'), files: { avif: { '1792': 'c/light/elm-1792.avif', '896': 'c/light/elm-896.avif' } } };
+
+	it('serve AVIF and an empty WebP srcset', () => {
+		expect(srcset(avifOnly, 'webp', (r) => r)).toBe('');
+		expect(srcset(avifOnly, 'avif', (r) => r)).toBe('c/light/elm-896.avif 896w, c/light/elm-1792.avif 1792w');
+		expect(widest(avifOnly, (r) => r)).toBe('c/light/elm-1792.avif');
+		expect(narrowest(avifOnly, (r) => r)).toBe('c/light/elm-896.avif');
+	});
+
+	it('fall back to WebP for a style built before AVIF only', () => {
+		const webpOnly: Variant = { ...variant('ash'), files: { webp: { '896': 'c/light/ash-896.webp' } } };
+		expect(widest(webpOnly, (r) => r)).toBe('c/light/ash-896.webp');
 	});
 });
