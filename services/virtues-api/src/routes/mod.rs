@@ -15,6 +15,7 @@
 //! - /v1/maps/*          - Map files for the boxes (bearer-gated, never logged)
 //! - /v1/push/*          - Calendar change signals a box collects (push.rs)
 //! - /v1/google/*, /v1/outlook/* - mail and calendar through verified apps we do not run yet (vendor.rs)
+//! - /byo/spotify/callback - bounces a sign-in made with the person's own Spotify app to their box (byo.rs)
 //!
 //! Bank connections (Plaid) start through the OAuth proxy (`oauth.rs`,
 //! via_proxy); the per-user data syncs run through the `plaid.rs` proxy so the
@@ -23,6 +24,7 @@
 pub mod ai;
 pub mod backgrounds;
 pub mod bearer_test;
+pub mod byo;
 pub mod connections;
 pub mod search;
 pub mod vendor;

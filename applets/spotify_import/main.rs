@@ -12,7 +12,9 @@
 //! blocking thread and written in batches, so memory stays flat.
 //!
 //! Rows dedup on `source_stream_id`, so importing a newer download later adds
-//! only the new plays (`ON CONFLICT DO NOTHING`).
+//! only the new plays. A play `spotify_recent_sync` already added has the
+//! same key, and the download's values replace the sync's estimate
+//! (`virtues_applets::listening`).
 
 mod transform;
 
@@ -21,9 +23,9 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use sqlx::PgPool;
-use transform::{is_account_file, is_extended_file, parse_play, Play};
+use transform::{is_account_file, is_extended_file, parse_play};
 use virtues_applets::import::{self, base_name, Batches, Tally, Upload};
-use virtues_helpers::dedup::build_batch_insert_query;
+use virtues_applets::listening::{self, Play, Writer};
 use virtues_helpers::{connect_from_env, output_with_records, read_input};
 
 const APPLET: &str = "spotify_import";
@@ -109,58 +111,18 @@ fn read_plays<R: std::io::Read>(reader: R, batches: &mut Batches<'_, Play>) -> R
     walked
 }
 
-/// Insert plays, skipping any already here. Returns how many were new.
+/// Write plays. A play already here from this import or an earlier one is
+/// left alone; one the recently-played sync added is replaced with the
+/// download's values. Returns how many rows were added or replaced.
 async fn write_plays(pool: &PgPool, plays: &[Play]) -> Result<u64> {
-    if plays.is_empty() {
-        return Ok(0);
-    }
-    let sql = build_batch_insert_query(
-        "data_activity_listening",
-        &[
-            "id",
-            "started_at",
-            "ended_at",
-            "played_ms",
-            "kind",
-            "title",
-            "artist_name",
-            "album_name",
-            "uri",
-            "is_skipped",
-            "is_shuffle",
-            "reason_start",
-            "reason_end",
-            "source_stream_id",
-            "source_table",
-            "source_provider",
-            "metadata",
-        ],
-        "source_stream_id",
-        plays.len(),
-    );
-    let mut q = sqlx::query(&sql);
-    for p in plays {
-        q = q
-            .bind(import::row_id(&p.source_stream_id))
-            .bind(p.started_at)
-            .bind(p.ended_at)
-            .bind(p.played_ms)
-            .bind(p.kind)
-            .bind(&p.title)
-            .bind(&p.artist_name)
-            .bind(&p.album_name)
-            .bind(&p.uri)
-            .bind(p.is_skipped)
-            .bind(p.is_shuffle)
-            .bind(&p.reason_start)
-            .bind(&p.reason_end)
-            .bind(&p.source_stream_id)
-            .bind("spotify_import")
-            .bind("spotify")
-            .bind(&p.metadata);
-    }
-    Ok(q.execute(pool).await?.rows_affected())
+    Ok(listening::write_plays(pool, plays, Writer::Import).await?.len() as u64)
 }
+
+// The recently-played sync's shaping, so the tests below can show that the
+// two applets meet on one row.
+#[cfg(test)]
+#[path = "../spotify_recent_sync/transform.rs"]
+mod recent_transform;
 
 #[cfg(test)]
 mod tests {
@@ -269,5 +231,74 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((n, ip), (2, 0));
+    }
+
+    /// The extended history's play of "Paper Lanterns" and the same play
+    /// from the recently-played list, which stamps it with milliseconds.
+    fn the_same_play_twice() -> (Play, Play) {
+        let download = json!({
+            "ts": "2026-03-05T22:15:30Z", "ms_played": 120_000, "platform": "ios",
+            "master_metadata_track_name": "Paper Lanterns", "master_metadata_album_artist_name": "The Example Band",
+            "master_metadata_album_album_name": "Night Market", "spotify_track_uri": "spotify:track:0000000000000000000001",
+            "reason_start": "clickrow", "reason_end": "fwdbtn", "shuffle": false, "skipped": true
+        });
+        let recent = json!({
+            "played_at": "2026-03-05T22:15:30.874Z",
+            "context": { "uri": "spotify:playlist:0000000000000000000009" },
+            "track": { "uri": "spotify:track:0000000000000000000001", "name": "Paper Lanterns", "duration_ms": 183_000,
+                       "artists": [{ "name": "The Example Band" }], "album": { "name": "Night Market" } }
+        });
+        (parse_play(&download).unwrap(), recent_transform::shape(&recent).unwrap())
+    }
+
+    #[test]
+    fn a_download_and_the_recent_list_key_one_play_alike() {
+        let (download, recent) = the_same_play_twice();
+        assert_eq!(download.source_stream_id, recent.source_stream_id);
+        assert_eq!(import::row_id(&download.source_stream_id), import::row_id(&recent.source_stream_id));
+
+        let mut a_second_later = recent.clone();
+        a_second_later.ended_at += chrono::Duration::seconds(1);
+        let key = listening::stream_id(a_second_later.ended_at, a_second_later.uri.as_deref(), &[]);
+        assert_ne!(key, download.source_stream_id, "the times must agree to the second");
+    }
+
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn a_download_replaces_the_recent_estimate_and_nothing_replaces_a_download(pool: PgPool) {
+        let (download, recent) = the_same_play_twice();
+        let row = |pool: PgPool| async move {
+            let r: (String, i64, Option<bool>, Option<String>, serde_json::Value, i64) = sqlx::query_as(
+                "SELECT source_table, played_ms, is_skipped, reason_end, metadata, count(*) OVER () \
+                 FROM data_activity_listening",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            r
+        };
+
+        // (a) The sync adds the play once; a second run adds nothing.
+        assert_eq!(listening::write_plays(&pool, &[recent.clone()], Writer::Recent).await.unwrap().len(), 1);
+        assert!(listening::write_plays(&pool, &[recent.clone()], Writer::Recent).await.unwrap().is_empty());
+        let (table, ms, skipped, _, meta, n) = row(pool.clone()).await;
+        assert_eq!((table.as_str(), ms, skipped, n), ("spotify_recent", 183_000, None, 1));
+        assert_eq!(meta["played_ms_estimated"], true);
+
+        // (b) A download over the sync's row replaces it, and counts as written.
+        assert_eq!(write_plays(&pool, &[download.clone(), download.clone()]).await.unwrap(), 1);
+        let (table, ms, skipped, reason_end, meta, n) = row(pool.clone()).await;
+        assert_eq!((table.as_str(), ms, skipped, reason_end.as_deref(), n), ("spotify_import", 120_000, Some(true), Some("fwdbtn"), 1));
+        assert_eq!(meta, download.metadata, "metadata is replaced, not merged");
+        let (moved,): (bool,) = sqlx::query_as("SELECT updated_at > created_at FROM data_activity_listening")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(moved);
+
+        // (c) Neither the sync nor a second download changes the download's row.
+        assert!(listening::write_plays(&pool, &[recent], Writer::Recent).await.unwrap().is_empty());
+        assert_eq!(write_plays(&pool, &[download]).await.unwrap(), 0);
+        let (table, ms, ..) = row(pool.clone()).await;
+        assert_eq!((table.as_str(), ms), ("spotify_import", 120_000));
     }
 }

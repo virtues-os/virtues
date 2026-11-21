@@ -15,6 +15,9 @@ pub mod meeting;
 /// The one-time imports' shared reading, staging check and summary.
 pub mod import;
 
+/// Spotify plays: the key and the writer the import and the sync share.
+pub mod listening;
+
 /// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`),
 /// and load the box environment — the same files, in the same order, as the
 /// server (`main.rs`).

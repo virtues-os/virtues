@@ -158,6 +158,13 @@ photo, and a picture for favorites only.**
    - **Not kept from the downloads:** Spotify's IP address and country per
      play; Amazon's addresses, payment details, gift messages and tracking
      numbers.
+   - **Spotify recent plays (decision 5), built on wave:** each person makes
+     a Spotify app and pastes its Client ID; the box signs in with PKCE
+     (`virtues_helpers::auth::own_app`), the vendor returns through
+     virtues-api's `/byo/spotify/callback`, which only bounces the browser to
+     the box, and the box exchanges and refreshes the token itself.
+     `spotify-recent-sync` writes plays with the import's key, and an import
+     replaces a recent play with its fuller row where the two match.
 5. **Slack,** as an import of a workspace export (decision 1).
    - **Built on wave:** the `slack-import` applet through the imports route
      (`/api/imports/slack/upload`), which also carries the owner's email in
@@ -173,26 +180,7 @@ photo, and a picture for favorites only.**
 
 Open, each needs the owner's words:
 
-5. **Spotify live plays:** import only, or also let someone paste their own
-   Spotify app's keys for the 50 most recent plays between imports.
-   - On 2026-11-21 the owner chose "Add recent plays". A read of Spotify's
-     own pages the same day found problems that leave this open until the
-     owner answers with them in front of them:
-     - Spotify's Developer Policy (effective 2025-05-15) says not to use
-       Spotify Content "to train a machine learning or AI model" or
-       "otherwise ingest Spotify Content into a machine learning or AI
-       model", and its terms define Spotify Content to include user data
-       read through the API. Your assistant reading your plays is ingest on
-       a literal reading. The policy also forbids analyzing Spotify Content,
-       with "usage statistics" and listening metrics as examples, and says
-       not to store Spotify Content indefinitely.
-     - A development-mode app works only while its owner pays for Spotify
-       Premium, takes at most five users, and each must be added by email.
-     - The sign-in lasts six months; refreshing does not extend it.
-     - The recent-plays call skips podcasts and reaches only about the last
-       50 plays.
-     - None of this touches the import: a person's own data download comes
-       from Spotify's privacy page, not through its developer platform.
+None open.
 
 Settled:
 
@@ -223,6 +211,13 @@ Settled:
    owner first asked "lets do favorites on photos from iphone since ALL
    photos might be way too much right? but all photo metadata? thoughts?",
    and on 2026-11-21 answered the slice as proposed with "Yes, slice 3".
+5. **Spotify recent plays: built, with each person's own Spotify app.**
+   The owner first chose "Add recent plays". Spotify's Developer Policy
+   (2025-05-15) says not to ingest Spotify Content, which includes user data
+   read through the API, into an AI model, not to analyze it, and not to
+   store it indefinitely; a development-mode app needs its owner on Premium
+   and a new sign-in every six months. With that in front of them the owner
+   said "build it anyway. we're not trainign etc".
 6. **Google Contacts: left to the iPhone.** The owner, on 2026-11-21:
    "Leave to iPhone". The iPhone already sends the contacts on the phone,
    Google's included when the phone syncs them. The options passed over

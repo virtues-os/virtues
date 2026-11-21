@@ -67,6 +67,16 @@ yet. Your iPhone sends more than any account.
   payment details. Discord's brings the messages you sent; it has no one
   else's. The import window says where to request each file. A newer
   download adds only what is new.
+- **Spotify's recent plays:** between downloads, your server can add the
+  songs you play from an app you make on Spotify's developer site. Open
+  Spotify in Sources and choose **Connect your Spotify app**; the window
+  lists the steps. Spotify asks the app's owner to have Premium and asks you
+  to sign in again every six months, and this way does not include
+  podcasts. When you sign in, Spotify sends your browser through
+  `auth.virtues.com` on its way back to your server, carrying a one-time
+  code that works only with a secret your server keeps. Your server then
+  reads from Spotify directly. A later download replaces these plays with
+  its fuller record where the two match.
 - **Slack:** a workspace export, which only the workspace's admins can make.
   The import window asks for your email in Slack, and your server keeps only
   the conversations you are in. On Slack's free plan an export reaches back

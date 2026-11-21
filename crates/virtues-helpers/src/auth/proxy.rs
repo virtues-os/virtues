@@ -26,7 +26,7 @@ const DEFAULT_PROXY_URL: &str = "https://auth.virtues.com";
 /// The timeout matters beyond the cron: `ensure_fresh` is also the
 /// just-in-time path the action runner takes before every dispatch, so a
 /// hung proxy call without one would wedge a sync forever.
-fn client() -> reqwest::Client {
+pub(crate) fn client() -> reqwest::Client {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -185,15 +185,17 @@ async fn read_response(resp: reqwest::Response) -> Result<ProxyExchangeResponse>
 /// errors, and the exchange call carries its one-time token in the path, so
 /// the URL is dropped: this message reaches the journal and the HTTP answer
 /// to the browser.
-fn transport_error(what: &str, e: reqwest::Error) -> AuthError {
+pub(crate) fn transport_error(what: &str, e: reqwest::Error) -> AuthError {
     AuthError::Proxy(format!("{what}: {}", e.without_url()))
 }
 
 const UPSTREAM_PREFIX: &str = "upstream ";
 
-/// The error for a non-2xx answer from the proxy. [`is_refused_grant`]
+/// The error for a non-2xx answer from the proxy, or from a vendor's token
+/// endpoint for a sign-in made with the person's own app (`own_app`).
+/// [`is_refused_grant`]
 /// parses it back, so its wording changes only together with that.
-fn upstream_error(status: u16, body: &str) -> AuthError {
+pub(crate) fn upstream_error(status: u16, body: &str) -> AuthError {
     AuthError::Proxy(format!("{UPSTREAM_PREFIX}{status}: {body}"))
 }
 

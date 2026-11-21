@@ -159,14 +159,17 @@ description = "From a Claude or ChatGPT export."
 auth = { kind = "api_key", fields = [] }
 
 # Data downloads, brought in like Past chats: the owner requests the file from
-# the service and uploads it (`server::api::imports`). Declared api_key with
+# the service and uploads it (`server::api::imports`). Spotify can also add
+# recent plays between downloads through an app the owner makes at Spotify
+# (`virtues_helpers::auth::own_app`), which makes a `spotify` credential that
+# `spotify-recent-sync` reads. Declared api_key with
 # no fields for the same reason as Past chats; the app opens the import card
 # for these ids.
 [[source]]
 id = "spotify"
 display_name = "Spotify"
 icon = "ri:music-2-line"
-description = "Everything you've played, from a Spotify data download."
+description = "Everything you've played, from a data download, and what you play next."
 auth = { kind = "api_key", fields = [] }
 
 [[source]]

@@ -131,6 +131,56 @@ pub struct OauthStartRequest {
     /// Defaults to the canonical `<self>/oauth/callback`.
     #[serde(default)]
     pub return_url: Option<String>,
+    /// The Client ID of an app the person created at the vendor, for a source
+    /// signed in that way (`own_app`: Spotify's recent plays).
+    #[serde(default)]
+    pub client_id: Option<String>,
+}
+
+/// A sign-in with the person's own app between its start and its callback:
+/// the PKCE verifier and the Client ID, keyed by the signed state. Kept in
+/// memory because the verifier must never travel with the browser; a server
+/// restarted mid-sign-in asks the person to start again.
+struct OwnAppPending {
+    verifier: String,
+    client_id: String,
+    started: std::time::Instant,
+}
+
+/// How long a started own-app sign-in waits for its callback.
+const OWN_APP_PENDING_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+fn own_app_pending() -> &'static std::sync::Mutex<std::collections::HashMap<String, OwnAppPending>> {
+    static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, OwnAppPending>>> =
+        std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+fn remember_own_app(state: &str, verifier: String, client_id: String) {
+    let mut map = own_app_pending().lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, p| p.started.elapsed() < OWN_APP_PENDING_TTL);
+    map.insert(state.to_string(), OwnAppPending { verifier, client_id, started: std::time::Instant::now() });
+}
+
+fn take_own_app(state: &str) -> Option<OwnAppPending> {
+    let mut map = own_app_pending().lock().unwrap_or_else(|e| e.into_inner());
+    map.remove(state).filter(|p| p.started.elapsed() < OWN_APP_PENDING_TTL)
+}
+
+/// Start a sign-in with the person's own app: remember the verifier and send
+/// the browser to the vendor, which returns through virtues-api's bounce
+/// route to this box's callback, marked `via=own_app`.
+fn start_own_app(
+    app: &virtues_helpers::auth::own_app::OwnApp,
+    client_id: &str,
+    return_url: &str,
+    signed_state: &str,
+) -> String {
+    let (verifier, challenge) = virtues_helpers::auth::own_app::pkce_pair();
+    remember_own_app(signed_state, verifier, client_id.to_string());
+    let sep = if return_url.contains('?') { '&' } else { '?' };
+    let back = format!("{return_url}{sep}via=own_app");
+    app.authorize_url(client_id, &challenge, &virtues_helpers::auth::own_app::bounce_state(&back, signed_state))
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +196,28 @@ pub async fn oauth_start_handler(
     let Some(source) = lookup_source(&source_id) else {
         return not_found(format!("unknown source: {source_id}"));
     };
+
+    // A source signed in with the person's own app (Spotify's recent plays)
+    // goes to the vendor directly; the OAuth proxy is only the way back.
+    if let Some(app) = virtues_helpers::auth::own_app::for_source(&source_id) {
+        let Some(client_id) = req.client_id.as_deref().map(str::trim).filter(|c| !c.is_empty()) else {
+            return bad_request(format!("Paste your {} app's Client ID, then continue.", source.display_name));
+        };
+        let Some(return_url) = req.return_url.as_deref().filter(|u| u.starts_with("http")) else {
+            return bad_request("return_url must be this server's own /oauth/callback address");
+        };
+        if let Some(id) = &req.credential_id {
+            if let Err(response) = reconnect_target(state.db.pool(), id, &source_id).await {
+                return response;
+            }
+        }
+        let signed_state = match sign_oauth_state(&source_id, req.credential_id.as_deref()) {
+            Ok(s) => s,
+            Err(e) => return auth_error_response(e),
+        };
+        let redirect_url = start_own_app(app, client_id, return_url, &signed_state);
+        return (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response();
+    }
 
     let start_path = match &source.auth {
         SourceAuth::ViaProxy { start_path } => start_path.as_str(),
@@ -335,6 +407,10 @@ pub struct OauthCallbackQuery {
     /// virtues-api what was connected.
     #[serde(default)]
     pub via: Option<String>,
+    /// The vendor's authorization code, for a sign-in made with the person's
+    /// own app (`via=own_app`), which this box exchanges itself.
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 /// Accept only a same-origin absolute path: starts with exactly one `/`
@@ -358,7 +434,27 @@ pub async fn oauth_callback_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    if q.via.as_deref() == Some("api") && super::vendor_api::serves(&claims.source_id) {
+    let own_app = virtues_helpers::auth::own_app::for_source(&claims.source_id);
+    if let (Some("own_app"), Some(app)) = (q.via.as_deref(), own_app) {
+        // The person's own app returned through virtues-api's bounce route.
+        // Exchange the code here with the verifier only this box holds.
+        let Some(pending) = take_own_app(&q.state) else {
+            return oauth_incomplete_response(&claims.source_id, "sign_in_expired", q.shell.as_deref(), q.next.as_deref());
+        };
+        let Some(code) = q.code.as_deref().filter(|c| !c.is_empty()) else {
+            let reason = q.error.as_deref().unwrap_or("no_code");
+            tracing::info!(source_id = %claims.source_id, reason, "own-app sign-in returned without a code");
+            return oauth_incomplete_response(&claims.source_id, reason, q.shell.as_deref(), q.next.as_deref());
+        };
+        let mut grant = match app.exchange_code(&pending.client_id, code, &pending.verifier).await {
+            Ok(g) => g,
+            Err(e) => return auth_error_response(e),
+        };
+        name_the_account(&claims.source_id, &mut grant).await;
+        if let Err(e) = store_grant(pool, &claims.source_id, claims.existing_credential_id.as_deref(), &grant).await {
+            return auth_error_response(e);
+        }
+    } else if q.via.as_deref() == Some("api") && super::vendor_api::serves(&claims.source_id) {
         // The sign-in went through virtues-api. Store what it connected; a
         // sign-in the owner backed out of connected nothing, which is fine.
         if let Err(e) = store_api_connections(pool, &claims.source_id, claims.existing_credential_id.as_deref()).await {
@@ -773,11 +869,16 @@ mod account_lookup {
         },
     ];
 
+    /// Spotify names the account by its user id, which `/me` returns without
+    /// any scope beyond the sign-in itself.
+    const SPOTIFY: &[Lookup<'static>] = &[Lookup { url: "https://api.spotify.com/v1/me", pointer: "/id" }];
+
     /// The lookups for a source whose grants arrive naming no account. Empty
     /// for every other source.
     pub(super) fn lookups_for(source_id: &str) -> &'static [Lookup<'static>] {
         match source_id {
             "google" => GOOGLE,
+            "spotify" => SPOTIFY,
             _ => &[],
         }
     }
@@ -1140,6 +1241,23 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn an_own_app_sign_in_keeps_its_verifier_for_one_callback() {
+        let url = start_own_app(
+            &virtues_helpers::auth::own_app::SPOTIFY,
+            "cid-7",
+            "http://192.168.1.20:7117/oauth/callback",
+            "state-own-app-1",
+        );
+        let parsed = reqwest::Url::parse(&url).unwrap();
+        assert_eq!(parsed.host_str(), Some("accounts.spotify.com"));
+        let pending = take_own_app("state-own-app-1").expect("remembered");
+        assert_eq!(pending.client_id, "cid-7");
+        assert_eq!(pending.verifier.len(), 64);
+        assert!(take_own_app("state-own-app-1").is_none(), "a verifier is spent once");
+        assert!(take_own_app("never-started").is_none());
     }
 
     async fn source_rows(pool: &PgPool, source_id: &str) -> i64 {

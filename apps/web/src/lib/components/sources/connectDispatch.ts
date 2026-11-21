@@ -25,6 +25,9 @@ export type ConnectIntent =
 export interface ConnectOptions {
 	next?: string;
 	credentialId?: string;
+	/** The Client ID of an app the person made at the vendor, for a source
+	 *  signed in that way (Spotify's recent plays). */
+	clientId?: string;
 }
 
 /**
@@ -71,7 +74,7 @@ export async function startOAuth(
 	// TODO(2026-10-27): migrate oauthStart's opts type in client.ts to
 	// `credential_id`. Until then `body` is a variable, which TypeScript checks
 	// without the excess-property rule.
-	const body = { return_url: returnUrl, credential_id: opts?.credentialId };
+	const body = { return_url: returnUrl, credential_id: opts?.credentialId, client_id: opts?.clientId };
 	const { redirect_url } = await oauthStart(sourceId, body);
 	if (isTauri) {
 		await openSignIn(redirect_url);

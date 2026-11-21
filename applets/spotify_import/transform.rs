@@ -12,27 +12,10 @@
 //! account name and user agent of each play. Only the fields named here are
 //! read, so none of those are kept.
 
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::Duration;
 use serde_json::{json, Value};
-use virtues_applets::import::{content_key, parse_time};
-
-#[derive(Debug, Clone)]
-pub struct Play {
-    pub started_at: DateTime<Utc>,
-    pub ended_at: DateTime<Utc>,
-    pub played_ms: i64,
-    pub kind: &'static str,
-    pub title: Option<String>,
-    pub artist_name: Option<String>,
-    pub album_name: Option<String>,
-    pub uri: Option<String>,
-    pub is_skipped: Option<bool>,
-    pub is_shuffle: Option<bool>,
-    pub reason_start: Option<String>,
-    pub reason_end: Option<String>,
-    pub source_stream_id: String,
-    pub metadata: Value,
-}
+use virtues_applets::import::parse_time;
+use virtues_applets::listening::{stream_id, Play};
 
 /// The play one element of either download describes, or `None` for an
 /// element with no time or nothing that says what played.
@@ -52,16 +35,6 @@ fn s(v: &Value, key: &str) -> Option<String> {
 
 fn played_ms(v: &Value, key: &str) -> i64 {
     v.get(key).and_then(Value::as_i64).unwrap_or(0).max(0)
-}
-
-/// `spotify:{stop time}:{uri}`, or a key from the play's text when there is
-/// no URI (a local file, or the account data download).
-fn stream_id(ended_at: DateTime<Utc>, uri: Option<&str>, text: &[&str]) -> String {
-    let at = ended_at.to_rfc3339_opts(SecondsFormat::Secs, true);
-    match uri {
-        Some(u) => format!("spotify:{at}:{u}"),
-        None => format!("spotify:{at}:{}", content_key(text)),
-    }
 }
 
 fn extended(v: &Value) -> Option<Play> {
@@ -122,7 +95,7 @@ fn account(v: &Value) -> Option<Play> {
         ("episode", s(v, "episodeName")?, s(v, "podcastName"))
     };
     let source_stream_id =
-        stream_id(ended_at, None,&[&title, artist_name.as_deref().unwrap_or(""), &ms.to_string()]);
+        stream_id(ended_at, None, &[&title, artist_name.as_deref().unwrap_or(""), &ms.to_string()]);
     Some(Play {
         started_at: ended_at - Duration::milliseconds(ms),
         ended_at,

@@ -5,6 +5,7 @@
 //! the `credential_refresh` cron action (Phase 4).
 
 pub mod error;
+pub mod own_app;
 pub mod proxy;
 pub mod refresh;
 pub mod state;

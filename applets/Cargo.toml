@@ -144,6 +144,12 @@ path = "plaid_investments_sync/main.rs"
 name = "plaid_liabilities_sync"
 path = "plaid_liabilities_sync/main.rs"
 
+# ── Spotify (the owner's own Spotify app; recent plays between downloads) ───
+
+[[bin]]
+name = "spotify_recent_sync"
+path = "spotify_recent_sync/main.rs"
+
 # ── One-time import (manual-trigger, no cron) ───────────────────────────────
 
 [[bin]]
