@@ -14,26 +14,14 @@ import myna from '$lib/myna-icons.json';
 // the bundle; scripts/myna-icons.mjs writes the file.
 addCollection(myna);
 
-// Simple Icons
-import siGithub from '@iconify-icons/simple-icons/github';
-import siGoogle from '@iconify-icons/simple-icons/google';
-import siInstagram from '@iconify-icons/simple-icons/instagram';
-import siLinear from '@iconify-icons/simple-icons/linear';
+// Simple Icons used outside the Sources page. The Sources page's brand
+// marks register in lib/sources/brands.ts, so they load with that page and
+// stay out of the first paint (tools/perf/bundle-budget.mjs).
 import siNotion from '@iconify-icons/simple-icons/notion';
-import siStrava from '@iconify-icons/simple-icons/strava';
-import siTodoist from '@iconify-icons/simple-icons/todoist';
 import siUnsplash from '@iconify-icons/simple-icons/unsplash';
-import siX from '@iconify-icons/simple-icons/x';
 
-addIcon('simple-icons:github', siGithub);
-addIcon('simple-icons:google', siGoogle);
-addIcon('simple-icons:instagram', siInstagram);
-addIcon('simple-icons:linear', siLinear);
 addIcon('simple-icons:notion', siNotion);
-addIcon('simple-icons:strava', siStrava);
-addIcon('simple-icons:todoist', siTodoist);
 addIcon('simple-icons:unsplash', siUnsplash);
-addIcon('simple-icons:x', siX);
 
 // Custom Icons — Virtues ∴ triangle logo (three dots)
 // Sized to look good at 16px: centered in 24x24 viewBox with adequate dot radius

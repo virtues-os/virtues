@@ -5,7 +5,28 @@
  * service in a list. Marks that are black in their own brand (Notion, X) use
  * the text ink, so they stay visible in Dark (Notion, X, GitHub). Sources without a brand mark
  * (devices, banks, past chats) fall back to the catalog's own icon in ink.
+ *
+ * The marks register here rather than in lib/icons.ts, so they load with the
+ * Sources page instead of before the app's first paint. Notion is registered
+ * there already, because pages outside Sources use it.
  */
+
+import { addIcon } from '@iconify/svelte';
+import siGithub from '@iconify-icons/simple-icons/github';
+import siGoogle from '@iconify-icons/simple-icons/google';
+import siInstagram from '@iconify-icons/simple-icons/instagram';
+import siLinear from '@iconify-icons/simple-icons/linear';
+import siStrava from '@iconify-icons/simple-icons/strava';
+import siTodoist from '@iconify-icons/simple-icons/todoist';
+import siX from '@iconify-icons/simple-icons/x';
+
+addIcon('simple-icons:github', siGithub);
+addIcon('simple-icons:google', siGoogle);
+addIcon('simple-icons:instagram', siInstagram);
+addIcon('simple-icons:linear', siLinear);
+addIcon('simple-icons:strava', siStrava);
+addIcon('simple-icons:todoist', siTodoist);
+addIcon('simple-icons:x', siX);
 
 export interface Mark {
 	icon: string;
