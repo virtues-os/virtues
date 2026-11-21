@@ -23,6 +23,7 @@ type Loader = () => Promise<Component<DrawnProps>>;
 
 const LOADERS: Record<DrawnRenderer, Loader> = {
 	dots: () => import('$lib/components/backgrounds/DotsField.svelte').then((m) => m.default as Component<DrawnProps>),
+	ascii: () => import('$lib/components/backgrounds/AsciiField.svelte').then((m) => m.default as Component<DrawnProps>),
 };
 
 const loaded = new Map<DrawnRenderer, Promise<Component<DrawnProps>>>();

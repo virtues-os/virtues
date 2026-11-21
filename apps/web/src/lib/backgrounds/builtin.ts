@@ -1,10 +1,10 @@
 /**
  * Styles the app draws itself and ships with, so nothing is downloaded for
- * them: today, Dots (agents/plan/backgrounds-plan.md, slice 5). They resolve
+ * them: Dots and ASCII (agents/plan/backgrounds-plan.md, "Moving styles"). They resolve
  * like any installed style (lib/backgrounds/resolve.ts), and the store lists
  * them before the server's.
  */
-import type { DotsStyle, StyleManifest } from './resolve';
+import type { AsciiStyle, DotsStyle, StyleManifest } from './resolve';
 
 export const DOTS: DotsStyle = {
 	version: 1,
@@ -39,8 +39,30 @@ export const DOTS: DotsStyle = {
 	],
 };
 
+export const ASCII: AsciiStyle = {
+	version: 1,
+	style: 'ascii',
+	title: 'ASCII',
+	renderer: 'ascii',
+	collections: [
+		{
+			id: 'sea',
+			title: 'Sea',
+			pictures: [
+				{ id: 'sharks', title: 'Sharks', params: { scene: 'sharks', cell: 11, speed: 1 } },
+				{ id: 'whale', title: 'Whale', params: { scene: 'whale', cell: 12, speed: 1 } },
+			],
+		},
+		{
+			id: 'night',
+			title: 'Night',
+			pictures: [{ id: 'moon', title: 'Moon', params: { scene: 'moon', cell: 10, speed: 1 } }],
+		},
+	],
+};
+
 /** Every built-in style, in the order the pickers list them. */
-export const BUILTIN_STYLES: StyleManifest[] = [DOTS];
+export const BUILTIN_STYLES: StyleManifest[] = [DOTS, ASCII];
 
 export function isBuiltin(style: string): boolean {
 	return BUILTIN_STYLES.some((s) => s.style === style);

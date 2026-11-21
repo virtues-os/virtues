@@ -17,9 +17,10 @@ A choice that stops above one picture shows a different picture each day.
 It changes at midnight and does not repeat until every picture in it has
 shown.
 
-**Dots** is drawn by the app itself, so it needs no download. Its dots
-drift, swell or fall slowly in the color of your text, and stay still when
-Reduce motion is on.
+**Dots** and **ASCII** are drawn by the app itself, so they need no
+download. Dots drift, swell or fall slowly. ASCII draws a scene in
+characters: sharks or a whale swimming past, or a turning moon. Both use
+the color of your text and stay still when Reduce motion is on.
 
 The button in the bottom right corner of a new chat does the same things
 from home. When your background changes daily, the arrows show the picture
@@ -38,7 +39,7 @@ laptop load these pictures from your server.
 
 ## What your server downloads
 
-The lake and Dots are part of Virtues. Every other style is downloaded by
+The lake, Dots and ASCII are part of Virtues. Every other style is downloaded by
 your server the first time you pick it, and the card shows its size before
 you do.
 

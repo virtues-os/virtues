@@ -14,7 +14,7 @@ file     = picture × appearance (Light or Dark)
 ```
 
 - **Style**: one renderer and one art direction. Its manifest names the
-  renderer (`image`, `dots`) and lists its collections.
+  renderer (`image`, `dots`, `ascii`) and lists its collections.
 - **Collection**: a curated set inside a style.
 - **Picture**: one entry in a collection. For an image style it is a file
   set per appearance; for a drawn style it is parameters.
@@ -40,7 +40,7 @@ names it.
 
 | Kind | Where it lives | Example |
 |---|---|---|
-| Built in | `lib/backgrounds/builtin.ts`, shipped with the app | Dots |
+| Built in | `lib/backgrounds/builtin.ts`, shipped with the app | Dots, ASCII |
 | Downloaded | the server's `/var/lib/virtues/backgrounds/<style>/`, fetched once from the catalog when picked | Watercolors, Oil paintings, Photographs |
 
 The store (`lib/stores/background.svelte.ts`) lists built-in styles first,
@@ -75,10 +75,12 @@ A renderer must:
 - **Cost little while it moves.** The window's glass blurs whatever is
   under it, and a frame that changes makes the blur redraw. Draw at most
   20 frames a second, nothing while `document.hidden`, and one still frame
-  under `motion.reduced` (`stores/motion.svelte.ts`). `DotsField.svelte` is
-  the reference.
+  under `motion.reduced` (`stores/motion.svelte.ts`).
+  `components/backgrounds/DrawnField.svelte` does all three: a renderer's
+  component hands it a draw function and the moment for the still frame,
+  as `DotsField.svelte` and `AsciiField.svelte` do.
 - **Draw a thumbnail** for the pickers, in the current appearance. A drawn
-  style draws a still of the same function (`dotsPreview`).
+  style draws a still of the same function (`dotsPreview`, `asciiPreview`).
 
 ## Adding a style
 
@@ -99,8 +101,10 @@ A renderer must:
 
 ### A drawn style (dots, a shader, ASCII)
 
-1. Write the renderer: a component that takes `params` and `appearance`
-   (`DrawnProps`), and a function that draws a still for a thumbnail.
+1. Write the renderer: a draw function of the time alone, so a frame needs
+   nothing from the one before; a component that takes `params` and
+   `appearance` (`DrawnProps`) and gives it to `DrawnField`; and a still of
+   the same function for a thumbnail.
 2. Register it in the three places under Renderers.
 3. Add its manifest to `lib/backgrounds/builtin.ts`: collections of
    pictures, each a set of parameters.

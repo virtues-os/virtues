@@ -244,6 +244,16 @@ window is hidden, and holds one frame under Reduce motion; the pickers'
 thumbnails are stills of the same drawing (`lib/backgrounds/dots.ts`). It
 does not yet lower its frame rate when nothing else on screen moves.
 
+ASCII (`ascii`), the second, was built on 2026-11-21 from a lab of
+eighteen scenes: Sharks and Whale in Sea, and Moon in Night. A scene gives
+each cell of a monospace grid an ink level, and the level picks a character
+from a ramp; faint levels stay blank, so only the subject and a little of
+its water or sky show. Each scene is a function of time alone
+(`lib/backgrounds/ascii.ts`), so a frame needs no state from the one before,
+and a frame is one `fillText` per row. Both renderers now draw through one
+canvas component, `components/backgrounds/DrawnField.svelte`, which keeps the
+frame cap, the pause while hidden and the still frame in one place.
+
 ## What every style keeps to
 
 - **A picture that belongs to the day,** behind the place where you start a

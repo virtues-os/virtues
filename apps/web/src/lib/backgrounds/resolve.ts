@@ -68,7 +68,7 @@ export interface DrawnPicture<P = unknown> {
 }
 
 /** The renderers that draw a style themselves, by manifest `renderer`. */
-export type DrawnRenderer = 'dots';
+export type DrawnRenderer = 'dots' | 'ascii';
 
 export interface DotsParams {
 	/** How the field moves: drifting on a slow current, swelling in and out, or falling. */
@@ -81,6 +81,17 @@ export interface DotsParams {
 	reach: number;
 	/** Seconds for one slow cycle of the motion. */
 	period: number;
+}
+
+/** The scenes the ASCII renderer draws (lib/backgrounds/ascii.ts). */
+export type AsciiScene = 'sharks' | 'whale' | 'moon';
+
+export interface AsciiParams {
+	scene: AsciiScene;
+	/** Font size of a character, in CSS pixels. */
+	cell: number;
+	/** How fast the scene moves; 1 is its natural pace. */
+	speed: number;
 }
 
 export type Picture = ImagePicture | DrawnPicture;
@@ -120,6 +131,7 @@ export interface DrawnStyle<R extends DrawnRenderer = DrawnRenderer, P = unknown
 }
 
 export type DotsStyle = DrawnStyle<'dots', DotsParams>;
+export type AsciiStyle = DrawnStyle<'ascii', AsciiParams>;
 
 export type StyleManifest = ImageStyle | DrawnStyle;
 

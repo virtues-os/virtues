@@ -156,6 +156,18 @@ describe('the built-in dots style', () => {
 	});
 });
 
+describe('the built-in ASCII style', () => {
+	it('resolves each scene by its address', async () => {
+		const { ASCII, BUILTIN_STYLES } = await import('./builtin');
+		expect(BUILTIN_STYLES.map((s) => s.style)).toEqual(['dots', 'ascii']);
+		const all: StyleManifest[] = [...BUILTIN_STYLES, ...styles];
+		expect(pool(all, parseSetting('ascii')).length).toBe(3);
+		const whale = find(all, { style: 'ascii', collection: 'sea', picture: 'whale' });
+		expect(whale && isDrawn(whale) ? (whale.params as { scene: string }).scene : undefined).toBe('whale');
+		expect(ASCII.collections.flatMap((c) => c.pictures.map((p) => p.id))).toEqual(['sharks', 'whale', 'moon']);
+	});
+});
+
 describe('AVIF-only styles', () => {
 	const avifOnly: Variant = { ...variant('elm'), files: { avif: { '1792': 'c/light/elm-1792.avif', '896': 'c/light/elm-896.avif' } } };
 

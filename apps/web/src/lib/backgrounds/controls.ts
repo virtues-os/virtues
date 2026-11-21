@@ -7,8 +7,9 @@
  */
 import { request } from '$lib/api/client';
 import { background, fileUrl } from '$lib/stores/background.svelte';
-import { find, formatAddress, isDrawn, parseSetting, pictureTitle, pool, srcset, widest, type Address, type DotsParams, type Picture } from './resolve';
+import { find, formatAddress, isDrawn, parseSetting, pictureTitle, pool, srcset, widest, type Address, type AsciiParams, type DotsParams, type Picture } from './resolve';
 import { narrowest, stepFrom } from './browse';
+import { asciiPreview } from './ascii';
 import { dotsPreview } from './dots';
 
 /** Whether the setting changes picture each day. */
@@ -88,6 +89,8 @@ function drawnThumbnail(style: string, id: string, params: unknown): string {
 	switch (renderer) {
 		case 'dots':
 			return dotsPreview(`${style}/${id}`, params as DotsParams, dark);
+		case 'ascii':
+			return asciiPreview(`${style}/${id}`, params as AsciiParams, dark);
 		default:
 			return '';
 	}
