@@ -120,7 +120,9 @@ impl Units {
 /// It is not in the assistant's prompt. It is one answer from Setup, and a
 /// sentence in every prompt would steer replies long after it stopped being
 /// true, and send the most sensitive answer ("breaking a vice") with every
-/// request.
+/// request. For the same reason it is not in `settings_draft::FIELDS` or
+/// `settings_changes::PROFILE_FIELDS`: the Settings search agent sends the
+/// Lite model every listed value and the last four weeks of changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartWith {
     Days,

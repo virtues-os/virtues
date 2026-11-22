@@ -72,14 +72,6 @@ const fn f(field: &'static str, setting_id: &'static str, kind: Kind, store: Sto
 }
 
 const UNITS: &[(&str, &str)] = &[("us", "US units: miles, pounds, Fahrenheit"), ("metric", "metric units")];
-/// The ids of `api::profile::StartWith`, with the words a person would use.
-const START_WITH: &[(&str, &str)] = &[
-    ("days", "reading their life as a story"),
-    ("patterns", "seeing patterns in their sleep, health and time"),
-    ("memory", "remembering everything"),
-    ("habit", "breaking a vice or building a virtue"),
-    ("ownership", "taking their life back from big tech"),
-];
 const THEMES: &[(&str, &str)] = &[
     ("oxford", "Light"),
     ("asgard", "Dark"),
@@ -109,7 +101,6 @@ pub const FIELDS: &[Field] = &[
     f("employer", "employer", Kind::Text(200), Store::Profile, "where they work"),
     f("home_timezone", "home", Kind::TimeZone, Store::Profile, "the time zone where they live"),
     f("units", "units", Kind::Choice(UNITS), Store::Profile, "the units they read in"),
-    f("start_with", "start-with", Kind::Choice(START_WITH), Store::Profile, "what excites them most about Virtues, as they picked it in Setup"),
     f(
         "keep_recordings_days",
         "keep-recordings",
@@ -738,6 +729,16 @@ mod tests {
         );
         assert_eq!(answer.kind, "answer");
         assert_eq!(answer.about, vec!["style"]);
+    }
+
+    /// The Settings agent's prompt carries every listed value and recent
+    /// change; `api::profile::StartWith` says why this one stays out.
+    #[test]
+    fn what_excites_them_is_not_shown_to_the_settings_agent() {
+        assert!(field("start_with").is_none());
+        assert!(!PROFILE_FIELDS.iter().any(|&(f, _)| f == "start_with"));
+        let prompt = draft_prompt(&json!({"start_with": "habit"}), &[]);
+        assert!(!prompt.contains("start_with") && !prompt.contains("habit"), "{prompt}");
     }
 
     #[test]

@@ -34,7 +34,6 @@ pub const PROFILE_FIELDS: &[(&str, &str)] = &[
     ("employer", "employer"),
     ("home_timezone", "home"),
     ("units", "units"),
-    ("start_with", "start-with"),
     ("keep_recordings_days", "keep-recordings"),
 ];
 
@@ -79,7 +78,6 @@ const NULLABLE_FIELDS: &[&str] = &[
     "home_timezone",
     "birth_date",
     "keep_recordings_days",
-    "start_with",
 ];
 
 /// How far back Changed lately reaches: the four weeks its chart draws, one
