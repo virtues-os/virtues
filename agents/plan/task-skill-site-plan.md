@@ -414,10 +414,21 @@ Two things the check turned up, both left:
 - Once, the chat's own tab moved to the site after a rebuild. Three repeats
   with the tabs logged did not show it again, and the cause is not known.
 
-Left for the owner to decide: the count of failed runs and the day dots on
-every Options page, where a site that came with the server is listed (O9),
-the "Runs on ... on your server" line on a one-time request, and "agent" for
-an outside tool connecting to a Mac.
+The owner decided the four questions the audit raised on 2026-11-22
+(Decisions). None of the four is built yet:
+
+- Options: replace `RecentDots` and the calendar in `RunHistory.svelte` with
+  the list of runs, and drop `recentSummary`'s count.
+- The dot cloud: it is the default for the server's screen
+  (`app_display.face_applet_id`, migration 0007), which falls back to the
+  record screen when its applet is gone. Removing it needs a migration that
+  moves that default and drops the applet's row, the folder `applets/dot-cloud/`
+  deleted, and the examples that cite it in `applets/AGENTS.md`,
+  `applets/AUTHORING.md` and three tests pointed elsewhere.
+- A one-time request: `where` in `TaskActions.svelte` says only the model.
+- "Agent" for an outside tool stays as it is. The 2026-11-20 decision stands
+  for everything inside Virtues: nothing the assistant or the server does is
+  called an agent.
 
 Left from the reviews, not fixed: `other_host` misses a module `import` from
 another host and refuses a plain link; a query that fails reads as "never
@@ -447,6 +458,10 @@ In the owner's words where he said them.
 | 2026-11-21 | The page that lists your server's tasks is "Server tasks". | He picked it from four names. |
 | 2026-11-21 | A task that came with the server, such as the morning examen, shows on Server tasks and never in your own list. | "th server task list yes not the human one" |
 | 2026-11-21 | Skills are managed on a Skills list under the assistant's settings. | "Add Skills list" |
+| 2026-11-22 | Options shows past runs as a plain list. The count of failed runs, the day dots and the month calendar go, on every Options page. | He picked "Plain list only" from three. |
+| 2026-11-22 | The dot cloud is removed, so no site comes with the server. | He picked "Remove the dot cloud" over listing it in Sites. |
+| 2026-11-22 | A one-time request names its model and not where it runs. | He picked "Model only": "Runs on Standard." |
+| 2026-11-22 | "Agent" stays for an outside AI tool connected to a Mac, with the tool's own name where it is known. | "I like 'agent' and or the agents name too" |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -458,7 +473,6 @@ view is a site".
 |---|---|---|
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
 | O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
-| O9 | Does a site that came with the server show in the Sites door? | No, as built. The door lists what you set up. The dot cloud opens by its address or in a page. |
 
 ## Personas
 
