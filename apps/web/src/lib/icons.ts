@@ -10,8 +10,11 @@ import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte
 import { LEGACY_ICONS } from '$lib/legacyIcons';
 import myna from '$lib/myna-icons.json';
 
+type MynaCollection = typeof myna;
+
 // Myna (mynaui:), the app's icon set. Only the icons the source names are in
-// the bundle; scripts/myna-icons.mjs writes the file.
+// the bundle, and only those the first paint's code names are here;
+// scripts/myna-icons.mjs writes both files.
 addCollection(myna);
 
 // Simple Icons used outside the Sources page. The Sources page's brand
@@ -33,10 +36,36 @@ addIcon('virtues:logo', {
 
 // Atlas — the shell's names for its own things (AtlasIcon.svelte), for
 // surfaces that take an icon by name: tabs, menus, ⌘K, a pin's stored icon.
-// Each draws the Myna icon its row in the table names.
-for (const [name, icon] of Object.entries(ATLAS_GLYPHS)) {
-	const data = myna.icons[icon.slice('mynaui:'.length) as keyof typeof myna.icons];
-	if (data) addIcon(`atlas:${name}`, { ...data, width: 24, height: 24 });
+// Each draws the Myna icon its row in the table names, registered with
+// whichever file holds that icon.
+function addAtlas(collection: MynaCollection): void {
+	const icons = collection.icons as Record<string, MynaCollection['icons'][keyof MynaCollection['icons']]>;
+	for (const [name, icon] of Object.entries(ATLAS_GLYPHS)) {
+		const data = icons[icon.slice('mynaui:'.length)];
+		if (data) addIcon(`atlas:${name}`, { ...data, width: 24, height: 24 });
+	}
+}
+addAtlas(myna);
+
+let later: Promise<void> | null = null;
+
+/**
+ * The Myna icons the first paint's code does not name, registered once. It
+ * runs by itself just after the page has loaded; Icon.svelte also asks for
+ * it when it is handed one of these names sooner.
+ */
+export function loadLaterMyna(): Promise<void> {
+	later ??= import('$lib/myna-icons-later.json').then(({ default: rest }) => {
+		addCollection(rest);
+		addAtlas(rest as unknown as MynaCollection);
+	});
+	return later;
+}
+
+if (typeof window !== 'undefined') {
+	const soon = () => setTimeout(() => void loadLaterMyna(), 0);
+	if (document.readyState === 'complete') soon();
+	else window.addEventListener('load', soon, { once: true });
 }
 
 // The dot: what a pin, page or chat wears when no icon has been chosen, in

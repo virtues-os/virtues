@@ -1,3 +1,18 @@
+<script lang="ts" module>
+	import type MarkdownView from "$lib/components/Markdown.svelte";
+
+	/**
+	 * The reply renderer (streamdown, and the marked it brings) loads beside
+	 * the chat rather than with the app's first paint. The home page shows no
+	 * reply, and a reopened chat waits a round trip for its transcript, by
+	 * which time this file has arrived from the device's cache. Kept here, so
+	 * a second chat view draws it at once. A failed load from a replaced
+	 * build reloads the page (hooks.client.ts, `vite:preloadError`).
+	 */
+	let markdownView: typeof MarkdownView | null = null;
+	const markdownLoad = import("$lib/components/Markdown.svelte").then((m) => (markdownView = m.default));
+</script>
+
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -9,7 +24,6 @@
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
-	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
@@ -150,6 +164,10 @@
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { REVEAL_MESSAGE, type RevealMessageDetail } from "$lib/components/chat/about/InThisChat.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
+
+	// The reply renderer, once it has loaded (see the module script above).
+	let Markdown = $state.raw(markdownView);
+	if (!markdownView) void markdownLoad.then((view) => (Markdown = view), (error) => console.error("[ChatView] reply renderer failed to load", error));
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -2240,13 +2258,15 @@
 													<div
 														class="text-foreground assistant-response"
 													>
-														<Markdown
-															content={shown.content}
-															isStreaming={isStreaming || shown.arriving}
-															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
-															citations={citationContext}
-															refVariant={chatEssay.on && !inRoom && !inInterview ? "quiet" : "link"}
-														/>
+														{#if Markdown}
+															<Markdown
+																content={shown.content}
+																isStreaming={isStreaming || shown.arriving}
+																animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
+																citations={citationContext}
+																refVariant={chatEssay.on && !inRoom && !inInterview ? "quiet" : "link"}
+															/>
+														{/if}
 														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && reveal.plateReady)}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The

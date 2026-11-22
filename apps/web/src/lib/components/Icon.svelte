@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Icon, { iconLoaded } from '@iconify/svelte';
 	// Import icon registry to ensure icons are pre-loaded
-	import { resolveIcon } from '$lib/icons';
+	import { loadLaterMyna, resolveIcon } from '$lib/icons';
 	import { isEmoji } from '$lib/utils/iconHelpers';
 	import { loadLucide } from '$lib/lucide';
 
@@ -25,12 +25,23 @@
 	const emoji = $derived(!!icon && isEmoji(icon));
 	const box = $derived(Number(width ?? height ?? 16) || 16);
 
-	// A Lucide name waits for the bundled collection (see lucide.ts). Handed to
-	// iconify before then, it would be fetched from iconify's public API.
+	// A Lucide name waits for the bundled collection (see lucide.ts), and a
+	// Myna or Atlas name the first paint does not draw waits for the later
+	// Myna file (icons.ts). Handed to iconify before then, either would be
+	// fetched from iconify's public API. Each holds its space, empty, so
+	// nothing moves when it arrives.
 	let lucideReady = $state(false);
-	const waiting = $derived(!!icon && icon.startsWith('lucide:') && !lucideReady && !iconLoaded(icon));
+	let mynaReady = $state(false);
+	const waitsForLucide = $derived(!!icon && icon.startsWith('lucide:') && !lucideReady && !iconLoaded(icon));
+	const waitsForMyna = $derived(
+		!!icon && (icon.startsWith('mynaui:') || icon.startsWith('atlas:')) && !mynaReady && !iconLoaded(icon),
+	);
+	const waiting = $derived(waitsForLucide || waitsForMyna);
 	$effect(() => {
-		if (waiting) loadLucide().then(() => (lucideReady = true));
+		if (waitsForLucide) loadLucide().then(() => (lucideReady = true));
+	});
+	$effect(() => {
+		if (waitsForMyna) loadLaterMyna().then(() => (mynaReady = true));
 	});
 </script>
 

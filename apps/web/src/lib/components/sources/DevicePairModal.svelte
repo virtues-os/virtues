@@ -14,7 +14,10 @@
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import { Button, TextAction } from "$lib";
+	// Each from its own file: the `$lib` barrel re-exports Markdown and the
+	// rest, and this modal loads with the first paint (the getting-started room).
+	import Button from "$lib/components/Button.svelte";
+	import TextAction from "$lib/components/TextAction.svelte";
 	import * as api from "$lib/api/client";
 	import { openPairDoor, closePairDoor, createPairHandoff } from "$lib/tauri/bridge";
 	import type { HandoffOutcome } from "$lib/tauri/bridge";

@@ -140,9 +140,11 @@ jobs:
       - name: Airlock router tests
         run: node --test "apps/web/src-tauri/ui/*.test.mjs"
 
-      # src/lib/myna-icons.json holds the Myna icons the source names. `pnpm
-      # dev` and `pnpm build` rewrite it, so a stale copy only reaches a commit
-      # when someone named a new icon and committed without running either.
+      # src/lib/myna-icons.json and myna-icons-later.json hold the Myna icons
+      # the source names, split by whether the first paint's code names them.
+      # `pnpm dev` and `pnpm build` rewrite both, so a stale copy only reaches
+      # a commit when someone named a new icon and committed without running
+      # either.
       - name: Bundled icons match the source
         working-directory: apps/web
         run: node scripts/myna-icons.mjs --check

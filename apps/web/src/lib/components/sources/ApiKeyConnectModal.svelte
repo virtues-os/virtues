@@ -15,7 +15,10 @@
 	 * way. The paste fields stay one click away, and are all a browser tab gets.
 	 */
 	import Modal from '$lib/components/Modal.svelte';
-	import { Button, Input } from '$lib';
+	// Each from its own file: the `$lib` barrel re-exports Markdown and the
+	// rest, and this modal loads with the first paint (the getting-started room).
+	import Button from '$lib/components/Button.svelte';
+	import Input from '$lib/components/Input.svelte';
 	import { apikeyComplete, type SourceCatalogItem } from '$lib/api/client';
 	import { fieldLabel, fieldPhrase, isSecretField, keyHelp, missingField } from '$lib/sources/keys';
 	import {
