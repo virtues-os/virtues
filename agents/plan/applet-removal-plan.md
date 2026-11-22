@@ -1,6 +1,9 @@
 # Removing "applet": sites, skills and tasks in storage and code
 
-Status: planned on 2026-11-22. Nothing here is built.
+Status: planned on 2026-11-22 and audited the same day. **Do not start it as
+written.** The audit below found claims in it that are false, dependencies
+it missed, and a case against its shape. The owner has not decided again.
+Nothing here is built.
 
 People already see three words: task, skill and site
 ([task-skill-site-plan.md](task-skill-site-plan.md)). The database, the code,
@@ -8,8 +11,120 @@ the folders on disk and the assistant's tool still say "applet". This plan
 replaces the one `app_applets` table with a table per word, renames
 everything else that carries the old word, and says in what order.
 
-Nothing a person sees changes. The command line and the tool outside agents
-call do change, and are listed below.
+The command line and the tool outside agents call change, and are listed
+below. The plan first said nothing a person sees changes. The audit found
+that is not so: see "What a person would see".
+
+## The audit of 2026-11-22
+
+Three reviews read this plan against the code: one checked every claim and
+looked for what it missed, one argued against the shape, and one looked at
+the experience. Their findings were checked in the code before they went in
+here. Claims in the plan that were false are corrected where they stand.
+
+### The case against the shape
+
+- **The reason given is small and recent.** The stand-in row for a repeating
+  task was added on 2026-11-21 (`0c98df84f`) and has had fixes since. The
+  second place a kind is derived, `kindOf` in the web app, takes the
+  server's `kind` first and falls back only for a server from before that
+  field, which the app never meets: the server ships the web bundle.
+- **One folder is one object.** A folder has one `SKILL.md` with one name,
+  one description, one prompt and one trigger, and its rows are rebuilt from
+  it on every start. Three rows per folder would be three copies of one
+  file's facts, and a rename would have to reach all of them.
+- **Splitting moves the derivation, it does not remove it.** Inside one
+  `app_tasks`, "is this a one-time request or scheduled work" would be read
+  from which columns are filled, in the six places that read `applet_id`
+  today (`api/tasks.rs`, `api/circumstances.rs`, `api/thread_week.rs`).
+- **The server's work does not fit the to-do table.** A to-do has a status
+  that ends, a due date, an order in a list, a home and a history written by
+  you or the assistant. A sync has none of them and never finishes. In one
+  table: `GET /api/tasks` returns every sync, the export file
+  (`cli/export.rs`) carries sync cursors and account ids, the count of
+  results waiting has no "whose", and the row has eight date columns. No
+  screen shows the two together.
+- **The row-level policy covers one login.** The app's own login owns the
+  table and is not subject to a policy, so every query the server makes
+  still needs its own filter. Rule 8 guards only sites and `sql_query`.
+- **Nobody gains anything they can see**, and the cost is about 370 files,
+  migrations with no way back, at least two releases and a rehearsal per
+  piece.
+
+### What the plan missed
+
+Each of these depends on the word or on an id, and is not in the lists
+below.
+
+- **Whether something is a site is a file on disk**, `view.html`
+  (`server/api/applets.rs`, `face_for`). A SQL migration cannot fill a sites
+  table.
+- **A sync folder makes one row per connected account or device**
+  (`applet_templates/mod.rs`, `per_credential`; 19 shipped folders have
+  `source:`). Ids have a third form, `applet_<name>_<account or device id>`.
+- **A run that belongs to no task.** A skill used from a chat makes a run,
+  and its daily spending limit is summed by the applet's id
+  (`applet_runner/limits.rs`). `app_runs.task_id` has no place for it.
+  Programs have limits too and would have no skill row to hold them.
+- **A skill has an on and off today**, and the runner refuses a run of one
+  that is off (`applet_runner/mod.rs`). `app_skills` as drawn has no such
+  column, so what was turned off would come back on.
+- **Text saved on a server's disk names the old tables and ids.** The tool's
+  guidance teaches a gate that reads `app_applet_runs` with an `applet_…`
+  id, and the reader login is granted those columns for it
+  (`server/faces.rs`). One shipped prompt and one shipped program name
+  another folder's schema (`applet_daily_readings`). Table files create the
+  schema by name and are checksummed (`tools/applet_schema.rs`).
+- **The two database roles cannot be renamed by a migration.** Each role's
+  password is derived from its name (`database/restricted.rs`), the lines
+  in `pg_hba.conf` name them, the server's own login may not alter a role,
+  and a role belongs to the whole cluster.
+- **Code that reads meaning out of an id**: `applet_slug` and its callers,
+  `template_for_applet_id`, the id built from the folder path
+  (`applet_templates/skill.rs`), a prefix match in `google_push.rs`, and
+  the web's address reader. Dropping `user__` from ids also lets a folder
+  of yours and a shipped one take the same id.
+- **Stored values**: tools the owner turned off, kept by tool id
+  (`api/capabilities.rs`); a tool list inside each saved skill; the sidebar
+  door `applets` in the profile; attention keys and routes; run outputs
+  that name `applet_<name>.<table>`; the lake's kind `applet` and its
+  `applets/<name>/` prefix; the `applet:` tag the crash reporter filters on.
+- **What SQL cannot reach**: stored chats draw a tool call by its name;
+  links inside pages and chat text; tabs kept in a browser's storage.
+- **Lints that would stop checking without failing**: `arch-lint.sh` and
+  `check-swallowed-queries.sh` test for a folder named `applets`.
+
+### Boundaries: seven, where the plan had three
+
+The three below stand, with corrections. Four more are of the same kind:
+
+4. **Backups.** Restore accepts an archive from an older schema, and its
+   members are named `applets/…` (`cli/backup.rs`, `cli/restore.rs`).
+5. **A server's own files**: its env file names the three variables, and
+   `pg_hba.conf` names the roles.
+6. **The native apps carry a web build of their own** and run it until the
+   server's loads.
+7. **A server that skips the preparing release.** Nothing makes an upgrade
+   stop at a given release, so a server two releases behind would still
+   install with no programs.
+
+### What a person would see
+
+- A water log stored as a site, a skill and a task would be listed three
+  times unless one stored fact still says what it shows as. Today that is
+  the precedence rule: a view, then a program, then a schedule, then a
+  skill.
+- Removing a schedule would delete the task and with it the run history,
+  the thread and the notes. Today the row stays and reopens.
+- The delete dialog prints the schema name, which would show "pkg_".
+
+### Where this leaves the plan
+
+The review that argued against the shape recommends keeping one row per
+folder, storing what it is once, and removing only the stand-in row. That
+contradicts two decisions the owner made on 2026-11-22 (a table per word,
+and the server's tasks in the task table), so it is his to decide. Until he
+does, the sections below are a record of the first proposal.
 
 ## What the owner decided
 
@@ -52,10 +167,13 @@ Measured on `wave` on 2026-11-22.
   its `feature` value `applet`, `app_publications.producer_kind`,
   `app_visits.kind`, one Postgres schema per applet named `applet_<name>`,
   the roles `virtues_applet_writer` and `virtues_face_reader`, and ids of
-  the form `applet_<name>` and `applet_user__<name>`.
+  the form `applet_<name>`, `applet_user__<name>` and, for a sync,
+  `applet_<name>_<account or device id>`.
 - **On disk**: the shipped folder `applets/` (46 folders, each a `SKILL.md`),
   the programs' crate `virtues-applets`, the installed
-  `/usr/local/share/virtues/applets` and `applets-bin`, the state root
+  `/usr/local/share/virtues/applets`, the programs in
+  `/usr/local/libexec/virtues` (`applets-bin` in the release archive), the
+  state root
   `/var/lib/virtues/applets`, `.applet-state/` in a checkout, and the
   variables `VIRTUES_APPLETS_DIR`, `VIRTUES_APPLETS_BIN_DIR`,
   `VIRTUES_APPLET_STATE_DIR` and `VIRTUES_APPLET_RUN_ID`. The names from the
@@ -94,7 +212,8 @@ Four tables hold what people have. The folder on disk is a package.
 1. **Which table a row is in says what it is.** Nothing is derived from
    which columns are filled. `kind_of` and `kindOf` are deleted.
 2. **A folder makes up to three rows.** A prompt makes a skill. A schedule,
-   a trigger or a program makes a task. A `view.html` makes a site.
+   a trigger or a program makes a task. A `view.html` makes a site. (False
+   for syncs: a folder with `source:` makes one row per connected account.)
 3. **Nothing changes kind.** A schedule added to a skill makes a task that
    uses the skill. A view added makes a site beside what was there. Removing
    the schedule deletes the task and leaves the skill.
@@ -151,8 +270,10 @@ package deletes its site, skill and task.
   with it the two-id lookup an address needs today (`readAddress` returns
   `id` and `otherId`).
 - A package's own tables move from the schema `applet_<name>` to
-  `pkg_<name>`. Prompts and views name those tables with no schema, so their
-  text does not change.
+  `pkg_<name>`. Views name those tables with no schema. Table files, one
+  shipped program, one shipped prompt and gates saved on a server's disk
+  name the schema, the run table or an id, so their text would have to
+  change with it.
 - The roles become `virtues_package_writer` and `virtues_reader`. "Face" is
   the earlier word for a view and goes with applet: the routes become
   `/view/<site id>/` and `/api/view/query`.
@@ -161,11 +282,13 @@ package deletes its site, skill and task.
 
 All 46 shipped folders fit with nothing left over:
 
-- 33 programs become server tasks. Five of them have no schedule and run
-  when asked.
+- 34 folders run a program (`applets/Cargo.toml` has 34 programs) and
+  become server tasks. Seven have no schedule: five run when asked, and the
+  two that take what a phone or a Mac sends start on a webhook. The wiki
+  editor is one of the 34 and has a prompt as well, run after its program.
 - 11 prompts become skills: ten in the `/` menu, and `charts`.
-- The morning examen and the wiki editor are prompts that start themselves.
-  Each becomes a skill and a server task that uses it.
+- The morning examen is a prompt that starts itself. It becomes a skill and
+  a server task that uses it.
 
 On a server with its own:
 
@@ -189,15 +312,18 @@ Each needs something to ship one release earlier.
    at all. So one release teaches the upgrader the new names, and the next
    one uses them.
 2. **Paired collectors keep ids.** A Mac or phone paired before the cut posts
-   to ids of the form `applet_…` and reads the key `applet_ids`. The server
-   keeps a `former_id` on `app_tasks` that the webhook route and the
-   device-ids route still answer to, and sends the new key beside the old
-   one, until the collectors that read the new key are the oldest still
-   supported.
+   to ids of the form `applet_…` and reads the key `applet_ids`, which three
+   replies carry (pairing, the device list, and the device-ids route). The
+   Mac asks for its ids again when a post is refused. The phone never does:
+   it keeps the ids from pairing until it is paired again. So the server
+   keeps a `former_id` that the webhook route still answers to for as long
+   as a phone paired before the cut is in use.
 3. **Pages hold the block.** A page's content is a document the database
-   cannot rewrite. The document contract gets a `site` block, and the old
-   block is read as one and rewritten when the page is next saved
-   (`crates/virtues-document/src/migrate.rs` does this for earlier changes).
+   cannot rewrite. The document contract would need a `site` block and a
+   way to read the old block as one. No such mechanism exists today:
+   `crates/virtues-document/src/migrate.rs` turns markdown into a document
+   and does not rename blocks. The block's `ref` holds the id, so a site
+   would need a `former_id` too.
 
 Two changes break callers on purpose, with no alias:
 
@@ -267,11 +393,12 @@ not when it builds (`.claude/rules/columns.md`). For each piece:
 - the catalog the assistant reads (`crates/virtues-registry/src/sql_catalog.rs`)
   and the reader role's grants (`server/faces.rs`);
 - the tool text and its size budgets (`api/chat_mode.rs`);
-- `applets/AGENTS.md` and `applets/AUTHORING.md`, which tell the assistant
-  what to write;
+- the applet tool's own text in `crates/virtues-registry/src/tools.rs`,
+  which is the whole instruction the assistant gets. `applets/AGENTS.md`
+  and `applets/AUTHORING.md` are for people working in the repo; the
+  release leaves them out;
 - the web client's types and the Mac collector's config keys;
-- the release workflow, the installer, the Makefile and `.claude/rules/`;
-- the sqlx offline cache.
+- the release workflow, the installer, the Makefile and `.claude/rules/`.
 
 ## Open questions
 
