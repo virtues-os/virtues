@@ -869,12 +869,10 @@
 			projectStore.setDraft(conversationId, seededProject);
 		}
 		(async () => {
-			// Stage 1: Models must load first (other code depends on model list)
-			await getInitializationPromise();
-
-			// Stage 2: Profile fetches + conversation load in parallel (independent)
-			const tabConversationId = extractConversationId(tab.route);
-
+			// The profile's model pin needs no model list, so it is asked for
+			// while the models load rather than after: a round trip saved, and
+			// at launch it shares the request the theme and background make
+			// (the client shares a GET already in flight).
 			let profileDefaultModelId: string | undefined;
 
 			const profilePromise = (async () => {
@@ -890,6 +888,12 @@
 					console.error("Failed to load assistant profile:", error);
 				}
 			})();
+
+			// Models must load before the conversation (other code depends on
+			// the model list).
+			await getInitializationPromise();
+
+			const tabConversationId = extractConversationId(tab.route);
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {

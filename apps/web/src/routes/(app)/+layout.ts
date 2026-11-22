@@ -4,6 +4,7 @@ import { boxBelowFloor } from '$lib/boxApi';
 import type { SetupState } from '$lib/api/client';
 import { setupStateStore } from '$lib/stores/setupState.svelte';
 import { sidebarDoors } from '$lib/stores/sidebarDoors.svelte';
+import { units } from '$lib/stores/units.svelte';
 import { markStartup } from '$lib/perf/startup';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
@@ -173,6 +174,7 @@ const loadShell: LayoutLoad = async ({ fetch, url }) => {
 		if (profileResponse?.ok) {
 			const profile = await profileResponse.json();
 			sidebarDoors.seed(profile);
+			units.seed(profile);
 
 			// (Onboarding redirects live above, off /api/setup/state. This fetch
 			// only feeds preferences.)
