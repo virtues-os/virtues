@@ -1458,6 +1458,18 @@ mod tests {
         assert_eq!(cfg["model_slot"].as_str(), Some("standard"));
     }
 
+    /// A skill of the owner's may not take a name the chat reads as a mode,
+    /// including the old name of the skill that writes skills.
+    #[test]
+    fn a_skill_of_yours_may_not_take_a_reserved_name() {
+        let f = tempfile::tempdir().unwrap();
+        for name in ["sudo", "new-applet"] {
+            let text = format!("---\nname: {name}\ndescription: Mine.\nmetadata:\n  invoke: chat\n---\nDo it.\n");
+            let e = parse(&text, f.path(), "user/mine", false).unwrap_err();
+            assert!(e.iter().any(|m| m.contains("already starts a built-in chat mode")), "{name}: {e:?}");
+        }
+    }
+
     #[test]
     fn the_wiring_under_metadata_maps_onto_the_row() {
         let t = ok(

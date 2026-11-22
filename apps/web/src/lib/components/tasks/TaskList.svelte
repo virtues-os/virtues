@@ -39,7 +39,7 @@
 	import { isClosed, toggleTaskDone } from "$lib/tasks/actions";
 	import { dueGroup, dueLabel, isoDay, type DueGroup } from "$lib/tasks/due";
 	import { homeOf, subjectIcon, subjectName, subjectUrl } from "$lib/tasks/homes";
-	import { isRequest, requestState } from "$lib/tasks/requests";
+	import { isRepeating, isRequest, requestState } from "$lib/tasks/requests";
 	import { toast } from "svelte-sonner";
 	import { onMount, tick } from "svelte";
 
@@ -348,7 +348,7 @@
 		} else if (e.key === "Enter") {
 			e.preventDefault();
 			openPage(t);
-		} else if (e.key === "x" && !mod && (t.assignee === "owner" || isClosed(t))) {
+		} else if (e.key === "x" && !mod && !isRepeating(t) && (t.assignee === "owner" || isClosed(t))) {
 			e.preventDefault();
 			void toggleTaskDone(t);
 		}
@@ -441,7 +441,9 @@
 
 {#snippet row(t: Task)}
 	{@const home = rowHome(t)}
-	{@const request = isRequest(t)}
+	<!-- A task that repeats is the assistant's for good, so it never gets a
+	     tick box, open or finished: its own runs end it. -->
+	{@const request = isRequest(t) || isRepeating(t)}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<li
 		class="row"

@@ -647,9 +647,17 @@ pub async fn update_task(
                 "a task that repeats has no end to mark. Turn it off or delete it from its page.".into(),
             ));
         }
+        // A closed row is closed because its task has no more runs. Opening
+        // it by hand would leave an open row nothing can end; it opens again
+        // by itself when the task is given a schedule again.
+        if patch.status == Some(Status::Open) && before.closed_at.is_some() {
+            return Err(Error::InvalidInput(
+                "this task has finished. Give it a schedule again from its options and it opens by itself.".into(),
+            ));
+        }
         // The row is named after its applet, and the next run would put the
         // applet's name back.
-        if patch.title.as_deref().is_some_and(|t| t.trim() != before.title) {
+        if patch.title.as_deref().is_some_and(|t| !clean_title(t).is_ok_and(|c| c == before.title)) {
             return Err(Error::InvalidInput(
                 "a task that repeats is named by what was set up. Rename it from its options.".into(),
             ));
@@ -1204,9 +1212,9 @@ pub async fn open_standing_task(
             let sql = format!(
                 "UPDATE app_tasks
                  SET title = $2,
-                     status = CASE WHEN status IN ('done', 'dismissed') THEN 'open' ELSE status END,
-                     closed_at = CASE WHEN status IN ('done', 'dismissed') THEN NULL ELSE closed_at END,
-                     updated_at = CASE WHEN title = $2 AND status NOT IN ('done', 'dismissed') THEN updated_at ELSE now() END
+                     status = CASE WHEN status = 'done' THEN 'open' ELSE status END,
+                     closed_at = CASE WHEN status = 'done' THEN NULL ELSE closed_at END,
+                     updated_at = CASE WHEN title = $2 AND status <> 'done' THEN updated_at ELSE now() END
                  WHERE applet_id = $1
                  RETURNING {TASK_COLUMNS}"
             );
@@ -1236,7 +1244,7 @@ pub async fn standing_task_id(pool: &PgPool, applet_id: &str) -> Result<Option<S
 pub async fn close_standing_task(pool: &PgPool, applet_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE app_tasks SET status = 'done', closed_at = now(), updated_at = now()
-         WHERE applet_id = $1 AND status IN ('open', 'active')",
+         WHERE applet_id = $1 AND status = 'open'",
     )
     .bind(applet_id)
     .execute(pool)

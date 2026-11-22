@@ -96,6 +96,7 @@ pub async fn week_at(pool: &PgPool, start: NaiveDate, now: DateTime<Utc>) -> Res
     let tasks: Vec<(String, Option<NaiveDate>, Option<DateTime<Utc>>, String)> = sqlx::query_as(
         "SELECT thread_id, due_on, closed_at, status FROM app_tasks
          WHERE thread_id = ANY($1)
+           AND applet_id IS NULL
            AND ((status IN ('open', 'active', 'ready') AND due_on IS NOT NULL)
                 OR (status = 'done' AND closed_at >= $2 AND closed_at < $3))",
     )

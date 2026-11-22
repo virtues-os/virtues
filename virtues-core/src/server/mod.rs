@@ -191,8 +191,9 @@ async fn preflight(client: &Virtues) {
     }
 
     // An applet that is a task of the assistant's has one row in the task
-    // list. Open the row of any that lacks one: made before the rows
-    // existed, or put in place by hand.
+    // list. Open the row of any that lacks one, and close the row of any
+    // that is no longer such a task: made before the rows existed, or
+    // changed by hand.
     if let Err(e) = crate::api::repeating_tasks::ensure_all(pool).await {
         tracing::warn!("Failed to open the task rows of repeating tasks: {}", e);
     }
