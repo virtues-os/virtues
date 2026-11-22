@@ -3258,6 +3258,18 @@
 	   it via --keyboard-inset). This block sits after the base rules on
 	   purpose: it ties them on specificity, and cascade order is what lets it
 	   win — an earlier version lived above them and silently lost. */
+	/* The phone shell's glass bar floats over the view (MobileShell), so the
+	   transcript starts below it and the painting runs up behind it. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.messages-container {
+			padding-top: calc(1.5rem + var(--shell-bar-inset, 0px));
+		}
+		.home-scene {
+			top: 0;
+			height: 100%;
+		}
+	}
+
 	@media (max-width: 768px), (pointer: coarse) {
 		.chat-input-wrapper,
 		.chat-input-wrapper.is-empty {

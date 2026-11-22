@@ -28,7 +28,7 @@
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
-		placeholder = "Ask anything, or type @ to add context",
+		placeholder: placeholderProp,
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
@@ -236,6 +236,11 @@
 		editor?.setDisabled(next);
 	});
 
+	// A phone's one-row pill has room for the short form only.
+	const placeholder = $derived(
+		placeholderProp ?? (mobileLayout.isMobile ? "Ask anything" : "Ask anything, or type @ to add context"),
+	);
+
 	// The placeholder can change after the editor exists: the chat's mode
 	// decides it.
 	$effect(() => {
@@ -249,7 +254,9 @@
 	$effect(() => {
 		if (inputIsEmpty) wrapped = false;
 	});
-	const oneRow = $derived(inline && !wrapped);
+	// A phone always starts on one row, a glass pill like the bar above it.
+	const phone = $derived(mobileLayout.isMobile);
+	const oneRow = $derived((inline || phone) && !wrapped);
 	// The field is as tall as its content.
 	function setHeight(contentPx: number) {
 		if (contentPx > MIN_HEIGHT + 4) wrapped = true;
@@ -426,6 +433,8 @@
 		aria-label="Chat input"
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
+		class:phone
+		class:lq={phone}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -474,7 +483,7 @@
 			</div>
 		</div>
 
-		<div class="composer-card bg-surface" class:one-row={oneRow}>
+		<div class="composer-card" class:bg-surface={!phone} class:one-row={oneRow}>
 			{#if onAttach}
 				<input
 					bind:this={fileInputEl}
@@ -671,6 +680,22 @@
 	.one-row .offline-note { grid-area: 1 / 3; margin-right: 0.25rem; }
 	.one-row .mic-button { grid-area: 1 / 4; }
 	.one-row .action-btn { grid-area: 1 / 5; }
+
+	/* On a phone the composer is a glass pill (the .lq recipe in app.css),
+	   so it follows the Glass setting. It is a pill on one row and takes the
+	   card's corners once the text wraps. */
+	.chat-input-wrapper.phone {
+		border-color: transparent;
+		background: var(--lq-sheen), var(--lq-fill);
+		/* design-ok: glass is lifted off the painting */
+		box-shadow: var(--lq-rim), var(--lq-lift);
+	}
+	.chat-input-wrapper.phone:has(.one-row) {
+		--shell-radius: var(--radius-full);
+	}
+	.phone .composer-card.one-row {
+		min-height: 56px;
+	}
 
 	.tray-open .composer-card {
 		border-top-color: var(--color-border);
