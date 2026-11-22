@@ -397,6 +397,23 @@ against the code. These were fixed on `wave`:
   search knows `#sites` and `#skills`, a late run reads "Hasn't run since",
   and the server's errors no longer say "applet" or "action".
 
+These were then checked in a running app, on the same copy of a real
+server's snapshot as slice G: a rename of the row is refused and its notes
+survive a run; a run started by hand is not marked new; a one-time task's row
+closed as done with its result; Share and Delete open from a site's view; the
+delete dialog says "site" or "skill"; a view opened another site and was
+refused a route outside the app; the Recent filter says "Sites"; and three
+changes the assistant made to an open site left the tabs as they were. Not
+checked there: the search scopes, a result marked new by a scheduled run, and
+the error shown on a failed switch.
+
+Two things the check turned up, both left:
+
+- Each rebuild or token renewal of an open site adds an entry to the
+  browser's history, because the frame's address changes.
+- Once, the chat's own tab moved to the site after a rebuild. Three repeats
+  with the tabs logged did not show it again, and the cause is not known.
+
 Left for the owner to decide: the count of failed runs and the day dots on
 every Options page, where a site that came with the server is listed (O9),
 the "Runs on ... on your server" line on a one-time request, and "agent" for
