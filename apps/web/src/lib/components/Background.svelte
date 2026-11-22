@@ -9,7 +9,9 @@
 	 * picture from a pack with one version of each, are dimmed in Dark
 	 * through `--window-scene-filter`. A style the app draws itself (Dots)
 	 * comes from its renderer, loaded the first time a setting needs it
-	 * (lib/backgrounds/renderers.ts), and draws in the theme's ink.
+	 * (lib/backgrounds/renderers.ts), and draws in the theme's ink. A site
+	 * of yours draws nothing here: home shows it behind a new chat, where it
+	 * can take clicks (ChatView).
 	 *
 	 * A change of picture crossfades. The new picture is a layer over the old
 	 * one, kept clear until it has loaded and decoded, then faded in; the old

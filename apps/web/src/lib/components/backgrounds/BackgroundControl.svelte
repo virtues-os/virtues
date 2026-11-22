@@ -52,6 +52,7 @@
 		if (!open) return;
 		theme = getThemeChoice();
 		void background.ensureStyles();
+		if (setting.kind === 'site') void background.ensureSites();
 	});
 
 	const setting = $derived(parseSetting(background.setting));
@@ -67,6 +68,7 @@
 
 	const caption = $derived.by(() => {
 		if (setting.kind === 'plain') return { title: 'Plain', note: 'No picture' };
+		if (setting.kind === 'site') return { title: background.siteName(setting.id) ?? 'Your site', note: 'One of your sites' };
 		if (setting.kind === 'default' || !now) return { title: 'The lake', note: 'Until you choose a background' };
 		return { title: now.title, note: now.collectionTitle };
 	});

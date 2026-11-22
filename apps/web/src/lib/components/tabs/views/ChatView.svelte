@@ -4,6 +4,7 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
+	import { background } from "$lib/stores/background.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -2612,6 +2613,20 @@
 								<Background position="70% 100%" />
 							</div>
 						{/if}
+						<!-- A site of yours as the background fills the pane behind
+						     home and takes clicks wherever home has nothing of its
+						     own. It loads once home shows, and again with the theme,
+						     which the site reads when it opens. -->
+						{#if background.shown.kind === "site"}
+							{@const site = background.shown}
+							<div class="home-site" transition:fade={{ duration: 500 }}>
+								{#await import("$lib/components/applets/FaceFrame.svelte") then { default: FaceFrame }}
+									{#key `${site.appletId}:${background.appearance}`}
+										<FaceFrame appletId={site.appletId} fill />
+									{/key}
+								{/await}
+							</div>
+						{/if}
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />
 						</div>
@@ -2925,6 +2940,15 @@
 		pointer-events: none;
 		-webkit-mask-image: var(--window-scene-mask);
 		mask-image: var(--window-scene-mask);
+	}
+
+	/* A site of yours as the background: under the headline and tiles
+	   (z-index 2) and the composer (10), which pass clicks through their
+	   empty space to it. */
+	.home-site {
+		position: absolute;
+		inset: 0;
+		z-index: 1;
 	}
 
 	/* The intro, about 0.95 s in all: the headline comes in as its letters

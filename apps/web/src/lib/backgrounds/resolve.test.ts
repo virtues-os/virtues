@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, isDrawn, parseSetting, pickForDay, pool, srcset, widest, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, isDrawn, parseSetting, pickForDay, pool, siteSetting, srcset, widest, type StyleManifest, type Variant } from './resolve';
 import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
@@ -38,6 +38,13 @@ describe('parseSetting', () => {
 		expect(parseSetting('plain')).toEqual({ kind: 'plain' });
 		expect(parseSetting('paintings')).toEqual({ kind: 'path', style: 'paintings', collection: undefined, picture: undefined });
 		expect(parseSetting('paintings/forest/oak')).toEqual({ kind: 'path', style: 'paintings', collection: 'forest', picture: 'oak' });
+	});
+
+	it('reads a site of yours', () => {
+		expect(parseSetting(siteSetting('applet_user__reading_garden'))).toEqual({ kind: 'site', id: 'applet_user__reading_garden' });
+		for (const bad of ['site:', 'site:water_log', 'site:applet_../x', 'site:applet_Big', 'site:applet_a/b']) {
+			expect(parseSetting(bad)).toEqual({ kind: 'default' });
+		}
 	});
 
 	it('treats a malformed setting as the default', () => {

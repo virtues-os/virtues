@@ -18,12 +18,15 @@
 	let {
 		appletId,
 		height = '420px',
-		keepAlive = true
+		keepAlive = true,
+		fill = false
 	}: {
 		appletId: string;
 		height?: string;
 		/** Whether to keep checking the view's token. A card's small preview doesn't. */
 		keepAlive?: boolean;
+		/** Fill the parent edge to edge with no frame, as home's background. */
+		fill?: boolean;
 	} = $props();
 
 	let src = $state<string | null>(null);
@@ -145,17 +148,22 @@
 <svelte:window onmessage={onMessage} />
 
 {#if err}
-	<div class="face-error">Your server couldn't load this site: {err}. Close it and open it again.</div>
+	{#if fill}
+		<div class="face-error fill">Your server couldn't load your background site: {err}. Choose a background in Settings › Appearance.</div>
+	{:else}
+		<div class="face-error">Your server couldn't load this site: {err}. Close it and open it again.</div>
+	{/if}
 {:else if src}
 	<iframe
 		bind:this={frame}
 		{src}
 		sandbox="allow-scripts"
-		title="Site"
+		title={fill ? 'Background site' : 'Site'}
 		class="face-frame"
-		style:height
+		class:fill
+		style:height={fill ? undefined : height}
 	></iframe>
-{:else}
+{:else if !fill}
 	<div class="face-loading">Loading…</div>
 {/if}
 
@@ -165,6 +173,21 @@
 		border: 1px solid var(--color-border, #e5e7eb);
 		border-radius: var(--radius-lg);
 		background: var(--color-surface, #fff);
+	}
+	.face-frame.fill {
+		display: block;
+		height: 100%;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+	}
+	.face-error.fill {
+		position: absolute;
+		left: 16px;
+		bottom: 16px;
+		max-width: 28rem;
+		padding: 0;
+		border: 0;
 	}
 	.face-error,
 	.face-loading {

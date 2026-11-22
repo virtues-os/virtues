@@ -159,14 +159,23 @@ export interface Address {
 export type Setting =
 	| { kind: 'default' }
 	| { kind: 'plain' }
+	| { kind: 'site'; id: string }
 	| { kind: 'path'; style: string; collection?: string; picture?: string };
 
 const SEGMENT = /^[a-z0-9-]{1,64}$/;
+const SITE_ID = /^applet_[a-z0-9_]{1,96}$/;
+
+/** The setting for one of your sites as the background: `site:` and the applet's id. */
+export const siteSetting = (id: string) => `site:${id}`;
 
 /** Read a stored setting. Anything malformed is the default. */
 export function parseSetting(raw: unknown): Setting {
 	if (typeof raw !== 'string' || raw === '') return { kind: 'default' };
 	if (raw === 'plain') return { kind: 'plain' };
+	if (raw.startsWith('site:')) {
+		const id = raw.slice('site:'.length);
+		return SITE_ID.test(id) ? { kind: 'site', id } : { kind: 'default' };
+	}
 	const parts = raw.split('/');
 	if (parts.length > 3 || !parts.every((p) => SEGMENT.test(p))) return { kind: 'default' };
 	const [style, collection, picture] = parts;

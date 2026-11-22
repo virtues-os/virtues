@@ -1,7 +1,7 @@
 ---
 title: Backgrounds
-description: Choose the picture behind home in Virtues - a style that changes each day, one collection, one picture, or none - and what your server downloads when you pick a style.
-updated: 2026-11-20
+description: Choose the picture behind home in Virtues - a style that changes each day, one collection, one picture, one of your sites, or none - and what your server downloads when you pick a style.
+updated: 2026-11-21
 ---
 
 The picture behind home is a setting. It follows you to every device, and
@@ -29,6 +29,21 @@ today's picture your setting. When you chose one picture, the arrows choose
 its neighbor in the collection instead. The row of collections switches
 between them. The button also sets Light, Dark, Match system or Follow the
 day, which is Light from sunrise to sunset.
+
+## Use one of your sites as the background
+
+A site can fill the space behind a new chat instead of a picture. Under the
+styles, **Your sites** lists the sites you made, then the ones that came with
+your server. Pick one, and a new chat opens on top of it. You can click and
+use the site wherever the headline, the message box and the tiles are not in
+the way. The button in the corner shows the site's name.
+
+The site opens the way it does on its own page: in a frame that can read
+your records only through the site's own read-only access, and that can
+reach no address but your server's. Choosing it sends nothing new off your
+server. The site opens again when you switch between Light and Dark, so it
+can match. A site decides for itself whether it moves, so one that animates
+keeps animating when Reduce motion is on, unless it was made to stop.
 
 ## Next steps
 

@@ -11,10 +11,15 @@
  * for the rest of the day (`ui_preferences.background_today`), and rotation
  * resumes the next day. What the arrows do is in lib/backgrounds/browse.ts,
  * which loads with the home control rather than at launch.
+ *
+ * A site of yours can be the background too (`site:<applet id>`). Home draws
+ * it behind a new chat and it takes clicks (ChatView); the window's painting
+ * shows nothing under it.
  */
 
 import { backendUrl } from '$lib/config/backend';
-import { getAssistantProfile, request, updateUiPreferences } from '$lib/api/client';
+import { getAssistantProfile, listApplets, request, updateUiPreferences } from '$lib/api/client';
+import { isYours, kindOf } from '$lib/applets/kind';
 import { getTheme, isThemeDark } from '$lib/utils/theme';
 import { BUILTIN_STYLES, isBuiltin } from '$lib/backgrounds/builtin';
 import {
@@ -43,13 +48,21 @@ const PICTURE_KEY = 'virtues-background-picture';
  * What to draw. `lake` is the bundled default; `none` draws nothing; a
  * `picture` is files from an image style, `dim` when it stands in for a dark
  * version it does not have; `drawn` is drawn by its renderer
- * (lib/backgrounds/renderers.ts).
+ * (lib/backgrounds/renderers.ts); `site` is one of your sites, which home
+ * draws itself.
  */
 export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
 	| { kind: 'picture'; key: string; avif: string; src: string; title: string; dim: boolean }
-	| { kind: 'drawn'; key: string; renderer: DrawnRenderer; params: unknown };
+	| { kind: 'drawn'; key: string; renderer: DrawnRenderer; params: unknown }
+	| { kind: 'site'; key: string; appletId: string };
+
+/** A site that can be the background: its applet id and its name. */
+export interface BackgroundSite {
+	id: string;
+	name: string;
+}
 
 /** Another picture for one day of a rotating setting. */
 interface DayChoice {
@@ -120,6 +133,8 @@ class BackgroundStore {
 	catalogPending = $state(false);
 	/** Whether the last attempt to load the styles failed, before any loaded. */
 	stylesUnavailable = $state(false);
+	/** Your sites, then the ones that came with the server, once a picker asks. */
+	sites = $state<BackgroundSite[] | null>(null);
 	#cached = typeof window === 'undefined' ? null : readCachedPicture();
 	#started = false;
 	/** Set once the person changes the setting here, so a late profile does not undo it. */
@@ -157,6 +172,7 @@ class BackgroundStore {
 		const setting = parseSetting(this.setting);
 		if (setting.kind === 'default') return { kind: 'lake' };
 		if (setting.kind === 'plain') return { kind: 'none' };
+		if (setting.kind === 'site') return { kind: 'site', key: setting.id, appletId: setting.id };
 		const today = this.today;
 		if (!today) {
 			// Still loading: draw nothing rather than flash the lake. Loaded and
@@ -220,6 +236,26 @@ class BackgroundStore {
 	/** Load the installed styles if they are not loaded yet, for the pickers. */
 	async ensureStyles(): Promise<void> {
 		if (this.styles === null || this.stylesUnavailable) await this.#loadStyles();
+	}
+
+	/** Load the sites that can be the background, for the pickers. */
+	async ensureSites(): Promise<void> {
+		if (this.sites !== null) return;
+		try {
+			const applets = await listApplets();
+			this.sites = applets
+				.filter((a) => kindOf(a) === 'site' && !a.archived_at)
+				.sort((a, b) => Number(isYours(b)) - Number(isYours(a)) || a.name.localeCompare(b.name))
+				.map((a) => ({ id: a.id, name: a.name }));
+		} catch (error) {
+			// The pickers show no sites; the next open asks again.
+			console.warn('Sites for the background not loaded:', error);
+		}
+	}
+
+	/** A site's name, once the sites have loaded. */
+	siteName(id: string): string | null {
+		return this.sites?.find((s) => s.id === id)?.name ?? null;
 	}
 
 	/** Load the styles again: after a download starts, and while it runs. */

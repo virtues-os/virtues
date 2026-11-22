@@ -9,10 +9,14 @@
 	 * A style the server does not have yet follows the installed ones, with
 	 * its size. Picking it downloads it to the server, and it becomes the
 	 * setting once it is installed (download in lib/backgrounds/controls.ts).
+	 *
+	 * Under the styles, your sites: one of them can fill the space behind a
+	 * new chat, and you can click it there.
 	 */
 	import { onMount } from 'svelte';
 	import { background } from '$lib/stores/background.svelte';
-	import { parseSetting, pictureTitle, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
+	import Icon from '$lib/components/Icon.svelte';
+	import { parseSetting, pictureTitle, siteSetting, type Picture, type StyleManifest } from '$lib/backgrounds/resolve';
 	import { download, megabytes, thumbnail } from '$lib/backgrounds/controls';
 	import type { AvailableStyle } from '$lib/backgrounds/resolve';
 
@@ -22,6 +26,7 @@
 
 	onMount(() => {
 		background.start();
+		void background.ensureSites();
 		let stopped = false;
 		void (async () => {
 			// Fresh on every visit: styles the server learned of since the app
@@ -65,9 +70,12 @@
 	}
 </script>
 
-{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' = 'one', note = '')}
+{#snippet card(label: string, picked: boolean, onclick: () => void, images: string[], kind: 'one' | 'many' | 'plain' | 'site' = 'one', note = '')}
 	<button type="button" role="radio" class="card" class:picked aria-checked={picked} {onclick}>
-		<span class="frame" class:plain={kind === 'plain'} class:many={kind === 'many'}>
+		<span class="frame" class:plain={kind === 'plain' || kind === 'site'} class:many={kind === 'many'} class:site={kind === 'site'}>
+			{#if kind === 'site'}
+				<Icon icon="mynaui:grid" width="22" />
+			{/if}
 			{#each kind === 'many' ? images : images.slice(0, 1) as src (src)}
 				<img {src} alt="" loading="lazy" decoding="async" />
 			{/each}
@@ -119,6 +127,15 @@
 			{/each}
 		</div>
 	{/if}
+
+	{#if background.sites?.length}
+		<h3 class="step">Your sites</h3>
+		<div class="cards" role="radiogroup" aria-label="Site">
+			{#each background.sites as s (s.id)}
+				{@render card(s.name, setting.kind === 'site' && setting.id === s.id, () => background.set(siteSetting(s.id)), [], 'site')}
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -167,6 +184,12 @@
 
 	.frame.plain {
 		background: var(--desk);
+	}
+
+	.frame.site {
+		display: grid;
+		place-items: center;
+		color: var(--color-foreground-subtle);
 	}
 
 	.frame.many {
