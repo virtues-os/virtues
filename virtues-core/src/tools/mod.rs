@@ -43,6 +43,7 @@ pub mod applet_schema;
 pub mod applet_setup;
 pub mod applet_management;
 pub(crate) mod use_applet;
+pub(crate) mod view_check;
 
 pub use executor::{
     SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor, WorkerStep,

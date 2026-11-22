@@ -154,7 +154,7 @@ description: What this shows you, in one sentence.
 ---
 ```
 
-Inside `view.html`, link `virtues.css` for the box's theme and use `await virtues.query(sql)` in `<script type="module">` for read-only access to your data. The tracker in `applets/AGENTS.md` has a working one. A folder an import brings with a multi-file `face/` keeps serving it from there.
+Inside `view.html`, link `virtues.css` for the box's theme and use `await virtues.query(sql)` in `<script type="module">` for read-only access to your data. The water log's view in `applets/AGENTS.md` is a working one. A folder an import brings with a multi-file `face/` keeps serving it from there.
 
 #### A view as the background behind a new chat
 
