@@ -1205,7 +1205,7 @@
 	$effect(() => {
 		if (!showsHome || !takeIntro()) return;
 		intro = true;
-		const done = setTimeout(() => (intro = false), 1600);
+		const done = setTimeout(() => (intro = false), 1360);
 		return () => {
 			clearTimeout(done);
 			intro = false;
@@ -2926,35 +2926,35 @@
 		mask-image: var(--window-scene-mask);
 	}
 
-	/* The intro, about 1.1 s in all: the headline comes in as its letters
-	   close up (150 to 700 ms), the composer rises 8 px (600 to 900), then
-	   the row with the notes line and the switch, and the tiles 60 ms apart. `translate`
+	/* The intro, about 0.95 s in all: the headline comes in as its letters
+	   close up (130 to 600 ms), the composer rises 8 px (510 to 765), then
+	   the row with the notes line and the switch, and the tiles 50 ms apart. `translate`
 	   rather than `transform`, so it never fights the composer's glide or a
 	   tile's hover. With reduced motion nothing here plays. */
 	@media (prefers-reduced-motion: no-preference) {
 		.page-container.intro .init-hero :global(.headline) {
-			animation: intro-headline 550ms var(--ease-premium) 150ms backwards;
+			animation: intro-headline 470ms var(--ease-premium) 130ms backwards;
 		}
 
 		.page-container.intro .chat-input-wrapper.is-empty {
-			animation: intro-rise 300ms var(--ease-premium) 600ms backwards;
+			animation: intro-rise 255ms var(--ease-premium) 510ms backwards;
 		}
 
 		.page-container.intro .home-tiles-wrap :global(.tiles-head) {
-			animation: intro-rise 260ms var(--ease-premium) 700ms backwards;
+			animation: intro-rise 220ms var(--ease-premium) 595ms backwards;
 		}
 
 		.page-container.intro .home-tiles-wrap :global(.layout > :not(.cards)),
 		.page-container.intro .home-tiles-wrap :global(.cards > :nth-child(1)) {
-			animation: intro-rise 340ms var(--ease-premium) 800ms backwards;
+			animation: intro-rise 290ms var(--ease-premium) 680ms backwards;
 		}
 
 		.page-container.intro .home-tiles-wrap :global(.cards > :nth-child(2)) {
-			animation: intro-rise 340ms var(--ease-premium) 860ms backwards;
+			animation: intro-rise 290ms var(--ease-premium) 730ms backwards;
 		}
 
 		.page-container.intro .home-tiles-wrap :global(.cards > :nth-child(3)) {
-			animation: intro-rise 340ms var(--ease-premium) 920ms backwards;
+			animation: intro-rise 290ms var(--ease-premium) 780ms backwards;
 		}
 	}
 
