@@ -1,18 +1,3 @@
-<script lang="ts" module>
-	import { getByoKey } from '$lib/api/client';
-	import { placeOf } from '$lib/tasks/requests';
-
-	/* Where your own account runs, asked once per load: the preview remounts
-	   this for every task you point at. */
-	let byoPlaceOnce: Promise<string> | null = null;
-	function byoPlace(): Promise<string> {
-		byoPlaceOnce ??= getByoKey<{ endpoint_url?: string | null }>()
-			.then((s) => placeOf(s.endpoint_url))
-			.catch(() => 'on your own account');
-		return byoPlaceOnce;
-	}
-</script>
-
 <script lang="ts">
 	/**
 	 * What can be done with a task, on its page and in the door's preview.
@@ -20,7 +5,7 @@
 	 *   A task that repeats  its newest result, when it runs, and Options.
 	 *                     Nothing to accept: opening it is all it asks.
 	 *   A ready request   the assistant's result, then Accept and Reply.
-	 *   A request at work where it runs and what it has cost, Start or Take it
+	 *   A request at work the model it runs on and what it has cost, Start or Take it
 	 *                     back, and a note for its next run.
 	 *   Your own task     Ask the assistant (once, never a recurring one), and
 	 *                     Dismiss.
@@ -113,18 +98,14 @@
 		}
 	}
 	let replying = $state(false);
-	let place = $state('on your own account');
 
 	onMount(() => {
 		if (!modelSlots.loaded) void modelSlots.load();
-		void byoPlace().then((p) => (place = p));
 	});
 
-	const where = $derived.by(() => {
-		if (!task.run_model) return null;
-		const name = modelSlots.nameOf(task.run_model);
-		return task.run_route === 'byo' ? `${name} ${place}` : `${name} through Virtues`;
-	});
+	// The model a request runs on, by name. Where that model runs is not
+	// said here: the manual and Settings say it.
+	const model = $derived(task.run_model ? modelSlots.nameOf(task.run_model) : null);
 
 	async function save(patch: TaskPatch, failure: string) {
 		try {
@@ -241,7 +222,7 @@
 		{:else if request}
 			<p class="state">
 				{requestState(task)}.
-				{#if where}Runs on {where}.{/if}
+				{#if model}Runs on {model}.{/if}
 				{#if task.spent_micros}{formatMicrosUSD(task.spent_micros)} so far.{/if}
 			</p>
 			<div class="buttons">
