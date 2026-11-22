@@ -11,6 +11,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
+	import { markStartup } from "$lib/perf/startup";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { COMPOSER_OVERLAY_ATTR } from "$lib/components/chat/state/composerReserve";
@@ -418,6 +419,7 @@
 		docText = value;
 		inputIsEmpty = !value.trim();
 		editorReady = true;
+		markStartup("composer-ready");
 		void canDictate().then((yes) => (showMic = yes));
 	});
 

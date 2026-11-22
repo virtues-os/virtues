@@ -37,6 +37,7 @@
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
+	import { markStartup } from "$lib/perf/startup";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
 	import { goto } from "$app/navigation";
@@ -201,6 +202,7 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
+		markStartup("shell-mounted");
 		// Boot-ok (confirming this bundle rendered) lives in the ROOT layout,
 		// so Setup and the recovery screens confirm too.
 
@@ -254,6 +256,7 @@
 
 		// Mark as initialized
 		initialized = true;
+		markStartup("shell-ready");
 
 		// Window-level shortcuts. These live here rather than in the sidebar
 		// because they're about panes and tabs, and the sidebar isn't mounted on

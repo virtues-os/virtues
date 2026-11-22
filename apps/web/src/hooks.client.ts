@@ -12,6 +12,11 @@ import type { ClientInit } from '@sveltejs/kit';
 import { initBackendFromShell } from '$lib/config/backend';
 import { reloadForStaleChunk } from '$lib/tabs/lazy';
 import { reportBootOk } from '$lib/tauri/bridge';
+import { markStartup } from '$lib/perf/startup';
+
+// By the time this module runs, the app's first-paint code has downloaded,
+// parsed and run its top level.
+markStartup('script');
 
 initBackendFromShell();
 
