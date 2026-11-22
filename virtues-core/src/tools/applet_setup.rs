@@ -187,12 +187,18 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
         findings.push(finding("view", "the view is over 48 KB", None));
     }
     if let Some(view) = &draft.view {
-        if let Some(host) = other_host(view) {
-            findings.push(finding(
+        match other_host(view) {
+            Some(OtherHost::Loads(host)) => findings.push(finding(
                 "view",
-                &format!("the view loads or links {host}, and a view cannot reach any other host"),
-                Some("write its styles and scripts in the document and draw charts with inline SVG or canvas"),
-            ));
+                &format!("the view loads {host}, and a view cannot reach any other host"),
+                Some("write its styles and scripts in the document, with no import or fetch from another host, and draw charts with inline SVG or canvas"),
+            )),
+            Some(OtherHost::Links(host)) => findings.push(finding(
+                "view",
+                &format!("the view links to {host}, and a link out opens inside the view's own frame, where most sites refuse to load"),
+                Some("show the address as text, or open a page of the app with `virtues.open('/page/…')`"),
+            )),
+            None => {}
         }
         if awaits_outside_async(view) {
             findings.push(finding(
@@ -428,7 +434,16 @@ pub async fn execute(
     if plan.existed {
         let _ = applets::unarchive_applet(pool, &applet_id).await;
     }
-    let made = applets::get_applet(pool, &applet_id).await.ok();
+    // The applet is saved by now, so a failed read back does not fail the
+    // setup. It is logged, and the card says on, which is how setup leaves a
+    // new applet.
+    let made = match applets::get_applet(pool, &applet_id).await {
+        Ok(a) => Some(a),
+        Err(e) => {
+            tracing::error!(applet_id, error = %e, "could not read the applet back after setup");
+            None
+        }
+    };
     let enabled = made.as_ref().map(|a| a.enabled).unwrap_or(true);
     // A prompt that starts on its own is a task the assistant does. It gets
     // its row in the task list, filed in the thread of the chat that made it.
@@ -504,27 +519,73 @@ fn spec_name(name: &str) -> String {
     out.trim_end_matches('-').chars().take(64).collect::<String>().trim_end_matches('-').to_string()
 }
 
-/// The first address in a view that names another host, in a `src`, an
-/// `href`, a CSS `url()` or an `@import`. The view's CSP allows only the
-/// server itself, so a stylesheet, script, font or image from anywhere else
-/// never arrives and the page renders blank or bare.
-fn other_host(view: &str) -> Option<String> {
+/// What a view does with an address on another host.
+#[derive(Debug, PartialEq)]
+enum OtherHost {
+    /// It loads from there: a script, stylesheet, font, image, module import
+    /// or `fetch`. The view's CSP allows only the server itself, so it never
+    /// arrives. A module that imports from another host does not run at all,
+    /// and the page stays empty.
+    Loads(String),
+    /// It links there with an `<a href>`. Nothing fails to load, but the link
+    /// opens inside the view's own frame.
+    Links(String),
+}
+
+/// The first address in a view that names another host: a load when there is
+/// one, since that breaks the page, and otherwise a link.
+fn other_host(view: &str) -> Option<OtherHost> {
     let lower = view.to_ascii_lowercase();
-    let mut first: Option<usize> = None;
-    for lead in ["src=", "href=", "url(", "@import "] {
+    let elsewhere = |rest: &str| rest.starts_with("http://") || rest.starts_with("https://") || rest.starts_with("//");
+    // Where the address starts after `lead`, past an `=`, spaces and a quote.
+    let address_after = |at: usize, lead: &str, assigns: bool| -> Option<usize> {
+        let mut rest = &lower[at + lead.len()..];
+        if assigns {
+            rest = rest.trim_start().strip_prefix('=')?;
+        }
+        let rest = rest.trim_start_matches(['"', '\'', '`', ' ', '(']);
+        elsewhere(rest).then(|| lower.len() - rest.len())
+    };
+    let mut load: Option<usize> = None;
+    let mut link: Option<usize> = None;
+    let note = |slot: &mut Option<usize>, start: usize| *slot = Some(slot.map_or(start, |f| f.min(start)));
+
+    for (at, _) in lower.match_indices("src") {
+        if let Some(start) = address_after(at, "src", true) {
+            note(&mut load, start);
+        }
+    }
+    for (at, _) in lower.match_indices("href") {
+        let Some(start) = address_after(at, "href", true) else { continue };
+        // `<a href>` is a link. On any other tag (`<link>`, `<image>`,
+        // `<use>`) and in a script (`a.href = …` aside) it is a load.
+        let tag = lower[..at].rfind('<').map(|open| &lower[open..at]);
+        let anchor = tag.is_some_and(|t| !t.contains('>') && (t.starts_with("<a ") || t.starts_with("<a\n") || t.starts_with("<a\t")));
+        note(if anchor { &mut link } else { &mut load }, start);
+    }
+    for lead in ["url(", "@import ", "import(", "import ", "from ", "fetch("] {
         for (at, _) in lower.match_indices(lead) {
-            let rest = lower[at + lead.len()..].trim_start_matches(['"', '\'', ' ']);
-            if rest.starts_with("http://") || rest.starts_with("https://") || rest.starts_with("//") {
-                let start = lower.len() - rest.len();
-                first = Some(first.map_or(start, |f| f.min(start)));
+            // `new URL("https://…")` only parses an address.
+            if lead == "url(" && lower[..at].trim_end().ends_with("new") {
+                continue;
+            }
+            if let Some(start) = address_after(at, lead, false) {
+                note(&mut load, start);
             }
         }
     }
-    let start = first?;
-    let end = view[start..]
-        .find(|c: char| c == '"' || c == '\'' || c == ')' || c == '>' || c.is_whitespace())
-        .map_or(view.len(), |e| start + e);
-    Some(view[start..end].chars().take(80).collect())
+
+    let address = |start: usize| -> String {
+        let end = view[start..]
+            .find(|c: char| c == '"' || c == '\'' || c == '`' || c == ')' || c == '>' || c.is_whitespace())
+            .map_or(view.len(), |e| start + e);
+        view[start..end].chars().take(80).collect()
+    };
+    match (load, link) {
+        (Some(start), _) => Some(OtherHost::Loads(address(start))),
+        (None, Some(start)) => Some(OtherHost::Links(address(start))),
+        (None, None) => None,
+    }
 }
 
 /// Whether a view has a plain inline script that awaits with nothing to make
@@ -867,11 +928,44 @@ mod tests {
     /// A view that loads from another host is a finding that names the host.
     #[test]
     fn a_view_that_names_another_host_is_found() {
+        let loads = |a: &str| Some(OtherHost::Loads(a.to_string()));
         let cdn = "<link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"https://cdn.example.com/chart.js\"></script>";
-        assert_eq!(other_host(cdn).as_deref(), Some("https://cdn.example.com/chart.js"));
-        assert_eq!(other_host("<style>@import url(//fonts.example.com/a.css);</style>").as_deref(), Some("//fonts.example.com/a.css"));
+        assert_eq!(other_host(cdn), loads("https://cdn.example.com/chart.js"));
+        assert_eq!(other_host("<style>@import url(//fonts.example.com/a.css);</style>"), loads("//fonts.example.com/a.css"));
+        assert_eq!(other_host("<link rel=\"stylesheet\" href=\"https://fonts.example.com/a.css\">"), loads("https://fonts.example.com/a.css"));
         let own = "<link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"virtues.js\"></script><p>See https://example.com in the text.</p>";
         assert_eq!(other_host(own), None);
+    }
+
+    /// A module that imports from another host never runs, so the page stays
+    /// empty: that is a load, as a `fetch` and a script-set `src` are. A plain
+    /// link is told apart, and an address that is only parsed is left alone.
+    #[test]
+    fn a_view_that_imports_fetches_or_links_elsewhere_is_found() {
+        let loads = |a: &str| Some(OtherHost::Loads(a.to_string()));
+        let module = "<script type=\"module\">import { chart } from 'https://cdn.example.com/chart.mjs';</script>";
+        assert_eq!(other_host(module), loads("https://cdn.example.com/chart.mjs"));
+        let dynamic = "<script type=module>const m = await import(\"https://cdn.example.com/m.js\");</script>";
+        assert_eq!(other_host(dynamic), loads("https://cdn.example.com/m.js"));
+        let bare = "<script type=module>import 'https://cdn.example.com/side.js';</script>";
+        assert_eq!(other_host(bare), loads("https://cdn.example.com/side.js"));
+        let fetched = "<script>fetch('https://api.example.com/weather').then(draw);</script>";
+        assert_eq!(other_host(fetched), loads("https://api.example.com/weather"));
+        let set = "<script>img.src = 'https://img.example.com/a.png';</script>";
+        assert_eq!(other_host(set), loads("https://img.example.com/a.png"));
+
+        let link = "<p>From <a href=\"https://example.com/guide\">the guide</a>.</p>";
+        assert_eq!(other_host(link), Some(OtherHost::Links("https://example.com/guide".to_string())));
+        // A load is the worse of the two, so it is the one reported.
+        let both = format!("{link}{module}");
+        assert_eq!(other_host(&both), loads("https://cdn.example.com/chart.mjs"));
+
+        let parsed = "<script>const u = new URL(\"https://example.com/x\"); show(u.pathname);</script>";
+        assert_eq!(other_host(parsed), None);
+        let own = "<script type=module>import { rows } from './rows.js'; const r = await virtues.query('select 1');</script>";
+        assert_eq!(other_host(own), None);
+        let prose = "<p>Data from the weather service, import or fetch as you like.</p>";
+        assert_eq!(other_host(prose), None);
     }
 
     /// A plain script that awaits with no async function never runs, so the
