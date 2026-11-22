@@ -33,7 +33,7 @@ folder through the same setup.
 | `invoke` | `metadata.invoke` | `assistant` (the default) lets the assistant start it; `chat` puts it in the `/` menu |
 | `tools` | `allowed-tools` | narrows the tools its prompt has, from chat's ordinary set |
 | `tables` | `tables/NNNN_schema.sql` | every `CREATE TABLE` it should have, every time; the box adds what is missing and never drops |
-| `view` | `view.html` | one HTML page that links `virtues.css` and `virtues.js` and reads with `await virtues.query(sql)` |
+| `view` | `view.html` | one HTML page that links `virtues.css` and `virtues.js` and reads with `await virtues.query(sql)` in `<script type="module">` |
 | `limit` | `metadata.limit` | `$0.25 per run, $1 per day, 10 minutes`; an applet with a prompt gets `$1 per day` when it has no daily limit, and one with a data trigger gets `6 runs per hour` when it has no hourly limit |
 | `model` | `metadata.model` | `standard`, `deep` or `lite`; an unattended prompt starts on `lite` |
 
@@ -124,6 +124,10 @@ A check on new data, with no model call unless a reading is high:
   stylesheet, script, font or image from a CDN never arrives, and setup
   refuses a view that names one. Write the styles and scripts in the
   document and draw charts with inline SVG or canvas.
+- **A view's script is `<script type="module">`.** `await` works at the top
+  of a module. In a plain `<script>` it is a syntax error unless it sits
+  inside an `async` function, the whole script stops, and the page stays
+  empty. Setup refuses a plain script that awaits with no `async` in it.
 - **A view shows what was recorded.** Dates, values, and a chart of them. It
   has no streaks, no count toward a goal and no "days since", because someone
   in recovery may be the one reading it.
