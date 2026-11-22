@@ -7,7 +7,11 @@ vi.mock('$lib/api/client', () => {
 			super(`HTTP ${status}`);
 		}
 	}
-	return { ApiError, request: (...args: unknown[]) => request(...args) };
+	return {
+		ApiError,
+		request: (...args: unknown[]) => request(...args),
+		deadline: (ms: number) => AbortSignal.timeout(ms),
+	};
 });
 
 import { ApiError } from '$lib/api/client';
@@ -35,9 +39,15 @@ describe('tokenForgotten', () => {
 		expect(await tokenForgotten('t1')).toBe(false);
 	});
 
-	it('asks with an empty query on the view route', async () => {
+	it('asks with an empty query on the view route, with a time limit', async () => {
 		request.mockRejectedValueOnce(refuse(400));
 		await tokenForgotten('t1');
 		expect(request).toHaveBeenCalledWith('/face/query', expect.objectContaining({ method: 'POST', query: { vt: 't1' }, body: '{"sql":""}' }));
+		expect(request.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it('is false when the check is cut off for taking too long', async () => {
+		request.mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'));
+		expect(await tokenForgotten('t1')).toBe(false);
 	});
 });

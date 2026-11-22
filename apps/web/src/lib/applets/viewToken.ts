@@ -11,7 +11,14 @@
  * doesn't know, and refuses the empty SQL of one it does with 400. An empty
  * query is not kept in the list of what the view has asked.
  */
-import { ApiError, request } from '$lib/api/client';
+import { ApiError, deadline, request } from '$lib/api/client';
+
+/**
+ * How long one check may take. A request sent as the server goes down can
+ * stay open with no answer, and the frame makes one check at a time, so a
+ * check with no limit would be the last one it ever made.
+ */
+const CHECK_DEADLINE_MS = 10_000;
 
 export async function tokenForgotten(token: string): Promise<boolean> {
 	try {
@@ -20,10 +27,11 @@ export async function tokenForgotten(token: string): Promise<boolean> {
 			query: { vt: token },
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sql: '' }),
+			signal: deadline(CHECK_DEADLINE_MS),
 		});
 		return false;
 	} catch (e) {
-		// Anything else is a server that is away or busy. The next check asks again.
+		// Anything else is a server that is away, busy or silent. The next check asks again.
 		return e instanceof ApiError && e.status === 401;
 	}
 }
