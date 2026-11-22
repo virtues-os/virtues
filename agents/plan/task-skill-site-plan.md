@@ -273,8 +273,8 @@ The small parts are built on wave (2026-11-21) and seen in a scratch app.
   before task rows.
 - Left: the Skills page is not on the Settings landing page or in Settings
   search, because `settings/index.ts` held another change in progress. The
-  shipped skill that writes skills is still named "New applet"; renaming its
-  folder changes its id and needs a migration to drop the old row. Nothing
+  shipped skill that writes skills was renamed from "New applet" to "New
+  skill" on 2026-11-22 (below). Nothing
   in the app suggests a repeating task any more; it is asked for in a chat
   until Tasks can make one (slice D, Left).
 
@@ -408,8 +408,9 @@ the error shown on a failed switch.
 
 Two things the check turned up, both left:
 
-- Each rebuild or token renewal of an open site adds an entry to the
-  browser's history, because the frame's address changes.
+- Each rebuild or token renewal of an open site added an entry to the
+  browser's history, because the frame's address changed. Fixed on
+  2026-11-22 (below).
 - Once, the chat's own tab moved to the site after a rebuild. Three repeats
   with the tabs logged did not show it again, and the cause is not known.
 
@@ -435,13 +436,28 @@ The owner decided the four questions the audit raised on 2026-11-22
   for everything inside Virtues: nothing the assistant or the server does is
   called an agent.
 
-Left from the reviews, not fixed: `other_host` misses a module `import` from
-another host and refuses a plain link; a query that fails reads as "never
-ran" in three places (`server/api/applets.rs`, `tools/applet_setup.rs`);
-saving Technical details does not reload the lists; the Inbox's "new" item
-and the task row's "New" clear separately; dead exports in
-`applets/palette.ts` and `applets/days.ts`; and no test covers the site
-page's address handling or the frame.
+Four leftovers were fixed on `wave` on 2026-11-22, with tests and not seen
+in an app (every preview server slot was in use by other sessions):
+
+- **The other-host check** finds a module `import` from another host, a
+  dynamic `import()`, a `fetch` and an address set from a script, since a
+  module that imports from elsewhere never runs and the page stays empty. A
+  plain `<a href>` to another site is a finding of its own, which says the
+  link opens inside the view's frame. `new URL("https://…")` is left alone.
+- **A reload of an open site adds no browser history.** `FaceFrame` makes a
+  new frame for each address.
+- **A failed read is not "never ran".** The applet's detail returns the
+  error when its last run cannot be read, and setup and the list log a
+  failed read where they go on.
+- **The shipped skill that writes skills is `new-skill`**, shown as "New
+  skill". A server drops the old row when it starts. An app that still sends
+  the old name reaches it.
+
+Left from the reviews, not fixed: saving Technical details does not reload
+the lists; the Inbox's "new" item and the task row's "New" clear separately;
+dead exports in `applets/palette.ts`; no test covers the site page's address
+handling or the frame; and a link a site builds at run time from its own
+data still opens inside its frame.
 
 ## Decisions
 

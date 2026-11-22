@@ -102,14 +102,16 @@ pub(crate) const RESERVED_CHAT_NAMES: &[&str] =
 impl ChatMode {
     /// The mode the client asked for. Unknown strings are ordinary chat.
     pub fn from_wire(requested: &str) -> Self {
-        use crate::api::chat_applets::{turn_named, ADMIN_APPLET, DEEP_RESEARCH_APPLET};
+        use crate::api::chat_applets::{turn_named, ADMIN_APPLET, CREATE_APPLET, DEEP_RESEARCH_APPLET};
         let applet = match requested {
             "chat" => return Self::Chat,
             "interview" => return Self::Interview,
             "local" => return Self::Local,
             getting_started::AGENT_MODE => return Self::GettingStarted,
-            // What a client from before these were applets sends.
+            // What a client from before these were applets sends, and the
+            // name the skill that writes skills had until 2026-11-22.
             "sudo" => ADMIN_APPLET,
+            "new-applet" => CREATE_APPLET,
             "deep_research" => DEEP_RESEARCH_APPLET,
             other => other,
         };
@@ -372,13 +374,16 @@ pub(crate) mod tests {
             "morning-brief",
             "trip-planner",
             "weekly-review",
-            "new-applet",
+            "new-skill",
         ] {
             assert!(names.iter().any(|n| n == name), "{name} is not offered");
         }
         for name in names {
             assert!(matches!(ChatMode::from_wire(&name), ChatMode::Applet(ref a) if a.name == name), "{name}");
         }
+        // An app from before the skill that writes skills was renamed still
+        // reaches it by its old name.
+        assert!(matches!(ChatMode::from_wire("new-applet"), ChatMode::Applet(ref a) if a.name == "new-skill"));
     }
 
     /// A shipped applet `/weekly-review` starts runs as a turn shaped by its
@@ -546,7 +551,7 @@ pub(crate) mod tests {
             // The shipped chat applets, each just above its 2026-10-22 size as a
             // skill; admin and deep research just above their size as modes,
             // less what admin no longer lists. Clarity review just above its
-            // size when it shipped on 2026-10-28. New applet is the applet
+            // size when it shipped on 2026-10-28. New skill is the applet
             // tool alone, so it follows that group's ceiling.
             ("admin", 9_800),
             // Each mode with sql_query rose 150 on 2026-11-17 with that
@@ -563,7 +568,7 @@ pub(crate) mod tests {
             ("insight-report", 13_450),
             ("meeting-prep", 9_350),
             ("morning-brief", 9_650),
-            ("new-applet", 3_850),
+            ("new-skill", 3_850),
             ("trip-planner", 10_250),
             ("weekly-review", 9_950),
         ];

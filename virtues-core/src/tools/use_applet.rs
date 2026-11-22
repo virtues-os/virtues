@@ -233,7 +233,7 @@ mod tests {
             let r = execute(&serde_json::json!({ "name": name }), None).unwrap();
             assert!(!r.data["instructions"].as_str().unwrap().is_empty(), "{name}");
         }
-        for name in ["admin", "deep-research", "new-applet", "wiki-editor", "day-summary-eod"] {
+        for name in ["admin", "deep-research", "new-skill", "wiki-editor", "day-summary-eod"] {
             assert!(!names.contains(&serde_json::json!(name)), "{name} is listed");
         }
         assert!(execute(&serde_json::json!({ "name": "admin" }), None).is_err(), "admin is /admin only");

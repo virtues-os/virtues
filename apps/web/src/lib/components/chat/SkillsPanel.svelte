@@ -4,7 +4,7 @@
 	The `/` menu in the chat composer's tray: the applets `/name` starts. As
 	with the `@` menu, the field keeps the focus and what is typed after the
 	`/` filters the list, so Up, Down, Enter and Escape are caught here before
-	the editor sees them. The applet that writes applets (`new-applet`) is
+	the editor sees them. The skill that writes skills (`new-skill`) is
 	pinned below the list as its create row, and the arrows reach it last.
 -->
 <script lang="ts">

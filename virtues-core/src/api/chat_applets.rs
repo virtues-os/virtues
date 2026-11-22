@@ -56,7 +56,7 @@ pub struct Menu {
 }
 
 /// The shipped applet that helps the person write one of their own.
-pub const CREATE_APPLET: &str = "new-applet";
+pub const CREATE_APPLET: &str = "new-skill";
 
 /// The shipped applet that runs commands on the server as its admin.
 pub const ADMIN_APPLET: &str = "admin";
@@ -260,7 +260,7 @@ mod tests {
     /// The menu lists the shipped applets `/name` starts and pins the one
     /// that writes applets below them.
     #[test]
-    fn the_menu_lists_chat_applets_and_pins_new_applet() {
+    fn the_menu_lists_chat_applets_and_pins_new_skill() {
         let menu = menu();
         let names: Vec<&str> = menu.skills.iter().map(|s| s.name.as_str()).collect();
         for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review"] {
@@ -268,7 +268,7 @@ mod tests {
         }
         assert_eq!(menu.create.as_ref().map(|c| c.name.as_str()), Some(CREATE_APPLET));
         assert!(!names.contains(&CREATE_APPLET));
-        let create = turn_named(CREATE_APPLET).expect("new-applet resolves");
+        let create = turn_named(CREATE_APPLET).expect("new-skill resolves");
         assert_eq!(create.tools, ["applet"]);
     }
 
