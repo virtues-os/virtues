@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const request = vi.fn();
+const deadline = vi.fn((ms: number) => AbortSignal.timeout(ms));
 vi.mock('$lib/api/client', () => {
 	class ApiError extends Error {
 		constructor(readonly status: number) {
@@ -10,7 +11,7 @@ vi.mock('$lib/api/client', () => {
 	return {
 		ApiError,
 		request: (...args: unknown[]) => request(...args),
-		deadline: (ms: number) => AbortSignal.timeout(ms),
+		deadline: (ms: number) => deadline(ms),
 	};
 });
 
@@ -19,7 +20,10 @@ import { tokenForgotten } from './viewToken';
 
 const refuse = (status: number) => new (ApiError as unknown as new (status: number) => Error)(status);
 
-afterEach(() => request.mockReset());
+afterEach(() => {
+	request.mockReset();
+	deadline.mockClear();
+});
 
 describe('tokenForgotten', () => {
 	it('is true only when the server refuses the token itself', async () => {
@@ -43,7 +47,8 @@ describe('tokenForgotten', () => {
 		request.mockRejectedValueOnce(refuse(400));
 		await tokenForgotten('t1');
 		expect(request).toHaveBeenCalledWith('/face/query', expect.objectContaining({ method: 'POST', query: { vt: 't1' }, body: '{"sql":""}' }));
-		expect(request.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+		expect(deadline).toHaveBeenCalledWith(10_000);
+		expect(request.mock.calls[0][1].signal).toBe(deadline.mock.results[0].value);
 	});
 
 	it('is false when the check is cut off for taking too long', async () => {

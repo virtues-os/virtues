@@ -134,8 +134,8 @@ export function serverLead(input: LeadInput): Lead {
 			kind: 'applets',
 			sentence: one ? `${appletsNeedingYou[0]} needs you.` : 'Some of what your server runs needs you.',
 			sub: one
-				? 'Its last run didn’t finish, or it hasn’t run when it was expected to.'
-				: 'Their last runs didn’t finish, or they haven’t run when they were expected to.',
+				? 'Server tasks says what happened and what fixes it.'
+				: 'Server tasks says what happened to each and what fixes it.',
 			action: { label: 'Open Server tasks', route: '/virtues/server-tasks' },
 		};
 	}

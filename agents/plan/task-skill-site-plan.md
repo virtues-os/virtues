@@ -453,6 +453,37 @@ in an app (every preview server slot was in use by other sessions):
   skill". A server drops the old row when it starts. An app that still sends
   the old name reaches it.
 
+A second audit the same day found flaws in that work, fixed on `wave` with
+tests and not seen in an app:
+
+- **The other-host check read the whole page as one string**, so a page
+  that only mentioned an address was refused and an address on the next
+  line was missed. It moved to `tools/view_check.rs` and reads the page by
+  part: each tag's attributes, each stylesheet and each script, with text,
+  HTML comments, script comments and data blocks left out. In a script an
+  address counts where the code loads it, including through a constant.
+- **A finished repeating task could be reopened by its tick box** and then
+  never closed. A repeating task has no tick box, open or finished, and
+  reopening a finished one is refused with how to bring it back. `ensure`
+  reports no row for a closed one, a run files its result after reading the
+  applet again, and a closed row is not a done dot in its thread's week.
+- **A tab that moved to another site showed the earlier one's runs, pages,
+  failure and dialogs.** All of it is dropped, and the page's loads are
+  numbered so a late answer or failure for the earlier site changes nothing.
+- **A rebuilt site in a tab behind another stayed hidden.** It comes to the
+  front of its pane, found under any of its addresses.
+- **Counts and lateness left over.** The run line on a page and on Server
+  tasks says why a run failed in a sentence and "(more than once)" in place
+  of "(12 times)". The server status line points at Server tasks in place of
+  "hasn't run when it was expected to". Options and Server tasks share one
+  last-run sentence, which no longer says "Last ran" for a skipped run.
+- **Words.** Recent's Sites filter holds only sites, and `#skills` no longer
+  lists them. A skill of yours may not be named `new-applet`.
+- **The guides had no working view.** `applets/AGENTS.md` writes the water
+  log's view out in full, and a test checks setup accepts it.
+- **Dead code.** The run-days route, its query and the web call went with
+  the day dots.
+
 Left from the reviews, not fixed: saving Technical details does not reload
 the lists; the Inbox's "new" item and the task row's "New" clear separately;
 dead exports in `applets/palette.ts`; no test covers the site page's address

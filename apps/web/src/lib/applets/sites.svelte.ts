@@ -5,7 +5,7 @@
  */
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
-import { homeRoute } from './routes';
+import { homeRoute, readAddress } from './routes';
 
 class SiteBuilds {
 	/** How many times each site's view was rebuilt in this session. A frame
@@ -41,11 +41,15 @@ export function openSiteBeside(appletId: string, name?: string) {
 export function showBuiltSite(appletId: string, name?: string) {
 	siteBuilds.rebuilt(appletId);
 	if (mobileLayout.isMobile) return;
-	// A site that is already open in a tab was just reloaded where it is. A
-	// second tab for each change the assistant makes would pile them up.
-	const route = homeRoute(appletId, 'site');
-	if (windowShellStore.findTab((t) => t.route === route || t.route === `${route}/options`)) return;
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteInSplitOrActive(route, name);
+	// A tab that already shows the site, under any of its addresses or on
+	// its Options, was just reloaded where it is. It comes to the front of
+	// its pane, as a new tab would, and no second tab is opened.
+	const open = windowShellStore.findTab((t) => {
+		const at = readAddress(t.route);
+		return !!at && (at.id === appletId || at.otherId === appletId);
+	});
+	if (open) windowShellStore.setActiveTabInPane(open.tab.id, open.paneId as 'left' | 'right');
+	else windowShellStore.openRouteInSplitOrActive(homeRoute(appletId, 'site'), name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }

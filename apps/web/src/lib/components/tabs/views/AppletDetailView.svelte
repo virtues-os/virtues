@@ -34,7 +34,7 @@
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
 	import { homeOf, optionsOf, pageOf } from '$lib/applets/kind';
-	import { problemOf } from '$lib/applets/standing';
+	import { isLate, problemOf, sentence } from '$lib/applets/standing';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
@@ -56,7 +56,7 @@
 	 *
 	 * Options (`/options`) holds Run history and Technical details, each
 	 * opening in place. `?panel=history` and `?panel=details` open Options with
-	 * that one open, which is where the table's dots and Last run link.
+	 * that one open, which is where links to its run history land.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
@@ -89,7 +89,22 @@
 	// one it showed is dropped at once, so the page says it is loading, or
 	// that it failed, and never draws the earlier applet under the new address.
 	$effect(() => {
-		if (action && !loaded) action = null;
+		if (action && !loaded) {
+			// Everything the page held for the earlier applet goes with it, or
+			// the new one would show the earlier one's runs, pages and failure
+			// until its own arrive.
+			action = null;
+			log = [];
+			pages = [];
+			selectedId = null;
+			pageContent = null;
+			draft = '';
+			busy = false;
+			err = null;
+			sharing = false;
+			deleting = false;
+			stopPolling();
+		}
 	});
 	const asked = $derived(address?.open ?? null);
 	const inInfo = $derived(address?.side === 'options');
@@ -202,18 +217,24 @@
 		throw last;
 	}
 
+	// Each load is numbered, and only the newest may change the page: an
+	// earlier one that answers late, or fails late, is for an applet the tab
+	// has moved away from, or is older news.
+	let loadSeq = 0;
 	async function load(ids: string[]) {
+		// The poll after a run can ask for an applet the tab no longer shows.
+		const here = readAddress(tab.route);
+		if (here && !ids.some((i) => i === here.id || i === here.otherId)) return;
+		const seq = ++loadSeq;
+		const current = () => seq === loadSeq;
 		loading = true;
 		err = null;
 		try {
-			// The applet loads on its own. The log and the day counts are
-			// weaker requests: one of them failing must not blank the page.
+			// The applet loads on its own. Its log and its pages are weaker
+			// requests: one of them failing must not blank the page.
 			const a = await firstFound(ids);
+			if (!current()) return;
 			const id = a.id;
-			// The tab moved on while this was loading: the answer is for an
-			// applet it no longer shows.
-			const here = readAddress(tab.route);
-			if (here && id !== here.id && id !== here.otherId) return;
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
 			// Opening the page is reading what it made, so its "new" Inbox
@@ -222,14 +243,16 @@
 				.then(() => attention.refresh())
 				.catch(() => {});
 			const [l, p] = await Promise.allSettled([getAppletLog(id), getAppletPages(id)]);
+			if (!current()) return;
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];
 		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
+			if (current()) err = e instanceof Error ? e.message : String(e);
 		} finally {
-			loading = false;
+			if (current()) loading = false;
 		}
 	}
+
 
 	const chatId = $derived.by(() => {
 		const id = action?.config?.chat_id;
@@ -284,7 +307,10 @@
 			pollsLeft -= 1;
 			const id = action?.id;
 			if (!id) return;
-			log = await getAppletLog(id).catch(() => log);
+			const fresh = await getAppletLog(id).catch(() => log);
+			// The tab moved to another applet while this was asked.
+			if (action?.id !== id) return;
+			log = fresh;
 			if (log.some((e) => e.status === 'running')) {
 				pollSoon();
 			} else {
@@ -373,17 +399,8 @@
 	const failedNow = $derived(lastEntry?.status === 'error' ? lastEntry : null);
 	const failure = $derived(failedNow?.error ? explainRunError(failedNow.error, collectorDenied) : null);
 
-	// Same grace the scheduler and the table use.
-	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-
-	const overdue = $derived(
-		Boolean(
-			action?.next_due_at &&
-				action.enabled &&
-				!action.archived_at &&
-				Date.now() - new Date(action.next_due_at).getTime() > OVERDUE_GRACE_MS
-		)
-	);
+	// A run more than an hour late, by the rule every list uses.
+	const overdue = $derived(action ? isLate(action) : false);
 
 	// What went wrong, said once, where the missing result would be. It has
 	// no final period: the sentence above a site adds one, the row doesn't.
@@ -560,7 +577,7 @@
 		{/if}
 		{#if problem}
 			<p class="needs">
-				<span>{problemText}.</span>
+				<span>{sentence(problemText ?? '')}</span>
 				{#if fix}
 					<Button variant="primary" onclick={openFix}>{fix.label}</Button>
 				{:else if canRunNow}

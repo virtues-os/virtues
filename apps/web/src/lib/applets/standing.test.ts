@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { actionOf, appletLine, appletsLead, groupServerTasks, needsYou, problemOf, troubleOf } from './standing';
+import { actionOf, appletLine, appletsLead, groupServerTasks, lastRunLine, needsYou, problemOf, troubleOf } from './standing';
 
 const NOW = new Date('2026-10-06T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -52,6 +52,27 @@ describe('needsYou', () => {
 	it('leaves applets that are off or finished alone', () => {
 		expect(needsYou(bare({ last_run: failedRun, enabled: false }), NOW)).toBe(false);
 		expect(needsYou(bare({ last_run: failedRun, archived_at: '2026-10-01T00:00:00' }), NOW)).toBe(false);
+	});
+});
+
+describe('lastRunLine', () => {
+	const ran = (status: string) => ({ status, started_at: at('2026-10-06T07:00:00'), records_processed: null, error: null }) as Applet['last_run'];
+
+	it('says what the last run did, and never "ran" for a run that did not', () => {
+		const t = clock('2026-10-06T07:00:00');
+		expect(lastRunLine(applet({ last_run: ran('success') }), NOW)).toBe(`Ran today at ${t}.`);
+		expect(lastRunLine(applet({ last_run: ran('skipped') }), NOW)).toBe(`Checked today at ${t} and had nothing to do.`);
+		expect(lastRunLine(applet({ last_run: ran('cancelled') }), NOW)).toBe(`Its last run was stopped today at ${t}.`);
+		expect(lastRunLine(applet({ last_run: ran('budget_exceeded') }), NOW)).toBe(`Stopped at its spending limit today at ${t}.`);
+		// Off, it does not need you, and a failed last run is still said.
+		expect(lastRunLine(applet({ enabled: false, last_run: ran('error') }), NOW)).toBe(`Its last run didn't finish today at ${t}.`);
+	});
+
+	it('ends what needs you in one period, however the reason ended', () => {
+		const cut = 'x'.repeat(130);
+		const line = lastRunLine(applet({ last_run: { status: 'error', started_at: at('2026-10-06T06:00:00'), records_processed: null, error: cut } }), NOW);
+		expect(line.endsWith('…')).toBe(true);
+		expect(line.endsWith('….')).toBe(false);
 	});
 });
 

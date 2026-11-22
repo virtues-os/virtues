@@ -3,8 +3,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import type { Applet } from '$lib/api/client';
-	import { problemOf } from '$lib/applets/standing';
-	import { whenInWords } from '$lib/utils/dateUtils';
+	import { lastRunLine } from '$lib/applets/standing';
 
 	/**
 	 * An applet's Info: how its last run went, then Technical details. Its
@@ -26,20 +25,10 @@
 		technical: Snippet;
 	} = $props();
 
-	// How its last run went, in one sentence. The runs themselves are a list
-	// under it: no count of them and no picture of days, since a row of
-	// marked days reads as a streak to someone who is counting days.
-	const lastRun = $derived.by(() => {
-		const trouble = problemOf(action);
-		if (trouble) return `${trouble}.`;
-		const run = action.last_run;
-		if (run?.status === 'running') return 'Running now.';
-		if (!run?.started_at) return "Hasn't run yet.";
-		const when = whenInWords(run.started_at);
-		if (run.status === 'error') return `Its last run, ${when}, didn't finish.`;
-		if (run.status === 'budget_exceeded') return `Stopped at its spending limit ${when}.`;
-		return `Last ran ${when}.`;
-	});
+	// How its last run went, in one sentence, as Server tasks says it. The
+	// runs are a list under it: no count of them and no picture of days,
+	// since a row of marked days reads as a streak to someone counting days.
+	const lastRun = $derived(lastRunLine(action));
 </script>
 
 <div class="info">

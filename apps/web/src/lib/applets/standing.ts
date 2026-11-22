@@ -1,7 +1,7 @@
 /**
  * Where an applet stands, in words: whether it needs you and why, what fixes
- * it, and the line Settings · Applets writes under its name. The Applets page
- * in Home uses the same problem and fix, so the two pages say the same thing.
+ * it, and the line the Server tasks page writes under its name. A site's
+ * Options and the Sites door use the same words, so the pages agree.
  *
  * An applet needs you when it's on and its last run failed, or a due run is
  * more than an hour late (`needsYou`). A late run is said as what happened
@@ -22,7 +22,12 @@ const LATE_GRACE_MS = 60 * 60 * 1000;
  */
 export function needsYou(applet: Applet, now = Date.now()): boolean {
 	if (!applet.enabled || applet.archived_at) return false;
-	if (applet.last_run?.status === 'error') return true;
+	return applet.last_run?.status === 'error' || isLate(applet, now);
+}
+
+/** Whether a run it was due to make is more than an hour late. */
+export function isLate(applet: Applet, now = Date.now()): boolean {
+	if (!applet.enabled || applet.archived_at) return false;
 	return Boolean(applet.next_due_at && now - new Date(applet.next_due_at).getTime() > LATE_GRACE_MS);
 }
 
@@ -75,7 +80,7 @@ export function actionOf(a: Applet, now = Date.now()): AppletAction | null {
 }
 
 /** A sentence ends in one period, even when the text it ends with brought its own. */
-function sentence(text: string): string {
+export function sentence(text: string): string {
 	return /[.!?…]$/.test(text) ? text : `${text}.`;
 }
 
@@ -86,20 +91,38 @@ function sentence(text: string): string {
 export function appletLine(a: Applet, now = Date.now()): string {
 	if (a.archived_at) return `Finished ${whenInWords(a.archived_at, now)}.`;
 	if (!a.enabled) return 'Off.';
-	const when = describeTriggers(a);
+	return `${describeTriggers(a)}. ${lastRunLine(a, now)}`;
+}
+
+/**
+ * How its last run went, in one sentence: what needs you, or what the run
+ * did, or when the next one is. Its Options and its line on Server tasks say
+ * the same. "Ran today at 7:00 AM."
+ */
+export function lastRunLine(a: Applet, now = Date.now()): string {
 	const trouble = troubleOf(a, now);
-	if (trouble) return `${when}. ${sentence(trouble.text)}`;
+	if (trouble) return sentence(trouble.text);
 	const run = a.last_run;
-	if (run?.status === 'running') return `${when}. Running now.`;
+	if (run?.status === 'running') return 'Running now.';
 	if (run?.started_at) {
 		const at = whenInWords(run.started_at, now);
-		if (run.status === 'budget_exceeded') return `${when}. Stopped at its spending limit ${at}.`;
-		return `${when}. Ran ${at}.`;
+		switch (run.status) {
+			case 'error':
+				return `Its last run didn't finish ${at}.`;
+			case 'budget_exceeded':
+				return `Stopped at its spending limit ${at}.`;
+			case 'skipped':
+				return `Checked ${at} and had nothing to do.`;
+			case 'cancelled':
+				return `Its last run was stopped ${at}.`;
+			default:
+				return `Ran ${at}.`;
+		}
 	}
 	if (a.next_due_at && new Date(a.next_due_at).getTime() > now) {
-		return `${when}. Next run ${whenInWords(a.next_due_at, now)}.`;
+		return `Next run ${whenInWords(a.next_due_at, now)}.`;
 	}
-	return `${when}. Hasn't run yet.`;
+	return "Hasn't run yet.";
 }
 
 /** The server's tasks that one connected account or device brought with it. */

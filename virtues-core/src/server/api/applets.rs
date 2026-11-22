@@ -80,7 +80,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/applets/:id/log", get(applet_log_handler))
         .route("/api/applets/:id/pages", get(applet_pages_handler))
         .route("/api/runs", get(list_runs_handler))
-        .route("/api/runs/by-day", get(runs_by_day_handler))
         // Credentials API
         .route("/api/credentials", get(list_credentials_handler))
         .route(
@@ -636,8 +635,12 @@ pub async fn patch_applet_handler(
     let pool = state.db.pool();
     let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
     // A change can make it a task of the assistant's (a schedule added to a
-    // prompt you made), which gives it its row in the task list.
-    crate::api::repeating_tasks::ensure(pool, &applet, None).await?;
+    // prompt you made), which gives it its row in the task list. The change
+    // is saved by now, so a row that fails to open is logged and the reply
+    // still says what was saved; the next start of the server opens it.
+    if let Err(e) = crate::api::repeating_tasks::ensure(pool, &applet, None).await {
+        tracing::error!(applet_id = %applet.id, error = %e, "could not open or close the applet's task row");
+    }
     // The row as it serializes, with the detail's fields over it. The app
     // replaces the applet it holds with this reply, so a reply without
     // `has_face` or `kind` would turn a site's page into a list of runs.
@@ -737,27 +740,6 @@ pub async fn list_runs_handler(
     )
     .await?;
     Ok(Json(runs))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RunsByDayQuery {
-    pub days: Option<i32>,
-}
-
-/// GET /api/runs/by-day?days=30 - each applet's run count per local day, split
-/// by outcome. Feeds the Applets page's "Last 7 days" column and run history.
-pub async fn runs_by_day_handler(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<RunsByDayQuery>,
-) -> Result<Json<Vec<crate::scheduler::applets::RunDay>>, Error> {
-    let days = q.days.unwrap_or(30).clamp(1, 90);
-    // Schedules fire on the box's own clock, so days are counted on it too.
-    // A box that can't read its timezone counts in UTC rather than failing the
-    // whole page; the days then match the UTC dates the runs carry.
-    let tz = crate::timezone::system_timezone().unwrap_or_else(|| "UTC".to_string());
-    Ok(Json(
-        crate::scheduler::applets::runs_by_day(state.db.pool(), &tz, days).await?,
-    ))
 }
 
 // ============================================================================

@@ -2,7 +2,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import type { AppletLogEntry, AppletTrigger } from '$lib/api/client';
-	import { failureReason, relativeTime } from '$lib/applets/palette';
+	import { failureReason, relativeTime, STATUS_WORD } from '$lib/applets/palette';
+	import { sentence } from '$lib/applets/standing';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { isTauri } from '$lib/utils/platform';
@@ -37,14 +38,6 @@
 		data: 'From your data'
 	};
 
-	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
-		success: 'Ran',
-		error: 'Failed',
-		running: 'Running',
-		skipped: 'Skipped',
-		cancelled: 'Cancelled',
-		budget_exceeded: 'Stopped at its spending limit'
-	};
 
 	// Newest first, failures among them where they happened. The log already
 	// folds identical runs into one entry. Retrying is the page header's job:
@@ -129,7 +122,7 @@
 						</Button>
 					{/if}
 				{:else}
-					<p class="run-text">{failureReason(e.error)}.</p>
+					<p class="run-text">{sentence(failureReason(e.error))}</p>
 				{/if}
 				<pre class="run-error">{e.error}</pre>
 			{/if}

@@ -265,7 +265,8 @@ export function failureReason(error: string, max = 160): string {
 	return plainReason(error) ?? errorHeadline(error, max).replace(/\.$/, '');
 }
 
-const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+/** A run's outcome in a word or two. */
+export const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
 	success: 'Ran',
 	error: 'Failed',
 	running: 'Running',
@@ -274,10 +275,13 @@ const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
 	budget_exceeded: 'Stopped at its spending limit',
 };
 
-/** One line of a run log in words: what the run said, or why it failed. */
+/**
+ * One line of a run log in words: what the run said, or why it failed in a
+ * sentence. Runs the server folded together say so without a count.
+ */
 export function runLine(e: AppletLogEntry): string {
-	const what = e.status === 'error' ? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}` : (e.summary ?? STATUS_WORD[e.status]);
-	return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
+	const what = e.status === 'error' ? (e.error ? failureReason(e.error, 120) : 'It failed') : (e.summary ?? STATUS_WORD[e.status]);
+	return e.occurrences > 1 ? `${what} (more than once)` : what;
 }
 
 /** The hosts a job's logged runs reached, each once, in the order first seen. */
