@@ -19,7 +19,6 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
-	import QuickAdd from "$lib/components/mobile/QuickAdd.svelte";
 	import { background } from "$lib/stores/background.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
@@ -2671,7 +2670,10 @@
 					{/if}
 
 					{#if mobileLayout.isMobile && isEmpty && !inRoom}
-						<QuickAdd onFiles={(f) => attachments.add(f)} />
+						<!-- Phones only, so it loads when first shown, not before every first paint. -->
+						{#await import("$lib/components/mobile/QuickAdd.svelte") then { default: QuickAdd }}
+							<QuickAdd onFiles={(f) => attachments.add(f)} />
+						{/await}
 					{/if}
 
 					<!-- ChatInput -->

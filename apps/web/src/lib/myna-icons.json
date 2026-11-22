@@ -90,9 +90,6 @@
 		"chevron-down": {
 			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"m6 9l6 6l6-6\"/>"
 		},
-		"chevron-left": {
-			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"m15 6l-6 6l6 6\"/>"
-		},
 		"chevron-right": {
 			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"m9 18l6-6l-6-6\"/>"
 		},

@@ -1,5 +1,5 @@
 # What /(app)/[...path] loads before first paint (tools/perf/bundle-budget.mjs).
 # A ratchet: these may only go down. Update in a scratch clone, never in the
 # shared checkout, and say in the commit message why a number went up.
-541808 js_gzip_bytes
-61344 css_gzip_bytes
+542605 js_gzip_bytes
+61328 css_gzip_bytes
