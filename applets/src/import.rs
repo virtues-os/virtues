@@ -395,7 +395,9 @@ pub fn field(record: &[String], index: Option<usize>) -> Option<&str> {
 
 /// A timestamp in any of the forms these exports have used. A time with no
 /// zone is UTC, which is what each of these services documents. A bare date
-/// is midnight UTC.
+/// is noon UTC, so it falls on the same calendar day from UTC-11 to UTC+11;
+/// midnight UTC would put an order on the day before for anyone in the
+/// Americas.
 ///
 /// chrono's `%Y` accepts one to four digits, so "01/15/19" parses as the year
 /// 19 under `%m/%d/%Y`. Every format's result is therefore checked for a year
@@ -432,7 +434,7 @@ pub fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
     for f in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"] {
         if let Some(t) = NaiveDate::parse_from_str(naive, f)
             .ok()
-            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .and_then(|d| d.and_hms_opt(12, 0, 0))
             .and_then(|t| plausible(t.and_utc()))
         {
             return Some(t);
@@ -628,10 +630,11 @@ pub(crate) mod tests {
         assert_eq!(want("2020-01-02 03:04:05.678000+00:00"), "2020-01-02T03:04:05.678+00:00");
         assert_eq!(want("2023-05-01 18:23"), "2023-05-01T18:23:00+00:00");
         assert_eq!(want("2023-05-01 18:23:45 UTC"), "2023-05-01T18:23:45+00:00");
-        assert_eq!(want("05/01/2023"), "2023-05-01T00:00:00+00:00");
+        assert_eq!(want("05/01/2023"), "2023-05-01T12:00:00+00:00");
+        assert_eq!(want("2023-05-01"), "2023-05-01T12:00:00+00:00");
         // A two-digit year is read as %y, not as the year 19.
-        assert_eq!(want("01/15/19"), "2019-01-15T00:00:00+00:00");
-        assert_eq!(want("01/15/2019"), "2019-01-15T00:00:00+00:00");
+        assert_eq!(want("01/15/19"), "2019-01-15T12:00:00+00:00");
+        assert_eq!(want("01/15/2019"), "2019-01-15T12:00:00+00:00");
         assert_eq!(want("01/15/19 10:30:00"), "2019-01-15T10:30:00+00:00");
         assert!(parse_time("Not Available").is_none());
         assert!(parse_time("").is_none());

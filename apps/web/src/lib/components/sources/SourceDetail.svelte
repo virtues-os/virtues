@@ -42,7 +42,7 @@
 	import { relativeTime } from '$lib/applets/palette';
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { sourceMark } from '$lib/sources/brands';
-	import { IMPORT_SOURCES, isImportSource } from '$lib/imports';
+	import { IMPORT_SOURCES, isImportSource, reasonOf } from '$lib/imports';
 	import { SOURCE_CAPABILITIES } from '$lib/sources/capabilities';
 	import type { LakeStream } from '$lib/sources/streams';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
@@ -97,6 +97,15 @@
 		void loadExtras();
 	});
 
+	// Closing the import window reads the runs again, so the page shows what
+	// the import just brought in.
+	let importOpen = false;
+	$effect(() => {
+		const open = connectFlow.pending.kind === 'import';
+		if (importOpen && !open) void loadExtras();
+		importOpen = open;
+	});
+
 	const source = $derived(store.catalogById.get(sourceId) ?? null);
 	const name = $derived(source?.name ?? sourceId);
 	const mark = $derived(sourceMark(sourceId, source?.icon ?? null));
@@ -137,6 +146,18 @@
 		// (Spotify's recent plays), so its reason is on the page.
 		const importing = IMPORT_SOURCES[source.id];
 		if (importing && !broken) {
+			// The last import says what is already here, so the page does not
+			// read as if nothing had been brought in.
+			const last = applets.find((a) => a.id === importing.appletId)?.last_run;
+			const on = last?.started_at
+				? new Date(last.started_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+				: null;
+			if (on && last?.status === 'success' && last.summary) {
+				return { line: `You last imported a file on ${on}.`, why: last.summary };
+			}
+			if (on && last?.status === 'error') {
+				return { line: `The import on ${on} stopped.`, why: reasonOf(last.error) };
+			}
 			return { line: importing.line, why: importing.why };
 		}
 		if (connections.length === 0) {

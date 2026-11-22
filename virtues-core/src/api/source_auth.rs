@@ -463,6 +463,10 @@ pub async fn oauth_callback_handler(
         };
         name_the_account(&claims.source_id, &mut grant).await;
         if let Err(e) = store_grant(pool, &claims.source_id, claims.existing_credential_id.as_deref(), &grant).await {
+            if q.sheet.as_deref() == Some("1") {
+                tracing::warn!(source_id = %claims.source_id, error = %e, "own-app grant could not be stored");
+                return Redirect::to(CLOSE_SHEET).into_response();
+            }
             return auth_error_response(e);
         }
     } else if q.via.as_deref() == Some("api") && super::vendor_api::serves(&claims.source_id) {

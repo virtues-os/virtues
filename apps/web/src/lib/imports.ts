@@ -123,7 +123,8 @@ export type ImportPhase = { step: 'uploading'; percent: number } | { step: 'read
 
 /** The applet's own sentence from a failed run's stderr: anyhow prints it
  *  after "Error: ", with the causes below it. */
-function reasonOf(raw: string | null | undefined): string {
+/** The sentence an import's error carries, from the run's raw error. */
+export function reasonOf(raw: string | null | undefined): string {
 	const line = raw?.split('\n').find((l) => l.startsWith('Error: '));
 	return line ? line.slice('Error: '.length) : 'The import stopped before it finished. Try the file again.';
 }

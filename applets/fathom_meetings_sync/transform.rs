@@ -105,6 +105,17 @@ fn is_theirs(item: &Value, email: &str) -> bool {
             .is_some_and(|people| people.iter().any(|p| matches(text_at(p, "/email"))))
 }
 
+/// Whether a teammate at the email's own domain recorded the meeting. A
+/// shared meeting like that suggests the email is right and the person was
+/// not in it; a recorder at another domain does not.
+pub fn recorded_at_domain_of(item: &Value, email: &str) -> bool {
+    let domain = |e: &str| e.trim().rsplit_once('@').map(|(_, d)| d.to_ascii_lowercase()).filter(|d| !d.is_empty());
+    match (domain(email), text_at(item, "/recorded_by/email").and_then(domain)) {
+        (Some(mine), Some(theirs)) => mine == theirs,
+        _ => false,
+    }
+}
+
 /// "Nick: send the deck" when the item has an assignee, else the description.
 fn action_item(item: &Value) -> Option<String> {
     let description = text_at(item, "/description")?;
@@ -201,6 +212,14 @@ mod tests {
         assert!(matches!(shape(&item(), "david@example.com"), Shaped::Meeting(_)));
         assert_eq!(shape(&item(), "ana@example.com"), Shaped::NotTheirs);
         assert_eq!(shape(&item(), ""), Shaped::NotTheirs);
+    }
+
+    #[test]
+    fn a_recorder_at_the_same_domain_is_a_teammate() {
+        assert!(recorded_at_domain_of(&item(), "ana@EXAMPLE.com"));
+        assert!(!recorded_at_domain_of(&item(), "ana@example.org"));
+        assert!(!recorded_at_domain_of(&item(), "no-at-sign"));
+        assert!(!recorded_at_domain_of(&json!({}), "ana@example.com"));
     }
 
     #[test]

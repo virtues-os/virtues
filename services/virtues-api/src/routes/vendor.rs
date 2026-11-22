@@ -58,10 +58,13 @@ use crate::AppState;
 
 /// One vendor whose sign-in goes through Truto.
 pub struct Provider {
-    /// The route segment and the `provider` column in `google_connections`,
-    /// which holds every provider's connections and keeps its first name so
-    /// an older image still works after a rollback (migration 0017).
+    /// The route segment.
     name: &'static str,
+    /// The table that says which Virtues account owns each Truto connection.
+    /// One per provider, so the image before a provider existed cannot touch
+    /// its rows after a rollback (migration 0018). Always a constant here,
+    /// never input, because it is written into the SQL.
+    table: &'static str,
     /// How a message to a person names the vendor's sign-in.
     label: &'static str,
     /// Truto's integration. Naming it on the connect page skips Truto's list.
@@ -79,6 +82,7 @@ pub struct Provider {
 /// also asks for contacts.
 const GOOGLE: Provider = Provider {
     name: "google",
+    table: "google_connections",
     label: "Google",
     integration: "googlecalendar",
     scopes: &[
@@ -120,6 +124,7 @@ const GOOGLE: Provider = Provider {
 /// only: the assistant has no Outlook tools yet.
 const OUTLOOK: Provider = Provider {
     name: "outlook",
+    table: "outlook_connections",
     label: "Outlook",
     integration: "outlook",
     scopes: &[
@@ -316,7 +321,7 @@ async fn list(p: &Provider, State(state): State<Arc<AppState>>, BearerAuth(walle
             continue;
         }
         let Some(truto_id) = account.get("id").and_then(|v| v.as_str()) else { continue };
-        let id = match connection_id(&state.db, p.name, &wallet.account_id, truto_id).await {
+        let id = match connection_id(&state.db, p, &wallet.account_id, truto_id).await {
             Ok(Some(id)) => id,
             Ok(None) => continue,
             Err(e) => {
@@ -335,11 +340,11 @@ async fn list(p: &Provider, State(state): State<Arc<AppState>>, BearerAuth(walle
         }));
     }
     // A connection removed at Truto has nothing left to route to.
-    if let Err(e) = sqlx::query(
-        "DELETE FROM google_connections WHERE account_id = $1 AND provider = $2 AND NOT (truto_account_id = ANY($3))",
-    )
+    if let Err(e) = sqlx::query(&format!(
+        "DELETE FROM {} WHERE account_id = $1 AND NOT (truto_account_id = ANY($2))",
+        p.table
+    ))
     .bind(&wallet.account_id)
-    .bind(p.name)
     .bind(&live)
     .execute(&state.db)
     .await
@@ -365,42 +370,36 @@ fn context_email(context: &Value) -> Option<&Value> {
 }
 
 /// The id a box uses for a Truto account, made on first sight. `None` when
-/// the Truto account is already recorded for another Virtues account or
-/// another provider.
-async fn connection_id(db: &sqlx::PgPool, provider: &str, account_id: &str, truto_account_id: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query(
-        "INSERT INTO google_connections (id, account_id, provider, truto_account_id) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (truto_account_id) DO NOTHING",
-    )
+/// the Truto account is already recorded for another Virtues account.
+async fn connection_id(db: &sqlx::PgPool, p: &Provider, account_id: &str, truto_account_id: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query(&format!(
+        "INSERT INTO {} (id, account_id, truto_account_id) VALUES ($1, $2, $3) ON CONFLICT (truto_account_id) DO NOTHING",
+        p.table
+    ))
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(account_id)
-    .bind(provider)
     .bind(truto_account_id)
     .execute(db)
     .await?;
-    sqlx::query_scalar(
-        "SELECT id FROM google_connections WHERE truto_account_id = $1 AND account_id = $2 AND provider = $3",
-    )
-    .bind(truto_account_id)
-    .bind(account_id)
-    .bind(provider)
-    .fetch_optional(db)
-    .await
+    sqlx::query_scalar(&format!("SELECT id FROM {} WHERE truto_account_id = $1 AND account_id = $2", p.table))
+        .bind(truto_account_id)
+        .bind(account_id)
+        .fetch_optional(db)
+        .await
 }
 
 /// The Truto account behind a connection, if the caller owns it and it
 /// belongs to this provider.
-async fn owned(db: &sqlx::PgPool, provider: &str, account_id: &str, connection: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT truto_account_id FROM google_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
+async fn owned(db: &sqlx::PgPool, p: &Provider, account_id: &str, connection: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(&format!("SELECT truto_account_id FROM {} WHERE id = $1 AND account_id = $2", p.table))
         .bind(connection)
         .bind(account_id)
-        .bind(provider)
         .fetch_optional(db)
         .await
 }
 
 async fn owned_or_refuse(p: &Provider, state: &AppState, account_id: &str, connection: &str) -> Result<String, Response> {
-    match owned(&state.db, p.name, account_id, connection).await {
+    match owned(&state.db, p, account_id, connection).await {
         Ok(Some(id)) => Ok(id),
         Ok(None) => Err(err(
             StatusCode::NOT_FOUND,
@@ -447,10 +446,9 @@ async fn disconnect(p: &Provider, State(state): State<Arc<AppState>>, BearerAuth
         tracing::warn!(status, provider = p.name, "truto refused to delete a connection");
         return err(StatusCode::BAD_GATEWAY, "upstream_error", "the sign-in service did not remove the connection");
     }
-    if let Err(e) = sqlx::query("DELETE FROM google_connections WHERE id = $1 AND account_id = $2 AND provider = $3")
+    if let Err(e) = sqlx::query(&format!("DELETE FROM {} WHERE id = $1 AND account_id = $2", p.table))
         .bind(&connection)
         .bind(&wallet.account_id)
-        .bind(p.name)
         .execute(&state.db)
         .await
     {
@@ -750,20 +748,37 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn a_connection_belongs_to_the_account_and_provider_that_made_it(db: sqlx::PgPool) {
-        let id = connection_id(&db, "google", "acct_a", "truto-1").await.unwrap().expect("recorded");
+        let id = connection_id(&db, &GOOGLE, "acct_a", "truto-1").await.unwrap().expect("recorded");
         assert_eq!(
-            connection_id(&db, "google", "acct_a", "truto-1").await.unwrap().as_deref(),
+            connection_id(&db, &GOOGLE, "acct_a", "truto-1").await.unwrap().as_deref(),
             Some(id.as_str()),
             "one id per connection"
         );
         // The same Truto account cannot be claimed by a second Virtues account.
-        assert_eq!(connection_id(&db, "google", "acct_b", "truto-1").await.unwrap(), None);
-        // Nor listed under another provider.
-        assert_eq!(connection_id(&db, "outlook", "acct_a", "truto-1").await.unwrap(), None);
+        assert_eq!(connection_id(&db, &GOOGLE, "acct_b", "truto-1").await.unwrap(), None);
 
-        assert_eq!(owned(&db, "google", "acct_a", &id).await.unwrap().as_deref(), Some("truto-1"));
-        assert_eq!(owned(&db, "google", "acct_b", &id).await.unwrap(), None);
-        assert_eq!(owned(&db, "outlook", "acct_a", &id).await.unwrap(), None, "a Google id on the Outlook route");
-        assert_eq!(owned(&db, "google", "acct_a", "not-an-id").await.unwrap(), None);
+        assert_eq!(owned(&db, &GOOGLE, "acct_a", &id).await.unwrap().as_deref(), Some("truto-1"));
+        assert_eq!(owned(&db, &GOOGLE, "acct_b", &id).await.unwrap(), None);
+        assert_eq!(owned(&db, &OUTLOOK, "acct_a", &id).await.unwrap(), None, "a Google id on the Outlook route");
+        assert_eq!(owned(&db, &GOOGLE, "acct_a", "not-an-id").await.unwrap(), None);
+    }
+
+    /// The image before Outlook lists an account's Google connections and
+    /// deletes every other row of `google_connections` for that account,
+    /// whatever its provider. An Outlook connection must survive that.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_image_before_outlook_cannot_delete_an_outlook_connection(db: sqlx::PgPool) {
+        let google = connection_id(&db, &GOOGLE, "acct_a", "truto-g").await.unwrap().expect("google");
+        let outlook = connection_id(&db, &OUTLOOK, "acct_a", "truto-o").await.unwrap().expect("outlook");
+        // The older image's sweep, verbatim.
+        sqlx::query("DELETE FROM google_connections WHERE account_id = $1 AND NOT (truto_account_id = ANY($2))")
+            .bind("acct_a")
+            .bind(vec!["truto-g".to_string()])
+            .execute(&db)
+            .await
+            .unwrap();
+        assert_eq!(owned(&db, &GOOGLE, "acct_a", &google).await.unwrap().as_deref(), Some("truto-g"));
+        assert_eq!(owned(&db, &OUTLOOK, "acct_a", &outlook).await.unwrap().as_deref(), Some("truto-o"));
+        assert_eq!(owned(&db, &GOOGLE, "acct_a", &outlook).await.unwrap(), None, "an Outlook id on the Google route");
     }
 }

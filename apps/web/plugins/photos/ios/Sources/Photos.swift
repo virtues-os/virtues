@@ -32,8 +32,10 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
   private static let firstPassDoneKey = "virtues.photos.firstPassDone"
   private static let cursorKey = "virtues.photos.firstPassCursor"
   private static let tokenKey = "virtues.photos.changeToken"
-  /// Whether the finished first pass ran with Limited access, so only the
-  /// photos the person picked were sent.
+  /// Whether any part of the first pass ran with Limited access, so only the
+  /// photos the person picked were sent. Set when a part runs, never cleared
+  /// by a later part: a pass paused under Limited and finished under Full
+  /// sent only what was picked before its cursor.
   private static let firstPassLimitedKey = "virtues.photos.firstPassLimited"
 
   /// The longest side of a favorite's picture, in pixels.
@@ -210,6 +212,7 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     // of an interrupted pass. Changes made while the pass runs are then read
     // by the first change pass after it.
     if loadToken() == nil { saveToken(library.currentChangeToken) }
+    if limited() { defaults.set(true, forKey: Self.firstPassLimitedKey) }
 
     let opts = fetchOptions()
     let media = NSPredicate(
@@ -254,7 +257,6 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     }
 
     defaults.set(true, forKey: Self.firstPassDoneKey)
-    defaults.set(limited(), forKey: Self.firstPassLimitedKey)
     defaults.removeObject(forKey: Self.cursorKey)
     NSLog("[Photos] first pass sent %ld assets", total)
     // Catch up on anything that changed while the pass ran. A pass that

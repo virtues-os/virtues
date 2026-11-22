@@ -199,6 +199,44 @@ after 99bea44ef). Left, none blocking a first real run:
 - **Photos.** Editing a favorite stores its new picture and leaves the old
   one in Drive with nothing pointing at it.
 - **Imports** check a staged file by its folder's name, not its full path.
+- **Imported sources stay under "Add a source"** in the Sources list,
+  because the list sorts by sign-ins and an import has none. Each one's
+  page says when the last import ran and what it brought in.
+
+## Checked on 2026-11-22
+
+A clean clone of `wave` ran every suite, the CI lints, and a scratch server
+on a fresh database (every migration applied). Through the real upload
+route, invented Spotify, Amazon, Discord and Slack downloads each wrote the
+expected rows; a second upload of each added nothing; a wrong file, a Slack
+email missing from the export, and a second upload while one runs each gave
+one sentence. The Spotify own-app sign-in built Spotify's address with PKCE
+and the bounce state, and a made-up code came back as a failed sign-in, then
+as an expired one. The Sources pages and the import and Spotify windows were
+looked at in the app.
+
+Fixed from that check and a fourth review:
+
+- **Outlook connections have their own table** (virtues-api migration
+  0018). In `google_connections` the image before Outlook would delete them
+  when it listed Google, and a roll forward would then ask every Outlook
+  account to sign in again.
+- **A bare date in an import is noon UTC**, so an older Amazon download's
+  order lands on its own day in the Americas.
+- **The Spotify sync passes over a play a download already holds**, so a
+  download imported before the sync first ran is not listed twice.
+- **A first photo pass that ran partly under Limited access** reads the
+  whole library again once access is Full.
+- **Fathom's wrong-email failure** does not fire when a teammate at the
+  email's own domain recorded the meetings.
+- **The iOS sheet closes** when saving a Spotify sign-in fails.
+- **An import source's page** says when the last import ran and what it
+  brought in, or why it stopped.
+
+Not covered: photos from a phone, the three meeting tools, Outlook, and a
+real Spotify app, which all need a real account or device. One core test,
+the size limit on the `applet` tool's description, fails on `wave` from the
+sites work, not from these sources.
 
 ## Decisions
 
