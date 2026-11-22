@@ -33,6 +33,8 @@
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
 	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
 	import ProjectChip from "$lib/components/ProjectChip.svelte";
@@ -201,11 +203,8 @@
 		windowShellStore.openTabFromRoute("/chat", { label: "Chat" });
 	}
 
-	// The top-right slot is modal (see ChatChrome in mobileLayout): an empty
-	// chat is already new, so the slot carries the temporary-chat toggle there;
-	// everywhere else it composes.
+	// An empty chat is already new, so its bar has no new-chat button.
 	const chrome = $derived(mobileLayout.chatChrome);
-	const showGhostToggle = $derived(chrome?.empty === true);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -240,9 +239,17 @@
 		<!-- Glass pills over the view, so the page scrolls under them: the way
 		     back to your chats on the left, the project in the middle, and new
 		     chat (or the temporary-chat switch on an empty chat) on the right. -->
+		{#if chrome && !chrome.empty}
+			<div class="bar-fade" aria-hidden="true"></div>
+		{/if}
 		<header class="topbar">
-			<button class="bar-btn lq" onclick={() => mobileLayout.openDrawer()} aria-label="Chats">
-				<Icon icon="mynaui:chevron-left" width={22} />
+			<!-- The ∴ opens the drawer, the way the mark opens the desktop's rail. -->
+			<button class="bar-btn lq" onclick={() => mobileLayout.openDrawer()} aria-label="Threads and chats">
+				<svg viewBox="0 0 12 10.5" width="15" height="13" fill="currentColor" aria-hidden="true">
+					<circle cx="6" cy="2.4" r="1.5" />
+					<circle cx="2.6" cy="8.1" r="1.5" />
+					<circle cx="9.4" cy="8.1" r="1.5" />
+				</svg>
 			</button>
 			{#if chrome?.project}
 				<!-- A tap is the project's menu (open it, move the chat, take it
@@ -256,23 +263,21 @@
 					/>
 				</div>
 			{/if}
-			{#if showGhostToggle}
-				<button
-					class="bar-btn lq"
-					class:ghost-active={chrome?.ghost}
-					onclick={() => chrome?.toggleGhost()}
-					aria-pressed={chrome?.ghost}
-					aria-label={chrome?.ghost
-						? "Temporary chat. It won't be saved"
-						: "Start a temporary chat"}
-				>
-					<Icon icon="mynaui:incognito" width={22} />
+			<div class="bar-group" class:alone={!chrome?.project}>
+				<button class="bar-btn lq" onclick={() => search.show()} aria-label="Search">
+					<AtlasIcon name="search" size={17} bare />
 				</button>
-			{:else}
-				<button class="bar-btn lq" onclick={newChat} aria-label="New chat">
-					<Icon icon="mynaui:chat-plus" width={22} />
-				</button>
-			{/if}
+				{#if chrome?.showChatMenu}
+					<button class="bar-btn lq" onclick={(e) => chrome?.showChatMenu?.(e)} aria-haspopup="menu" aria-label="Chat options">
+						<Icon icon="mynaui:dots" width={18} />
+					</button>
+				{/if}
+				{#if !chrome?.empty}
+					<button class="bar-btn lq" onclick={newChat} aria-label="New chat">
+						<AtlasIcon name="plus" size={17} bare />
+					</button>
+				{/if}
+			</div>
 		</header>
 
 		{#if reachability.unreachable}
@@ -361,28 +366,39 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px;
-		height: 52px;
-		margin: 8px 12px 0;
+		height: 40px;
+		margin: 12px 12px 0;
 		pointer-events: none;
 	}
 	.topbar > :global(*) {
 		pointer-events: auto;
 	}
 
-	/* Centered on the bar, not between the buttons, so it stays put when the
-	   right-hand button changes; the width keeps it clear of both. */
+	/* Beside the ∴, like the desktop's breadcrumb, so it never runs into the
+	   buttons on the right however long the name is. */
 	.bar-title {
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		transform: translate(-50%, -50%);
+		flex: 0 1 auto;
+		min-width: 0;
+		margin-right: auto;
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		height: 52px;
+		height: 40px;
 		padding: 0 8px;
 		border-radius: var(--radius-full);
-		max-width: calc(100% - 136px);
+		overflow: hidden;
+	}
+
+	/* Under a saved chat the page fades out behind the bar, so reply text
+	   does not show through the glass. */
+	.bar-fade {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 2;
+		height: 88px;
+		background: linear-gradient(var(--color-page) 50%, transparent);
+		pointer-events: none;
 	}
 
 	/* Calm and factual: a strip, not a dialog. Warm-muted, never red — see the
@@ -432,8 +448,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 52px;
-		height: 52px;
+		width: 40px;
+		height: 40px;
 		border: 0;
 		border-radius: var(--radius-full);
 		color: var(--color-foreground);
@@ -441,14 +457,33 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 
-	/* The temporary-chat switch, lit: the mode is on. */
-	.bar-btn.ghost-active {
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+	.bar-group {
+		flex: none;
+		display: flex;
+		gap: 8px;
+	}
+	.bar-group.alone {
+		margin-left: auto;
+	}
+
+	/* The press: a quick shrink under the finger and a spring back. */
+	.bar-btn {
+		transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+	.bar-btn:active {
+		transform: scale(0.92);
+		transition-duration: 0.08s;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.bar-btn,
+		.bar-btn:active {
+			transition: none;
+			transform: none;
+		}
 	}
 
 	.view {
-		--shell-bar-inset: 60px;
+		--shell-bar-inset: 56px;
 		position: relative;
 		flex: 1;
 		min-height: 0;

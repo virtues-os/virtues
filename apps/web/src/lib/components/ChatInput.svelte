@@ -255,12 +255,17 @@
 	$effect(() => {
 		if (inputIsEmpty) wrapped = false;
 	});
-	// A phone always starts on one row, a glass pill like the bar above it.
+	// A phone always starts on one row.
 	const phone = $derived(mobileLayout.isMobile);
 	const oneRow = $derived((inline || phone) && !wrapped);
+	// How tall one line of the field is, measured while it is empty. The
+	// font decides it, so a fixed number misreads a serif's taller line as
+	// wrapped text.
+	let lineHeight = 0;
 	// The field is as tall as its content.
 	function setHeight(contentPx: number) {
-		if (contentPx > MIN_HEIGHT + 4) wrapped = true;
+		if (inputIsEmpty) lineHeight = contentPx;
+		if (contentPx > Math.max(MIN_HEIGHT, lineHeight) + 4) wrapped = true;
 		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
 	}
 
@@ -436,7 +441,6 @@
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
 		class:phone
-		class:lq={phone}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -683,20 +687,13 @@
 	.one-row .mic-button { grid-area: 1 / 4; }
 	.one-row .action-btn { grid-area: 1 / 5; }
 
-	/* On a phone the composer is a glass pill (the .lq recipe in app.css),
-	   so it follows the Glass setting. It is a pill on one row and takes the
-	   card's corners once the text wraps. */
-	.chat-input-wrapper.phone {
-		border-color: transparent;
-		background: var(--lq-sheen), var(--lq-fill);
-		/* design-ok: glass is lifted off the painting */
-		box-shadow: var(--lq-rim), var(--lq-lift);
-	}
+	/* On a phone the composer is the desktop's card, a pill on one row. It
+	   takes the card's corners once the text wraps. */
 	.chat-input-wrapper.phone:has(.one-row) {
 		--shell-radius: var(--radius-full);
 	}
 	.phone .composer-card.one-row {
-		min-height: 56px;
+		min-height: 52px;
 	}
 
 	.tray-open .composer-card {

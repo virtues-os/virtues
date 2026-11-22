@@ -19,6 +19,7 @@
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import Background from "$lib/components/Background.svelte";
+	import QuickAdd from "$lib/components/mobile/QuickAdd.svelte";
 	import { background } from "$lib/stores/background.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
@@ -2017,6 +2018,7 @@
 			toggleGhost,
 			project: isGhost ? null : (chatProject ?? null),
 			showProjectMenu: showProjectChipMenu,
+			showChatMenu: showChatMenu ? openChatMenu : undefined,
 		});
 		return () => mobileLayout.setChatChrome(null);
 	});
@@ -2085,18 +2087,6 @@
 						     the chat, on the axis the eye is already reading
 						     along. -->
 						<GettingStartedDoor />
-					{/if}
-					{#if showChatMenu && mobileLayout.isMobile}
-						<button
-							type="button"
-							class="chat-menu-btn"
-							onclick={openChatMenu}
-							aria-haspopup="menu"
-							aria-label="Chat options"
-							title="Chat options"
-						>
-							<Icon icon="mynaui:dots-vertical" width="16" />
-						</button>
 					{/if}
 				</div>
 				<div class="page-container" class:is-empty={isEmpty} class:home={showsHome} class:intro class:essay={chatEssay.on && !inRoom && !inInterview} class:carrying={carryFrom !== null} bind:clientWidth={pageWidth}>
@@ -2680,6 +2670,10 @@
 						</div>
 					{/if}
 
+					{#if mobileLayout.isMobile && isEmpty && !inRoom}
+						<QuickAdd onFiles={(f) => attachments.add(f)} />
+					{/if}
+
 					<!-- ChatInput -->
 					<div
 						bind:this={composerEl}
@@ -2749,7 +2743,7 @@
 						{:else}
 						<ChatInput
 							allowEmptySubmit={attachments.count > 0}
-							onAttach={(f) => attachments.add(f)}
+							onAttach={mobileLayout.isMobile && isEmpty && !inRoom ? undefined : (f) => attachments.add(f)}
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
@@ -2810,49 +2804,6 @@
 	}
 
 
-
-	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
-	   small and floats over the transcript, so the target grows around it
-	   rather than under it. */
-	@media (max-width: 768px), (pointer: coarse) {
-		/* (The composer's phone padding lives in the docked-composer block at
-		   the end of these styles — it must follow the base rules to win the
-		   cascade.) */
-		.chat-menu-btn {
-			position: relative;
-		}
-		.chat-menu-btn::after {
-			content: "";
-			position: absolute;
-			top: 50%;
-			left: 50%;
-			width: 44px;
-			height: 44px;
-			transform: translate(-50%, -50%);
-		}
-	}
-
-	.chat-menu-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: var(--radius-lg);
-		color: var(--color-foreground-subtle);
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-		cursor: pointer;
-	}
-
-	.chat-menu-btn:hover {
-		color: var(--color-foreground);
-		background: var(--hover-bg);
-	}
 
 	.chat-topbar-right > :global(*) {
 		animation: topbar-pop-in 260ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
@@ -3295,6 +3246,9 @@
 	}
 
 	@media (max-width: 768px), (pointer: coarse) {
+		.chat-input-wrapper.is-empty {
+			padding-right: 68px;
+		}
 		.chat-input-wrapper,
 		.chat-input-wrapper.is-empty {
 			bottom: 0;

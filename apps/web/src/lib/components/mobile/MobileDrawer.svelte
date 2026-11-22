@@ -1,37 +1,19 @@
 <script lang="ts">
 	/**
-	 * The phone's drawer — the app's entire navigation, as a full-screen room.
+	 * The phone's drawer: the app's navigation, as a full-screen room.
 	 *
-	 * Chat-first means the drawer IS the chat list, not a menu that links to
-	 * one. The layout grammar is deliberately strict — the previous version
-	 * had five text stylings and a bordered "New chat" card, and read as
-	 * assembled rather than designed:
-	 *
-	 *   - TWO text voices in the list: row (16px) and caption (13px muted).
-	 *     The serif masthead is the one exception, and it is the brand.
-	 *   - Conversations carry their own relative time as a caption instead of
-	 *     shouting day-bucket headers between them — one quiet section label,
-	 *     then rows.
-	 *   - Two regions, not one list: the mast and the doors are pinned
-	 *     chrome. Search comes first, then the desktop's doors in the order the
-	 *     owner arranged them (stores/sidebarDoors, saved on the profile), then
-	 *     All chats and Settings. Only the lists scroll — Pinned, then Recents,
-	 *     the desktop panel's order —
-	 *     and a hairline appears under the doors once the list has slid
-	 *     beneath them — the way a navigation bar earns its rule. There used
-	 *     to be a bottom bar too (search pill, compose), and search down there
-	 *     sat one thumb-width from the chat's own search, so which search you
-	 *     were in was never quite clear. Search is now the first door.
-	 *
-	 * Because the viewport slides ALL the way off (see MobileShell), this is a
-	 * standalone screen, so it carries the app's masthead — the same drawn ∴
-	 * and serif wordmark as the desktop sidebar's mast — and its own close
-	 * control, sitting in the exact slot the hamburger occupied so the toggle
-	 * reads as one control changing state.
+	 * Threads are the main container, so the drawer is built around them. Your
+	 * threads come first, each one a row that folds open to its latest chats;
+	 * the thread you are in opens by itself. Chats outside any thread follow.
+	 * The places you visit less (Inbox, Pages, Sites, Wiki and the other doors
+	 * the owner arranged on the desktop) are tiles at the bottom, with search
+	 * and new chat under them, so everything you tap often is in thumb reach.
+	 * The top holds only the title, Settings and the way back to the chat.
 	 *
 	 * Position, the slide and the gesture all belong to MobileShell; this
 	 * component only renders content (the shell moves it for parallax).
 	 */
+
 	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
@@ -46,7 +28,6 @@
 	import { accentCss } from "$lib/sidebar/pin-colors";
 	import { isEmoji, kindGlyph } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
-	import { newPage as makePage } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
@@ -65,11 +46,6 @@
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
 
-	// "Recents", literally: the drawer shows the last stretch of conversation
-	// and All Chats carries the archive. Uncapped, the list buried the doors
-	// above it and made the archive page redundant-but-worse.
-	const RECENTS_CAP = 15;
-	const recentSessions = $derived(chatSessions.sessions.slice(0, RECENTS_CAP));
 
 	function go(route: string, label: string) {
 		windowShellStore.openTabFromRoute(route, { label });
@@ -81,19 +57,11 @@
 		search.show();
 	}
 
-	/** A page is written the way a chat is started, so its door stands under New chat. */
-	function newPage() {
-		void makePage(go);
-	}
 
-	/**
-	 * Each door, as on the desktop panel. The arrangement is the owner's and
-	 * is made on the desktop; the phone shows it. No hover on a phone, so a
-	 * door's + is always drawn.
-	 */
-	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
+	/** Each door, as on the desktop panel. The owner arranges them on the desktop. */
+	const doorActions: Record<DoorId, { open: () => void }> = {
 		"new-chat": { open: () => go("/chat", "Chat") },
-		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
+		pages: { open: () => go("/page", "Pages") },
 		threads: { open: () => go("/inbox", "Inbox") },
 		applets: { open: () => go("/sites", "Sites") },
 		wiki: { open: () => go("/wiki", "Wiki") },
@@ -109,8 +77,6 @@
 		go(pin.url, title);
 	}
 
-	/** The list has scrolled under the doors; draw the rule between them. */
-	let scrolled = $state(false);
 
 	/**
 	 * A conversation's recency, said the way a person would: clock time today,
@@ -142,99 +108,75 @@
 			return d.toLocaleDateString(undefined, { weekday: "long" });
 		return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 	}
+
+	const THREAD_CHATS = 3;
+	const OTHER_CAP = 8;
+	const activeChatId = $derived(activeRoute.startsWith("/chat/") ? activeRoute.slice("/chat/".length) : null);
+	const activeThreadId = $derived(
+		activeRoute.startsWith("/thread/")
+			? activeRoute.slice("/thread/".length)
+			: (chatSessions.sessions.find((s) => s.conversation_id === activeChatId)?.thread_id ?? null),
+	);
+	// The threads you used last, by their latest chat, then the rest in the
+	// store's order; All threads holds the full list.
+	const THREAD_CAP = 6;
+	const threads = $derived.by(() => {
+		const lastUsed = new Map<string, number>();
+		chatSessions.sessions.forEach((s, i) => {
+			if (s.thread_id && !lastUsed.has(s.thread_id)) lastUsed.set(s.thread_id, i);
+		});
+		const rank = (id: string) => lastUsed.get(id) ?? Number.MAX_SAFE_INTEGER;
+		return [...projectStore.projects].sort((a, b) => rank(a.id) - rank(b.id)).slice(0, THREAD_CAP);
+	});
+	const otherChats = $derived(chatSessions.sessions.filter((s) => !s.thread_id).slice(0, OTHER_CAP));
+	function chatsIn(threadId: string) {
+		return chatSessions.sessions.filter((s) => s.thread_id === threadId).slice(0, THREAD_CHATS);
+	}
+
+	// Which threads are folded open. The one you are in opens by itself; a
+	// tap on a chevron opens or closes any other.
+	let opened = $state<Record<string, boolean>>({});
+	function isOpen(id: string): boolean {
+		return opened[id] ?? id === activeThreadId;
+	}
+	function toggle(id: string) {
+		opened = { ...opened, [id]: !isOpen(id) };
+	}
+
+	// The doors other than new chat, as tiles. New chat has its own button.
+	const tileDoors = $derived(sidebarDoors.visible.filter((d) => d.id !== "new-chat"));
+
+	function newChat() {
+		go("/chat", "Chat");
+	}
 </script>
 
 <nav class="drawer" aria-label="Navigation">
 	<header class="mast">
-		<!-- The mark, drawn: same optical grid as the desktop mast — the
-		     typed ∴ glyph is text-weight, a masthead needs logo weight. -->
-		<span class="mark-glyph" aria-hidden="true">
-			<svg viewBox="0 0 12 10.5" width="12" height="10.5" fill="currentColor">
-				<circle cx="6" cy="2.4" r="1.5" />
-				<circle cx="2.6" cy="8.1" r="1.5" />
-				<circle cx="9.4" cy="8.1" r="1.5" />
-			</svg>
-		</span>
-		<span class="mark-word">Virtues</span>
-		<!-- Close rides top-RIGHT, and it's a double chevron, not an X: the
-		     chat is parked off the right edge, and this points back at it —
-		     "return", not "dismiss". It also matches the closing swipe's
-		     direction, so the button and the gesture tell one story. -->
-		<button class="close-btn" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
-			<Icon icon="mynaui:chevrons-right" width={22} />
+		<h1 class="mast-title">Threads</h1>
+		<button class="round lq" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
+			<AtlasIcon name="settings" bare />
+		</button>
+		<!-- Back to the chat, which is parked off the right edge. The swipe
+		     closes the drawer too; this is the one you can see. -->
+		<button class="round lq" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
+			<Icon icon="mynaui:chevrons-right" width={20} />
 		</button>
 	</header>
 
-	<!-- The doors: pinned, before the flow of conversations. They wear Atlas
-	     (the shell's drawn set), matching the desktop sidebar's rule: Atlas
-	     for nav doors, Remix for interface symbols (the close » above).
-	     Search first, then the desktop's doors in the owner's order, then
-	     the full archive, then Settings. That last door used to say "This device",
-	     which was the truth about what the page held (this phone's streams
-	     and its link to the server) and a mystery to anyone looking for
-	     settings. One door, the word people look for. -->
-	<div class="doors" class:scrolled>
-		<!-- Search is a field, not a door: the one filled shape in the column,
-		     so the eye finds it without reading. The pill treatment is the
-		     old bottom bar's, moved up. -->
-		<button class="search-pill" onclick={openSearch}>
-			<AtlasIcon name="search" bare />
-			<span>Search</span>
-		</button>
-		{#each sidebarDoors.visible as door (door.id)}
-			{@const act = doorActions[door.id]}
-			{#if act.add}
-				{@const add = act.add}
-				<!-- The word is the list, the + is the new one: the desktop
-				     panel's shape. -->
-				<div class="row row-split">
-					<button class="row-main" onclick={act.open}>
-						<AtlasIcon name={door.glyph} bare />
-						<span class="row-text">{door.label}</span>
-					</button>
-					<button class="row-plus" onclick={add.run} aria-label={add.label}>
-						<Icon icon="mynaui:plus" width={20} />
-					</button>
-				</div>
-			{:else}
-				<!-- The phone is chat-first: the desktop's Create door starts a chat here. -->
-				{@const chat = door.id === "new-chat"}
-				<button class="row" onclick={act.open}>
-					<AtlasIcon name={chat ? "new-chat" : door.glyph} bare />
-					<span class="row-text">{chat ? "New chat" : door.label}</span>
-				</button>
-			{/if}
-		{/each}
-		<button class="row" onclick={() => go("/chat-history", "All Chats")}>
-			<AtlasIcon name="chats" bare />
-			<span class="row-text">All chats</span>
-		</button>
-		<button class="row" onclick={() => go("/virtues/devices/this", "Settings")}>
-			<AtlasIcon name="settings" bare />
-			<span class="row-text">Settings</span>
-		</button>
-	</div>
-
-	<div class="body" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}>
-		{#if pinsStore.pins.length > 0}
-			<!-- What the owner pinned, in their order, above the chats: the
-			     desktop panel's order. Projects are a door now, as there. No
-			     empty state: a section with nothing in it is a feature
-			     announcing itself. -->
-			<div class="section-label">Pinned</div>
-			{#each pinsStore.pins as pin (pin.id)}
-				{@const look = pinIdentity(pin)}
-				{@const pinChat = pin.url.startsWith("/chat/") ? pin.url.slice("/chat/".length) : null}
-				<button
-					class="chat-row"
-					class:active={activeRoute === pin.url}
-					aria-current={activeRoute === pin.url ? "page" : undefined}
-					onclick={() => openPin(pin, look.title)}
-				>
-					<span class="chat-title with-glyph">
-						<!-- The mark picked for it, else its kind's base glyph, in its
-						     color if it has one. -->
-						<span class="pin-mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
+	<div class="body">
+		<div class="card">
+			{#if pinsStore.pins.length > 0}
+				<div class="section-label">Pinned</div>
+				{#each pinsStore.pins as pin (pin.id)}
+					{@const look = pinIdentity(pin)}
+					<button
+						class="row"
+						class:active={activeRoute === pin.url}
+						aria-current={activeRoute === pin.url ? "page" : undefined}
+						onclick={() => openPin(pin, look.title)}
+					>
+						<span class="mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
 							{#if look.icon && isEmoji(look.icon)}
 								{look.icon}
 							{:else if look.icon?.startsWith("atlas:")}
@@ -245,338 +187,377 @@
 								<AtlasIcon name={kindGlyph(pin.url)} size={16} bare />
 							{/if}
 						</span>
-						<span class="title-text">{look.title}</span>
-						{#if pinChat && chatActivity.running(pinChat)}
-							<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
-						{:else if pinChat && chatActivity.unread(pinChat)}
-							<span class="row-unread" role="img" aria-label="New reply"></span>
-						{/if}
-					</span>
-				</button>
+						<span class="text">{look.title}</span>
+					</button>
+				{/each}
+				<div class="rule"></div>
+			{/if}
+
+			{#each threads as t (t.id)}
+				{@const open = isOpen(t.id)}
+				{@const route = `/thread/${t.id}`}
+				<div class="thread-row">
+					<button
+						class="row thread"
+						class:active={activeRoute === route}
+						aria-current={activeRoute === route ? "page" : undefined}
+						onclick={() => go(route, t.name)}
+					>
+						<span class="mark"><ProjectGlyph project={t} size={16} /></span>
+						<span class="text">{t.name}</span>
+					</button>
+					<button
+						class="fold"
+						class:open
+						onclick={() => toggle(t.id)}
+						aria-expanded={open}
+						aria-label={open ? `Hide chats in ${t.name}` : `Show chats in ${t.name}`}
+					>
+						<Icon icon="mynaui:chevron-right" width={16} />
+					</button>
+				</div>
+				{#if open}
+					{#each chatsIn(t.id) as s (s.conversation_id)}
+						{@const chatRoute = `/chat/${s.conversation_id}`}
+						<button
+							class="row nested"
+							class:active={activeRoute === chatRoute}
+							aria-current={activeRoute === chatRoute ? "page" : undefined}
+							onclick={() => go(chatRoute, s.title || "Chat")}
+						>
+							<span class="text">{s.title || untitled("chat")}</span>
+							{#if chatActivity.running(s.conversation_id)}
+								<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
+							{:else if chatActivity.unread(s.conversation_id)}
+								<span class="row-unread" role="img" aria-label="New reply"></span>
+							{/if}
+						</button>
+					{:else}
+						<div class="nested-empty">No chats in this thread yet.</div>
+					{/each}
+				{/if}
 			{/each}
-		{/if}
-		<div class="section-label">Recents</div>
-		{#each recentSessions as s (s.conversation_id)}
-			{@const route = `/chat/${s.conversation_id}`}
-			{@const home = s.thread_id ? projectStore.byId(s.thread_id) : undefined}
-			<button
-				class="chat-row"
-				class:active={activeRoute === route}
-				aria-current={activeRoute === route ? "page" : undefined}
-				onclick={() => go(route, s.title || "Chat")}
-			>
-				<!-- Working, or a reply not yet read: the same two states the
-				     desktop row shows, after the title. -->
-				<span class="chat-title with-glyph">
-					<span class="title-text">{s.title || untitled("chat")}</span>
+			<button class="row quiet" onclick={() => go("/threads", "Threads")}>All threads</button>
+
+			<div class="rule"></div>
+			<div class="section-label">Other chats</div>
+			{#each otherChats as s (s.conversation_id)}
+				{@const route = `/chat/${s.conversation_id}`}
+				<button
+					class="row"
+					class:active={activeRoute === route}
+					aria-current={activeRoute === route ? "page" : undefined}
+					onclick={() => go(route, s.title || "Chat")}
+				>
+					<span class="text">{s.title || untitled("chat")}</span>
 					{#if chatActivity.running(s.conversation_id)}
 						<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
 					{:else if chatActivity.unread(s.conversation_id)}
 						<span class="row-unread" role="img" aria-label="New reply"></span>
-					{/if}
-				</span>
-				<!-- A chat in a project says which, in the project's own mark and
-				     color, before when: the phone's form of the desktop row's
-				     tinted glyph. -->
-				<span class="chat-when" class:with-glyph={!!home}>
-					{#if home}
-						<ProjectGlyph project={home} size={12} />
-						<span class="title-text">{home.name} · {when(s.last_message_at || s.first_message_at)}</span>
 					{:else}
-						{when(s.last_message_at || s.first_message_at)}
+						<span class="when">{when(s.last_message_at || s.first_message_at)}</span>
 					{/if}
-				</span>
-			</button>
-		{:else}
-			<div class="empty">Conversations you start will collect here.</div>
-		{/each}
+				</button>
+			{:else}
+				<div class="nested-empty">Chats you start outside a thread collect here.</div>
+			{/each}
+			<button class="row quiet" onclick={() => go("/chat-history", "All Chats")}>All chats</button>
+		</div>
 	</div>
+
+	<!-- The thumb's end of the screen: the other doors as tiles, then search
+	     and new chat. -->
+	<footer class="dock">
+		{#if tileDoors.length > 0}
+			<div class="tiles" style:--tile-count={Math.min(tileDoors.length, 5)}>
+				{#each tileDoors as door (door.id)}
+					<button class="tile lq" onclick={doorActions[door.id].open}>
+						<AtlasIcon name={door.glyph} bare />
+						<span>{door.label}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+		<div class="dock-row">
+			<button class="search lq" onclick={openSearch}>
+				<AtlasIcon name="search" bare />
+				<span>Search</span>
+			</button>
+			<button class="compose" onclick={newChat} aria-label="New chat">
+				<Icon icon="mynaui:plus" width={20} />
+			</button>
+		</div>
+	</footer>
 </nav>
 
 <style>
-	/* The same paint as the viewport (MobileShell), on purpose. It used to be
-	   --surface-elevated so the two planes would read as different materials;
-	   but the drawer fills the whole screen, so on a warm theme "elevated"
-	   read as the page turning beige when the menu opened. Depth is the
-	   sliding plane's shadow, which the viewport already casts on this one. */
 	.drawer {
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		/* NO safe-area padding of its own: the drawer lives inside `main`,
-		   which already pads the status bar (see main.is-mobile in the app
-		   layout). Padding it again pushed the mast a full notch-height below
-		   the viewport's top bar, and the two bars are meant to share a
-		   baseline — the » lands where the ghost/compose control sits. */
-		background-color: var(--color-surface);
+		background-color: var(--color-page);
 		color: var(--color-foreground);
 	}
 
-	/* Mirrors the shell's topbar height so the wordmark sits on the same
-	   baseline the view's chrome does; the left inset lines the mark up with
-	   the list rows' ink below it. */
 	.mast {
 		flex: none;
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		height: 48px;
-		padding: 0 6px 0 20px;
-		user-select: none;
-		-webkit-user-select: none;
+		padding: 8px 12px 12px 24px;
 	}
-
-	.mark-word {
+	.mast-title {
 		flex: 1;
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: 1.875rem;
+		font-weight: 400;
 	}
 
-	.close-btn {
+	.round {
+		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 44px;
 		height: 44px;
 		border: 0;
-		border-radius: var(--radius-xl);
-		background: transparent;
+		border-radius: var(--radius-full);
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
-	}
-	.close-btn:active {
-		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
-		transition-duration: 0s;
 	}
 
-	.mark-glyph {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 16px;
-		flex-shrink: 0;
-	}
-
-	/* The desktop mast's treatment, verbatim: serif, never bold — the hairline
-	   stroke is what gives it logo presence at text weight. */
-	.mark-word {
-		font-family: var(--font-serif, serif);
-		font-size: 16px;
-		font-weight: 400;
-		letter-spacing: 0.025em;
-		-webkit-text-stroke: 0.2px currentColor;
-	}
-
-	/* Pinned chrome. The rule beneath is drawn only while the list is under
-	   it: at rest the doors and the first rows share one column, and a
-	   permanent line there would cut the room in two for no reason. */
-	.doors {
-		flex: none;
-		padding: 2px 10px 6px;
-		border-bottom: 1px solid transparent;
-		transition: border-color 0.2s ease-out;
-	}
-	.doors.scrolled {
-		border-bottom-color: var(--color-border);
-	}
-
-	.search-pill {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		width: 100%;
-		min-height: 40px;
-		margin: 0 0 6px;
-		padding: 0 14px;
-		border: 0;
-		border-radius: var(--radius-full);
-		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
-		color: var(--color-foreground-muted);
-		font-size: 15px;
-		text-align: left;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
-	}
-	.search-pill:active {
-		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
-		transition-duration: 0s;
-	}
-	/* Atlas ships a .sidebar-icon color of its own (the desktop sidebar's);
-	   in this pill the control says what its glyph wears. */
-	.search-pill :global(svg) {
-		color: currentColor;
-	}
-
-	/* No bottom bar any more, so the list covers the home indicator itself. */
 	.body {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-		-webkit-overflow-scrolling: touch;
-		overscroll-behavior: contain;
-		padding: 0 10px calc(12px + env(safe-area-inset-bottom));
+		padding: 0 12px 12px;
 	}
 
-	/* A row that is two controls: the word and a + at its right edge. The
-	   outer keeps the row's box; the inner buttons split it. */
-	/* Qualified, not bare: `.row` below sets the row's padding and, as the
-	   later rule of equal weight, won; the inner button pads itself too, so
-	   Pages sat 10px right of every other door. */
-	.row.row-split {
-		padding: 0;
-	}
-	.row-main {
-		flex: 1;
+	/* The list sits on a white card, the same page card the chat uses. */
+	.card {
 		display: flex;
-		align-items: center;
-		gap: 12px;
-		min-height: 48px;
-		padding: 0 10px;
-		border: 0;
-		background: transparent;
-		color: inherit;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-	}
-	.row-plus {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 44px;
-		min-height: 48px;
-		border: 0;
+		flex-direction: column;
+		padding: 8px;
 		border-radius: var(--radius-xl);
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-	}
-	.row-plus:active {
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+		background: var(--color-surface);
+		box-shadow: 0 0 0 0.5px var(--color-border);
 	}
 
-	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
+	.section-label {
+		padding: 8px 12px 4px;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.rule {
+		height: 1px;
+		margin: 8px 12px;
+		background: var(--color-border);
+	}
+
 	.row {
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		width: 100%;
-		min-height: 48px;
-		padding: 0 10px;
+		min-height: 44px;
+		padding: 0 12px;
 		border: 0;
 		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground);
+		font: inherit;
+		font-size: 1rem;
 		text-align: left;
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
 	}
-	.row:active {
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
-		transition-duration: 0s;
-	}
-	.row :global(svg) {
-		color: var(--color-foreground-muted);
-	}
-
-	.row-text {
-		font-size: 16px;
-	}
-
-	/* Voice 2 of 2: a caption. The section label and the row times share it. */
-	.section-label {
-		margin: 12px 10px 6px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.chat-row {
-		display: block;
-		width: 100%;
-		min-height: 48px;
-		padding: 7px 10px;
-		border: 0;
-		border-radius: var(--radius-xl);
-		background: transparent;
-		color: var(--color-foreground);
-		text-align: left;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
-	}
-	.chat-row.active {
+	.row.active {
 		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 	}
-	.chat-row:active {
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
-		transition-duration: 0s;
+	.row.nested {
+		margin-left: 28px;
+		font-size: 0.9375rem;
+		color: var(--color-foreground-muted);
 	}
-
-	.chat-title {
-		display: block;
-		font-size: 16px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.row.nested.active {
+		color: var(--color-foreground);
 	}
-
-	.row-unread {
-		width: 8px;
-		height: 8px;
-		margin-left: auto;
-		flex: none;
-		border-radius: var(--radius-full);
-		background: var(--color-success);
-	}
-
-	.chat-title :global(.state-mark) {
-		margin-left: auto;
-		flex: none;
+	.row.quiet {
+		min-height: 40px;
+		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
 
-	.chat-when {
-		display: block;
-		margin-top: 1px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
-	.chat-title.with-glyph,
-	.chat-when.with-glyph {
+	.thread-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+	}
+	.thread-row .thread {
+		flex: 1;
 		min-width: 0;
 	}
 
-	.chat-when.with-glyph {
-		gap: 5px;
-	}
-
-	.title-text {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.pin-mark {
-		display: flex;
+	.fold {
 		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		height: 44px;
+		border: 0;
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		transition: transform var(--motion-enter) var(--ease-premium);
+	}
+	.fold.open {
+		transform: rotate(90deg);
+	}
+
+	.mark {
+		flex: none;
+		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 16px;
-		font-size: 14px;
 	}
 
-	.empty {
-		padding: 16px 10px;
-		font-size: 13px;
+	.text {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.when {
+		flex: none;
+		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
+	}
+
+	.nested-empty {
+		padding: 8px 12px 8px 40px;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.row-unread {
+		flex: none;
+		width: 8px;
+		height: 8px;
+		border-radius: var(--radius-full);
+		background: var(--color-success);
+	}
+	.row :global(.state-mark) {
+		flex: none;
+		color: var(--color-foreground-muted);
+	}
+
+	.dock {
+		flex: none;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+	}
+
+	.tiles {
+		display: grid;
+		grid-template-columns: repeat(var(--tile-count), minmax(0, 1fr));
+		gap: 8px;
+	}
+	.tile {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		height: 64px;
+		border: 0;
+		border-radius: var(--radius-xl);
+		color: var(--color-foreground);
+		font: inherit;
+		font-size: 0.75rem;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.dock-row {
+		display: flex;
+		gap: 8px;
+	}
+	.search {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		height: 52px;
+		padding: 0 16px;
+		border: 0;
+		border-radius: var(--radius-full);
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 1rem;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.compose {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 52px;
+		height: 52px;
+		border: 0;
+		border-radius: var(--radius-full);
+		background: var(--color-foreground);
+		color: var(--color-surface);
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	/* The press: a quick shrink under the finger and a spring back. */
+	.row,
+	.round,
+	.tile,
+	.search,
+	.compose {
+		transition:
+			transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
+			background-color 0.2s ease-out;
+	}
+	.round:active,
+	.tile:active,
+	.search:active,
+	.compose:active {
+		transform: scale(0.92);
+		transition-duration: 0.08s;
+	}
+	.row:active {
+		transform: scale(0.98);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+		transition-duration: 0.08s;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.row,
+		.round,
+		.tile,
+		.search,
+		.compose,
+		.fold {
+			transition: none;
+		}
+		.row:active,
+		.round:active,
+		.tile:active,
+		.search:active,
+		.compose:active {
+			transform: none;
+		}
 	}
 </style>

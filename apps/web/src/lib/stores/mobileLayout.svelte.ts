@@ -49,6 +49,8 @@ export interface ChatChrome {
 	project?: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'accent_color' | 'archived_at'> | null;
 	/** The project's menu, anchored to whatever was tapped. */
 	showProjectMenu?: (e: MouseEvent) => void;
+	/** The chat's own menu (pin, rename, delete), for a saved chat. */
+	showChatMenu?: (e: MouseEvent) => void;
 }
 
 const shellMobile = detectShellFlag();
