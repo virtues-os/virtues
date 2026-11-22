@@ -469,8 +469,9 @@ pub(crate) mod tests {
             // 2026-10-27 for setup's invoke, tools and model, and 200 on
             // 2026-10-28 for the three data triggers, and 400 on 2026-11-20
             // for what a view is: a whole page beside the chat, with nothing
-            // loaded from another host.
-            ("applets", &["applet"], 3_550),
+            // loaded from another host. Raised 300 on 2026-11-22 for a view
+            // that is the background behind a new chat.
+            ("applets", &["applet"], 3_850),
             // The applets chat may load, listed by name and description. The
             // shipped catalog has none; a box's grows to the cap in
             // `use_applet_tool`.
@@ -534,10 +535,11 @@ pub(crate) mod tests {
         // 2026-11-19 for the Gmail and Calendar tools and the next-step
         // card. Rose 200 on 2026-11-20 for `use_applet` listing the
         // insight-report applet. Rose 300 on 2026-11-21 with sql_query, and
-        // 900 more the same day with sql_query, show and pages. The rest sit
-        // just above their 2026-09-29 size.
+        // 900 more the same day with sql_query, show and pages. Rose 300 on
+        // 2026-11-22 with the applets group. The rest sit just above their
+        // 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 31_450),
+            ("chat", 31_750),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
@@ -561,7 +563,7 @@ pub(crate) mod tests {
             ("insight-report", 13_450),
             ("meeting-prep", 9_350),
             ("morning-brief", 9_650),
-            ("new-applet", 3_550),
+            ("new-applet", 3_850),
             ("trip-planner", 10_250),
             ("weekly-review", 9_950),
         ];
