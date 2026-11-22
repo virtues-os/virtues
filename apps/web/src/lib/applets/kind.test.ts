@@ -25,7 +25,7 @@ describe('the kind of an applet', () => {
 
 	it('opens each kind at an address that says the word', () => {
 		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_user__water_log' })).toBe('/site/water_log');
-		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_dot_cloud' })).toBe('/site/dot_cloud');
+		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_star_map' })).toBe('/site/star_map');
 		expect(homeOf({ ...parts({ kind: 'skill' }), id: 'applet_meeting_prep' })).toBe('/skill/meeting_prep');
 		expect(homeOf({ ...parts({ kind: 'server_task' }), id: 'applet_embedding_index' })).toBe('/server-task/embedding_index');
 		expect(optionsOf({ ...parts({ kind: 'skill' }), id: 'applet_user__packing_list' }, 'history')).toBe(

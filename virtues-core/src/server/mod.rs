@@ -1582,8 +1582,8 @@ mod cors_tests {
     #[test]
     fn the_sandboxed_face_reaches_its_own_routes() {
         for p in [
-            "/face/applet_dot_cloud/",
-            "/face/applet_dot_cloud/virtues.js",
+            "/face/applet_user__water_log/",
+            "/face/applet_user__water_log/virtues.js",
             "/api/face/query",
         ] {
             assert!(face_origin_allowed("null", p, None, &[]), "must allow null on {p}");
@@ -1596,7 +1596,7 @@ mod cors_tests {
     fn null_is_refused_everywhere_else() {
         for p in [
             "/api/status",
-            "/api/applets/applet_dot_cloud/face-token",
+            "/api/applets/applet_user__water_log/face-token",
             "/display",
             "/api/faces/x",
             "/faces/x",

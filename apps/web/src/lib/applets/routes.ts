@@ -7,7 +7,7 @@
  * `/options` for the other side of the page.
  *
  * The server's id carries one more fact, whether you made it:
- * `applet_user__water_log` is yours and `applet_dot_cloud` came with the
+ * `applet_user__water_log` is yours and `applet_meeting_prep` came with the
  * server. The address drops that, so reading one back gives a first guess
  * and a second (`otherId`), and the page tries both. A name you give never
  * equals a built-in's: setup treats the same name as the same applet.

@@ -132,8 +132,9 @@ A check on new data, with no model call unless a reading is high:
   has no streaks, no count toward a goal and no "days since", because someone
   in recovery may be the one reading it.
 
-Examples that ship: `applets/morning-examen/` (a scheduled prompt with a
-limit) and `applets/dot-cloud/` (a view with no prompt).
+An example that ships: `applets/morning-examen/` (a scheduled prompt with a
+limit). No site ships with the server; the tracker above is the example of a
+view.
 
 ## For builtin (Rust) applet development
 

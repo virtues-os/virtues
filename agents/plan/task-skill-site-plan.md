@@ -74,13 +74,13 @@ fields the row already has, in this order:
    **assistant's task**.
 4. It has a prompt and nothing starts it: a **skill**.
 
-Run against the 47 shipped applets on 2026-11-22, the rule places every one:
+Run against the 46 shipped applets on 2026-11-22, the rule places every one:
 
 | Kind | Count | Examples |
 |---|---|---|
 | Your server's task | 34 | 29 start themselves (syncs, the search index, backups, transcription, the day summary, the wiki editor). Five imports run only when asked. |
 | Skill | 11 | 10 in the `/` menu, and `charts` |
-| Site | 1 | `dot-cloud` |
+| Site | 0 | None ships with the server since the dot cloud was removed on 2026-11-22. |
 | The assistant's task | 1 | `morning-examen` |
 
 The day summary and the wiki editor run a program and then a prompt. The rule
@@ -167,8 +167,7 @@ slice G run.
   `/skill/<name>`, `/server-task/<name>`. The name drops whether you made it,
   so an address can mean two ids, and the page asks the list which exists
   before it asks the server. A page that opens under the wrong word corrects
-  its own address once it has loaded. The dot cloud opens at
-  `/site/dot_cloud`.
+  its own address once it has loaded.
 - The switch on a page reads "Site", "Task" or "Skill" from the kind.
 - The Server tasks page lists rows whose kind is the server's task.
   "Runs only when asked" holds the import tasks. Skills are on their own page
@@ -415,17 +414,23 @@ Two things the check turned up, both left:
   with the tabs logged did not show it again, and the cause is not known.
 
 The owner decided the four questions the audit raised on 2026-11-22
-(Decisions). None of the four is built yet:
+(Decisions), and three were built on `wave` the same day:
 
-- Options: replace `RecentDots` and the calendar in `RunHistory.svelte` with
-  the list of runs, and drop `recentSummary`'s count.
-- The dot cloud: it is the default for the server's screen
-  (`app_display.face_applet_id`, migration 0007), which falls back to the
-  record screen when its applet is gone. Removing it needs a migration that
-  moves that default and drops the applet's row, the folder `applets/dot-cloud/`
-  deleted, and the examples that cite it in `applets/AGENTS.md`,
-  `applets/AUTHORING.md` and three tests pointed elsewhere.
-- A one-time request: `where` in `TaskActions.svelte` says only the model.
+- **Options shows past runs as a list.** The Run history row says how the
+  last run went in one sentence, and opens to the last eight runs: what
+  started each, what it said or made, and why it failed in a sentence with
+  the error's own text under it. The day dots, the month calendar, the count
+  of failed runs and the "N times" on a repeated run are gone
+  (`RunHistory.svelte`, `AppletInfo.svelte`). `applets/days.ts`,
+  `RecentDots.svelte` and `DayDot.svelte` are deleted, and `needsYou` moved
+  to `applets/standing.ts`. Seen in a scratch app.
+- **The dot cloud is removed.** Its folder is deleted, and a server drops the
+  row of a shipped applet whose folder is gone when it starts, so no
+  migration was needed. The server's screen, which once defaulted to it, was
+  already dropped. No site ships with the server now, so the kind rule's
+  table above has no site row to count. Seen on a fresh scratch server.
+- **A one-time request names its model only**: "Runs on Standard."
+  (`TaskActions.svelte`). Type-checked, not seen in an app.
 - "Agent" for an outside tool stays as it is. The 2026-11-20 decision stands
   for everything inside Virtues: nothing the assistant or the server does is
   called an agent.
