@@ -17,11 +17,9 @@
  * src/. A name built at runtime (`mynaui:heading-${n}`) is not found, so
  * write such names out in full.
  *
- * The first paint's code is every file reached from the shell's entry files
- * (`ROOTS`) by static imports; a dynamic `import()` is where it stops, as it
- * is for the bundler. legacyIcons.ts is left out of that scan: it maps old
- * stored names onto nearly every Myna icon, and a stored old name is rare
- * enough to wait for the later file.
+ * The first paint's code is read by scripts/first-paint.mjs. legacyIcons.ts
+ * is left out of that scan: it maps old stored names onto nearly every Myna
+ * icon, and a stored old name is rare enough to wait for the later file.
  *
  * Myna draws a 1.5 line on a 24-unit grid, which is 1px at 16px. The shell's
  * line is 1.25px at 16px (design.md, "Glyphs"), so the stroke is
@@ -33,6 +31,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { firstPaint } from './first-paint.mjs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -40,14 +39,6 @@ const WEB_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SRC = join(WEB_ROOT, 'src');
 const OUT = join(SRC, 'lib', 'myna-icons.json');
 const OUT_LATER = join(SRC, 'lib', 'myna-icons-later.json');
-const ROOTS = [
-	'hooks.client.ts',
-	'routes/+layout.js',
-	'routes/+layout.svelte',
-	'routes/(app)/+layout.ts',
-	'routes/(app)/+layout.svelte',
-	'routes/(app)/[...path]/+page.svelte',
-].map((f) => join(SRC, f));
 const NOT_SCANNED = [join(SRC, 'lib', 'legacyIcons.ts')];
 const STROKE = '1.875';
 
@@ -67,42 +58,10 @@ const namesIn = (file) => [...readFileSync(file, 'utf8').matchAll(/mynaui:([a-z0
 const named = new Set();
 for (const file of sourceFiles(SRC)) for (const name of namesIn(file)) named.add(name);
 
-// Static imports: `import x from '…'`, `import '…'`, `export … from '…'`.
-// `import type` names no code, and `import('…')` loads later.
-const IMPORT = /(?:^|[\s;])(?:import|export)\s+(?!type\s)(?:[^'"`;]*?\sfrom\s*)?['"]([^'"]+)['"]/g;
-const EXTENSIONS = ['', '.ts', '.js', '.svelte.ts', '.svelte.js', '/index.ts', '/index.js'];
-
-function resolveImport(from, spec) {
-	let base;
-	if (spec === '$lib') base = join(SRC, 'lib', 'index');
-	else if (spec.startsWith('$lib/')) base = join(SRC, 'lib', spec.slice('$lib/'.length));
-	else if (spec.startsWith('.')) base = join(dirname(from), spec);
-	else return null; // a package, or an alias with no icons in it
-	for (const ext of EXTENSIONS) {
-		const path = base + ext;
-		if (existsSync(path) && /\.(svelte|ts|js)$/.test(path)) return path;
-	}
-	return null;
-}
-
-const firstPaint = new Set();
-const stack = ROOTS.filter((f) => existsSync(f));
-if (stack.length !== ROOTS.length) {
-	console.error(`myna-icons: an entry file is missing: ${ROOTS.filter((f) => !existsSync(f)).join(', ')}`);
-	process.exit(1);
-}
-while (stack.length) {
-	const file = stack.pop();
-	if (firstPaint.has(file)) continue;
-	firstPaint.add(file);
-	for (const m of readFileSync(file, 'utf8').matchAll(IMPORT)) {
-		const next = resolveImport(file, m[1]);
-		if (next && !firstPaint.has(next)) stack.push(next);
-	}
-}
+const { files: firstPaintFiles } = firstPaint(SRC);
 
 const early = new Set();
-for (const file of firstPaint) {
+for (const file of firstPaintFiles) {
 	if (NOT_SCANNED.includes(file)) continue;
 	for (const name of namesIn(file)) early.add(name);
 }
