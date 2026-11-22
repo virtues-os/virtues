@@ -344,7 +344,12 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
-                    let task_id: Option<String> = r.try_get("task_id").unwrap_or(None);
+                    // A row that cannot be read is logged. Without that, a
+                    // task of the assistant's would show as one with no row.
+                    let task_id: Option<String> = r.try_get("task_id").unwrap_or_else(|e| {
+                        tracing::error!(applet_id = %id, error = %e, "could not read the applet's task row id");
+                        None
+                    });
                     // The SQL COALESCEs to 0, so a real "spent nothing" arrives
                     // as 0 and NULL can only mean the decode failed. Those must
                     // not collapse into each other: this is a money figure, and
@@ -545,7 +550,9 @@ async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow
 /// keys it names and its last run). The GET and the PATCH both answer with
 /// this, so a page that takes the PATCH reply as the applet loses nothing.
 async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::Applet) -> Result<serde_json::Value, Error> {
-    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await.ok().flatten();
+    // A failed read is an error here. Answering with no last run would say
+    // the applet never ran.
+    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await?;
     let secrets = declared_secrets_status(pool, &action.id)
         .await
         .map_err(|e| Error::Other(format!("{e:#}")))?;
