@@ -1,6 +1,6 @@
 # MCP: connections in, the box as a server
 
-**Written 2026-10-26. Slices 1 and 2 built the same day; slice 3 started, with Linear.** Two directions over the Model Context
+**Written 2026-10-26. Slices 1 to 4 are built; slices 5 and 6 are not started.** Two directions over the Model Context
 Protocol. Inbound, the box connects to other services' MCP servers and uses
 their tools: actions and live lookups only, with no ingest. Outbound, the box
 serves its own MCP endpoint, so agents the owner already uses (Claude Desktop,
@@ -37,34 +37,40 @@ applets share data through tables, as decided for data triggers.
 
 ## What exists today
 
-- **No MCP code.** A client (`cf109c2b6`, about 700 lines no binary
-  compiled) and a server (`dbfa46f3b`: `/mcp` mounted outside the auth layer,
-  zero tools, the `rmcp` dependency) were both deleted. Migration 0010 dropped
-  the `app_mcp_servers` and `app_mcp_tools` tables. The unused
-  `ToolType::Mcp` variant in `tools.rs` and the "MCP tokens" mention on
-  `SourceAuth::ApiKey` in `applet_templates/mod.rs` are what remain.
+- **The box serves MCP at `/api/mcp`** (slice 1,
+  `virtues-core/src/server/api/mcp.rs`). `MCP_TOOLS` in `tools/mod.rs`
+  lists `sql_query`, `semantic_search`, `get_page_content`, `create_page`,
+  `edit_page`, `sql_write` and `applet`, and `mcp_allows` limits each call
+  to what a CLI verb could send.
+- **Agents reach it two ways** (slice 2): the Mac app's binary as a stdio
+  bridge over iroh, paired as an `agent` device, or `virtues mcp` on the box
+  through the console socket. An agent on another machine runs the second
+  over SSH with an agent key (`ssh virtues-agent@<box> mcp`).
+- **What `sql_query` can read** is what the SQL catalog
+  (`crates/virtues-registry/src/sql_catalog.rs`) lists and the reader login
+  `virtues_face_reader` is granted: the `data_` and `wiki_` tables, pages,
+  tasks, threads, and the titles and message text of chats with Virtues.
+  The same login serves applet views and applet `run: sql`, so a table
+  added for agents is readable there too.
+- **The box is an MCP client** for one service at a time (slices 3 and 4):
+  a chat's `connection` tool hands the service's tools to a Lite-slot
+  worker, and applets name a connection's tools in `allowed-tools`.
 - **One tool table, one executor.** Every tool is a `ToolConfig`;
   `ToolExecutor::execute` (`virtues-core/src/tools/executor.rs`) dispatches by
   name. Callers get a named allowlist in `tools/mod.rs` (`CLI_TOOLS`,
-  `CLI_WRITE_TOOLS`, `SUBAGENT_TOOLS`, the applet and request lists).
-  `PERMISSION_REQUIRED` gates `applet`, `save_skill`, `sql_write` and
-  `generate_image`; headless calls and applet runs are not gated.
-- **A worker pattern for outside tools.** `browse` (`virtues-core/src/browse.rs`)
-  gives chat one tool that runs a small `AgentLoop` with only the browser
-  tools on the Lite slot, and reports its spend back to the turn.
+  `CLI_WRITE_TOOLS`, `MCP_TOOLS`, `SUBAGENT_TOOLS`, the applet and request
+  lists). The `ToolType::Mcp` variant in the registry's `tools.rs` is unused.
+- **How the box authenticates** (`virtues-core/src/middleware/auth.rs`): a
+  proven iroh peer that is an allowlisted device, a caller on the console
+  socket admitted by its uid, or dev. An `agent` device reaches only
+  `/api/mcp`, and the agent key's user reaches only the data verbs' routes.
+  A connection from loopback TCP is not the console.
 - **Source auth kinds.** `self_issued_bearer`, `via_proxy` (the OAuth proxy in
   `services/virtues-api/src/routes/oauth.rs`, a client-secret custodian that
   hands tokens to the box in a signed 5-minute exchange token) and `api_key`.
-- **How the box authenticates** (`virtues-core/src/middleware/auth.rs`): a
-  proven iroh peer that is an allowlisted device, the loopback console, or
-  dev. "There is no fourth class." Other tokens each open exactly one thing.
-- **The Mac app already serves the box locally.** The desktop reach client
-  (`crates/virtues-reach-client/src/proxy.rs`) listens on `127.0.0.1:7117` and
-  splices each connection onto an iroh stream to the box, authenticated as the
-  Mac's paired device.
-- **CLI verbs for outside agents** (cli-data-verbs slices 1-4): read verbs,
-  write verbs through `POST /api/console/tool/:tool`, and `agent-key`, an SSH
-  forced-command key that can run only the data verbs.
+- **Not built:** remote access for claude.ai and ChatGPT (slice 5), the
+  terms flag for sources whose terms bar this, and a manual page. The page
+  waits until the agent key and `virtues mcp` are in a stable release.
 
 ## Part 1: the MCP client, tools only
 
@@ -208,7 +214,8 @@ What it exposes:
 Some sources' terms forbid this. Strava's API policy bars third-party MCP
 servers, and Oura's agreement bars aggregators from passing its data to any AI
 model. A source entry gets a flag for it, and `sql_query` under `/api/mcp`
-drops to a role with no grants on those sources' tables.
+drops to a role with no grants on those sources' tables. The flag is not
+built; today every table the catalog lists is readable over `/api/mcp`.
 
 ### Tier 1: the Mac bridge (first)
 
@@ -262,9 +269,9 @@ endpoint and tokens as tier 2. Which tunnel they choose decides who else sees
 plaintext: Tailscale Funnel terminates TLS on their machine, and Cloudflare
 Tunnel terminates at Cloudflare. The manual says which is which.
 
-`middleware/auth.rs` already refuses the loopback-console bypass when a
-forwarding header is present, so a tunnel on the box itself cannot pass as
-the console.
+The console is a Unix socket that checks the caller's uid, and
+`middleware/auth.rs` never takes a TCP connection as the console, so a
+tunnel on the box itself cannot pass as it.
 
 ### Where the data goes
 
@@ -324,9 +331,9 @@ name.
      environment. Devices › Add device › An AI agent on this Mac
      (`AgentConnectModal.svelte`) runs it and shows the `claude mcp add` line
      and the `mcpServers` JSON.
-   - `virtues mcp` on the box is the same bridge over loopback TCP
-     (`cli/mcp.rs`, with `Loopback` beside the iroh client as a
-     `pair_door::Forwarder`). The server takes it as the local console. An
+   - `virtues mcp` on the box is the same bridge over the console socket
+     (`cli/mcp.rs`), which the server admits by the caller's uid. A
+     developer's checkout has no socket, so there it uses loopback TCP. An
      agent elsewhere runs it as `ssh virtues-agent@<box> mcp`: `agent-exec`
      allows the `mcp` verb and sends the key's name, which the `mcp_tool`
      audit line records as `agent_key`.
@@ -336,10 +343,14 @@ name.
      line naming the agent device; the agent's key got 403 on `/api/pages`
      and `/api/devices`. `virtues mcp`, and `agent-exec` with
      `SSH_ORIGINAL_COMMAND=mcp`, were driven the same way, and the audit line
-     named the key. Not yet checked: a real sshd in front of `agent-exec`,
-     the sheet inside a built Mac app, and Claude Code building an applet
-     through the bridge away from home, the test the CLI plan set for its
-     verbs.
+     named the key.
+   - Run on a real box on 2026-11-21: Claude Code on a Mac connected with
+     `ssh virtues-agent@<box> mcp` through a real sshd, with the key's
+     `authorized_keys` line set to `restrict` and the forced command. The
+     agent user has no sudo, and a shell command over the key was refused.
+     Not yet checked: the sheet inside a built Mac app, and Claude Code
+     building an applet through the bridge away from home, the test the CLI
+     plan set for its verbs.
 3. **One MCP connection: Linear** (the owner's pick, 2026-10-26). Done when
    a chat files an issue on it and the chat shows the receipt.
    - Built: `tools/connection.rs` and `server/api/connections.rs`, on rmcp's
