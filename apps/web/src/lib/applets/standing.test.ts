@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { actionOf, appletLine, appletsLead, groupServerTasks, problemOf, troubleOf } from './standing';
+import { actionOf, appletLine, appletsLead, groupServerTasks, needsYou, problemOf, troubleOf } from './standing';
 
 const NOW = new Date('2026-10-06T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -36,6 +36,22 @@ describe('whenInWords', () => {
 		expect(whenInWords(at('2026-10-02T09:00:00'), NOW)).toMatch(/^on \S+ at /);
 		expect(whenInWords(at('2026-09-12T09:00:00'), NOW)).toMatch(/^on /);
 		expect(whenInWords(at('2026-09-12T09:00:00'), NOW)).not.toMatch(/ at /);
+	});
+});
+
+describe('needsYou', () => {
+	const failedRun = { status: 'error', started_at: null, records_processed: null, error: 'x' } as Applet['last_run'];
+	const bare = (over: Partial<Applet> = {}) => ({ id: 'applet_a', enabled: true, archived_at: null, next_due_at: null, ...over }) as Applet;
+
+	it('is true for a failed last run and for a run more than an hour late', () => {
+		expect(needsYou(bare({ last_run: failedRun }), NOW)).toBe(true);
+		expect(needsYou(bare({ next_due_at: '2026-10-06T10:00:00' }), NOW)).toBe(true);
+		expect(needsYou(bare({ next_due_at: '2026-10-06T11:30:00' }), NOW)).toBe(false);
+	});
+
+	it('leaves applets that are off or finished alone', () => {
+		expect(needsYou(bare({ last_run: failedRun, enabled: false }), NOW)).toBe(false);
+		expect(needsYou(bare({ last_run: failedRun, archived_at: '2026-10-01T00:00:00' }), NOW)).toBe(false);
 	});
 });
 

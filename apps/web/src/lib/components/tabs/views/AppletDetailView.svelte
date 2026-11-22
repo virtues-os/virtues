@@ -18,7 +18,6 @@
 	import {
 		getApplet,
 		getAppletLog,
-		getRunsByDay,
 		getAppletPages,
 		getPage,
 		type AppletPage,
@@ -27,8 +26,7 @@
 		markAppletSeen,
 		patchApplet,
 		type Applet,
-		type AppletLogEntry,
-		type RunDay
+		type AppletLogEntry
 	} from '$lib/api/client';
 	import { appletGlyph, describeTriggers, failureReason, relativeTime, runFix, runLine } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
@@ -39,7 +37,6 @@
 	import { problemOf } from '$lib/applets/standing';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { attention } from '$lib/stores/attention.svelte';
@@ -126,15 +123,12 @@
 	});
 
 	let log = $state<AppletLogEntry[]>([]);
-	let runDays = $state<RunDay[]>([]);
-	let daysErr = $state<string | null>(null);
 	let loading = $state(false);
 	let busy = $state(false);
 	let err = $state<string | null>(null);
 	let sharing = $state(false);
 	let deleting = $state(false);
 
-	const index = $derived(indexRunDays(runDays));
 
 	// The pages its runs wrote, newest first, and the one open.
 	let pages = $state<AppletPage[]>([]);
@@ -227,15 +221,9 @@
 			void markAppletSeen(id)
 				.then(() => attention.refresh())
 				.catch(() => {});
-			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
+			const [l, p] = await Promise.allSettled([getAppletLog(id), getAppletPages(id)]);
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];
-			if (d.status === 'fulfilled') {
-				runDays = d.value.filter((r) => r.applet_id === id);
-				daysErr = null;
-			} else {
-				daysErr = d.reason instanceof Error ? d.reason.message : String(d.reason);
-			}
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -610,9 +598,9 @@
 						<div class="fact"><span>Next run</span><span class="fact-value">{nextRunText}</span></div>
 						<div class="fact"><span>Cost</span><span class="fact-value">{costText}</span></div>
 					</Card>
-					<AppletInfo bind:action {index} {daysErr} bind:historyOpen bind:technicalOpen>
+					<AppletInfo bind:action bind:historyOpen bind:technicalOpen>
 						{#snippet history()}
-							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
+							{#if action}<RunHistory {log} {collectorDenied} />{/if}
 						{/snippet}
 						{#snippet technical()}
 							{#if action}

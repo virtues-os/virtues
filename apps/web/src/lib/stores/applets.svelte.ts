@@ -5,7 +5,7 @@
  * can disagree about whether something is broken.
  */
 import { listApplets, type Applet } from '$lib/api/client';
-import { needsYou } from '$lib/applets/days';
+import { needsYou } from '$lib/applets/standing';
 import { inSitesDoor, isYours } from '$lib/applets/kind';
 
 class AppletsStore {

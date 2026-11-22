@@ -9,9 +9,22 @@
  */
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { needsYou } from './days';
 import { inSitesDoor, isYours, kindOf, startsItself } from './kind';
 import { describeTriggers, failureReason, runFix } from './palette';
+
+/** How far past its due time a run can be before the applet needs you. */
+const LATE_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Whether an applet needs you now: it's on, and its last run failed or a due
+ * run is more than an hour late. Stopping at a spending limit doesn't count:
+ * the applet did what it was told.
+ */
+export function needsYou(applet: Applet, now = Date.now()): boolean {
+	if (!applet.enabled || applet.archived_at) return false;
+	if (applet.last_run?.status === 'error') return true;
+	return Boolean(applet.next_due_at && now - new Date(applet.next_due_at).getTime() > LATE_GRACE_MS);
+}
 
 export interface Trouble {
 	/** `signin`: the run failed because an account's sign-in lapsed. */

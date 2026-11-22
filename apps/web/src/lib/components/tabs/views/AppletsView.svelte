@@ -27,8 +27,7 @@
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
 	import { appletGlyph, describeTriggers } from '$lib/applets/palette';
-	import { actionOf, canRun, problemOf, type AppletAction } from '$lib/applets/standing';
-	import { needsYou } from '$lib/applets/days';
+	import { actionOf, canRun, needsYou, problemOf, type AppletAction } from '$lib/applets/standing';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
