@@ -101,8 +101,10 @@
 				// Absolute on mobile: an iframe src bypasses the fetch shim, so a
 				// root-relative path would resolve against the bundled tauri://
 				// origin and render an empty frame.
+				// Behind a new chat the view is told so (`virtues.surface`), and may
+				// drop its title and fill the window.
 				src = backendUrl(
-					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}`
+					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}${fill ? '&surface=background' : ''}`
 				);
 			} catch (e) {
 				if (gone) return;

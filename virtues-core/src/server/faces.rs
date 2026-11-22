@@ -605,8 +605,8 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
   const theme = params.get('theme') || 'light';
   document.documentElement.dataset.theme = theme;
   // Where this face is hanging: '' in the app's pane, 'panel' on the box's
-  // 585x329 non-interactive screen. Exposed so a face MAY adapt; nothing
-  // requires it to.
+  // 585x329 non-interactive screen, 'background' behind a new chat. Exposed
+  // so a face MAY adapt; nothing requires it to.
   const surface = params.get('surface') || '';
   if (surface) document.documentElement.dataset.surface = surface;
 
