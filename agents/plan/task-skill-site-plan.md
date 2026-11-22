@@ -88,7 +88,8 @@ makes them your server's tasks, which is how a person meets them.
 
 ## What is built on wave
 
-None of this is on `staging`, and none has run against a real server.
+None of this is on `staging`. It ran on a copy of a real server's snapshot on
+2026-11-21 (slice G), not on a real server.
 
 | Piece | Commits | What it does |
 |---|---|---|
@@ -102,6 +103,7 @@ None of this is on `staging`, and none has run against a real server.
 | What a row is | `3dee2a53f` | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
 | A task that repeats | slice D, 2026-11-21 | One task row per repeating applet, its newest result on it, cleared by opening it. |
 | The site, finished | slice F, 2026-11-21 | Failed runs said in sentences, a view that outlives a server restart, "Add to a new page". |
+| What the run found | `2497c81c1`, `665f89641` | A site's script is a module and setup refuses one that cannot run; the open site's token check has a time limit. |
 
 ### What the built parts now say wrong
 
@@ -307,10 +309,63 @@ Built on wave (2026-11-21) and seen in a scratch app, in the web app only.
 
 ### Slice G: run it on a real server, then the pull request
 
-Three things have never run end to end: the assistant building a site in a
-chat and the site opening, a card with real content in its preview, and the
-server's tasks with a connected account. After that, one pull request to
-`staging` with whatever else on `wave` is ready.
+The run happened on 2026-11-21 on the owner's Mac. The pull request to
+`staging` is not opened.
+
+**How it was run.** Committed `wave` was built in a scratch clone, so nothing
+another agent had open was in it. The server ran on a copy of the Mac's
+snapshot of a real server, never on the snapshot itself. Before the first
+start, the copy lost the server's network identity (its key, its relay
+config and its door key), and the relay was off, so the copy could not
+answer as the real server. It refused requests that did not come from the
+Mac itself. Saved sign-ins stayed unreadable there, because the real
+server's key was not on the Mac.
+
+**What ran end to end.**
+
+- The 47 migrations from the snapshot's schema to `wave` applied cleanly.
+- Server tasks listed the real accounts and devices, one row each.
+- The assistant built a site in a chat, the approval card showed, and the
+  site opened in a new tab next to the chat with its card in the Sites door.
+- The assistant set up a repeating task. A run started by hand went through
+  the runner and filed its result on the task. Tasks showed it under "Ready
+  for you" as "New", opening it showed the result and cleared it, and the
+  request worker had nothing to claim. The owner's earlier repeating tasks
+  each had their row.
+- "Add to a new page" made a page holding the site.
+- A site left open got a new token by itself after a real restart.
+
+**What it found, both fixed on `wave`.**
+
+- The first site the assistant built opened empty while the chat said it was
+  up. Its script awaited at the top of a plain `<script>`, which is a syntax
+  error, and the guidance had invited it. The setup line and
+  `applets/AGENTS.md` now say the script is `<script type="module">`, and
+  setup refuses a plain script that awaits with no `async` in it. Asked to
+  fix the site, the assistant rewrote it as a module, and it drew its chart
+  from the real rows.
+- A token check sent as the server went down never got an answer, and the
+  frame made no check after it. The check now has a ten-second limit.
+
+**What it did not show.**
+
+- A site drawing inside the app's own frame, or in a card. The built-in
+  browser used for the run refuses the resources of a sandboxed frame. The
+  site's page was watched drawing through a test page that ran the same
+  document against the same data route, and the server's answer to a
+  sandboxed frame's preflight was read with `curl`.
+- The server's tasks running. The snapshot arrives with every task off, and
+  its sign-ins cannot be read on the Mac.
+- An upgrade on a real server, with its tasks on.
+
+**Seen and left.**
+
+- When several accounts of one source carry the same stored name, their rows
+  on Server tasks read alike.
+- After the person allows a setup, the assistant starts the turn again,
+  which took over a minute for the site.
+- The chat's card for a new repeating task is still the earlier receipt
+  (slice D, Left).
 
 ## Decisions
 
