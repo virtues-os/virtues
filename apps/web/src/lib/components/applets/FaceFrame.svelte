@@ -156,15 +156,21 @@
 		<div class="face-error">Your server couldn't load this site: {err}. Close it and open it again.</div>
 	{/if}
 {:else if src}
-	<iframe
-		bind:this={frame}
-		{src}
-		sandbox="allow-scripts"
-		title={fill ? 'Background site' : 'Site'}
-		class="face-frame"
-		class:fill
-		style:height={fill ? undefined : height}
-	></iframe>
+	<!-- A new frame for each address. Changing the address of a frame that
+	     has loaded adds an entry to the browser's history, so Back would
+	     reload the view with a token the server no longer knows. A frame's
+	     first load adds none. -->
+	{#key src}
+		<iframe
+			bind:this={frame}
+			{src}
+			sandbox="allow-scripts"
+			title={fill ? 'Background site' : 'Site'}
+			class="face-frame"
+			class:fill
+			style:height={fill ? undefined : height}
+		></iframe>
+	{/key}
 {:else if !fill}
 	<div class="face-loading">Loading…</div>
 {/if}
