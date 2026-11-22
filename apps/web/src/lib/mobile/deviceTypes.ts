@@ -18,6 +18,14 @@ export interface StreamStatus {
 	collecting: boolean;
 }
 
+/** The photos collector's status. */
+export interface PhotosStatus extends StreamStatus {
+	/** Limited access: the collector sees only the photos picked in the iOS sheet. */
+	limited: boolean;
+	/** Every photo has been sent once; only changes go now. */
+	firstPassDone: boolean;
+}
+
 /** Whether the Health sheet has been shown — the most HealthKit will say.
  * `requested` says nothing about what the person allowed. */
 export type HealthPermission = "requested" | "not_requested" | "unknown" | "unavailable";
@@ -81,7 +89,7 @@ export interface AudioStatus {
 	overrideUntil?: number;
 }
 
-export type StreamKey = "location" | "health" | "cycle" | "calendar" | "contacts" | "finance" | "audio";
+export type StreamKey = "location" | "health" | "cycle" | "calendar" | "contacts" | "photos" | "finance" | "audio";
 
 /** Minutes since midnight → a short local time, "10:00 PM". */
 export function fmtClock(m: number): string {

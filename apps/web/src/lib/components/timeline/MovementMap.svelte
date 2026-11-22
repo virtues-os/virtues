@@ -238,6 +238,8 @@
 
 		const leaflet = await import("leaflet");
 		L = (leaflet as any).default ?? leaflet;
+		// The map can be gone by the time Leaflet has loaded.
+		if (!container) return;
 
 		map = L.map(container, {
 			zoomControl: interactive,

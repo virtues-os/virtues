@@ -46,7 +46,6 @@
 	import { accentCss } from "$lib/sidebar/pin-colors";
 	import { isEmoji, kindGlyph } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
-	import { newProject } from "$lib/utils/projectActions";
 	import { newPage as makePage } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
@@ -87,11 +86,6 @@
 		void makePage(go);
 	}
 
-	function addProject() {
-		mobileLayout.closeDrawer();
-		void newProject();
-	}
-
 	/**
 	 * Each door, as on the desktop panel. The arrangement is the owner's and
 	 * is made on the desktop; the phone shows it. No hover on a phone, so a
@@ -100,8 +94,8 @@
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
-		threads: { open: () => go("/threads", "Threads"), add: { label: "New thread", run: addProject } },
-		applets: { open: () => go("/applets", "Applets") },
+		threads: { open: () => go("/inbox", "Inbox") },
+		applets: { open: () => go("/sites", "Sites") },
 		wiki: { open: () => go("/wiki", "Wiki") },
 		storage: { open: () => go("/storage", "Storage") },
 	};
@@ -203,9 +197,11 @@
 					</button>
 				</div>
 			{:else}
+				<!-- The phone is chat-first: the desktop's Create door starts a chat here. -->
+				{@const chat = door.id === "new-chat"}
 				<button class="row" onclick={act.open}>
-					<AtlasIcon name={door.glyph} bare />
-					<span class="row-text">{door.label}</span>
+					<AtlasIcon name={chat ? "new-chat" : door.glyph} bare />
+					<span class="row-text">{chat ? "New chat" : door.label}</span>
 				</button>
 			{/if}
 		{/each}

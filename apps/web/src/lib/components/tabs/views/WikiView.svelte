@@ -119,10 +119,10 @@
 		part: () => section,
 	});
 
-	// The lifeline left the wiki for the Timeline, the rail's own room for a
-	// life laid out in time. Its old door lands there.
+	// The lifeline left the wiki, and the day on a map is now the Inbox's Map
+	// view. Its old door lands there.
 	$effect(() => {
-		if (routeSegment === 'lifeline') windowShellStore.navigate('/timeline', { label: 'Timeline' });
+		if (routeSegment === 'lifeline') windowShellStore.navigate('/inbox?view=map', { label: 'Inbox' });
 	});
 
 	// --- Years ---

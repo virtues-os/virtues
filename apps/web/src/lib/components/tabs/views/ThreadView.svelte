@@ -1,37 +1,60 @@
 <script lang="ts">
 	/**
 	 * A thread's page. The main column is the thread itself: its name and
-	 * brief, where it stands, its tasks, the way into a chat about it, and the
-	 * thread as a line of what happened in it, down to today and on to what is
-	 * planned. The side column holds its properties and its materials, the
-	 * chats, pages and files added to it, which take a drop.
+	 * brief, where it stands, any note your server raised about it, the way
+	 * into a chat about it, its open tasks (TaskList, with the tasks also
+	 * about it), and the thread as a line. The line runs from the day you
+	 * started it, through everything added to it and the tasks you finished,
+	 * down to today, then on to what is planned. A task you tick off leaves
+	 * the list and lands on the line.
+	 *
+	 * The side column holds its properties (status, Adding, the thing it sits
+	 * under, who it is with), this week's time, and what is coming up. Each
+	 * fact is said in one place. Anything dropped on the page is added to it.
 	 */
 	import type { Tab } from '$lib/tabs/types';
-	import type { ProjectChat, ProjectDetail, ProjectGraphNode, ProjectItemRole, Task } from '$lib/api/client';
+	import type { ProjectChat, ProjectDetail, ProjectGraphNode, ProjectItemRole, Task, Week } from '$lib/api/client';
+	import DetailFrame from '$lib/components/DetailFrame.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import ProjectHeader from '$lib/components/projects/ProjectHeader.svelte';
-	import TaskList from '$lib/components/tasks/TaskList.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
+	import TaskCheck from '$lib/components/tasks/TaskCheck.svelte';
+	import TaskList from '$lib/components/tasks/TaskList.svelte';
+	import NoteBox from '$lib/components/threads/NoteBox.svelte';
+	import PreviewRow from '$lib/components/threads/PreviewRow.svelte';
+	import ThreadHeader from '$lib/components/threads/ThreadHeader.svelte';
+	import ThreadUpNext from '$lib/components/threads/ThreadUpNext.svelte';
+	import ThreadWeekBars from '$lib/components/threads/ThreadWeekBars.svelte';
+	import { Popover } from '$lib/floating';
 	import { THREAD_ICON } from '$lib/utils/iconHelpers';
-	import { Button, IconButton, TextAction } from '$lib';
+	import { IconButton, TextAction } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
+	import { notesStore } from '$lib/stores/notes.svelte';
+	import { tasksStore } from '$lib/stores/tasks.svelte';
+	import { thingsStore } from '$lib/stores/things.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { toast } from 'svelte-sonner';
-	import { uploadDriveFile, addProjectItem, reextractDriveFile, getProjectGraph, getThreadWeek } from '$lib/api/client';
-	import type { ThreadWeek } from '$lib/api/client';
+	import { onMount } from 'svelte';
+	import { ApiError, uploadDriveFile, addProjectItem, reextractDriveFile, getProjectGraph, getThreadWeek } from '$lib/api/client';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { newTaskDialog } from '$lib/stores/newTask.svelte';
 	import { dropZone, hasFiles } from '$lib/actions/dropZone';
+	import { toggleTaskDone } from '$lib/tasks/actions';
+	import { homeOf } from '$lib/tasks/homes';
+	import { isRequest, requestState } from '$lib/tasks/requests';
 	import {
+		changeOutcome,
 		droppedRefUrl,
 		endProject,
 		fileIntoProject,
 		memberIcon,
 		memberName,
+		newChatInProject,
 		outcomeLabel,
 		projectMemberUrl,
 		REF_DRAG_TYPE,
@@ -68,7 +91,11 @@
 			await projectStore.get(id, { force });
 		} catch (e) {
 			console.error('[ThreadView] Failed to load thread:', e);
-			error = "Your server couldn't open this thread. If you deleted it, you can restore it from Recently deleted.";
+			// A missing thread was most likely deleted; anything else is the server not answering.
+			error =
+				e instanceof ApiError && e.status === 404
+					? "This thread isn't here. If you deleted it, you can restore it from Recently deleted."
+					: "Your server couldn't open this thread. Check that it's running, then try again.";
 		} finally {
 			loading = false;
 		}
@@ -89,6 +116,20 @@
 	});
 
 	const archived = $derived(!!detail?.archived_at);
+	const color = $derived(detail ? projectColor(detail) : 'var(--color-foreground-muted)');
+
+	// Finished tasks, so the line can show what was done in it, and notes
+	// about the thread. The task list loads and refreshes the open ones.
+	onMount(() => {
+		notesStore.start();
+		thingsStore.ensure();
+		if (!tasksStore.closedLoaded) {
+			tasksStore.loadClosed().catch((e) => console.error('[ThreadView] finished tasks failed:', e));
+		}
+		return () => notesStore.stop();
+	});
+
+	const notes = $derived(threadId ? notesStore.about(`/thread/${threadId}`) : []);
 
 	// Who it is with: the people its members name or link, from the thread's
 	// graph. Nothing is inferred from free text.
@@ -111,38 +152,19 @@
 	});
 
 	// ── this week ──────────────────────────────────────────────────────────
-	let weekRow = $state<ThreadWeek | null>(null);
+	let week = $state<Week | null>(null);
 	$effect(() => {
-		const id = threadId;
 		void detail?.items.length;
-		if (!id) return;
+		if (!threadId) return;
 		getThreadWeek()
-			.then((w) => {
-				const row = w.threads.find((t) => t.id === id) ?? null;
-				const any = row?.days.some((d) => d.done_minutes + d.ahead_minutes > 0);
-				weekRow = any ? row : null;
-			})
+			.then((w) => (week = w))
 			.catch((e) => {
 				// An aid, not the content: the page stands without it.
 				console.error('[ThreadView] week failed:', e);
-				weekRow = null;
+				week = null;
 			});
 	});
-
-	function hoursText(minutes: number): string {
-		const h = Math.floor(minutes / 60);
-		const m = minutes % 60;
-		if (h === 0) return `${m} m`;
-		return m === 0 ? `${h} h` : `${h} h ${m} m`;
-	}
-
-	/** "6 h done, 6 h 30 m ahead", saying only what is there. */
-	const weekHours = $derived.by(() => {
-		if (!weekRow) return '';
-		const done = weekRow.days.reduce((n, d) => n + d.done_minutes, 0);
-		const ahead = weekRow.days.reduce((n, d) => n + d.ahead_minutes, 0);
-		return [done ? `${hoursText(done)} done` : null, ahead ? `${hoursText(ahead)} ahead` : null].filter(Boolean).join(', ');
-	});
+	const weekDays = $derived(week?.threads.find((t) => t.id === threadId)?.days ?? null);
 
 	// ── where it stands ────────────────────────────────────────────────────
 	let standsDraft = $state('');
@@ -164,7 +186,8 @@
 		}
 	}
 
-	async function setProps(patch: { is_backlog?: boolean; is_adding_automatic?: boolean }) {
+	// ── properties ─────────────────────────────────────────────────────────
+	async function setProps(patch: { is_backlog?: boolean; is_adding_automatic?: boolean; is_listed?: boolean; thing_id?: string | null }) {
 		const id = threadId;
 		if (!id) return;
 		try {
@@ -175,7 +198,49 @@
 		}
 	}
 
-	// ── materials ──────────────────────────────────────────────────────────
+	type Status = 'active' | 'backlog' | 'finished' | 'dropped';
+	const status = $derived<Status>(
+		!detail ? 'active' : detail.archived_at ? (detail.outcome === 'dropped' ? 'dropped' : 'finished') : detail.is_backlog ? 'backlog' : 'active',
+	);
+	const STATUS_ICON: Record<Status, string> = {
+		active: 'mynaui:circle-half',
+		backlog: 'mynaui:archive',
+		finished: 'mynaui:check-circle',
+		dropped: 'mynaui:x-circle',
+	};
+	const statusText = $derived.by(() => {
+		if (!detail) return '';
+		if (detail.archived_at) return `${outcomeLabel(detail)} ${shortDay(localDay(new Date(detail.archived_at)))}`;
+		return detail.is_backlog ? 'In your backlog' : 'Active';
+	});
+
+	/** An unlisted thread holds a lesser concern and stays out of the sidebar. */
+	const unlisted = $derived(detail?.is_listed === false);
+
+	/** Status is one property with four values. Ending and reopening go through it. */
+	async function setStatus(next: Status) {
+		if (!detail || next === status) return;
+		if (next === 'finished' || next === 'dropped') {
+			if (archived) await changeOutcome(detail, next);
+			else await endProject(detail, next);
+			return;
+		}
+		if (archived) await reopenProject(detail);
+		if (!!detail.is_backlog !== (next === 'backlog')) await setProps({ is_backlog: next === 'backlog' });
+	}
+
+	/** A property menu closes, then makes its change. */
+	function choose(close: () => void, change: () => Promise<void>) {
+		close();
+		void change();
+	}
+
+	let statusOpen = $state(false);
+	let addingOpen = $state(false);
+	let listedOpen = $state(false);
+	let underOpen = $state(false);
+
+	// ── what was added ─────────────────────────────────────────────────────
 	// Chats come from the thread's own detail: every chat whose `thread_id` is
 	// this one. The session list holds only the box's most recent chats, so it
 	// is only the fallback for a box older than `detail.chats`.
@@ -212,24 +277,6 @@
 			return;
 		}
 		windowShellStore.openRouteBeside(url);
-	}
-
-	async function removeMember(url: string) {
-		if (!detail) return;
-		await removeFromProject(detail, url);
-	}
-
-	async function moveTo(url: string, edge: 'top' | 'bottom') {
-		const id = threadId;
-		if (!id || !detail) return;
-		const rest = detail.items.map((i) => i.url).filter((u) => u !== url);
-		const next = edge === 'top' ? [url, ...rest] : [...rest, url];
-		try {
-			await projectStore.reorderItems(id, next);
-		} catch (e) {
-			console.error('[ThreadView] reorder failed:', e);
-			toast.error("Your server couldn't move that item", { description: 'Try again' });
-		}
 	}
 
 	async function setRole(url: string, role: ProjectItemRole) {
@@ -270,25 +317,22 @@
 				action: () => setRole(url, draft ? 'library' : 'manuscript'),
 			});
 		}
-		if (!url.startsWith('/chat/') && memberItems.length > 1) {
-			items.push(
-				{ id: 'top', label: 'Move to top', icon: 'mynaui:chevrons-up', dividerBefore: true, action: () => moveTo(url, 'top') },
-				{ id: 'bottom', label: 'Move to bottom', icon: 'mynaui:chevrons-down', action: () => moveTo(url, 'bottom') },
-			);
-		}
 		const elsewhere = getProjectMenuItems(url).map((i) => ({
 			...i,
 			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project'),
 		}));
 		items.push(...elsewhere);
-		items.push({
-			id: 'remove',
-			label: 'Remove from thread',
-			icon: 'mynaui:x',
-			dividerBefore: true,
-			variant: 'destructive',
-			action: () => removeMember(url),
-		});
+		if (!archived && detail) {
+			const d = detail;
+			items.push({
+				id: 'remove',
+				label: 'Remove from thread',
+				icon: 'mynaui:x',
+				dividerBefore: true,
+				variant: 'destructive',
+				action: () => void removeFromProject(d, url),
+			});
+		}
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
@@ -299,11 +343,12 @@
 		const text = askDraft.trim();
 		const id = threadId;
 		if (!text || !id) return;
-		askVirtues(text, id);
+		// The chat opens in the other pane, so the thread stays beside it.
+		askVirtues(text, id, { beside: true });
 		askDraft = '';
 	}
 
-	// ── dropping into Materials: files upload, rows file themselves ───────
+	// ── dropping on the page: files upload, rows file themselves ──────────
 	let dropActive = $state(false);
 	function acceptsDrop(data: DataTransfer): boolean {
 		return !archived && (hasFiles(data) || data.types.includes(REF_DRAG_TYPE));
@@ -356,15 +401,43 @@
 	}
 
 	// ── the thread as a line ───────────────────────────────────────────────
+	type EntryKind = 'start' | 'record' | 'task' | 'request';
+	/** The line's filters. "What happened" is your records: events, messages, purchases. */
+	type LineFilter = 'chats' | 'pages' | 'tasks' | 'files' | 'happened';
+	const FILTER_LABELS: Record<LineFilter, string> = {
+		chats: 'Chats',
+		pages: 'Pages',
+		tasks: 'Tasks',
+		files: 'Files',
+		happened: 'What happened',
+	};
+	let lineFilter = $state<LineFilter | null>(null);
+
+	function memberGroup(url: string): LineFilter | undefined {
+		if (url.startsWith('/record/')) return 'happened';
+		if (url.startsWith('/page/')) return 'pages';
+		if (url.startsWith('/drive/')) return 'files';
+		return undefined;
+	}
 	interface LineEntry {
 		key: string;
+		/** Its local day, `YYYY-MM-DD`; null for a task with no date. */
 		date: string | null;
+		/** Orders entries within a day. */
+		at: string;
 		label: string;
+		kind: EntryKind;
 		icon: string;
-		kind: 'record' | 'task';
-		/** What it is, in a few words: "Calendar event", "Page", "Task". */
+		/** What it is, in a few words: "Calendar event", "Page", "Done". */
 		meta: string;
-		open: () => void;
+		/** The filter it answers to; none for the start and for things with no filter of their own. */
+		group?: LineFilter;
+		task?: Task;
+		/** A member's url, for its menu and its reading note. */
+		url?: string;
+		role?: string;
+		fileStatus?: string;
+		open?: () => void;
 	}
 
 	/** What a member is, from its route. */
@@ -383,60 +456,106 @@
 	}
 	const today = localDay(new Date());
 
+	/** A task opens in a tab, as it does from every list. */
 	function openTask(t: Task) {
-		windowShellStore.openRouteBeside(`/task/${t.id}`, t.title);
+		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
+	}
+
+	/** A task homed here, or homed elsewhere and also about this thread. */
+	function inThread(t: Task): 'home' | 'also' | null {
+		const home = homeOf(t);
+		if (home?.kind === 'thread' && home.id === threadId) return 'home';
+		if ((t.also_about ?? []).some((l) => l.kind === 'thread' && l.id === threadId)) return 'also';
+		return null;
+	}
+
+	const doneTasks = $derived(tasksStore.closed.filter((t) => t.status === 'done' && t.closed_at && inThread(t)));
+
+	function taskEntry(t: Task): LineEntry {
+		const request = isRequest(t);
+		const also = inThread(t) === 'also';
+		const done = t.status === 'done';
+		let meta = request ? `Asked of the assistant · ${requestState(t)}` : done ? 'Done' : 'Task';
+		if (also) meta += ' · Also about this thread';
+		const date = done && t.closed_at ? localDay(new Date(t.closed_at)) : t.due_on;
+		return {
+			key: t.id,
+			date,
+			at: done ? (t.closed_at ?? '') : (t.due_at ?? `${t.due_on ?? ''}T99`),
+			label: t.title,
+			kind: request ? 'request' : 'task',
+			icon: request ? 'mynaui:sparkles' : 'mynaui:circle',
+			meta,
+			group: 'tasks',
+			task: t,
+			open: () => openTask(t),
+		};
 	}
 
 	const line = $derived.by(() => {
-		const records: LineEntry[] = [
-			...memberItems.map((i) => ({
-				key: i.url,
-				date: localDay(new Date(i.occurred_at ?? i.added_at)),
-				label: memberName(i),
-				icon: memberIcon(i.url),
-				kind: 'record' as const,
-				meta: memberKind(i.url),
-				open: () => openUrl(i.url),
-			})),
+		if (!detail) return { past: [] as LineEntry[], ahead: [] as LineEntry[], filters: [] as LineFilter[] };
+		const entries: LineEntry[] = [
+			{
+				key: 'start',
+				date: localDay(new Date(detail.created_at)),
+				// First on its day, before anything added that day.
+				at: '',
+				label: 'You started this thread',
+				kind: 'start',
+				icon: THREAD_ICON,
+				meta: '',
+			},
+			...memberItems.map((i) => {
+				const when = i.occurred_at ?? i.added_at;
+				return {
+					key: i.url,
+					date: localDay(new Date(when)),
+					at: when,
+					label: memberName(i),
+					kind: 'record' as const,
+					icon: memberIcon(i.url),
+					meta: memberKind(i.url),
+					group: memberGroup(i.url),
+					url: i.url,
+					role: i.role,
+					fileStatus: i.status,
+					open: () => openUrl(i.url),
+				};
+			}),
 			...chats.map((c) => ({
 				key: `/chat/${c.id}`,
 				date: localDay(new Date(c.last_message_at)),
+				at: c.last_message_at,
 				label: c.title || 'Untitled chat',
-				icon: c.icon || 'mynaui:message',
 				kind: 'record' as const,
+				icon: c.icon || 'mynaui:message',
 				meta: 'Chat',
+				group: 'chats' as const,
+				url: `/chat/${c.id}`,
 				open: () => openUrl(`/chat/${c.id}`),
 			})),
+			...doneTasks.map(taskEntry),
 		];
-		const tasks = [...(detail?.tasks ?? []), ...(detail?.tasks_also_about ?? [])];
-		const dated: LineEntry[] = tasks
-			.filter((t) => t.due_on)
-			.map((t) => ({
-				key: t.id,
-				date: t.due_on,
-				label: t.title,
-				icon: 'mynaui:circle',
-				kind: 'task' as const,
-				meta: t.thread_id === threadId ? 'Task' : 'Task, also about this thread',
-				open: () => openTask(t),
-			}));
-		const all = [...records, ...dated].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+		entries.sort(byDay);
+		const shown = lineFilter ? entries.filter((e) => e.group === lineFilter) : entries;
 		return {
-			past: all.filter((e) => (e.date ?? '') <= today),
-			ahead: all.filter((e) => (e.date ?? '') > today),
-			undated: tasks
-				.filter((t) => !t.due_on)
-				.map((t) => ({
-					key: t.id,
-					date: null,
-					label: t.title,
-					icon: 'mynaui:circle',
-					kind: 'task' as const,
-					meta: 'A task with no date yet',
-					open: () => openTask(t),
-				})),
+			past: shown.filter((e) => (e.date ?? '') <= today),
+			ahead: shown.filter((e) => (e.date ?? '') > today),
+			// Only the kinds this thread has get a filter.
+			filters: (Object.keys(FILTER_LABELS) as LineFilter[]).filter((f) => entries.some((e) => e.group === f)),
 		};
 	});
+
+	function byDay(a: LineEntry, b: LineEntry): number {
+		return (a.date ?? '').localeCompare(b.date ?? '') || a.at.localeCompare(b.at);
+	}
+
+	/** A long past folds to its latest entries until you ask for the rest. */
+	const PAST_SHOWN = 8;
+	let showAllPast = $state(false);
+	const pastShown = $derived(showAllPast ? line.past : line.past.slice(-PAST_SHOWN));
+	const pastHidden = $derived(line.past.length > pastShown.length);
+	const lineEmpty = $derived(!lineFilter && line.past.length <= 1 && line.ahead.length === 0);
 
 	function shortDay(iso: string | null): string {
 		if (!iso) return '';
@@ -450,25 +569,35 @@
 	}
 </script>
 
-<div class="thread-page">
+<div
+	class="thread-page"
+	use:dropZone={{
+		accepts: acceptsDrop,
+		onActive: (on) => (dropActive = on),
+		onDrop: handleDrop,
+		// A sidebar row allows only a link, and a drop whose effect it does
+		// not allow never fires.
+		effect: (data) => (data.types.includes(REF_DRAG_TYPE) ? 'link' : 'copy'),
+	}}
+>
 	{#if loading && !detail}
 		<div class="state"><Icon icon="mynaui:spinner" width="18" class="spin" /> Loading…</div>
 	{:else if error}
-		<div class="state">{error}</div>
+		<div class="state">{error} <TextAction inline onclick={() => load(true)}>Try again</TextAction></div>
 	{:else if detail}
-		<div class="frame">
+		<DetailFrame>
 			<main class="main">
-				<ProjectHeader project={detail} />
+				<ThreadHeader thread={detail} />
 
 				<section class="stands-block" aria-label="Where it stands">
 					{#if standsEditing}
 						<!-- svelte-ignore a11y_autofocus -->
 						<textarea
-							class="stands-input"
+							class="stands stands-input"
 							bind:value={standsDraft}
-							rows="2"
+							rows="1"
 							autofocus
-							placeholder="One sentence on where this is now."
+							placeholder="Where is this now? One sentence is enough."
 							aria-label="Where it stands"
 							onblur={saveStands}
 							onkeydown={(e) => {
@@ -492,236 +621,256 @@
 					{/if}
 				</section>
 
-				<section class="block" aria-labelledby="tasks-h">
+				{#each notes as n (n.key)}
+					<NoteBox note={n} here={`/thread/${detail.id}`} />
+				{/each}
+
+				{#if !archived}
+					<!-- The way into a new chat about this thread, shaped like the
+					     composer it leads to so it reads as a place to type. -->
+					<form class="ask" onsubmit={submitAsk}>
+						<input
+							class="ask-input"
+							bind:value={askDraft}
+							placeholder={`Ask about ${detail.name}…`}
+							aria-label={`Ask about ${detail.name}`}
+						/>
+						<span class="ask-send" class:idle={!askDraft.trim()}>
+							<IconButton icon="mynaui:arrow-up" label="Ask" type="submit" disabled={!askDraft.trim()} />
+						</span>
+					</form>
+					<div class="ask-more">
+						<TextAction onclick={() => newChatInProject(detail, { beside: true })}>New chat here</TextAction>
+					</div>
+				{/if}
+
+				<section aria-labelledby="tasks-h">
 					<div class="block-head">
 						<h2 id="tasks-h" class="block-title">Tasks</h2>
 						{#if !archived}
 							<TextAction onclick={() => newTaskDialog.open({ home: { kind: 'thread', id: detail.id } })}>New task</TextAction>
 						{/if}
 					</div>
-					<TaskList {active} route={tab.route} projectId={detail.id} readonly={archived} hideNew emptyText={null} />
-					{#if (detail.tasks_also_about ?? []).length > 0}
-						<h3 class="sub">Also about this thread</h3>
-						<ul class="also">
-							{#each detail.tasks_also_about ?? [] as t (t.id)}
-								<li>
-									<button class="also-row" onclick={() => openTask(t)}>
-										<span class="ring" aria-hidden="true"></span>
-										<span class="also-title">{t.title}</span>
-										{#if t.due_on}<span class="due">{shortDay(t.due_on)}</span>{/if}
-									</button>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					<div class="tasks">
+						<TaskList
+							{active}
+							route={tab.route}
+							projectId={detail.id}
+							readonly={archived}
+							hideNew
+							emptyText={archived ? 'No open tasks were left.' : 'No open tasks. New task adds one.'}
+						/>
+					</div>
 				</section>
 
-				<!-- The way into a new chat about this thread, shaped like the
-				     composer it leads to so it reads as a place to type. -->
-				<form class="ask" onsubmit={submitAsk}>
-					<input
-						class="ask-input"
-						bind:value={askDraft}
-						placeholder={`Ask about ${detail.name}…`}
-						aria-label={`Ask about ${detail.name}`}
-					/>
-					<span class="ask-send" class:idle={!askDraft.trim()}>
-						<IconButton
-							icon="mynaui:arrow-up"
-							label="Ask, grounded in this thread"
-							type="submit"
-							disabled={!askDraft.trim()}
-						/>
-					</span>
-				</form>
-
-				<section class="block" aria-labelledby="line-h">
+				<section aria-labelledby="line-h">
 					<div class="block-head">
 						<h2 id="line-h" class="block-title">The thread</h2>
-						<span class="since">Since {longDay(detail.created_at)}</span>
+						{#if !archived}
+							<TextAction onclick={openPicker}>Add</TextAction>
+						{/if}
 					</div>
-					{#if line.past.length + line.ahead.length + line.undated.length === 0}
-						<p class="quiet">What you add to this thread, and its dated tasks, line up here by day.</p>
-					{:else}
-						<ol class="line">
-							{#each line.past as e (e.key)}
-								{@render entry(e, false)}
+
+					{#if line.filters.length > 1}
+						<div class="filters" role="group" aria-label="Show on the line">
+							<button type="button" class="filter" aria-pressed={lineFilter === null} onclick={() => (lineFilter = null)}>Everything</button>
+							{#each line.filters as f (f)}
+								<button type="button" class="filter" aria-pressed={lineFilter === f} onclick={() => (lineFilter = f)}>{FILTER_LABELS[f]}</button>
 							{/each}
-							<li class="entry today" aria-label="Today">
-								<span class="date">Today</span>
-								<span class="today-dot"></span>
-								<span class="today-rule"></span>
+						</div>
+					{/if}
+
+					<ol class="line">
+						{#if pastHidden}
+							<li class="entry fold">
+								<span class="date"></span>
+								<span class="node quiet"></span>
+								<TextAction onclick={() => (showAllPast = true)}>Show earlier</TextAction>
 							</li>
-							{#each line.ahead as e (e.key)}
-								{@render entry(e, true)}
-							{/each}
-							{#each line.undated as e (e.key)}
-								{@render entry(e, true, 'No date')}
-							{/each}
-						</ol>
+						{/if}
+						{#each pastShown as e, i (e.key)}
+							{@render entry(e, false, i === 0 || pastShown[i - 1].date !== e.date)}
+						{/each}
+						<li class="entry today" aria-label="Today">
+							<span class="date">Today</span>
+							<span class="today-dot"></span>
+							<span class="today-rule"></span>
+						</li>
+						{#each line.ahead as e, i (e.key)}
+							{@render entry(e, true, i === 0 || line.ahead[i - 1].date !== e.date)}
+						{/each}
+					</ol>
+					{#if lineEmpty && !archived}
+						<p class="quiet">Chats, pages and files you add, and tasks you finish, line up here by day. Drop anything on this page to add it.</p>
 					{/if}
 				</section>
 			</main>
 
 			<aside class="side" aria-label="About this thread">
-				<div class="psec">Properties</div>
-				<dl class="props">
-					<dt>Status</dt>
-					<dd>
-						{#if archived}
-							{outcomeLabel(detail)} {longDay(detail.archived_at ?? detail.updated_at)}
-						{:else}
-							<span class="seg" role="group" aria-label="Status">
-								<button class="vt" aria-pressed={!detail.is_backlog} onclick={() => setProps({ is_backlog: false })}>Active</button>
-								<button class="vt" aria-pressed={!!detail.is_backlog} onclick={() => setProps({ is_backlog: true })}>Backlog</button>
-							</span>
-						{/if}
-					</dd>
-					<dt>Started</dt>
-					<dd>{longDay(detail.created_at)}</dd>
-					{#if weekRow}
-						<dt>This week</dt>
-						<dd>
-							<span class="mini" style={`--thread: ${projectColor(detail)}`} aria-hidden="true">
-								{#each weekRow.days as d (d.date)}
-									<span class="mini-day">
-										{#each Array(Math.min(12, Math.round(d.done_minutes / 15))) as _, i (i)}<span class="mini-dot"></span>{/each}
-										{#each Array(Math.min(12, Math.round(d.ahead_minutes / 15))) as _, i (i)}<span class="mini-dot ahead"></span>{/each}
-									</span>
+				<section class="props" aria-label="Properties">
+					<div class="prop">
+						<Popover bind:open={statusOpen} placement="bottom-start" offset={4}>
+							{#snippet trigger({ toggle })}
+								<PreviewRow icon={STATUS_ICON[status]} onclick={toggle}>{statusText}</PreviewRow>
+							{/snippet}
+							{#snippet children({ close })}
+								<div class="menu" role="menu" aria-label="Status">
+									<MenuItem role="menuitemradio" icon={STATUS_ICON.active} checked={status === 'active'} label="Active"
+										description="It shows in your week and on the Overview."
+										onclick={() => choose(close, () => setStatus('active'))} />
+									<MenuItem role="menuitemradio" icon={STATUS_ICON.backlog} checked={status === 'backlog'} label="Backlog"
+										description="It waits until you come back to it."
+										onclick={() => choose(close, () => setStatus('backlog'))} />
+									<div class="gap"></div>
+									<MenuItem role="menuitemradio" icon={STATUS_ICON.finished} checked={status === 'finished'} label="Finished"
+										description="You did what it was for."
+										onclick={() => choose(close, () => setStatus('finished'))} />
+									<MenuItem role="menuitemradio" icon={STATUS_ICON.dropped} checked={status === 'dropped'} label="Dropped"
+										description="You stopped. Everything in it stays."
+										onclick={() => choose(close, () => setStatus('dropped'))} />
+								</div>
+							{/snippet}
+						</Popover>
+					</div>
+
+					<div class="prop">
+						<Popover bind:open={addingOpen} placement="bottom-start" offset={4}>
+							{#snippet trigger({ toggle })}
+								<PreviewRow
+									icon={detail.is_adding_automatic ? 'mynaui:sparkles' : 'mynaui:hand'}
+									onclick={archived ? undefined : toggle}
+								>
+									{detail.is_adding_automatic ? 'Adding: Automatic' : 'Adding: Manual'}
+								</PreviewRow>
+							{/snippet}
+							{#snippet children({ close })}
+								<div class="menu" role="menu" aria-label="Adding">
+									<MenuItem role="menuitemradio" icon="mynaui:hand" checked={!detail.is_adding_automatic} label="Manual"
+										description="Only what you add is filed here."
+										onclick={() => choose(close, () => setProps({ is_adding_automatic: false }))} />
+									<MenuItem role="menuitemradio" icon="mynaui:sparkles" checked={!!detail.is_adding_automatic} label="Automatic"
+										description="Your server also files what it is sure belongs here, and asks about the rest."
+										onclick={() => choose(close, () => setProps({ is_adding_automatic: true }))} />
+								</div>
+							{/snippet}
+						</Popover>
+					</div>
+
+					<div class="prop">
+						<Popover bind:open={listedOpen} placement="bottom-start" offset={4}>
+							{#snippet trigger({ toggle })}
+								<PreviewRow icon={unlisted ? 'mynaui:eye-off' : 'mynaui:eye'} onclick={archived ? undefined : toggle}>
+									{unlisted ? 'Unlisted' : 'Listed'}
+								</PreviewRow>
+							{/snippet}
+							{#snippet children({ close })}
+								<div class="menu" role="menu" aria-label="Listing">
+									<MenuItem role="menuitemradio" icon="mynaui:eye" checked={!unlisted} label="Listed"
+										description="It has its own row in your sidebar."
+										onclick={() => choose(close, () => setProps({ is_listed: true }))} />
+									<MenuItem role="menuitemradio" icon="mynaui:eye-off" checked={unlisted} label="Unlisted"
+										description="It stays out of your sidebar. In your Inbox its things wait toward Noise until they are due."
+										onclick={() => choose(close, () => setProps({ is_listed: false }))} />
+								</div>
+							{/snippet}
+						</Popover>
+					</div>
+
+					<div class="prop">
+						<Popover bind:open={underOpen} placement="bottom-start" offset={4}>
+							{#snippet trigger({ toggle })}
+								<PreviewRow
+									icon="atlas:things"
+									quiet={!detail.thing_id}
+									title="A thing goes on and can't be finished, like a garden or a bike. A thread can sit under one."
+									onclick={archived ? undefined : toggle}
+								>
+									{detail.thing_title ? `Under ${detail.thing_title}` : 'Not under a thing'}
+								</PreviewRow>
+							{/snippet}
+							{#snippet children({ close })}
+								<div class="menu" role="menu" aria-label="The thing this thread sits under">
+									<MenuItem role="menuitemradio" checked={!detail.thing_id} label="Not under a thing"
+										onclick={() => choose(close, () => setProps({ thing_id: null }))} />
+									{#each thingsStore.things as th (th.id)}
+										<MenuItem role="menuitemradio" icon="atlas:things" checked={detail.thing_id === th.id} label={th.title}
+											onclick={() => choose(close, () => setProps({ thing_id: th.id }))} />
+									{/each}
+									{#if thingsStore.loaded && thingsStore.things.length === 0}
+										<p class="menu-note">Name a thing in your wiki to put this thread under it.</p>
+									{/if}
+								</div>
+							{/snippet}
+						</Popover>
+					</div>
+
+					{#if people.length > 0}
+						<PreviewRow icon="atlas:people">
+							<span class="with">
+								{#each people.slice(0, 6) as person, i (person.url)}
+									<TextAction inline onclick={() => openUrl(person.url)}>{person.name}</TextAction>{i < Math.min(people.length, 6) - 1 ? ', ' : ''}
 								{/each}
 							</span>
-							<span class="hint">{weekHours}</span>
-						</dd>
-					{/if}
-					{#if detail.thing_title}
-						<dt>Under</dt>
-						<dd>{detail.thing_title}</dd>
-					{/if}
-					{#if people.length > 0}
-						<dt>With</dt>
-						<dd class="with">
-							{#each people.slice(0, 6) as person (person.url)}
-								<button class="person" onclick={() => openUrl(person.url)}>{person.name}</button>
-							{/each}
-						</dd>
-					{/if}
-				</dl>
-
-				<div class="psec">Adding</div>
-				<div class="opts" role="radiogroup" aria-label="Adding">
-					<button
-						class="opt"
-						role="radio"
-						aria-checked={!detail.is_adding_automatic}
-						disabled={archived}
-						onclick={() => setProps({ is_adding_automatic: false })}
-					>
-						<span class="radio" aria-hidden="true"></span>
-						<span>
-							<span class="opt-title">Manual</span>
-							<span class="opt-sub">Only what you add is filed here.</span>
-						</span>
-					</button>
-					<button
-						class="opt"
-						role="radio"
-						aria-checked={!!detail.is_adding_automatic}
-						disabled={archived}
-						onclick={() => setProps({ is_adding_automatic: true })}
-					>
-						<span class="radio" aria-hidden="true"></span>
-						<span>
-							<span class="opt-title">Automatic</span>
-							<span class="opt-sub">Your server also files what it is sure belongs here, and asks about the rest.</span>
-						</span>
-					</button>
-				</div>
-
-				<section
-					class="materials"
-					class:drop-active={dropActive}
-					aria-labelledby="materials-h"
-					use:dropZone={{
-						accepts: acceptsDrop,
-						onActive: (on) => (dropActive = on),
-						onDrop: handleDrop,
-						// A sidebar row allows only a link, and a drop whose effect
-						// it does not allow never fires.
-						effect: (data) => (data.types.includes(REF_DRAG_TYPE) ? 'link' : 'copy'),
-					}}
-				>
-					<div class="block-head">
-						<h2 id="materials-h" class="psec flush">Materials</h2>
-						{#if !archived}
-							<TextAction onclick={openPicker}>Add</TextAction>
-						{/if}
-					</div>
-					{#if chats.length === 0 && memberItems.length === 0 && archived}
-						<p class="hint">Nothing was added here.</p>
-					{:else}
-						<ul class="members">
-							{#each chats as c (c.id)}
-								<li>
-									<button
-										class="member"
-										onclick={() => openUrl(`/chat/${c.id}`)}
-										oncontextmenu={(e) => memberMenu(`/chat/${c.id}`, undefined, e)}
-									>
-										<Icon icon={c.icon || 'mynaui:message'} width="14" />
-										<span class="member-name">{c.title || 'Untitled chat'}</span>
-									</button>
-								</li>
-							{/each}
-							{#each memberItems as it (it.url)}
-								{@const note = fileNote(it.url, it.role, it.status)}
-								<li>
-									<button
-										class="member"
-										onclick={() => openUrl(it.url)}
-										oncontextmenu={(e) => memberMenu(it.url, it.role, e)}
-									>
-										<Icon icon={memberIcon(it.url)} width="14" />
-										<span class="member-name">{memberName(it)}</span>
-									</button>
-									{#if note === 'failed'}
-										<TextAction inline onclick={() => retryExtraction(it.url)}>Reading failed, retry</TextAction>
-									{:else if note}
-										<span class="member-note">{note}</span>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-					{#if !archived}
-						<div class="drop"><Icon icon="mynaui:upload" width="14" />Drop chats, pages or files here</div>
+						</PreviewRow>
 					{/if}
 				</section>
 
-				<div class="ends">
-					{#if archived}
-						<Button variant="secondary" onclick={() => reopenProject(detail)}>Reopen</Button>
-					{:else}
-						<Button variant="secondary" onclick={() => endProject(detail, 'finished')}>Finish the thread</Button>
-						<TextAction onclick={() => endProject(detail, 'dropped')}>Drop it</TextAction>
-					{/if}
-				</div>
+				{#if weekDays && !archived}
+					<ThreadWeekBars days={weekDays} today={week?.today ?? null} {color} />
+				{/if}
+
+				{#if !archived}
+					<ThreadUpNext threadId={detail.id} {detail} tasks={0} />
+				{/if}
 			</aside>
-		</div>
+
+			{#if dropActive}
+				<div class="drop-over" aria-hidden="true">
+					<span class="drop-card"><Icon icon="mynaui:upload" width="16" />Drop to add it to {detail.name}</span>
+				</div>
+			{/if}
+		</DetailFrame>
 	{:else}
 		<div class="state">Thread not found.</div>
 	{/if}
 </div>
 
-{#snippet entry(e: LineEntry, ahead: boolean, dateText?: string)}
-	<li class="entry" class:ahead>
-		<span class="date">{dateText ?? shortDay(e.date)}</span>
-		<span class="node" class:ahead>
-			{#if e.kind === 'task'}<span class="mini-ring"></span>{:else}<Icon icon={e.icon} width="14" />{/if}
-		</span>
-		<button class="entry-label" onclick={e.open}>
-			<span class="entry-title">{e.label}</span>
-			<span class="entry-meta">{e.meta}</span>
-		</button>
+{#snippet entry(e: LineEntry, ahead: boolean, showDate: boolean)}
+	{@const note = e.url ? fileNote(e.url, e.role, e.fileStatus) : null}
+	<li class="entry" class:ahead class:start={e.kind === 'start'}>
+		<span class="date">{showDate ? shortDay(e.date) : ''}</span>
+		{#if e.kind === 'task' && e.task}
+			{@const t = e.task}
+			<span class="node check">
+				<TaskCheck
+					done={t.status === 'done'}
+					label={t.status === 'done' ? `Mark ${t.title} not done` : `Complete ${t.title}`}
+					onclick={() => toggleTaskDone(t)}
+				/>
+			</span>
+		{:else if e.kind === 'start' && detail}
+			<span class="node tinted" style={`--tile: ${color}`}><ProjectGlyph project={detail} size={14} inherit /></span>
+		{:else}
+			<span class="node" class:request={e.kind === 'request'}><Icon icon={e.icon} width="14" /></span>
+		{/if}
+		{#if e.open}
+			<button
+				type="button"
+				class="entry-label"
+				class:done={e.task?.status === 'done'}
+				onclick={e.open}
+				oncontextmenu={e.url ? (ev) => memberMenu(e.url!, e.role, ev) : undefined}
+			>
+				<span class="entry-title">{e.label}</span>
+				<span class="entry-meta">{e.meta}{note && note !== 'failed' ? ` · ${note}` : ''}</span>
+			</button>
+		{:else}
+			<span class="entry-label static"><span class="entry-title">{e.label}</span></span>
+		{/if}
+		{#if note === 'failed' && e.url}
+			{@const url = e.url}
+			<span class="retry"><TextAction inline onclick={() => retryExtraction(url)}>Reading failed. Try again</TextAction></span>
+		{/if}
 	</li>
 {/snippet}
 
@@ -743,14 +892,6 @@
 		height: 100%;
 		overflow-y: auto;
 	}
-	.frame {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 280px;
-		gap: 48px;
-		max-width: var(--page-detail);
-		margin: 0 auto;
-		padding: 48px 32px 96px;
-	}
 	.main {
 		display: flex;
 		flex-direction: column;
@@ -765,102 +906,36 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.block-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		min-height: 28px;
-	}
-	.block-title {
-		margin: 0 0 8px;
-		font-family: var(--font-serif);
-		font-weight: 400;
-		font-size: var(--md-h2-size);
-		line-height: 28px;
-		color: var(--color-foreground);
-	}
-	.block-head .block-title {
-		margin: 0;
-	}
-	.sub {
-		margin: 16px 0 4px;
-		font-size: 13px;
-		font-weight: 400;
-		color: var(--color-foreground-muted);
+	/* Where it stands: the box's sentence, in the serif at the lead size. */
+	.stands-block {
+		margin-top: -8px;
 	}
 	.stands {
-		margin: 8px 0 0;
+		display: block;
+		width: 100%;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
 		font-family: var(--font-serif);
-		font-size: 18px;
+		font-weight: 400;
+		font-size: var(--text-lead);
 		line-height: 28px;
 		color: var(--color-foreground);
 	}
 	.stands-input {
-		width: 100%;
-		margin-top: 8px;
-		padding: 8px 12px;
-		box-sizing: border-box;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-surface);
-		font-family: var(--font-serif);
-		font-size: 18px;
-		line-height: 28px;
-		color: var(--color-foreground);
-		resize: vertical;
+		resize: none;
+		outline: none;
+		field-sizing: content;
 	}
-	.quiet {
-		margin: 8px 0 0;
-		font-size: 15px;
-		line-height: 24px;
+	.stands-input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
+	.stands-meta {
+		margin: 4px 0 0;
+		font-size: var(--text-small);
+		line-height: 20px;
 		color: var(--color-foreground-muted);
-	}
-
-	.also {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.also-row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		width: 100%;
-		min-height: 40px;
-		padding: 0 12px;
-		margin: 0 -12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		text-align: left;
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.also-row:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.ring {
-		flex: none;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		border: 1px solid var(--color-foreground-muted);
-		box-sizing: border-box;
-	}
-	.also-title {
-		flex: 1 1 auto;
-		min-width: 0;
-	}
-	.due {
-		flex: none;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
 	}
 
 	/* The ask: shaped like the composer it opens. */
@@ -869,14 +944,10 @@
 		align-items: center;
 		gap: 8px;
 		min-height: 44px;
-		padding: 4px 8px 4px 16px;
+		padding: 4px 4px 4px 16px;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-xl);
 		background: var(--color-surface);
-		transition: border-color var(--motion-state) var(--ease-premium);
-	}
-	.ask:focus-within {
-		border-color: var(--color-foreground-subtle);
 	}
 	.ask-input {
 		flex: 1;
@@ -885,7 +956,7 @@
 		background: transparent;
 		outline: none;
 		font: inherit;
-		font-size: 15px;
+		font-size: var(--text-body);
 		color: var(--color-foreground);
 	}
 	.ask-input::placeholder {
@@ -893,36 +964,90 @@
 	}
 	.ask-send {
 		display: inline-flex;
-		transition: opacity var(--motion-state) var(--ease-premium);
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
+	/* Opacity alone, so it fades out as well as in; the button is disabled
+	   while the field is empty, so it takes no click or focus. */
 	.ask-send.idle {
 		opacity: 0;
-		visibility: hidden;
+		pointer-events: none;
 	}
 
-	/* The thread as a line: dates on the left, a round node with what each
-	   entry is, solid down to today and dashed after it. */
-	.since {
-		font-size: 12px;
+	.ask-more {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 8px;
+	}
+	.filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px;
+		margin: 4px 0 12px -10px;
+	}
+	.filter {
+		height: 28px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: var(--text-sm, 13px);
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.filter:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.filter[aria-pressed='true'] {
+		background: var(--active-bg);
+		color: var(--color-foreground);
+	}
+	.block-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-height: 32px;
+	}
+	.block-title {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: var(--text-heading);
+		line-height: 32px;
+		color: var(--color-foreground);
+	}
+	.tasks {
+		margin-top: 8px;
+	}
+	.quiet {
+		margin: 8px 0 0 96px;
+		font-size: var(--text-small);
+		line-height: 20px;
 		color: var(--color-foreground-muted);
 	}
+
+	/* The thread as a line: dates on the left, a typed node for each entry,
+	   solid down to today and dashed after it. */
 	.line {
 		list-style: none;
-		margin: 12px 0 0;
+		margin: 16px 0 0;
 		padding: 0;
 	}
 	.entry {
-		display: grid;
-		grid-template-columns: 72px 24px minmax(0, 1fr);
-		align-items: center;
-		gap: 12px;
-		min-height: 48px;
 		position: relative;
+		display: grid;
+		grid-template-columns: 64px 24px minmax(0, 1fr);
+		align-items: center;
+		column-gap: 8px;
+		min-height: 48px;
 	}
 	.entry::before {
 		content: '';
 		position: absolute;
-		left: calc(72px + 12px + 12px);
+		left: calc(64px + 8px + 12px);
 		top: 0;
 		bottom: 0;
 		border-left: 2px solid var(--color-border);
@@ -938,51 +1063,67 @@
 		bottom: 50%;
 	}
 	.date {
-		font-size: 12px;
+		font-size: var(--text-small);
+		line-height: 20px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 		text-align: right;
+		padding-right: 4px;
 	}
 	.node {
+		position: relative;
+		z-index: 1;
 		display: inline-grid;
 		place-items: center;
 		width: 24px;
 		height: 24px;
 		border-radius: 50%;
-		background: var(--color-surface);
+		box-sizing: border-box;
 		border: 1px solid var(--color-border);
-		box-sizing: border-box;
-		color: var(--color-foreground-muted);
-		position: relative;
-		z-index: 1;
-	}
-	.node.ahead {
 		background: var(--color-page);
+		color: var(--color-foreground-muted);
 	}
-	.mini-ring {
-		width: 12px;
-		height: 12px;
-		border-radius: 50%;
-		border: 1px solid var(--color-foreground-muted);
-		box-sizing: border-box;
+	.node.quiet {
+		width: 8px;
+		height: 8px;
+		justify-self: center;
+		border: 0;
+		background: var(--color-border);
+	}
+	.node.check {
+		border: 0;
+	}
+	.node.request {
+		color: var(--color-primary);
+	}
+	.node.tinted {
+		border: 0;
+		background: color-mix(in srgb, var(--tile) 16%, var(--color-page));
+		color: var(--tile);
 	}
 	.entry.today {
 		min-height: 32px;
 	}
 	.entry.today .date {
-		color: var(--color-foreground);
+		color: var(--color-primary);
+		font-weight: 500;
 	}
 	.today-dot {
+		position: relative;
+		z-index: 1;
 		justify-self: center;
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: var(--color-foreground);
-		position: relative;
-		z-index: 1;
+		background: var(--color-primary);
 	}
+	/* Round dots, as the week chart rings today. */
 	.today-rule {
-		border-top: 1px dashed var(--color-foreground-subtle);
+		height: 2px;
+		background-image: radial-gradient(circle, var(--color-primary) 1px, transparent 1.5px);
+		background-size: 8px 2px;
+		background-repeat: repeat-x;
+		opacity: 0.7;
 	}
 	.entry-label {
 		display: flex;
@@ -990,7 +1131,6 @@
 		align-items: flex-start;
 		min-width: 0;
 		padding: 4px 8px;
-		margin-left: -8px;
 		border: 0;
 		border-radius: var(--radius-md);
 		background: transparent;
@@ -1003,283 +1143,125 @@
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
 	}
+	.entry-label.static {
+		cursor: default;
+	}
+	.entry-label.static:hover {
+		background: transparent;
+	}
 	.entry-title {
 		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 14px;
+		font-size: var(--text-label);
 		line-height: 20px;
 		color: var(--color-foreground);
+	}
+	.entry.start .entry-title {
+		color: var(--color-foreground-muted);
+	}
+	.entry-label.done .entry-title {
+		color: var(--color-foreground-muted);
 	}
 	.entry-meta {
-		font-size: 12px;
+		font-size: var(--text-caption);
 		line-height: 16px;
 		color: var(--color-foreground-muted);
+	}
+	.entry-meta:empty {
+		display: none;
+	}
+	.retry {
+		grid-column: 3;
+		padding: 0 8px 8px;
+		font-size: var(--text-caption);
+	}
+	.entry.fold {
+		min-height: 40px;
+	}
+	.entry.fold :global(.v-textaction) {
+		padding-left: 8px;
 	}
 
-	.stands-block {
-		margin-top: -8px;
-	}
-	.stands-meta {
-		margin: 4px 0 0;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-	.psec {
-		margin: 0 0 8px;
-		font-family: var(--font-sans);
-		font-size: 12px;
-		line-height: 16px;
-		font-weight: 400;
-		color: var(--color-foreground-muted);
-	}
-	.psec.flush {
-		margin: 0;
-	}
-	.mini {
-		display: inline-flex;
-		align-items: flex-end;
-		gap: 4px;
-		height: 28px;
-		vertical-align: middle;
-	}
-	.mini-day {
-		display: flex;
-		flex-wrap: wrap-reverse;
-		align-content: flex-start;
-		gap: 4px;
-		width: 16px;
-	}
-	.mini-dot {
-		width: 4px;
-		height: 4px;
-		border-radius: 50%;
-		background: var(--thread);
-	}
-	.mini-dot.ahead {
-		background: transparent;
-		border: 1px solid var(--thread);
-		box-sizing: border-box;
-	}
-	.opts {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.opt {
-		display: flex;
-		align-items: flex-start;
-		gap: 12px;
-		width: 100%;
-		padding: 8px 12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.opt:hover:not(:disabled) {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.opt[aria-checked='true'] {
-		background: var(--active-bg);
-	}
-	.opt:disabled {
-		cursor: default;
-	}
-	.opt:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-	.radio {
-		flex: none;
-		width: 14px;
-		height: 14px;
-		margin-top: 4px;
-		border-radius: 50%;
-		border: 1px solid var(--color-foreground-muted);
-		box-sizing: border-box;
-	}
-	.opt[aria-checked='true'] .radio {
-		border: 4px solid var(--color-foreground);
-	}
-	.opt-title {
-		display: block;
-		font-size: 14px;
-		line-height: 20px;
-		color: var(--color-foreground);
-	}
-	.opt-sub {
-		display: block;
-		margin-top: 4px;
-		font-size: 12px;
-		line-height: 16px;
-		color: var(--color-foreground-muted);
-	}
-	.drop {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-top: 8px;
-		padding: 12px;
-		border: 1px dashed var(--color-border);
-		border-radius: var(--radius-md);
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-
-	/* The side column. */
+	/* The side column: properties as rows, then the week and what is next. */
 	.side {
 		display: flex;
 		flex-direction: column;
 		gap: 32px;
-		padding-top: 8px;
+		padding-top: 4px;
 	}
 	.props {
-		display: grid;
-		grid-template-columns: 64px minmax(0, 1fr);
-		gap: 12px;
-		margin: 0;
-		align-items: baseline;
-	}
-	.props dt {
-		font-size: 13px;
-		line-height: 28px;
-		color: var(--color-foreground-muted);
-	}
-	.props dd {
-		margin: 0;
-		font-size: 14px;
-		line-height: 28px;
-		color: var(--color-foreground);
-		min-width: 0;
-	}
-	.seg {
-		display: inline-flex;
-		gap: 4px;
-	}
-	.with {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-	}
-	.person {
-		padding: 0;
-		border: 0;
-		background: none;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.vt {
-		height: 28px;
-		padding: 0 12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.vt:hover:not(:disabled) {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.vt[aria-pressed='true'] {
-		background: var(--active-bg);
-		color: var(--color-foreground);
-	}
-	.vt:disabled {
-		cursor: default;
-	}
-	.hint {
-		display: block;
-		margin-top: 4px;
-		font-size: 13px;
-		line-height: 20px;
-		color: var(--color-foreground-muted);
-	}
-	.materials {
-		padding: 12px;
-		margin: -12px;
-		border-radius: var(--radius-xl);
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.materials.drop-active {
-		background: var(--drop-tint);
-		transition-duration: var(--motion-hover-in);
-	}
-	.members {
-		list-style: none;
-		margin: 8px 0 0;
-		padding: 0;
-	}
-	.members li {
 		display: flex;
 		flex-direction: column;
 	}
-	.member {
+	.prop :global(.popover-trigger) {
+		display: block;
+	}
+	.menu {
 		display: flex;
-		align-items: center;
-		gap: 8px;
-		min-height: 32px;
-		padding: 0 8px;
-		margin: 0 -8px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		font: inherit;
-		font-size: 14px;
-		color: var(--color-foreground);
-		text-align: left;
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
+		flex-direction: column;
+		min-width: 240px;
+		max-width: 320px;
+		max-height: 360px;
+		overflow-y: auto;
+		padding: 4px;
 	}
-	.member:hover {
-		background: var(--hover-bg);
-		transition-duration: var(--motion-hover-in);
+	.gap {
+		height: 4px;
 	}
-	.member :global(svg) {
-		flex: none;
+	.menu-note {
+		margin: 0;
+		padding: 8px;
+		font-size: var(--text-small);
+		line-height: 20px;
 		color: var(--color-foreground-muted);
 	}
-	.member-name {
+	.with {
+		display: block;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.member-note {
-		margin: 0 0 4px 24px;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-	.ends {
-		display: flex;
-		align-items: center;
-		gap: 16px;
-	}
 
-	@media (max-width: 900px) {
-		.frame {
-			grid-template-columns: minmax(0, 1fr);
-			padding: 24px 16px 64px;
+	/* Anything dragged over the page lands in the thread. */
+	.drop-over {
+		position: absolute;
+		inset: 16px;
+		display: grid;
+		place-items: center;
+		border: 2px dashed var(--drop-line);
+		border-radius: var(--radius-xl);
+		background: var(--drop-tint);
+		pointer-events: none;
+		animation: drop-in var(--motion-hover-in) var(--ease-premium) both;
+		z-index: 2;
+	}
+	.drop-card {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		border-radius: var(--radius-full);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
+		font-size: var(--text-label);
+		color: var(--color-foreground);
+	}
+	@keyframes drop-in {
+		from {
+			opacity: 0;
 		}
 	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.ask,
 		.ask-send,
-		.materials,
-		.member,
-		.entry-label,
-		.also-row,
-		.vt {
+		.entry-label {
 			transition: none;
+		}
+		.drop-over {
+			animation: none;
 		}
 	}
 </style>

@@ -310,7 +310,7 @@
 					<span class="choice-name">A Virtues subscription</span>
 					<span class="radio" aria-hidden="true"></span>
 				</span>
-				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
+				<span class="choice-line">Includes $20 of AI each month, plus bank data, places, maps and remote access. Extra AI is sold at cost.</span>
 				<span class="price"><span class="amount">$29</span> a month</span>
 			</button>
 			<button

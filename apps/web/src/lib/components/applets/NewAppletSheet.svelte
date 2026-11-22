@@ -5,9 +5,13 @@
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	/**
-	 * Making an applet starts as a chat: you say what you want, and Virtues
-	 * builds it in the conversation. The examples fill the box rather than
-	 * sending, so each one is a starting point you can change before you ask.
+	 * Making a site starts as a chat: you say what you want to see or keep
+	 * track of, and Virtues builds it in the conversation. The examples fill
+	 * the box and do not send, so each one is a starting point you can
+	 * change before you ask.
+	 *
+	 * Every example is a site: a page you look at. A task for the assistant
+	 * that repeats is asked for in a chat and shows in Tasks.
 	 */
 	let {
 		open,
@@ -17,32 +21,26 @@
 		onClose: () => void;
 	} = $props();
 
-	// Each with the glyph of where its work would go, as its row on the
-	// Applets page would show it.
-	const EXAMPLES: { name: string; note: string; glyph: string; ask: string }[] = [
+	const EXAMPLES: { name: string; note: string; ask: string }[] = [
 		{
-			name: 'Weekly summary',
-			note: 'A page every Sunday',
-			glyph: 'pages',
-			ask: 'Every Sunday evening, write a page that sums up my week.'
+			name: 'Sleep chart',
+			note: 'Your nights, drawn from your record',
+			ask: 'Make a page that charts how long I slept each night for the last month.'
 		},
 		{
-			name: 'Food log',
-			note: 'You tell it, it keeps the count',
-			glyph: 'dashboard',
-			ask: "Keep a food log. I'll tell you what I eat in plain words, and you keep a daily calorie total."
+			name: 'Water log',
+			note: 'You tell it, the page keeps the record',
+			ask: "Keep a water log. I'll tell you when I drink a glass, and you show each day on a page."
 		},
 		{
-			name: 'One-time reminder',
-			note: 'Runs once, then finishes',
-			glyph: 'chats',
-			ask: 'Remind me on the 25th to renew the car registration.'
+			name: 'Reading list',
+			note: 'A table you add to',
+			ask: 'Make a reading list I can add books to, with where I am in each one.'
 		},
 		{
-			name: 'Workout nudge',
-			note: 'Checks quietly, speaks up when needed',
-			glyph: 'chats',
-			ask: 'If I go three days without a workout, tell me. Not more than once a day.'
+			name: 'Trip budget',
+			note: 'What you planned and what you spent',
+			ask: 'Make a page for a trip budget: what I planned to spend and what I have spent so far.'
 		}
 	];
 
@@ -59,7 +57,7 @@
 
 <Modal {open} {onClose} title="New site" width="md">
 	<div class="sheet">
-		<p class="lede">Describe what it should do and when. Virtues sets it up in a new chat.</p>
+		<p class="lede">Describe what you want to see or keep track of. Virtues builds it in a new chat.</p>
 		<form
 			class="ask"
 			onsubmit={(e) => {
@@ -70,8 +68,8 @@
 			<input
 				type="text"
 				bind:value={draft}
-				placeholder="Every Sunday evening, write a page that sums up my week"
-				aria-label="What the site should do"
+				placeholder="A page that charts how long I slept each night"
+				aria-label="What the site should show"
 			/>
 			<IconButton
 				icon="mynaui:arrow-up"
@@ -87,7 +85,7 @@
 			{#each EXAMPLES as ex (ex.name)}
 				<li>
 					<button type="button" class="example" onclick={() => (draft = ex.ask)}>
-						<span class="glyph" aria-hidden="true"><AtlasIcon name={ex.glyph} size={16} bare /></span>
+						<span class="glyph" aria-hidden="true"><AtlasIcon name="dashboard" size={16} bare /></span>
 						<span class="example-body">
 							<span class="example-name">{ex.name}</span>
 							<span class="example-note">{ex.note}</span>

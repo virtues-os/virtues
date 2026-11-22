@@ -8,7 +8,7 @@
 //! The covenant this table exists to hold:
 //!
 //! **Point, don't decide.** A machine note says what it saw and links to where
-//! it saw it. *"Sarah may have moved to Denver — group thread, Jul 12, tone
+//! it saw it. *"Sarah may have moved to Denver — group conversation, Jul 12, tone
 //! ambiguous; the article doesn't mention it"* is useful even when wrong,
 //! because the citation makes it checkable in seconds. A bare claim with a
 //! confidence score is worthless when wrong, because there is nothing to check.

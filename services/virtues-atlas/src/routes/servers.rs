@@ -134,7 +134,10 @@ async fn remove(State(state): State<AppState>, Json(body): Json<RemoveBody>) -> 
             .bind(&target)
             .execute(&mut *tx)
             .await?;
-        // The legacy mirror authenticates billing doors too.
+        // An atlas image older than this one also authenticates by the
+        // `customers.api_key_hash` mirror, and it is the rollback image.
+        // TODO(2026-11-20): drop this and the column once no rollback image
+        // reads the mirror.
         sqlx::query("UPDATE customers SET api_key_hash = NULL WHERE account_id = $1 AND api_key_hash = $2")
             .bind(&account_id)
             .bind(&target)

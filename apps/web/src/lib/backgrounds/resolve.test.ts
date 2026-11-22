@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, find, narrowest, parseSetting, pickForDay, pool, srcset, stepFrom, type StyleManifest, type Variant } from './resolve';
+import { dayNumber, find, isDrawn, parseSetting, pickForDay, pool, siteSetting, srcset, widest, type StyleManifest, type Variant } from './resolve';
+import { narrowest, stepFrom } from './browse';
 
 function variant(name: string): Variant {
 	return {
@@ -39,6 +40,13 @@ describe('parseSetting', () => {
 		expect(parseSetting('paintings/forest/oak')).toEqual({ kind: 'path', style: 'paintings', collection: 'forest', picture: 'oak' });
 	});
 
+	it('reads a site of yours', () => {
+		expect(parseSetting(siteSetting('applet_user__reading_garden'))).toEqual({ kind: 'site', id: 'applet_user__reading_garden' });
+		for (const bad of ['site:', 'site:water_log', 'site:applet_../x', 'site:applet_Big', 'site:applet_a/b']) {
+			expect(parseSetting(bad)).toEqual({ kind: 'default' });
+		}
+	});
+
 	it('treats a malformed setting as the default', () => {
 		for (const bad of ['a/b/c/d', '../x', 'Paintings', 'a//b', 42, { style: 'x' }]) {
 			expect(parseSetting(bad)).toEqual({ kind: 'default' });
@@ -61,7 +69,8 @@ describe('pool', () => {
 	});
 
 	it('finds the picture an address names', () => {
-		expect(find(styles, { style: 'paintings', collection: 'beach', picture: 'cove' })?.dark.source).toBe('cove-night');
+		const cove = find(styles, { style: 'paintings', collection: 'beach', picture: 'cove' });
+		expect(cove && !isDrawn(cove) ? cove.dark.source : undefined).toBe('cove-night');
 	});
 });
 
@@ -120,6 +129,64 @@ describe('stepFrom', () => {
 
 describe('narrowest', () => {
 	it('picks the smallest WebP', () => {
-		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.webp');
+		expect(narrowest(variant('oak'), (rel) => `/f/${rel}`)).toBe('/f/c/light/oak-896.avif');
+	});
+});
+
+describe('pickForDay across cycles', () => {
+	it('never shows one picture two days running, and shows each once per cycle', () => {
+		for (const n of [2, 3, 5, 12]) {
+			const items = Array.from({ length: n }, (_, i) => i);
+			for (const key of ['a', 'paintings', 'paintings/forest']) {
+				let previous: number | undefined;
+				for (let day = 20_000; day < 20_000 + n * 40; day++) {
+					const pick = pickForDay(items, key, day);
+					expect(pick).not.toBe(previous);
+					previous = pick;
+				}
+				const start = Math.ceil(20_000 / n) * n;
+				const cycle = new Set(Array.from({ length: n }, (_, i) => pickForDay(items, key, start + i)));
+				expect(cycle.size).toBe(n);
+			}
+		}
+	});
+});
+
+describe('the built-in dots style', () => {
+	it('resolves like an installed style, alongside one', async () => {
+		const { DOTS } = await import('./builtin');
+		const all: StyleManifest[] = [DOTS, ...styles];
+		expect(pool(all, parseSetting('dots')).length).toBe(DOTS.collections.reduce((n, c) => n + c.pictures.length, 0));
+		const tide = find(all, { style: 'dots', collection: 'swell', picture: 'tide' });
+		expect(tide && isDrawn(tide) ? (tide.params as { motion: string }).motion : undefined).toBe('swell');
+		expect(pool(all, parseSetting('paintings/forest')).length).toBe(3);
+	});
+});
+
+describe('the built-in ASCII style', () => {
+	it('resolves each scene by its address', async () => {
+		const { ASCII, BUILTIN_STYLES } = await import('./builtin');
+		expect(BUILTIN_STYLES.map((s) => s.style)).toEqual(['dots', 'ascii']);
+		const all: StyleManifest[] = [...BUILTIN_STYLES, ...styles];
+		expect(pool(all, parseSetting('ascii')).length).toBe(3);
+		const whale = find(all, { style: 'ascii', collection: 'sea', picture: 'whale' });
+		expect(whale && isDrawn(whale) ? (whale.params as { scene: string }).scene : undefined).toBe('whale');
+		expect(ASCII.collections.flatMap((c) => c.pictures.map((p) => p.id))).toEqual(['sharks', 'whale', 'moon']);
+	});
+});
+
+describe('AVIF-only styles', () => {
+	const avifOnly: Variant = { ...variant('elm'), files: { avif: { '1792': 'c/light/elm-1792.avif', '896': 'c/light/elm-896.avif' } } };
+
+	it('serve AVIF and an empty WebP srcset', () => {
+		expect(srcset(avifOnly, 'webp', (r) => r)).toBe('');
+		expect(srcset(avifOnly, 'avif', (r) => r)).toBe('c/light/elm-896.avif 896w, c/light/elm-1792.avif 1792w');
+		expect(widest(avifOnly, (r) => r)).toBe('c/light/elm-1792.avif');
+		expect(narrowest(avifOnly, (r) => r)).toBe('c/light/elm-896.avif');
+	});
+
+	it('fall back to WebP for a style built before AVIF only', () => {
+		const webpOnly: Variant = { ...variant('ash'), files: { webp: { '896': 'c/light/ash-896.webp' } } };
+		expect(widest(webpOnly, (r) => r)).toBe('c/light/ash-896.webp');
 	});
 });

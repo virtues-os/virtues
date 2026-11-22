@@ -1,7 +1,7 @@
 <!--
 	The heading over a beat of the room: "1 of 4 · Connect AI", as an h2.
 
-	Progress lives in the thread, on the reading axis, the way a
+	Progress lives in the chat, on the reading axis, the way a
 	conversational form numbers each question — and as a section heading
 	rather than a caption, so the room has the hierarchy of an authored
 	page: one title, four sections, each with its ask, the answer, and the

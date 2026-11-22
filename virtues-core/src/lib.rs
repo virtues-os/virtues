@@ -17,6 +17,7 @@ pub mod crypto;
 pub mod data_disk;
 pub mod database;
 pub mod dayline;
+pub mod downloads;
 pub mod door;
 pub mod egress;
 pub mod entity_resolution;

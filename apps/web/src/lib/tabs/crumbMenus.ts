@@ -9,6 +9,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import type { Crumb, CrumbMenu } from '$lib/tabs/crumbs';
 import { recentRows, type RecentKind, type RecentRow } from '$lib/sidebar/recents.svelte';
 import { appletsStore } from '$lib/stores/applets.svelte';
+import { homeOf } from '$lib/applets/kind';
 import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
 import { search } from '$lib/stores/search.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -25,7 +26,7 @@ const GLYPH: Record<RecentKind, string> = {
 /** The list kinds: the noun for "All …" and the palette scope. */
 const LISTS = {
 	pages: { kind: 'page', noun: 'pages' },
-	applets: { kind: 'applet', noun: 'applets' },
+	applets: { kind: 'applet', noun: 'sites' },
 } as const;
 
 export function crumbMenuItems(
@@ -62,13 +63,13 @@ export function crumbMenuItems(
 	const list = LISTS[menu.kind];
 	const rows =
 		menu.kind === 'applets'
-			? appletsStore.mine.slice(0, LIST_ROWS).map(
+			? appletsStore.sites.slice(0, LIST_ROWS).map(
 					(a): ContextMenuItem => ({
 						id: a.id,
 						label: a.name,
 						icon: GLYPH.applet,
-						checked: `/applet/${a.id}` === current,
-						action: () => open(`/applet/${a.id}`),
+						checked: homeOf(a) === current,
+						action: () => open(homeOf(a)),
 					}),
 				)
 			: recentRows({ pinned: true })

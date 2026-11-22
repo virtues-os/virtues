@@ -11,7 +11,7 @@
 id = "ios"
 display_name = "iPhone"
 icon = "ri:smartphone-line"
-description = "Pair an iPhone to ingest HealthKit, Location, EventKit, FinanceKit, Contacts, and Microphone streams."
+description = "Health, places, audio, calendar and contacts from your phone."
 auth = { kind = "self_issued_bearer" }
 # Read-the-code pointer, not an install path: the app arrives through the App
 # Store and updates itself. See agents/record/sources-packages.md (P1).
@@ -22,7 +22,7 @@ repo_ref = "apps/web/src-tauri"
 id = "mac"
 display_name = "Mac"
 icon = "ri:macbook-line"
-description = "Pair a Mac to ingest app usage, browser activity, and iMessage history."
+description = "Messages, apps and browsing from your Mac."
 auth = { kind = "self_issued_bearer" }
 # The collector daemon that reads this Mac. Same caveat as iOS — it ships as a
 # signed binary and updates itself; this is so you can read what it does.
@@ -33,29 +33,43 @@ repo_ref = "apps/mac-source"
 id = "google"
 display_name = "Google"
 icon = "ri:google-fill"
-description = "Read-only sync of your Google Calendar and Mail."
+description = "Your mail and calendar."
 auth = { kind = "via_proxy", start_path = "/google/start" }
+
+# Signed in only through virtues-api, which reaches Microsoft through a
+# verified app we do not run yet (`api::vendor_api`). The sign-in asks to read
+# mail and calendars only. There is no direct sign-in, so `start_path` is
+# never sent to the OAuth proxy.
+[[source]]
+id = "outlook"
+display_name = "Outlook"
+icon = "ri:mail-line"
+description = "Your mail and calendar."
+auth = { kind = "via_proxy", start_path = "/outlook/start" }
 
 [[source]]
 id = "notion"
 display_name = "Notion"
 icon = "ri:notion-fill"
-description = "Sync pages and databases from your Notion workspace."
+description = "Your pages and databases."
 auth = { kind = "via_proxy", start_path = "/notion/start" }
 
 [[source]]
 id = "strava"
 display_name = "Strava"
 icon = "ri:run-line"
-description = "Sync your activities (runs, rides, swims) from Strava."
+description = "Your runs, rides and swims."
 auth = { kind = "via_proxy", start_path = "/strava/start" }
 
 [[source]]
 id = "plaid"
-display_name = "Plaid"
+display_name = "Banks"
 icon = "ri:bank-card-line"
-description = "Connect bank accounts via Plaid Hosted Link to sync transactions, balances, investments, and liabilities."
+description = "Spending, balances and investments, through Plaid."
 auth = { kind = "via_proxy", start_path = "/plaid/start" }
+# Plaid bills a monthly fee per linked bank until it is removed, so a box
+# whose subscription has lapsed for 30 days lets its banks go.
+release_on_lapse = true
 
 # PAT, not OAuth: the GitHub OAuth proxy app is dead, and a fine-grained token
 # with read-only scopes is the better fit for a personal appliance anyway.
@@ -63,8 +77,35 @@ auth = { kind = "via_proxy", start_path = "/plaid/start" }
 id = "github"
 display_name = "GitHub"
 icon = "ri:github-fill"
-description = "Sync your starred repositories as bookmarks. Uses a personal access token (read-only)."
+description = "The repositories you star."
 auth = { kind = "api_key", fields = ["token"] }
+
+# Meeting tools, each with a key the person makes in the tool. A meeting is
+# one row in the transcript record beside the iPhone's audio
+# (`transcript::MEETING_TABLE`). Fathom's key also reads meetings shared with
+# the person's team, so the sync keeps only meetings they recorded or were
+# invited to, by their email.
+[[source]]
+id = "fathom"
+display_name = "Fathom"
+icon = "ri:chat-voice-line"
+description = "Your meetings, with transcripts, summaries and action items."
+auth = { kind = "api_key", fields = ["api_key", "email"] }
+
+[[source]]
+id = "fireflies"
+display_name = "Fireflies.ai"
+icon = "ri:chat-voice-line"
+description = "Your meetings, with transcripts, summaries and action items."
+auth = { kind = "api_key", fields = ["api_key"] }
+
+# Granola offers API keys on its Business and Enterprise plans only.
+[[source]]
+id = "granola"
+display_name = "Granola"
+icon = "ri:chat-voice-line"
+description = "Your meeting notes and transcripts."
+auth = { kind = "api_key", fields = ["api_key"] }
 
 # Session cookies, not OAuth: X has no read API for your own bookmarks that a
 # personal appliance can use (the v2 endpoint caps at ~800 and paginates
@@ -79,7 +120,7 @@ auth = { kind = "api_key", fields = ["token"] }
 id = "x"
 display_name = "X"
 icon = "ri:twitter-x-fill"
-description = "Sync the posts you bookmark on X. Uses your session cookies (auth_token and ct0), read-only."
+description = "The posts you bookmark."
 auth = { kind = "api_key", fields = ["auth_token", "ct0"] }
 # Logging in inside the app's browser window fills both fields from its cookie
 # jar (agents/record/webkit-agent-spike.md). Pasting them stays the fallback.
@@ -100,26 +141,11 @@ login = { url = "https://x.com/i/flow/login", cookies = ["auth_token", "ct0"] }
 id = "instagram"
 display_name = "Instagram"
 icon = "ri:instagram-line"
-description = "Sync the posts you save on Instagram. Uses your session cookies, read-only."
+description = "The posts you save."
 auth = { kind = "api_key", fields = ["cookies"] }
 # The whole jar is the credential, so a login hands over every instagram.com
 # cookie once the two that mean "logged in" exist.
 login = { url = "https://www.instagram.com/accounts/login/", cookies = ["sessionid", "csrftoken"], jar_field = "cookies" }
-
-# Session cookies, like Instagram: Grok has no API for reading your own chats,
-# so this replays the requests the grok.com web client makes for its chat list.
-# Unlike claude.ai and ChatGPT, grok.com answers a plain HTTP client without a
-# Cloudflare challenge (agents/record/ai-chat-sync-spike-2026-10-23.md).
-# TODO(2026-10-25): confirm `sso` and `sso-rw` are the login cookies with a
-# sign-in through the Mac app's login pane, and record them in that file.
-[[source]]
-id = "grok"
-display_name = "Grok"
-icon = "ri:robot-line"
-description = "Keep a copy of your Grok chats. Uses your session cookies, read-only."
-auth = { kind = "api_key", fields = ["cookies"] }
-# The login page is grok.com itself, so the handed-over jar is grok.com's.
-login = { url = "https://grok.com/", cookies = ["sso", "sso-rw"], jar_field = "cookies" }
 
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Claude and ChatGPT only: Gemini's
@@ -127,7 +153,45 @@ login = { url = "https://grok.com/", cookies = ["sso", "sso-rw"], jar_field = "c
 # catalog tile + uniform dedup; its action is manual-trigger only (no cron).
 [[source]]
 id = "chat_import"
-display_name = "Chat History"
+display_name = "Past chats"
 icon = "ri:chat-history-line"
-description = "Bring in your past conversations from a Claude or ChatGPT export. A newer export adds only what is new."
+description = "From a Claude or ChatGPT export."
+auth = { kind = "api_key", fields = [] }
+
+# Data downloads, brought in like Past chats: the owner requests the file from
+# the service and uploads it (`server::api::imports`). Spotify can also add
+# recent plays between downloads through an app the owner makes at Spotify
+# (`virtues_helpers::auth::own_app`), which makes a `spotify` credential that
+# `spotify-recent-sync` reads. Declared api_key with
+# no fields for the same reason as Past chats; the app opens the import card
+# for these ids.
+[[source]]
+id = "spotify"
+display_name = "Spotify"
+icon = "ri:music-2-line"
+description = "Everything you've played, from a data download, and what you play next."
+auth = { kind = "api_key", fields = [] }
+
+[[source]]
+id = "amazon"
+display_name = "Amazon"
+icon = "ri:shopping-bag-line"
+description = "Your orders, from an Amazon data download."
+auth = { kind = "api_key", fields = [] }
+
+[[source]]
+id = "discord"
+display_name = "Discord"
+icon = "ri:discord-line"
+description = "The messages you sent, from a Discord data download."
+auth = { kind = "api_key", fields = [] }
+
+# A workspace export, which only the workspace's admins can make. Slack's
+# directory turns away apps that keep a copy of messages, and its API is too
+# slow for one outside the directory, so an export is the way in.
+[[source]]
+id = "slack"
+display_name = "Slack"
+icon = "ri:slack-line"
+description = "The conversations you're in, from a workspace export."
 auth = { kind = "api_key", fields = [] }

@@ -124,7 +124,7 @@
 	}
 
 	/* The serif names the thing, the way the closed card's two doors do — the
-	   two cards sit in one thread and must read as one family. */
+	   two cards sit in one chat and must read as one family. */
 	.label {
 		font-family: var(--font-serif-ui);
 		font-size: 1rem;

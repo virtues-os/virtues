@@ -19,6 +19,7 @@ use crate::crypto::TokenEncryptor;
 use crate::error::{Error, Result};
 
 pub mod jar;
+pub mod lapse;
 
 /// The payload a revoked row keeps: `{}`, sealed under the box key.
 ///

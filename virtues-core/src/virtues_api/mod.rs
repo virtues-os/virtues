@@ -29,6 +29,19 @@ pub fn api_url() -> String {
     std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string())
 }
 
+/// This server's virtues-api key, or `None` when it is not linked to an
+/// account. `VIRTUES_API_KEY` overrides the stored key: it pairs with the
+/// gated dev seed in virtues-api (`ENVIRONMENT=dev`), which registers a device
+/// key keyed by `sha256(VIRTUES_API_KEY)`. Unset on a real server.
+pub async fn box_key(pool: &sqlx::PgPool) -> anyhow::Result<Option<String>> {
+    if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
+        if !key.is_empty() {
+            return Ok(Some(key));
+        }
+    }
+    renew::read_api_key(pool).await
+}
+
 /// The atlas base URL: `VIRTUES_ATLAS_URL`, else the prod default.
 pub fn atlas_url() -> String {
     std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| DEFAULT_ATLAS_URL.to_string())

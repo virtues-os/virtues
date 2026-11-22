@@ -15,7 +15,8 @@ import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
-import { promptText } from '$lib/stores/dialog.svelte';
+import { chooseFrom, promptText } from '$lib/stores/dialog.svelte';
+import { newThreadDialog } from '$lib/stores/newThread.svelte';
 import { toast } from 'svelte-sonner';
 import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
@@ -25,27 +26,12 @@ import { notifyEnded, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
  * Ask for a name, make the project, and open it (in the tab you are on,
  * unless `open` says where). `under` starts it under a thing.
  */
-export async function newProject(
-	open: (route: string, label: string) => void = (route, label) => windowShellStore.openTabFromRoute(route, { label }),
+/** Open the New thread dialog; `open` shows the thread once it is made, `under` starts it under a thing. */
+export function newProject(
+	open?: (route: string, label: string) => void,
 	under?: { thing_id: string },
-): Promise<void> {
-	const name = (
-		await promptText({
-			title: 'New thread',
-			placeholder: 'Name your thread',
-			confirmLabel: 'Create',
-		})
-	)?.trim();
-	if (!name) return;
-	try {
-		const project = await projectStore.create(name, under);
-		open(`/thread/${project.id}`, project.name);
-	} catch (e) {
-		console.error('[projectActions] Failed to create project:', e);
-		toast.error("Your server couldn't create that thread", {
-			description: 'Nothing changed. Try again',
-		});
-	}
+): void {
+	newThreadDialog.open({ under: under?.thing_id ?? null, onOpen: open });
 }
 
 export function openProjects(): void {
@@ -197,7 +183,13 @@ export async function removeFromProject(
  * A chat lives in one project, and the menu says which: a check where it is,
  * "Move to project" as the label, and "Remove from" to take it out. Anything
  * else is filed additively and the menu does not track where.
+ *
+ * The menu lists the threads this already sits in and the most recently
+ * changed others, up to MENU_THREADS. "All threads…" opens every one in a
+ * list you search by typing, so a long list never fills the screen.
  */
+const MENU_THREADS = 6;
+
 export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	if (!target) return [];
 	const projects = projectStore.projects;
@@ -208,13 +200,42 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 		'url' in target ? projectStore.holding(target.url).map((p) => p.id) : [],
 	);
 
-	const submenu: ContextMenuItem[] = projects.map((p) => ({
+	const isIn = (p: Project) => p.id === home?.id || held.has(p.id);
+	const recent = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+	const shown = [...recent.filter(isIn), ...recent.filter((p) => !isIn(p))].slice(
+		0,
+		Math.max(MENU_THREADS, recent.filter(isIn).length),
+	);
+
+	const submenu: ContextMenuItem[] = shown.map((p) => ({
 		id: `project-${p.id}`,
-		label: p.name,
+		label: p.name || untitled('thread'),
 		icon: p.icon || THREAD_ICON,
-		checked: p.id === home?.id || held.has(p.id),
+		checked: isIn(p),
 		action: () => fileIntoProject(p, target),
 	}));
+
+	if (projects.length > shown.length) {
+		submenu.push({
+			id: 'all-threads',
+			label: 'All threads…',
+			icon: 'mynaui:search',
+			action: async () => {
+				const id = await chooseFrom({
+					title: 'All threads',
+					placeholder: 'Find a thread',
+					options: recent.map((p) => ({
+						id: p.id,
+						label: p.name || untitled('thread'),
+						icon: p.icon || THREAD_ICON,
+						checked: isIn(p),
+					})),
+				});
+				const picked = id ? projectStore.byId(id) : undefined;
+				if (picked) await fileIntoProject(picked, target);
+			},
+		});
+	}
 
 	submenu.push({
 		id: 'new-project-with-item',
@@ -371,9 +392,11 @@ export function projectChipMenuItems(
  * next chat to claim, as "Ask this project" does, so its first message files
  * it and grounds retrieval there.
  */
-export function newChatInProject(project: Pick<Project, 'id'>): void {
+export function newChatInProject(project: Pick<Project, 'id'>, opts: { beside?: boolean } = {}): void {
 	pendingPrompt.setProject(project.id);
-	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+	// Beside: in the other pane, so the thread's page stays in view.
+	if (opts.beside) windowShellStore.openRouteBeside('/', 'New chat');
+	else windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 }
 
 /**

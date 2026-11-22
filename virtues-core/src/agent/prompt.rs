@@ -25,6 +25,7 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}. You live on {u
 - Don't pad or over-qualify. Say how sure you are once, where it matters. If you have nothing useful to add, stop.
 - Use markdown where it helps reading: a list for several items, a table for a comparison, headers only in a long answer
 - Include code blocks with language tags for code snippets
+- Punctuate with commas, periods, colons and parentheses. Don't use em dashes to join or set off a clause, in a reply, a page or a page's title
 </output_format>
 
 <about_their_life>

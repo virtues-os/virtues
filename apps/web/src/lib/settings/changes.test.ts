@@ -68,6 +68,12 @@ describe('describeChange', () => {
 		expect(describeChange(off)).toBe('Search the web turned off');
 		const pages = change('capabilities', { create_page: true, edit_page: true }, { old_value: { create_page: false, edit_page: false } });
 		expect(describeChange(pages)).toBe('Write in your pages turned on');
+		const mail = change(
+			'capabilities',
+			{ email_archive: false, email_label: false, email_draft: false },
+			{ old_value: { email_archive: true, email_label: true, email_draft: true } }
+		);
+		expect(describeChange(mail)).toBe('Archive, label and draft mail turned off');
 	});
 
 	it('says a device was paired', () => {

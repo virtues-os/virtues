@@ -20,11 +20,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use tokio::io::AsyncWriteExt;
 
 use super::maps_root;
 
@@ -208,15 +206,6 @@ fn source_base() -> String {
     }
 }
 
-async fn bearer(pool: &PgPool) -> Result<Option<String>> {
-    if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
-        if !key.is_empty() {
-            return Ok(Some(key));
-        }
-    }
-    crate::virtues_api::renew::read_api_key(pool).await
-}
-
 fn build_date(build: &str) -> Option<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(build, "%Y%m%d").ok()
 }
@@ -245,105 +234,17 @@ fn is_current(manifest: &Manifest, dir: &Path, f: &IndexFile, build: &str) -> bo
 }
 
 /// Download one file into `<name>.tmp`, resuming a partial one, check its
-/// sha256, and rename it into place. A rename swaps the inode, so a reader
-/// holding the old file's mmap keeps working until the next reload.
+/// sha256, and rename it into place (crate::downloads).
 async fn download(http: &reqwest::Client, url: &str, bearer: Option<&str>, dir: &Path, f: &IndexFile) -> Result<()> {
+    let expected = crate::downloads::Expected { bytes: f.bytes, sha256: &f.sha256, what: "map" };
     let tmp = dir.join(format!("{}.tmp", f.name));
-    let have = tokio::fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
-    let mut req = http.get(url);
-    if let Some(b) = bearer {
-        req = req.bearer_auth(b);
-    }
-    if have > 0 && have < f.bytes {
-        req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
-    }
-    // No `{e}` of a reqwest error reaches a log with its URL: that URL names a square.
-    let resp = req.send().await.map_err(|e| anyhow::anyhow!("map download request: {}", e.without_url()))?;
-    let status = resp.status();
-    let mut resuming = status == reqwest::StatusCode::PARTIAL_CONTENT;
-    if !status.is_success() {
-        bail!("map download answered {status}");
-    }
-    if resuming {
-        // Append only where we asked to start; anything else starts over.
-        let starts_at_have = resp
-            .headers()
-            .get(reqwest::header::CONTENT_RANGE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.starts_with(&format!("bytes {have}-")));
-        if !starts_at_have {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            bail!("map download resumed at the wrong offset; starting over next pass");
-        }
-    } else {
-        resuming = false;
-    }
-    let mut out = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(resuming)
-        .truncate(!resuming)
-        .open(&tmp)
-        .await?;
-    let mut written = if resuming { have } else { 0 };
-    let mut body = resp.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| anyhow::anyhow!("map download interrupted: {}", e.without_url()))?;
-        written += chunk.len() as u64;
-        if written > f.bytes {
-            // The index says how big the file is; more than that is not it.
-            drop(out);
-            let _ = tokio::fs::remove_file(&tmp).await;
-            bail!("map download ran past its expected size");
-        }
-        out.write_all(&chunk).await?;
-    }
-    out.flush().await?;
-    drop(out);
-
-    let sha = {
-        let path = tmp.clone();
-        tokio::task::spawn_blocking(move || -> Result<String> {
-            let mut h = Sha256::new();
-            let mut file = std::fs::File::open(path)?;
-            std::io::copy(&mut file, &mut h)?;
-            Ok(hex::encode(h.finalize()))
-        })
-        .await??
-    };
-    if sha != f.sha256 {
-        // Start over next time rather than resuming onto bad bytes.
-        let _ = tokio::fs::remove_file(&tmp).await;
-        bail!("map file failed its checksum");
-    }
-    tokio::fs::rename(&tmp, dir.join(&f.name)).await?;
-    Ok(())
+    crate::downloads::verified(http, url, bearer, &tmp, &dir.join(&f.name), &expected, None).await
 }
 
 fn unpack_assets(archive: PathBuf, dir: PathBuf) -> Result<()> {
     let staging = dir.join("assets.new");
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging)?;
-    // Entry by entry, refusing links: the glyph and sprite routes read files
-    // under assets/, and a symlink there would let them read any file.
-    let mut ar = tar::Archive::new(std::fs::File::open(&archive)?);
-    for entry in ar.entries()? {
-        let mut entry = entry?;
-        let kind = entry.header().entry_type();
-        if kind.is_symlink() || kind.is_hard_link() {
-            anyhow::bail!("the assets archive holds a link; refusing it");
-        }
-        entry.unpack_in(&staging)?;
-    }
-    let live = dir.join("assets");
-    let old = dir.join("assets.old");
-    let _ = std::fs::remove_dir_all(&old);
-    if live.exists() {
-        std::fs::rename(&live, &old)?;
-    }
-    std::fs::rename(&staging, &live)?;
-    let _ = std::fs::remove_dir_all(&old);
-    Ok(())
+    crate::downloads::unpack_without_links(&archive, &staging, "assets")?;
+    crate::downloads::swap_in(&staging, &dir.join("assets"), &dir.join("assets.old"))
 }
 
 #[derive(Debug, Default)]
@@ -362,7 +263,7 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
     let base = source_base();
     let self_hosted = std::env::var("VIRTUES_MAPS_SOURCE").is_ok_and(|s| !s.is_empty());
     // The subscription key goes to virtues-api and nowhere else.
-    let key = if self_hosted { None } else { bearer(pool).await? };
+    let key = if self_hosted { None } else { crate::virtues_api::box_key(pool).await? };
     if key.is_none() && !self_hosted {
         tracing::info!("maps: no subscription linked; keeping what is on disk");
         return Ok(SyncReport::default());

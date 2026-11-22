@@ -318,7 +318,7 @@ describe('an article’s nodes and mark', () => {
 		expect(doc.firstChild!.type.name).toBe('figure');
 		expect(doc.firstChild!.attrs).toMatchObject({ kind: 'picture', style: 'watercolor', caption: 'Rain.' });
 		expect(render(doc)).toBe(html);
-		expect(parse('<virtues-figure kind="chart"></virtues-figure>').firstChild?.type.name).not.toBe('figure');
+		expect(parse('<virtues-figure kind="poll"></virtues-figure>').firstChild?.type.name).not.toBe('figure');
 	});
 
 	it('the veil is innermost of the delimiters, and holds no code', () => {

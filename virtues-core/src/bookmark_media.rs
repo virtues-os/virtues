@@ -22,6 +22,8 @@ use crate::error::{Error, Result};
 /// The Drive folder saved-post images land in. A hidden system path, out of the
 /// person's own file tree — these are enrichment inputs, not files they filed.
 const MEDIA_DIR: &str = ".bookmarks/media";
+/// Where the pictures of favorite photos from the iPhone are kept.
+pub const PHOTOS_DIR: &str = ".photos/favorites";
 
 /// Largest image kept. A saved post's display image is well under this; the cap
 /// is here so a URL that turns out to be a video (or a decompression bomb) is
@@ -76,6 +78,17 @@ pub async fn store_image_bytes_in(
     bytes: &[u8],
     declared_mime: &str,
 ) -> Result<StoredImage> {
+    store_image_bytes_at(pool, config, MEDIA_DIR, bytes, declared_mime).await
+}
+
+/// [`store_image_bytes_in`] into a given Drive folder.
+pub async fn store_image_bytes_at(
+    pool: &PgPool,
+    config: &DriveConfig,
+    dir: &str,
+    bytes: &[u8],
+    declared_mime: &str,
+) -> Result<StoredImage> {
     // The bytes are the fact; the sender's label is a hint. A PNG a phone
     // labelled JPEG would otherwise be stored, and shown to the model, as the
     // wrong thing.
@@ -104,7 +117,7 @@ pub async fn store_image_bytes_in(
     let file = drive::upload_system_file(
         pool,
         config,
-        MEDIA_DIR,
+        dir,
         &filename,
         Some(mime.clone()),
         bytes,

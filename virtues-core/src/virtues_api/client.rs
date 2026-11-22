@@ -992,21 +992,11 @@ impl BearerClient {
         Ok(Self::classify_stream(resp).await)
     }
 
-    /// Return the device api_key to authenticate with. No renewal — the key
-    /// is stable; the wallet behind it is credited server-side.
-    ///
-    /// Dev override: when `VIRTUES_API_KEY` is set we present it verbatim and
-    /// skip the vault. Pairs with the gated dev seed in virtues-api
-    /// (`ENVIRONMENT=dev`), which registers a device key keyed by
-    /// `sha256(VIRTUES_API_KEY)` against a funded account. Unset in prod → no
-    /// effect.
+    /// Return the device api_key to authenticate with (`virtues_api::box_key`,
+    /// which honors the dev override). No renewal: the key is stable; the
+    /// wallet behind it is credited server-side.
     async fn ensure_bearer(&self) -> Result<String> {
-        if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
-            if !key.is_empty() {
-                return Ok(key);
-            }
-        }
-        renew::read_api_key(&self.pool)
+        super::box_key(&self.pool)
             .await?
             .ok_or_else(|| anyhow!("no virtues_api key — link a subscription first"))
     }

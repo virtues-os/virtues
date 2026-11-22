@@ -5,16 +5,7 @@
  */
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
-
-/** Where a site's view opens as a tab. */
-export const siteRoute = (appletId: string) => `/applet/${appletId}/view`;
-
-/** Where a site's options open: the same tab, on its other side. */
-export const optionsRoute = (appletId: string) => `/applet/${appletId}?panel=info`;
-
-/** Where a site opens: its view, or the page of what it made when it has none. */
-export const siteHome = (site: { id: string; has_face: boolean }) =>
-	site.has_face ? siteRoute(site.id) : `/applet/${site.id}`;
+import { homeRoute } from './routes';
 
 class SiteBuilds {
 	/** How many times each site's view was rebuilt in this session. A frame
@@ -34,7 +25,7 @@ export const siteBuilds = new SiteBuilds();
  */
 export function openSiteBeside(appletId: string, name?: string) {
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteBeside(siteRoute(appletId), name);
+	windowShellStore.openRouteBeside(homeRoute(appletId, 'site'), name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }
 
@@ -51,6 +42,6 @@ export function showBuiltSite(appletId: string, name?: string) {
 	siteBuilds.rebuilt(appletId);
 	if (mobileLayout.isMobile) return;
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteInSplitOrActive(siteRoute(appletId), name);
+	windowShellStore.openRouteInSplitOrActive(homeRoute(appletId, 'site'), name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }

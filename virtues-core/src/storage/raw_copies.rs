@@ -61,8 +61,12 @@ use crate::{Error, Result};
 /// `message_guid` is the exception that is a reference on purpose: it is the
 /// key of an iMessage attachment's record and of a deletion notice, which are
 /// about that one message and go with it.
+///
+/// `local_id` is the iPhone photo's PhotoKit identifier. The photo record's
+/// `id` is that identifier plus a version (the phone's outbox keeps one row
+/// per `id`), so `local_id` is what matches the photo's tombstone.
 const IDENTITY_KEYS: &[&str] =
-    &["id", "guid", "uuid", "node_id", "transaction_id", "message_guid", "rest_id", "id_str", "pk"];
+    &["id", "guid", "uuid", "node_id", "transaction_id", "message_guid", "rest_id", "id_str", "pk", "local_id"];
 
 /// The shortest value compared by its ending. A two-digit id would match the
 /// end of unrelated ids; every provider id in use is far longer.

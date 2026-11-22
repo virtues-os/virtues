@@ -29,6 +29,10 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_chat_handler),
         )
         .route("/api/chats/title", post(generate_chat_title_handler))
+        .route(
+            "/api/chats/:id/thread-suggestion/decline",
+            post(decline_thread_suggestion_handler),
+        )
         .route("/api/chats/live", get(live_chats_handler))
         // The composer's `/` menu
         .route("/api/skills", get(list_skills_handler))
@@ -225,6 +229,18 @@ pub async fn mark_chat_seen_handler(State(state): State<AppState>, Path(chat_id)
         turn.ended(std::time::Duration::from_secs(3)).await;
     }
     api_response(crate::api::chats::mark_seen(state.db.pool(), &chat_id).await)
+}
+
+/// Say no to the thread suggested for a chat
+pub async fn decline_thread_suggestion_handler(
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+) -> Response {
+    api_response(
+        crate::api::chats::decline_thread_suggestion(state.db.pool(), &chat_id)
+            .await
+            .map(|()| serde_json::json!({ "success": true })),
+    )
 }
 
 /// Generate a title for a chat

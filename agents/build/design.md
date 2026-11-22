@@ -167,35 +167,45 @@ as the fallback.
 
 ### Grays
 
+Every gray in Light is neutral: the grounds (`--background`,
+`--surface-elevated`, `--desk`), the borders and the washes have no hue of
+their own, so the only color on a page is its ink and its accent. The inks
+keep their navy.
+
 Every gray wash mixes one pigment, `--wash-ink`, into whatever is behind it,
-so it reads on any ground. On Light the pigment is the stone of
-`--surface-elevated` taken as dark as that hue goes, so a wash over the white
-sheet is a darker stone and belongs with the sidebar. On Dark it is white.
+so it reads on any ground. On Light the pigment is a neutral near-black, so a
+wash is a plain gray like the grounds and lines. A pigment with a hue tints
+everything it touches: a warm one comes out beige on the white sheet. On Dark
+it is white.
 
 **A tinted block at rest uses `--fill-bg`** (6% on Light, 3% on Dark): a sent
-message, an open card, a chip, a key cap. On the sheet it is the same color
-as `--surface-elevated`. It is a wash, so it also shows on a stone ground,
-where the surface token would vanish. `--surface-elevated` is for a pane's
-own ground.
+message, an open card, a chip, a key cap. It is a wash, so it shows on any
+ground, where the surface token would vanish on a ground of its own gray.
+`--surface-elevated` is for a pane's own ground. On the sheet the two come
+out within a step of each other.
 
 The interaction ramp sits above the fill. Four steps, no others:
 
 | Step | Token | Mix, Light / Dark | Means |
 |---|---|---|---|
 | Rest | | 0% | nothing |
-| Hover | `--hover-bg` | 9% / 5% | the pointer is here |
-| Selected | `--active-bg` | 15% / 9% | where you are |
-| Press | `--press-bg` | 20% / 12% | held down, only while pressed |
+| Hover | `--hover-bg` | 4% / 5% | the pointer is here |
+| Selected | `--active-bg` | 7% / 9% | where you are |
+| Press | `--press-bg` | 10% / 12% | held down, only while pressed |
 
 ```specimen Ramp
 ```
 
+The steps on Light are light on purpose, so a chosen row stays quiet beside
+its text. Hover is lighter than the fill, so a block that rests on `--fill-bg`
+must not change to `--hover-bg` under the pointer: it would get lighter.
+
 **Never use a surface token for an interaction state.** `--surface-elevated`
-is a step of about 4% from the page, which is too small to see. That bug
-shipped twice: dead hovers across 39 rules, and an active tab drawn white on
-white. **Never use an interaction step for a block at rest** either: a block
-filled with `--hover-bg` sits next to one filled with the stone as a second
-gray. The scrollbar's thumb is on the same ramp at 28% on Light and 22% on
+is one fixed color, so on a ground of the same gray it is no step at all,
+where a wash is a step off whatever is behind it. That bug shipped twice:
+dead hovers across 39 rules, and an active tab drawn white on white. **Never
+use an interaction step for a block at rest** either: a block filled with
+`--hover-bg` sits next to one filled with `--fill-bg` as a second gray. The scrollbar's thumb is on the same ramp at 28% on Light and 22% on
 Dark, with no track.
 
 ### Type
@@ -208,7 +218,7 @@ CDN or a system font.
 |---|---|---|---|
 | `--font-serif` | EB Garamond | 400 only | Reading text and titles. |
 | `--font-serif-ui` | EB Garamond UI | 400 only | The serif in a row beside an icon or a control. |
-| `--font-serif-lead` | EB Garamond Lead | 600, Latin only | The first word of a day's Abstract, and nothing else. |
+| `--font-serif-lead` | EB Garamond Lead | 600, Latin only | The first word of a day's Abstract, and bold in a chat reply set in the essay layout. Nothing else. |
 | `--font-sans` | Avenir | 400, 500, 700 | The chrome: labels, buttons, menus, captions. |
 | `--font-mono` | IBM Plex Mono | 400, 500, 600 | Code, and a chart's own labels. |
 | `--font-hand` | Nothing You Could Do | 400 | The owner's notes in a day page's margin, and nothing else. |
@@ -263,7 +273,9 @@ italic asked of `--font-serif`.
 
 `--font-serif-lead` is its own family so that the 600 cut is reached only by
 name. Inside `EB Garamond` it would be handed to every `<strong>` and table
-header that asks the serif for bold.
+header that asks the serif for bold. The essay layout's reply bold names it
+on purpose: a reply's bold lead-ins are how it is scanned, and in the regular
+cut they read as plain text. The owner chose this on 2026-11-21.
 
 #### Two serif tokens for one font
 
@@ -740,9 +752,9 @@ gap is open work.
 | `TextAction` | A button with no box: a quiet link in `--color-primary`. `inline` keeps `font: inherit` mid-sentence. | 33 files. | Kept. |
 | `Input`, `Textarea` | Text fields with label, help and validation. | 34px, 44px on touch; 14px text, 16px on touch. 12 and 3 files, beside about 100 raw fields. | Kept; the raw fields move onto them. |
 | `Switch`, `Select` | A toggle and a choice among named options. | `Select` (`lib/components`) is 34px on the field edge and opens a menu of `MenuItem` rows on `lib/floating`, with keyboard, typeahead and groups; `variant="bare"` sits in a sentence or an underlined form. No native `<select>` is left: it draws the operating system's menu, which ignores the theme. `Switch` lives under `settings/`. | Promote `Switch` to `lib/components`. |
-| Checkbox | A box you tick. | None: `TaskCheck`, `TaskCard` and `ReviewAsk` each build `role=checkbox`, beside about 10 native ones. | Add one. |
-| Segmented control | Two to five exclusive choices in a row. | Six separate builds (ContextViewPanel, DayPage, TimelineScrubber, DisplaySettingsPopover, IconPicker, ThreadsView). | Add one. |
-| Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, `timeline/Pill`, and `.chip` in 13 files. | One Chip. |
+| Checkbox | A box you tick. | None: `TaskCheck` and `TaskCard` each build `role=checkbox`, beside about 10 native ones. | Add one. |
+| Segmented control | Two to five exclusive choices in a row. | Five separate builds (ContextViewPanel, DayPage, DisplaySettingsPopover, IconPicker, ThreadsView). | Add one. |
+| Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, and `.chip` in 13 files. | One Chip. |
 | `MenuItem`, context menu | A row in a menu. | `MenuItem` in 11 files; the context menu positions itself (`contextMenu/fit.ts`). | One menu on `lib/floating`. |
 | `Popover` | Anything anchored to a control. | `lib/floating` in about 24 files; about 15 overlays hand-build their own. | Everything anchored uses it. |
 | `Modal` | A dialog. `DialogHost` draws confirm and prompt on it. | 16 files; SearchModal, MediaLightbox and MobileDrawer build their own. Its close is a hand-made 28px button, and it draws its own shadow and uses raw `--surface` and `--border`. | Close on `IconButton`, `--shadow-float`, `--color-` tokens. |
@@ -925,8 +937,12 @@ Kept for the reasoning. Don't rebuild one without answering why it went.
   ∴.** The ∴ widening into the sidebar's first row, with "Virtues" on the
   labels' line, replaced both.
 - **The home page** (`/home`, 2026-10-06). Home and chat had become one
-  place, and the page was a second front door. Today's streams live on the
-  Timeline, and a day's account is the wiki's day article.
+  place, and the page was a second front door. A day's account is the
+  wiki's day article.
+- **The Timeline page** (`/timeline`, 2026-11-20). A full-pane map of one day
+  with a list beside it, lanes under it and questions about places. It read
+  as too much on one page. Today's route is the Inbox's Map view, and the
+  old address opens it.
 - **A painting in the page's margin, and a full-width painting over a
   room.** A framed painting on one page is decoration, and a cinematic band
   over a column of chat looked like two products stacked.

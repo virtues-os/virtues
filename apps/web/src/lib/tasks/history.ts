@@ -1,6 +1,6 @@
 /**
  * A task's history (`app_task_events`) as the owner reads it: one line per
- * event, signed by who did it. The task list and the task page both show it.
+ * event, signed by who did it, for the activity in the task view.
  */
 import type { TaskEvent } from '$lib/api/client';
 

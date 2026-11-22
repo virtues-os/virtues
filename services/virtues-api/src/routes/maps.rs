@@ -148,11 +148,13 @@ fn storage_unavailable() -> Response {
     err(StatusCode::BAD_GATEWAY, "maps_storage_unavailable", "Could not read the map files. Try again later.")
 }
 
-/// One signed read of `<endpoint>/<bucket>/<key>`. `key` is `latest.json` or
-/// a `<build>/<file>` both parts of which passed `is_build` and
-/// `is_map_file`, so it needs no URI encoding and cannot name anything else.
-/// `Err` is a request that never got an answer.
-async fn bucket_get(
+/// One signed read of `<endpoint>/<bucket>/<key>`. Every caller passes a key
+/// built only from names it has checked (`is_build` and `is_map_file` here,
+/// `routes/backgrounds.rs` for its files), so it needs no URI encoding and
+/// cannot name anything else. Also used by `routes/backgrounds.rs`, which
+/// keeps its files in the same bucket under `backgrounds/`. `Err` is a
+/// request that never got an answer.
+pub(crate) async fn bucket_get(
     http: &reqwest::Client,
     bucket: &MapsBucket,
     key: &str,
@@ -188,7 +190,7 @@ async fn bucket_get(
 }
 
 /// A small object's whole body, or `None` when it does not arrive in time.
-async fn small_body(res: reqwest::Response) -> Option<bytes::Bytes> {
+pub(crate) async fn small_body(res: reqwest::Response) -> Option<bytes::Bytes> {
     tokio::time::timeout(STORAGE_ANSWER_TIMEOUT, res.bytes()).await.ok()?.ok()
 }
 
@@ -244,6 +246,17 @@ async fn bucket_file(
     let Ok(upstream) = bucket_get(http, bucket, &format!("{build}/{name}"), range).await else {
         return storage_unavailable();
     };
+    match forward(upstream, content_type(name)) {
+        Ok(res) => res,
+        Err(StatusCode::NOT_FOUND) => err(StatusCode::NOT_FOUND, "not_found", "No such map file"),
+        Err(_) => storage_unavailable(),
+    }
+}
+
+/// Storage's answer to a file read, passed on to the box: a `200` or `206`
+/// streamed with its length, range and validators, or a `416` as it came.
+/// Any other status is returned for the caller to answer in its own words.
+pub(crate) fn forward(upstream: reqwest::Response, content_type: &'static str) -> Result<Response, StatusCode> {
     let status = upstream.status();
     let mut headers = HeaderMap::new();
     for name in [header::CONTENT_LENGTH, header::CONTENT_RANGE, header::ACCEPT_RANGES, header::ETAG, header::LAST_MODIFIED] {
@@ -253,17 +266,16 @@ async fn bucket_file(
     }
     match status {
         StatusCode::OK | StatusCode::PARTIAL_CONTENT => {
-            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(name)));
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
             // A stream error is stripped of its URL before anything can print it.
             let bytes = upstream.bytes_stream().map_err(reqwest::Error::without_url);
-            (status, headers, Body::from_stream(bytes)).into_response()
+            Ok((status, headers, Body::from_stream(bytes)).into_response())
         }
-        StatusCode::NOT_FOUND => err(StatusCode::NOT_FOUND, "not_found", "No such map file"),
         StatusCode::RANGE_NOT_SATISFIABLE => {
             headers.remove(header::CONTENT_LENGTH);
-            (status, headers).into_response()
+            Ok((status, headers).into_response())
         }
-        _ => storage_unavailable(),
+        other => Err(other),
     }
 }
 

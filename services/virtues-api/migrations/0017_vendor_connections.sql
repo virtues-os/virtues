@@ -1,0 +1,13 @@
+-- Outlook sign-ins join Google's (routes/vendor.rs).
+--
+-- Both are connected through Truto's verified apps until Virtues has its own,
+-- so one table holds every such connection and `provider` says whose it is.
+-- A box calls `/v1/<provider>/c/<id>/...`, and the route looks the Truto id
+-- up by id, provider AND the caller's account, so a Google connection cannot
+-- be reached through the Outlook route or the other way round.
+--
+-- The table keeps its name, and `provider` keeps its default, because an
+-- older image must keep working on this schema after a rollback (db.rs): the
+-- image before this one reads and writes `google_connections` and knows
+-- nothing of `provider`. Rename it once no rollback can reach that image.
+ALTER TABLE google_connections ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';

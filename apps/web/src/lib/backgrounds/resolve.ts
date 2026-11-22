@@ -2,8 +2,8 @@
  * The background setting, resolved to a picture.
  *
  * A setting is one path that can stop at any depth: `plain`, a style
- * (`paintings-muted`), a collection in it (`paintings-muted/forest`), or one
- * picture (`paintings-muted/forest/birch-grove`). The empty setting is the
+ * (`watercolors`), a collection in it (`watercolors/forest`), or one
+ * picture (`watercolors/forest/birch-grove`). The empty setting is the
  * default, the bundled lake. A path that stops above a picture rotates daily
  * through every picture under it, shuffled, with no repeat until each has
  * shown. Light and Dark are versions of a picture, never part of the path.
@@ -24,29 +24,130 @@ export interface Variant {
 	fade: 'top' | 'bottom' | 'none';
 	width: number;
 	height: number;
-	/** Format, then width as a string, then the path under /api/backgrounds/files/<style>/. */
-	files: { avif: Record<string, string>; webp: Record<string, string> };
+	/**
+	 * Format, then width as a string, then the path under
+	 * /api/backgrounds/files/<style>/. Styles are built as AVIF only; a style
+	 * built before that also carries WebP.
+	 */
+	files: Partial<Record<ImageFormat, Record<string, string>>>;
+	/**
+	 * Set on the dark version of a pack that has one version of each
+	 * picture: it is the light one, dimmed as the lake is in Dark
+	 * (`--window-scene-filter`).
+	 */
+	dim?: boolean;
 }
 
-export interface Picture {
+export type ImageFormat = 'avif' | 'webp';
+
+/** A variant's files from narrowest to widest, AVIF before WebP. */
+export function filesOf(v: Variant): { width: number; rel: string }[] {
+	const format = v.files.avif && Object.keys(v.files.avif).length ? 'avif' : 'webp';
+	return Object.entries(v.files[format] ?? {})
+		.map(([w, rel]) => ({ width: Number(w), rel }))
+		.sort((a, b) => a.width - b.width);
+}
+
+/** A picture of an image style: one file set per appearance. */
+export interface ImagePicture {
 	id: string;
 	light: Variant;
 	dark: Variant;
 }
 
-export interface Collection {
+/**
+ * A picture of a style the app draws itself: parameters for its renderer,
+ * which draws them in the current theme (lib/backgrounds/renderers.ts), so
+ * one picture serves Light and Dark. The style's `renderer` says how to read
+ * `params`.
+ */
+export interface DrawnPicture<P = unknown> {
 	id: string;
 	title: string;
-	pictures: Picture[];
+	params: P;
 }
 
-export interface StyleManifest {
+/** The renderers that draw a style themselves, by manifest `renderer`. */
+export type DrawnRenderer = 'dots' | 'ascii';
+
+export interface DotsParams {
+	/** How the field moves: drifting on a slow current, swelling in and out, or falling. */
+	motion: 'drift' | 'swell' | 'rain';
+	/** Space between dots on the grid, in CSS pixels. */
+	gap: number;
+	/** Dot radius, in CSS pixels. */
+	radius: number;
+	/** How far a dot wanders from its place, in CSS pixels. */
+	reach: number;
+	/** Seconds for one slow cycle of the motion. */
+	period: number;
+}
+
+/** The scenes the ASCII renderer draws (lib/backgrounds/ascii.ts). */
+export type AsciiScene = 'sharks' | 'whale' | 'moon';
+
+export interface AsciiParams {
+	scene: AsciiScene;
+	/** Font size of a character, in CSS pixels. */
+	cell: number;
+	/** How fast the scene moves; 1 is its natural pace. */
+	speed: number;
+}
+
+export type Picture = ImagePicture | DrawnPicture;
+
+export function isDrawn(p: Picture): p is DrawnPicture {
+	return 'params' in p;
+}
+
+/** A picture's name in the current appearance. */
+export function pictureTitle(p: Picture, appearance: Appearance): string {
+	return isDrawn(p) ? p.title : p[appearance].title;
+}
+
+export interface Collection<P extends Picture = Picture> {
+	id: string;
+	title: string;
+	pictures: P[];
+}
+
+interface StyleBase {
 	version: 1;
 	style: string;
 	/** The style's name in the pickers. */
 	title: string;
+}
+
+/** A style of pictures, installed on the server (tools/backgrounds/build.py). */
+export interface ImageStyle extends StyleBase {
 	renderer: 'image';
-	collections: Collection[];
+	collections: Collection<ImagePicture>[];
+}
+
+/** A style drawn by the app itself, shipped with it (lib/backgrounds/builtin.ts). */
+export interface DrawnStyle<R extends DrawnRenderer = DrawnRenderer, P = unknown> extends StyleBase {
+	renderer: R;
+	collections: Collection<DrawnPicture<P>>[];
+}
+
+export type DotsStyle = DrawnStyle<'dots', DotsParams>;
+export type AsciiStyle = DrawnStyle<'ascii', AsciiParams>;
+
+export type StyleManifest = ImageStyle | DrawnStyle;
+
+/** A style the server can download (GET /api/backgrounds, `available`). */
+export interface AvailableStyle {
+	style: string;
+	title: string;
+	bytes: number;
+	/** A small picture per appearance, as `data:` URLs. */
+	preview: Partial<Record<Appearance, string>>;
+}
+
+/** A download in progress (GET /api/backgrounds, `installing`). */
+export interface DownloadProgress {
+	received_bytes: number;
+	total_bytes: number;
 }
 
 export interface Address {
@@ -58,14 +159,23 @@ export interface Address {
 export type Setting =
 	| { kind: 'default' }
 	| { kind: 'plain' }
+	| { kind: 'site'; id: string }
 	| { kind: 'path'; style: string; collection?: string; picture?: string };
 
 const SEGMENT = /^[a-z0-9-]{1,64}$/;
+const SITE_ID = /^applet_[a-z0-9_]{1,96}$/;
+
+/** The setting for one of your sites as the background: `site:` and the applet's id. */
+export const siteSetting = (id: string) => `site:${id}`;
 
 /** Read a stored setting. Anything malformed is the default. */
 export function parseSetting(raw: unknown): Setting {
 	if (typeof raw !== 'string' || raw === '') return { kind: 'default' };
 	if (raw === 'plain') return { kind: 'plain' };
+	if (raw.startsWith('site:')) {
+		const id = raw.slice('site:'.length);
+		return SITE_ID.test(id) ? { kind: 'site', id } : { kind: 'default' };
+	}
 	const parts = raw.split('/');
 	if (parts.length > 3 || !parts.every((p) => SEGMENT.test(p))) return { kind: 'default' };
 	const [style, collection, picture] = parts;
@@ -124,55 +234,48 @@ function random(seed: number): () => number {
 	};
 }
 
-/**
- * The picture for a day. Days are grouped into cycles as long as the pool;
- * each cycle walks its own shuffle of the pool, so a picture shows once per
- * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
- * pictures do not walk in step.
- */
-export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
-	const n = items.length;
-	if (n === 0) return undefined;
-	if (n === 1) return items[0];
-	const cycle = Math.floor(day / n);
-	const order = items.map((_, i) => i);
+/** The order a cycle walks the pool in: a shuffle seeded by the setting and the cycle. */
+function cycleOrder(n: number, key: string, cycle: number): number[] {
+	const order = Array.from({ length: n }, (_, i) => i);
 	const next = random(hash(`${key}:${cycle}`));
 	for (let i = n - 1; i > 0; i--) {
 		const j = Math.floor(next() * (i + 1));
 		[order[i], order[j]] = [order[j], order[i]];
 	}
+	return order;
+}
+
+/**
+ * The picture for a day. Days are grouped into cycles as long as the pool;
+ * each cycle walks its own shuffle of the pool, so a picture shows once per
+ * cycle. `key` (the setting) seeds the shuffle, so two settings over the same
+ * pictures do not walk in step. A cycle never opens with the picture the one
+ * before it ended on, so no picture shows two days running.
+ */
+export function pickForDay<T>(items: T[], key: string, day: number): T | undefined {
+	const n = items.length;
+	if (n === 0) return undefined;
+	if (n === 1) return items[0];
+	// Two pictures can only alternate without a repeat.
+	if (n === 2) return items[(((day + hash(key)) % 2) + 2) % 2];
+	const cycle = Math.floor(day / n);
+	const order = cycleOrder(n, key, cycle);
+	if (order[0] === cycleOrder(n, key, cycle - 1)[n - 1]) [order[0], order[1]] = [order[1], order[0]];
 	return items[order[((day % n) + n) % n]];
 }
 
-/** A `srcset` for one format of a variant, widest last. */
-export function srcset(v: Variant, format: 'avif' | 'webp', url: (rel: string) => string): string {
-	return Object.entries(v.files[format])
+/** A `srcset` for one format of a variant, widest last; empty when the style has no files in it. */
+export function srcset(v: Variant, format: ImageFormat, url: (rel: string) => string): string {
+	return Object.entries(v.files[format] ?? {})
 		.map(([w, rel]) => ({ w: Number(w), rel }))
 		.sort((a, b) => a.w - b.w)
 		.map(({ w, rel }) => `${url(rel)} ${w}w`)
 		.join(', ');
 }
 
-/** The widest WebP, for the `<img>` fallback. */
+/** The widest file, AVIF before WebP, for the `<img>` itself. */
 export function widest(v: Variant, url: (rel: string) => string): string {
-	const [, rel] = Object.entries(v.files.webp).sort((a, b) => Number(b[0]) - Number(a[0]))[0];
-	return url(rel);
+	const files = filesOf(v);
+	return url(files[files.length - 1].rel);
 }
 
-/** The narrowest WebP, for a thumbnail. */
-export function narrowest(v: Variant, url: (rel: string) => string): string {
-	const [, rel] = Object.entries(v.files.webp).sort((a, b) => Number(a[0]) - Number(b[0]))[0];
-	return url(rel);
-}
-
-/**
- * The picture before or after `current` in `items`, wrapping at either end.
- * From a picture that is not in `items`, the first or the last.
- */
-export function stepFrom(items: Address[], current: string, dir: 1 | -1): Address | undefined {
-	const n = items.length;
-	if (n === 0) return undefined;
-	const i = items.findIndex((a) => formatAddress(a) === current);
-	if (i < 0) return dir === 1 ? items[0] : items[n - 1];
-	return items[(i + dir + n) % n];
-}

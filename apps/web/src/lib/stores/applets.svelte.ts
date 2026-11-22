@@ -6,9 +6,7 @@
  */
 import { listApplets, type Applet } from '$lib/api/client';
 import { needsYou } from '$lib/applets/days';
-
-/** Made by you, in a chat or by hand, rather than shipped with the server. */
-const isMine = (a: Applet) => a.origin === 'user' || a.origin === 'ai';
+import { inSitesDoor, isYours } from '$lib/applets/kind';
 
 class AppletsStore {
 	list = $state<Applet[]>([]);
@@ -20,9 +18,12 @@ class AppletsStore {
 	 *  source applets stay in Settings > Applets. */
 	mine = $derived(
 		this.list
-			.filter((a) => isMine(a) && !a.archived_at)
+			.filter((a) => isYours(a) && !a.archived_at)
 			.sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name))
 	);
+
+	/** What the Sites door lists: the sites you set up (`inSitesDoor`). */
+	sites = $derived(this.mine.filter(inSitesDoor));
 
 	/** Load, or join the load already in flight. */
 	load(): Promise<void> {

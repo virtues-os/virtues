@@ -89,8 +89,18 @@ pub struct Thread {
     /// False is manual, where only what the owner adds is filed.
     #[serde(default)]
     pub is_adding_automatic: bool,
+    /// You keep it in view: it has its own row in the sidebar. An unlisted
+    /// thread holds a lesser concern and stays out of the sidebar until you
+    /// list it. It has tasks, chats and pages like any other thread.
+    #[serde(default = "listed")]
+    pub is_listed: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// A thread is listed unless something says otherwise.
+fn listed() -> bool {
+    true
 }
 
 /// List-view summary — adds member and chat counts.
@@ -122,6 +132,8 @@ pub struct ThreadSummary {
     pub is_backlog: bool,
     #[serde(default)]
     pub is_adding_automatic: bool,
+    #[serde(default = "listed")]
+    pub is_listed: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -234,6 +246,7 @@ pub struct UpdateThreadRequest {
     pub current_status: Option<Option<String>>,
     pub is_backlog: Option<bool>,
     pub is_adding_automatic: Option<bool>,
+    pub is_listed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,7 +301,8 @@ pub struct ThreadGraph {
 const THREAD_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
      archived_at, outcome, thing_id, \
      (SELECT t.title FROM wiki_things t WHERE t.id = app_threads.thing_id) AS thing_title, \
-     current_status, current_status_at, is_backlog, is_adding_automatic, created_at, updated_at";
+     current_status, current_status_at, is_backlog, is_adding_automatic, is_listed, \
+     created_at, updated_at";
 
 /// List Threads, most-recently-active first, with member and chat counts.
 /// Open ones only unless `include_archived` — the threads page asks for both
@@ -320,7 +334,7 @@ pub async fn list_threads(
             COALESCE((SELECT COUNT(*) FROM app_chats
                       WHERE thread_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
             s.current_status, s.current_status_at,
-            s.is_backlog, s.is_adding_automatic, s.created_at, s.updated_at
+            s.is_backlog, s.is_adding_automatic, s.is_listed, s.created_at, s.updated_at
         FROM app_threads s
         WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
           AND ($2::text IS NULL OR EXISTS (
@@ -480,7 +494,7 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
         "UPDATE app_threads \
          SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
              instructions = $6, thing_id = $7, is_backlog = $8, is_adding_automatic = $9, \
-             current_status = $10, \
+             current_status = $10, is_listed = $11, \
              current_status_at = CASE WHEN current_status IS DISTINCT FROM $10 THEN now() \
                                       ELSE current_status_at END \
          WHERE id = $1 \
@@ -499,6 +513,7 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
         Some(value) => value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
         None => existing.current_status.clone(),
     })
+    .bind(req.is_listed.unwrap_or(existing.is_listed))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update thread: {}", e)))?;
@@ -742,7 +757,8 @@ pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&st
         .await
         .map_err(|e| Error::Database(format!("Failed to start transaction: {}", e)))?;
 
-    sqlx::query(r#"UPDATE app_chats SET thread_id = $2 WHERE id = $1"#)
+    // Filing the chat, or taking it out, answers any open suggestion.
+    sqlx::query(r#"UPDATE app_chats SET thread_id = $2, suggested_thread_id = NULL WHERE id = $1"#)
         .bind(chat_id)
         .bind(thread_id)
         .execute(&mut *tx)
@@ -1164,27 +1180,30 @@ mod tests {
     }
 
     /// Where it stands is the owner's sentence: writing it stamps when, a
-    /// blank clears it, and leaving it out of an edit keeps it. Backlog and
-    /// automatic adding are kept the same way.
+    /// blank clears it, and leaving it out of an edit keeps it. Backlog,
+    /// automatic adding and being unlisted are kept the same way.
     #[sqlx::test(migrations = "./migrations")]
     async fn where_it_stands_and_backlog_are_kept(pool: PgPool) {
         let p = create_thread(&pool, named("Repaint the hallway")).await.unwrap();
-        assert!(p.current_status.is_none() && !p.is_backlog && !p.is_adding_automatic);
+        assert!(p.current_status.is_none() && !p.is_backlog && !p.is_adding_automatic && p.is_listed);
 
         let set = UpdateThreadRequest {
             current_status: Some(Some("  Waiting on the paint samples. ".into())),
             is_backlog: Some(true),
+            is_listed: Some(false),
             ..Default::default()
         };
         let t = update_thread(&pool, &p.id, set).await.unwrap();
         assert_eq!(t.current_status.as_deref(), Some("Waiting on the paint samples."));
-        assert!(t.current_status_at.is_some() && t.is_backlog);
+        assert!(t.current_status_at.is_some() && t.is_backlog && !t.is_listed);
 
         let rename = UpdateThreadRequest { name: Some("Repaint the hall".into()), ..Default::default() };
         let kept = update_thread(&pool, &p.id, rename).await.unwrap();
         assert_eq!(kept.current_status, t.current_status);
         assert_eq!(kept.current_status_at, t.current_status_at);
-        assert!(kept.is_backlog);
+        assert!(kept.is_backlog && !kept.is_listed);
+        let list = list_threads(&pool, false, None).await.unwrap();
+        assert!(list.threads.iter().any(|s| s.id == p.id && !s.is_listed), "an unlisted thread is still returned, marked");
 
         let clear = UpdateThreadRequest { current_status: Some(Some(" ".into())), ..Default::default() };
         assert!(update_thread(&pool, &p.id, clear).await.unwrap().current_status.is_none());

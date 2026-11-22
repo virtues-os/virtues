@@ -122,6 +122,8 @@ pub const FIELDS: &[Field] = &[
     f("capabilities.browser", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may use a web browser"),
     f("capabilities.applets", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may make and change applets"),
     f("capabilities.pages", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may write and edit pages"),
+    f("capabilities.email", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may archive, label and draft the owner's Google mail"),
+    f("capabilities.calendar", "capabilities", Kind::Switch, Store::Capability, "whether the assistant may add and change events in the owner's Google calendar"),
     f("theme", "theme", Kind::Choice(THEMES), Store::App, "the app's theme"),
     f("accent", "accent", Kind::Choice(ACCENTS), Store::App, "the app's accent color"),
     f("glass", "glass", Kind::Choice(GLASS), Store::App, "how much of the painting shows through the sidebar, tabs and buttons"),

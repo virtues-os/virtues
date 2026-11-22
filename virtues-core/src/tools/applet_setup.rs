@@ -194,6 +194,13 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
                 Some("write its styles and scripts in the document and draw charts with inline SVG or canvas"),
             ));
         }
+        if awaits_outside_async(view) {
+            findings.push(finding(
+                "view",
+                "the view's script uses `await` outside an async function, which stops the whole script and leaves the page empty",
+                Some("make it `<script type=\"module\">`, where `await` works at the top"),
+            ));
+        }
         for file in ["virtues.css", "virtues.js"] {
             if view.contains(&format!("\"/{file}\"")) || view.contains(&format!("'/{file}'")) {
                 findings.push(finding(
@@ -327,7 +334,7 @@ fn key_named(problem: &str) -> &'static str {
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
-    _context: &ToolContext,
+    context: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
     let draft = Draft::parse(&arguments)?;
     let checked = plan(pool, &draft).await;
@@ -421,7 +428,20 @@ pub async fn execute(
     if plan.existed {
         let _ = applets::unarchive_applet(pool, &applet_id).await;
     }
-    let enabled = applets::get_applet(pool, &applet_id).await.map(|a| a.enabled).unwrap_or(true);
+    let made = applets::get_applet(pool, &applet_id).await.ok();
+    let enabled = made.as_ref().map(|a| a.enabled).unwrap_or(true);
+    // A prompt that starts on its own is a task the assistant does. It gets
+    // its row in the task list, filed in the thread of the chat that made it.
+    let task_id = match &made {
+        Some(a) => match crate::api::repeating_tasks::ensure(pool, a, context.thread_id.as_deref()).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(applet_id, error = %e, "could not open the task row of a repeating task");
+                None
+            }
+        },
+        None => None,
+    };
 
     // ---- What the card shows -----------------------------------------------
     let has_prompt = crate::applet_templates::key_value(&plan.text, "prompt").is_some();
@@ -452,6 +472,7 @@ pub async fn execute(
         "lifecycle": until.as_deref().map(|u| if u.eq_ignore_ascii_case("once") { "once" } else { "until" }).unwrap_or("forever"),
         "capabilities": capabilities,
         "has_view": has_view,
+        "task_id": task_id,
         "estimated_cost_per_day": est_cost_per_day,
         "run_it_with": chat_started.then(|| format!("/{spec}")),
         "skill_md": plan.text,
@@ -504,6 +525,69 @@ fn other_host(view: &str) -> Option<String> {
         .find(|c: char| c == '"' || c == '\'' || c == ')' || c == '>' || c.is_whitespace())
         .map_or(view.len(), |e| start + e);
     Some(view[start..end].chars().take(80).collect())
+}
+
+/// Whether a view has a plain inline script that awaits with nothing to make
+/// it legal. `await` outside a module and outside an async function is a
+/// syntax error, so the browser runs none of the script and the page stays
+/// empty. Only the certain case counts: a script that is not a module, has
+/// no `src`, uses `await` and has no `async` anywhere in it.
+fn awaits_outside_async(view: &str) -> bool {
+    let lower = view.to_ascii_lowercase();
+    let mut at = 0;
+    while let Some(open) = lower[at..].find("<script") {
+        let tag_start = at + open;
+        let Some(tag_len) = lower[tag_start..].find('>') else {
+            return false;
+        };
+        let tag = &lower[tag_start..tag_start + tag_len];
+        let body_start = tag_start + tag_len + 1;
+        let body_end = lower[body_start..]
+            .find("</script")
+            .map_or(lower.len(), |e| body_start + e);
+        at = body_end;
+        // A module may await at the top, and a script with a `src` or with a
+        // type that is not JavaScript (a JSON data block) has no code here.
+        let other_type = tag.contains("type=") && !tag.contains("javascript");
+        if tag.contains("src=") || other_type {
+            continue;
+        }
+        let code = without_js_comments(&lower[body_start..body_end]);
+        if has_js_word(&code, "await") && !has_js_word(&code, "async") {
+            return true;
+        }
+    }
+    false
+}
+
+/// JavaScript with its comments dropped, so a word in a comment is not read
+/// as code. `//` after a colon is an address in a string and is kept.
+fn without_js_comments(code: &str) -> String {
+    let bytes = code.as_bytes();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+            i = code[i + 2..].find("*/").map_or(bytes.len(), |e| i + 2 + e + 2);
+        } else if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/') && (i == 0 || bytes[i - 1] != b':') {
+            i = code[i..].find('\n').map_or(bytes.len(), |e| i + e);
+        } else {
+            let ch = code[i..].chars().next().expect("i is inside the string");
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Whether `word` appears as a word of its own, not inside a longer name.
+fn has_js_word(code: &str, word: &str) -> bool {
+    let name_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    code.match_indices(word).any(|(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + word.len()..].chars().next();
+        !before.is_some_and(name_char) && !after.is_some_and(name_char)
+    })
 }
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
@@ -788,6 +872,32 @@ mod tests {
         assert_eq!(other_host("<style>@import url(//fonts.example.com/a.css);</style>").as_deref(), Some("//fonts.example.com/a.css"));
         let own = "<link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"virtues.js\"></script><p>See https://example.com in the text.</p>";
         assert_eq!(other_host(own), None);
+    }
+
+    /// A plain script that awaits with no async function never runs, so the
+    /// view stays empty. A module, an async function, a comment and a longer
+    /// word are all left alone.
+    #[test]
+    fn a_view_whose_script_awaits_outside_async_is_found() {
+        let head = "<script src=\"virtues.js\"></script>";
+        let plain = format!("{head}<script>const rows = await virtues.query('select 1');</script>");
+        assert!(awaits_outside_async(&plain));
+        let upper = format!("{head}<SCRIPT>\n  const rows = await virtues.query('select 1');\n</SCRIPT>");
+        assert!(awaits_outside_async(&upper));
+
+        let module = format!("{head}<script type=\"module\">const rows = await virtues.query('select 1');</script>");
+        assert!(!awaits_outside_async(&module));
+        let unquoted = format!("{head}<script type=module>const rows = await virtues.query('select 1');</script>");
+        assert!(!awaits_outside_async(&unquoted));
+        let wrapped = format!("{head}<script>(async () => {{ const rows = await virtues.query('select 1'); }})();</script>");
+        assert!(!awaits_outside_async(&wrapped));
+        let comment = format!("{head}<script>// await the rows later\n/* await */ draw();</script>");
+        assert!(!awaits_outside_async(&comment));
+        let longer = format!("{head}<script>const awaiting = 1; show(awaiting);</script>");
+        assert!(!awaits_outside_async(&longer));
+        let data = format!("{head}<script type=\"application/json\">{{\"note\": \"await this\"}}</script>");
+        assert!(!awaits_outside_async(&data));
+        assert!(!awaits_outside_async("<p>No script at all, and an open <script"));
     }
 
     /// A typo in a table name is the failure the authoring contract calls out

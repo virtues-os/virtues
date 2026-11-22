@@ -24,6 +24,7 @@ mod financekit;
 mod healthkit;
 mod location;
 mod microphone;
+mod photos;
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;
@@ -116,6 +117,16 @@ async fn main() -> Result<()> {
                 format!("bookmarks: {written} written")
             }
         }
+        // The photo library: a row per photo, and a picture for each favorite.
+        "photos" => {
+            // Pictures FIRST, the bookmark arm's order, so the lake never holds
+            // a second copy of one.
+            let recs = records(payload, "photos")?;
+            let recs = photos::externalize_pictures(&db, &storage, recs).await?;
+            let recs = archive(&db, &storage, "photos", payload, &recs).await?;
+            let w = photos::write_photos(&db, &recs).await?;
+            format!("photos: {} written, {} deleted, {} skipped", w.written, w.deleted, w.skipped)
+        }
         "financekit" => {
             let recs = archive(
                 &db,
@@ -133,7 +144,7 @@ async fn main() -> Result<()> {
             return Err(anyhow!(
                 "ios_ingest: unknown stream '{other}' \
                  (expected one of healthkit, location, eventkit, contacts, microphone, \
-                 financekit, bookmark)"
+                 financekit, bookmark, photos)"
             ))
         }
     };

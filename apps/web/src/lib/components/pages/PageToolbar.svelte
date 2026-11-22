@@ -6,6 +6,7 @@
 	import Button from "$lib/components/Button.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
+	import type { Masthead, PageLayout, PagePaper } from "$lib/api/client";
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
 	import type { PageFormat } from "$lib/api/client";
@@ -27,6 +28,9 @@
 		onShare?: () => void;
 		onToggleReferences?: () => void;
 		onDelete: () => void;
+		/** The page's paper, columns and masthead, for the display menu; null before the page has loaded. */
+		layout?: { paper: PagePaper; column_count: 1 | 2; masthead: Masthead | null } | null;
+		onLayout?: (patch: PageLayout) => void;
 		/** Find stands in the toolbar's place (DocumentEditor's dock): the toolbar steps aside. */
 		finding?: boolean;
 		/** The page's headings, offered as Contents in ⋯ when the pane has no gutter for the headings rail. */
@@ -48,6 +52,8 @@
 		onShare,
 		onToggleReferences,
 		onDelete,
+		layout = null,
+		onLayout,
 	}: Props = $props();
 
 	let showDisplaySettings = $state(false);
@@ -97,6 +103,8 @@
 			{/snippet}
 			{#snippet children()}
 				<DisplaySettingsPopover
+					{layout}
+					{onLayout}
 					onViewMarkdown={onViewMarkdown
 						? () => {
 								showDisplaySettings = false;

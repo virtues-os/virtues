@@ -1,9 +1,9 @@
 <script lang="ts">
 	/**
-	 * A task in the Threads door's preview column: its title and notes, its
-	 * home and what else it is about, its due day and where it came from, and
-	 * what can be done with it. "Mark done" is the column's one button; Open
-	 * goes to the task's page.
+	 * A task in the Threads door's preview column, in the thread preview's
+	 * shape: its home's tile and its title, its description, one note if your
+	 * server raised one, then its properties as rows. The home and date rows
+	 * change them in place; Open goes to the task's page.
 	 */
 	import type { Task, TaskPatch } from '$lib/api/client';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
@@ -11,25 +11,37 @@
 	import TaskHome from '$lib/components/tasks/TaskHome.svelte';
 	import TaskActions from '$lib/components/tasks/TaskActions.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import PreviewHead from '$lib/components/threads/PreviewHead.svelte';
+	import PreviewNote from '$lib/components/threads/PreviewNote.svelte';
+	import PreviewRow from '$lib/components/threads/PreviewRow.svelte';
 	import { Button } from '$lib';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
+	import { projectStore } from '$lib/stores/project.svelte';
+	import { notesStore } from '$lib/stores/notes.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { identityOf } from '$lib/refs/identity.svelte';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { isClosed, toggleTaskDone } from '$lib/tasks/actions';
 	import { dueLabel } from '$lib/tasks/due';
 	import { recurLabel, recurrenceOf } from '$lib/tasks/recur';
 	import { homeOf, subjectIcon, subjectName } from '$lib/tasks/homes';
 	import { isRequest } from '$lib/tasks/requests';
 	import { toast } from 'svelte-sonner';
-	import { notesStore } from '$lib/stores/notes.svelte';
-	import NoteBox from '$lib/components/threads/NoteBox.svelte';
 
 	let { task }: { task: Task } = $props();
 
 	let dueOpen = $state(false);
+	const closed = $derived(isClosed(task));
 	const recurs = $derived(recurrenceOf(task));
 	const source = $derived(task.source_url ? identityOf(task.source_url) : null);
 	const home = $derived(homeOf(task));
+	const homeThread = $derived(
+		home?.kind === 'thread' ? [...projectStore.projects, ...projectStore.archived].find((p) => p.id === home.id) : undefined,
+	);
+	const homeColor = $derived(homeThread ? projectColor(homeThread) : null);
+	const note = $derived(notesStore.about(`/task/${task.id}`)[0] ?? null);
+	const also = $derived(task.also_about ?? []);
 
 	async function save(patch: TaskPatch, failure = "Your server couldn't change that") {
 		try {
@@ -38,51 +50,51 @@
 			toast.error(failure, { description: e instanceof Error ? e.message : undefined });
 		}
 	}
+
+	function open() {
+		windowShellStore.openTabFromRoute(`/task/${task.id}`, { label: task.title, focusExisting: true });
+	}
 </script>
 
-<div class="ph">
-	<span class="kind">{isRequest(task) ? 'Request' : 'Task'}</span>
-	{#if !isRequest(task)}
-		<Button variant="secondary" onclick={() => toggleTaskDone(task)}>
-			{isClosed(task) ? 'Mark not done' : 'Mark done'}
-		</Button>
-	{/if}
-</div>
+<PreviewHead color={homeColor} title={task.title} {closed}>
+	{#snippet glyph()}
+		{#if homeThread}
+			<ProjectGlyph project={homeThread} size={18} />
+		{:else}
+			<Icon icon={home ? subjectIcon(home.kind) : 'mynaui:circle'} width="18" />
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		{#if !isRequest(task)}
+			<Button variant="secondary" onclick={() => toggleTaskDone(task)}>{closed ? 'Mark not done' : 'Mark done'}</Button>
+		{/if}
+		<Button variant="ghost" onclick={open}>Open</Button>
+	{/snippet}
+</PreviewHead>
 
-<h2 class="title" class:closed={isClosed(task)}>{task.title}</h2>
 {#if task.notes}
 	<p class="notes">{task.notes}</p>
 {/if}
 
-{#each notesStore.about(`/task/${task.id}`).slice(0, 2) as n (n.key)}
-	<div class="note"><NoteBox note={n} /></div>
-{/each}
+{#if note}
+	<div class="block"><PreviewNote {note} /></div>
+{/if}
 
-<div class="chips">
-	{#if home}
-		<span class="chip"><Icon icon={subjectIcon(home.kind)} width="14" />{subjectName(home)}</span>
-	{:else}
-		<span class="chip quiet"><Icon icon="atlas:projects" width="14" />No home yet</span>
-	{/if}
-	{#each task.also_about ?? [] as link (link.kind + link.id)}
-		<span class="chip"><Icon icon={subjectIcon(link.kind)} width="14" />Also about {subjectName(link)}</span>
-	{/each}
-	<span class="chip"><Icon icon="mynaui:calendar" width="14" />{task.due_on ? `Due ${dueLabel(task.due_on, task.due_at).toLowerCase()}` : 'No date'}</span>
-	{#if recurs}
-		<span class="chip"><Icon icon="mynaui:refresh" width="14" />{recurLabel(recurs.every, recurs.unit)}</span>
-	{/if}
-	{#if source && task.source_url}
-		<button type="button" class="chip link" onclick={() => windowShellStore.openRouteBeside(task.source_url!)}>
-			<Icon icon={source.icon || 'mynaui:link'} width="14" />{source.title}
-		</button>
-	{/if}
-</div>
+<section class="block props" aria-label="Properties">
+	<PreviewRow icon={home ? subjectIcon(home.kind) : 'atlas:projects'} iconColor={homeColor} quiet={!home}>
+		{#if closed}
+			{home ? subjectName(home) : 'No home'}
+		{:else}
+			<TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} plain linked />
+		{/if}
+	</PreviewRow>
 
-{#if !isClosed(task)}
-	<div class="buttons">
+	<div class="due">
 		<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
 			{#snippet trigger({ toggle })}
-				<Button variant="secondary" onclick={toggle}>Change date</Button>
+				<PreviewRow icon="mynaui:calendar" quiet={!task.due_on} onclick={closed ? undefined : toggle}>
+					{task.due_on ? `Due ${dueLabel(task.due_on, task.due_at)}` : 'No date'}
+				</PreviewRow>
 			{/snippet}
 			{#snippet children({ close })}
 				<DuePicker
@@ -95,103 +107,53 @@
 				/>
 			{/snippet}
 		</Popover>
-		<span class="move"><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} label="Move" plain /></span>
+	</div>
+
+	{#if recurs}
+		<PreviewRow icon="mynaui:refresh">{recurLabel(recurs.every, recurs.unit)}</PreviewRow>
+	{/if}
+
+	{#if also.length > 0}
+		{@const names = also.map((l) => subjectName(l)).join(', ')}
+		<PreviewRow icon="mynaui:link" title={`Also about ${names}`}>Also about {names}</PreviewRow>
+	{/if}
+
+	{#if source && task.source_url}
+		{@const url = task.source_url}
+		<PreviewRow icon={source.icon || 'mynaui:file-text'} title={source.title} onclick={() => windowShellStore.openRouteBeside(url)}>
+			{source.title}
+		</PreviewRow>
+	{/if}
+</section>
+
+{#if !closed}
+	<div class="block">
+		<TaskActions {task} />
 	</div>
 {/if}
 
-<div class="actions">
-	<TaskActions {task} />
-</div>
-
 <style>
-	.ph {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		height: 48px;
-		gap: 8px;
-	}
-	.kind {
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	.buttons {
-		display: inline-flex;
-		gap: 8px;
-	}
-	.title {
-		margin: 16px 0 0;
-		font-size: 18px;
-		line-height: 28px;
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-	.title.closed {
-		color: var(--color-foreground-muted);
-		text-decoration: line-through;
-	}
 	.notes {
+		display: -webkit-box;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 		margin: 8px 0 0;
 		font-family: var(--font-serif);
-		font-size: 16px;
+		font-size: var(--text-body);
 		line-height: 24px;
-		color: var(--color-foreground);
+		color: var(--color-foreground-muted);
 		white-space: pre-wrap;
 	}
-	.note {
-		margin-top: 20px;
-	}
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-		margin-top: 16px;
-	}
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		height: 28px;
-		padding: 0 12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: var(--hover-bg);
-		font: inherit;
-		font-size: 12px;
-		color: var(--color-foreground);
-		white-space: nowrap;
-		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		box-sizing: border-box;
-	}
-	.chip :global(svg) {
-		flex: none;
-		color: var(--color-foreground-muted);
-	}
-	.chip.quiet {
-		color: var(--color-foreground-muted);
-	}
-	.chip.link {
-		cursor: pointer;
-		transition: background-color var(--motion-hover-out) var(--ease-premium);
-	}
-	.chip.link:hover {
-		background: var(--active-bg);
-		transition-duration: var(--motion-hover-in);
-	}
-	.buttons {
-		display: flex;
-		align-items: center;
-		gap: 16px;
-		margin-top: 20px;
-	}
-	.actions {
+	.block {
 		margin-top: 24px;
 	}
-	@media (prefers-reduced-motion: reduce) {
-		.chip.link {
-			transition: none;
-		}
+	.props {
+		display: flex;
+		flex-direction: column;
+	}
+	.due :global(.popover-trigger) {
+		display: block;
 	}
 </style>

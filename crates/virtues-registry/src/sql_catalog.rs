@@ -74,6 +74,8 @@ pub const CATEGORY_ORDER: &[(&str, &str)] = &[
     ("wiki_reference", "WIKI REFERENCES"),
     ("wiki", "WIKI NARRATIVE"),
     ("tasks", "TASKS"),
+    ("threads", "THREADS"),
+    ("chats", "CHATS WITH VIRTUES"),
 ];
 
 /// The block the model reads: every queryable table, its columns, and the
@@ -226,11 +228,11 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: Some("direction is metadata->>'is_from_me'; the other person is via wiki_refs role sender/recipient"),
     });
     m.insert("data_communication_transcription", TableMetadata {
-        description: "Voice/audio transcriptions",
+        description: "Transcripts of audio recordings and meetings",
         category: "communication",
-        key_columns: &["text", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
+        key_columns: &["text", "title", "summary", "duration_seconds", "started_at", "ended_at", "speaker_count"],
         join_hint: None,
-        note: None,
+        note: Some("source_table 'meeting' = a whole meeting"),
     });
     // Tables that hold real data and were never described, so the agent could
     // see them only because the old catalog listed everything matching
@@ -342,6 +344,27 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
         note: None,
     });
+    m.insert("data_activity_listening", TableMetadata {
+        description: "Spotify plays",
+        category: "activity",
+        key_columns: &["started_at", "played_ms", "kind", "title", "artist_name", "album_name", "is_skipped"],
+        join_hint: None,
+        note: None,
+    });
+    m.insert("data_financial_purchase", TableMetadata {
+        description: "Amazon order items",
+        category: "financial",
+        key_columns: &["occurred_at", "order_id", "item_name", "quantity", "total_cents", "currency", "status"],
+        join_hint: None,
+        note: None,
+    });
+    m.insert("data_content_photo", TableMetadata {
+        description: "iPhone photos and videos",
+        category: "content",
+        key_columns: &["occurred_at", "kind", "is_favorite", "latitude", "longitude", "asset_id"],
+        join_hint: Some("JOIN app_drive_files f ON f.id = data_content_photo.asset_id"),
+        note: None,
+    });
     m.insert("data_content_bookmark", TableMetadata {
         description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
         category: "content",
@@ -398,6 +421,37 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["task_id", "thread_id", "person_id", "place_id", "org_id", "thing_id"],
         join_hint: None,
         note: None,
+    });
+    // Threads and chats with Virtues. The reader login can see only some of
+    // a chat's columns (`server/faces.rs`), so key_columns stays inside
+    // that grant, and a test checks every key column against it.
+    m.insert("app_threads", TableMetadata {
+        description: "The owner's threads: things happening in their life that they follow. A thread holds tasks, chats, pages and records (app_thread_items). instructions is its brief, the sentence that says what belongs in it; current_status is one sentence the owner wrote on where it stands. An open thread has archived_at NULL and is active, or in the backlog when is_backlog; an ended one has outcome finished or dropped",
+        category: "threads",
+        key_columns: &["name", "instructions", "current_status", "is_backlog", "outcome", "archived_at", "thing_id"],
+        join_hint: Some("its items: app_thread_items WHERE thread_id = app_threads.id; its tasks: app_tasks.thread_id; its chats: app_chats.thread_id"),
+        note: Some("open: archived_at IS NULL AND deleted_at IS NULL"),
+    });
+    m.insert("app_thread_items", TableMetadata {
+        description: "What is filed in a thread, one row per item, addressed by url (/chat/<id>, /page/<id>, /person/<id>, /record/<table>/<id>). role library grounds the thread's chats, manuscript is the owner's own draft, pin is a link only; added_by magnet means the server filed it",
+        category: "threads",
+        key_columns: &["thread_id", "url", "role", "added_by", "added_at"],
+        join_hint: None,
+        note: Some("url names the item, e.g. /page/<id>"),
+    });
+    m.insert("app_chats", TableMetadata {
+        description: "The owner's chats with the Virtues assistant, one row each. Chats in other AI apps are data_content_conversation",
+        category: "chats",
+        key_columns: &["title", "thread_id", "created_at"],
+        join_hint: Some("JOIN app_chat_messages m ON m.chat_id = app_chats.id"),
+        note: Some("filter deleted_at IS NULL"),
+    });
+    m.insert("app_chat_messages", TableMetadata {
+        description: "The messages of a chat with Virtues: who wrote each (role user or assistant) and its text. Tool calls and reasoning are not readable",
+        category: "chats",
+        key_columns: &["chat_id", "role", "content", "sequence_num", "created_at"],
+        join_hint: Some("JOIN app_chats c ON c.id = app_chat_messages.chat_id"),
+        note: Some("order by sequence_num; skip chats whose app_chats.deleted_at is set"),
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
@@ -572,13 +626,14 @@ mod tests {
     }
 
     /// The block sits in every turn. The budget is the size of the prose
-    /// list it replaced plus the columns — if it grows past this, something
-    /// is being rendered that belongs in `get_schema`.
+    /// list it replaced plus the columns, and a line for each table added
+    /// since (photos, listening, purchases, threads, chats) — if it grows
+    /// past this, something is being rendered that belongs in `get_schema`.
     #[test]
     fn prompt_block_stays_within_budget() {
         let block = prompt_block();
         assert!(
-            block.len() < 5_000,
+            block.len() < 6_000,
             "prompt block is {} bytes; descriptions or join hints leaking in?",
             block.len()
         );

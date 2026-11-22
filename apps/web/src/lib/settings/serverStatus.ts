@@ -136,7 +136,7 @@ export function serverLead(input: LeadInput): Lead {
 			sub: one
 				? 'Its last run didn’t finish, or a run is more than an hour late.'
 				: 'Their last runs didn’t finish, or a run is more than an hour late.',
-			action: { label: 'Open Jobs', route: '/virtues/applets' },
+			action: { label: 'Open Server tasks', route: '/virtues/server-tasks' },
 		};
 	}
 

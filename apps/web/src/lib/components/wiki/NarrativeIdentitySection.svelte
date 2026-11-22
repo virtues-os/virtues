@@ -266,8 +266,10 @@
 		cursor: pointer;
 	}
 
+	/* It rests on the stone surface, so its hover is a wash over that stone.
+	   The ramp's own hover is lighter than the surface. */
 	.btn:hover:not(:disabled) {
-		background: var(--hover-bg);
+		background: color-mix(in srgb, var(--wash-ink) 8%, var(--color-surface-elevated));
 	}
 
 	.btn:disabled {

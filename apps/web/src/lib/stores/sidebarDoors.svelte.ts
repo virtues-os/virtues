@@ -1,8 +1,8 @@
 /**
  * The sidebar's doors, as the owner arranged them.
  *
- * The doors are the places every box has (New chat, Threads, Pages,
- * Applets, Wiki, Storage). Tasks have no door: they live in the Threads door. Their arrangement is the owner's: an order and a set of
+ * The doors are the places every box has (Create, Inbox, Pages,
+ * Applets, Wiki, Storage). Tasks and threads have no door of their own: the Inbox door holds them. Their arrangement is the owner's: an order and a set of
  * hidden doors, saved on the profile (`sidebar_doors`, migration 0058) so
  * every device shows the same sidebar. Setup is not a door here: it shows
  * while setup is unfinished and leaves when it is done.
@@ -26,10 +26,12 @@ export interface Door {
 }
 
 export const DOORS: readonly Door[] = [
-	{ id: 'new-chat', label: 'New chat', glyph: 'new-chat' },
-	{ id: 'threads', label: 'Threads', glyph: 'projects' },
+	// Its id predates the menu: saved arrangements name it 'new-chat'.
+	{ id: 'new-chat', label: 'Create', glyph: 'plus' },
+	// Its id predates the Inbox: saved arrangements name it 'threads'.
+	{ id: 'threads', label: 'Inbox', glyph: 'inbox' },
 	{ id: 'pages', label: 'Pages', glyph: 'pages' },
-	{ id: 'applets', label: 'Applets', glyph: 'applets' },
+	{ id: 'applets', label: 'Sites', glyph: 'applets' },
 	{ id: 'wiki', label: 'Wiki', glyph: 'wiki' },
 	{ id: 'storage', label: 'Storage', glyph: 'drive' },
 ];

@@ -10,7 +10,8 @@
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
 import { needsYou } from './days';
-import { describeTriggers, errorHeadline, runFix } from './palette';
+import { inSitesDoor, isYours, kindOf, startsItself } from './kind';
+import { describeTriggers, failureReason, runFix } from './palette';
 
 export interface Trouble {
 	/** `signin`: the run failed because an account's sign-in lapsed. */
@@ -24,8 +25,8 @@ export function troubleOf(a: Applet, now = Date.now()): Trouble | null {
 	if (!needsYou(a, now)) return null;
 	const run = a.last_run;
 	if (run?.status === 'error') {
-		// The run's own reason ("Gmail is disconnected") says more than when.
-		const reason = run.error ? errorHeadline(run.error, 120) : null;
+		// Why it failed says more than when.
+		const reason = run.error ? failureReason(run.error, 120) : null;
 		const when = run.started_at ? ` ${whenInWords(run.started_at, now)}` : '';
 		return { kind: fixOf(a) ? 'signin' : 'failed', text: reason ?? `Its last run didn't finish${when}` };
 	}
@@ -88,29 +89,69 @@ export function appletLine(a: Applet, now = Date.now()): string {
 	return `${when}. Hasn't run yet.`;
 }
 
-export interface AppletGroups {
-	needsYou: Applet[];
-	/** Made by you or by your assistant. */
-	yours: Applet[];
-	/** Shipped with the server. */
-	server: Applet[];
-	/** Came with an account or a device you connected. */
-	connected: Applet[];
-	/** One-time applets that already ran. */
-	finished: Applet[];
+/** The server's tasks that one connected account or device brought with it. */
+export interface AccountTasks {
+	kind: 'credential' | 'device';
+	/** The credential's or the device's id. */
+	id: string;
+	tasks: Applet[];
 }
 
-/** The groups Settings · Applets lists, each sorted by name. An applet that needs you is listed there only. */
-export function groupApplets(applets: Applet[], now = Date.now()): AppletGroups {
+export interface ServerTaskGroups {
+	/** One entry per connected account or device, in the order first met. */
+	accounts: AccountTasks[];
+	/** The server's own tasks that start themselves. */
+	server: Applet[];
+	/** The server's own tasks that nothing starts: they run when asked. */
+	whenAsked: Applet[];
+	/** One-time ones that already ran, yours included. */
+	finished: Applet[];
+	/** Sites of yours that need you. Your tasks that repeat say so in Tasks. */
+	yoursNeedingYou: Applet[];
+}
+
+/**
+ * Whether the Server tasks page lists it: one of the server's own tasks, or
+ * a task of the assistant's that came with the server. Those have no row in
+ * Tasks (the morning examen), so this page is where they show and where you
+ * turn one off. They never show in your own task list.
+ */
+function isServerTask(a: Applet): boolean {
+	const kind = kindOf(a);
+	return kind === 'server_task' || (kind === 'assistant_task' && !isYours(a) && !a.task_id);
+}
+
+/** The server's tasks that still run. */
+export function serverTasks(applets: Applet[]): Applet[] {
+	return applets.filter((a) => !a.archived_at && isServerTask(a));
+}
+
+/**
+ * The groups the Server tasks page lists, each sorted by name. A task that
+ * needs you stays in its group, so the list keeps its order when something
+ * breaks.
+ */
+export function groupServerTasks(applets: Applet[], now = Date.now()): ServerTaskGroups {
 	const byName = (list: Applet[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
-	const living = applets.filter((a) => !a.archived_at);
-	const rest = living.filter((a) => !needsYou(a, now));
+	const accounts: AccountTasks[] = [];
+	const own: Applet[] = [];
+	for (const a of byName(serverTasks(applets))) {
+		const id = a.credential_id ?? a.device_id;
+		if (!id) {
+			own.push(a);
+			continue;
+		}
+		const kind = a.credential_id ? 'credential' : 'device';
+		const group = accounts.find((g) => g.kind === kind && g.id === id);
+		if (group) group.tasks.push(a);
+		else accounts.push({ kind, id, tasks: [a] });
+	}
 	return {
-		needsYou: byName(living.filter((a) => needsYou(a, now))),
-		yours: byName(rest.filter((a) => a.origin === 'user' || a.origin === 'ai')),
-		server: byName(rest.filter((a) => a.origin === 'system')),
-		connected: byName(rest.filter((a) => a.origin === 'source')),
+		accounts,
+		server: own.filter(startsItself),
+		whenAsked: own.filter((a) => !startsItself(a)),
 		finished: byName(applets.filter((a) => a.archived_at)),
+		yoursNeedingYou: byName(applets.filter((a) => inSitesDoor(a) && needsYou(a, now))),
 	};
 }
 
@@ -130,7 +171,7 @@ function clause(a: Applet, trouble: Trouble, now: number): string {
 	}
 }
 
-/** The sentence Settings · Applets opens with, and the one under it. */
+/** The sentence the Jobs page opens with, and the one under it. */
 export function appletsLead(applets: Applet[], now = Date.now()): { sentence: string; sub: string } {
 	const living = applets.filter((a) => !a.archived_at);
 	const needing = living
@@ -146,7 +187,7 @@ export function appletsLead(applets: Applet[], now = Date.now()): { sentence: st
 		if (!last) {
 			return living.length
 				? { sentence: 'Everything is running on schedule.', sub: 'Nothing has run yet.' }
-				: { sentence: 'Nothing runs on your server yet.', sub: 'Its jobs appear here once it has run one.' };
+				: { sentence: 'Nothing runs on your server yet.', sub: 'Its tasks appear here once it has run one.' };
 		}
 		return {
 			sentence: 'Everything is running on schedule.',
@@ -167,5 +208,5 @@ export function appletsLead(applets: Applet[], now = Date.now()): { sentence: st
 		};
 	}
 
-	return { sentence: 'Some of what your server runs needs you.', sub: `Each one under Needs you says what happened.${others}` };
+	return { sentence: 'Some of what your server runs needs you.', sub: `Each one below says what happened.${others}` };
 }

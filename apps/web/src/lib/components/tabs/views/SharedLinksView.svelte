@@ -24,6 +24,7 @@
 	import LoadError from '$lib/components/settings/LoadError.svelte';
 	import { listPublications, revokePublication, type Publication } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { homeRoute } from '$lib/applets/routes';
 
 	let all = $state<Publication[]>([]);
 	let loading = $state(true);
@@ -90,7 +91,7 @@
 				? `/page/${p.producer_id}`
 				: p.producer_kind === 'chat'
 					? `/chat/${p.producer_id}`
-					: `/applet/${p.producer_id}`;
+					: homeRoute(p.producer_id, 'site');
 		windowShellStore.openTabFromRoute(route, { label: p.title });
 	}
 

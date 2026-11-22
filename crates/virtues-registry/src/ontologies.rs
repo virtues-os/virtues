@@ -338,10 +338,13 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
         // A recorded chunk with nothing said is kept as a row with empty text,
         // so only a chunk holding something other than spaces and punctuation
         // is speech. A day of silent chunks is a real zero; a day with no
-        // chunks at all is a day the microphone was not recording.
+        // chunks at all is a day the microphone was not recording. A meeting
+        // from a meeting tool is not this server's audio, and the phone may
+        // have heard the same call, so it is left out.
         LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
             timestamp_column: "started_at", label: "speech heard", unit: "min",
-            agg: "sum(duration_seconds) / 60.0", filter: Some("text ~ '[^[:space:][:punct:]]'"),
+            agg: "sum(duration_seconds) / 60.0",
+            filter: Some("text ~ '[^[:space:][:punct:]]' AND source_table <> 'meeting'"),
             coverage: None, empty_is_zero: false, kind: Total },
         // ── financial ───────────────────────────────────────────────────────
         // Purchases: money that left for someone else. Not a transfer between
@@ -563,6 +566,71 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             continuous_agg: None,
             //                    who  whom what when where why  how
             // Not activation: rain is not the owner doing something.
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "activity_listening",
+            display_name: "Listening",
+            description: "What you played on Spotify, one row per play, from a data download",
+            domain: "activity",
+            // No lane. A lane would plot plays on every day, which reads as a
+            // count, and the owner's history arrives in one import rather than
+            // as a daily rhythm.
+            lane: None,
+            table_name: "data_activity_listening",
+            source_streams: vec!["spotify_import"],
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
+            // Song and show names are not prose worth a search vector; the
+            // assistant reads them with SQL.
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "financial_purchase",
+            display_name: "Purchases",
+            description: "Items you ordered, one row per item, from an Amazon data download",
+            domain: "financial",
+            // No lane: bank transactions already carry spending, and these
+            // are the same purchases seen from the store.
+            lane: None,
+            table_name: "data_financial_purchase",
+            source_streams: vec!["amazon_orders_import"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "content_photo",
+            display_name: "Photos",
+            description: "Photos and videos from the iPhone's library: when, where, what kind, and a picture of each favorite",
+            domain: "content",
+            // No lane. Taking photos is not a rhythm worth plotting beside sleep
+            // and movement, and a lane would show a count of them on every day.
+            lane: None,
+            table_name: "data_content_photo",
+            source_streams: vec!["stream_ios_photos"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // No words to embed: a photo row is a time, a place and a kind.
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Not a day source: a day with many photos is not a busier day.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
             is_activation_signal: false,
         },
         OntologyDescriptor {

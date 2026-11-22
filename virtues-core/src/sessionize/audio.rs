@@ -198,6 +198,7 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
          FROM data_communication_transcription t \
          LEFT JOIN data_audio_recording r ON r.source_stream_id = t.source_stream_id \
          WHERE t.started_at >= $1::timestamptz AND t.started_at < $2::timestamptz \
+           AND t.source_table <> 'meeting' \
          ORDER BY t.started_at",
     )
     .bind(&start_str)

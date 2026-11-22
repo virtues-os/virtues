@@ -44,8 +44,6 @@ const SKIPPED_LABELS: [&str; 3] = ["DRAFT", "SPAM", "TRASH"];
 const FETCHES_AT_ONCE: usize = 4;
 /// How many times one fetch waits out a "too many requests" answer.
 const RATE_LIMIT_TRIES: u32 = 4;
-/// The longest single wait, whatever `Retry-After` says.
-const MAX_RATE_LIMIT_WAIT_SECS: u64 = 15;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -339,7 +337,7 @@ async fn fetch_message(client: reqwest::Client, token: String, url: String, at: 
         }
         tries += 1;
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && tries < RATE_LIMIT_TRIES {
-            tokio::time::sleep(rate_limit_wait(resp.headers().get(reqwest::header::RETRY_AFTER))).await;
+            tokio::time::sleep(virtues_applets::rate_limit_wait(resp.headers().get(reqwest::header::RETRY_AFTER))).await;
             continue;
         }
         let m = resp
@@ -350,18 +348,6 @@ async fn fetch_message(client: reqwest::Client, token: String, url: String, at: 
             .context("gmail get non-JSON")?;
         return Ok((at, Some(m)));
     }
-}
-
-/// How long to wait after "too many requests": what `Retry-After` asks for in
-/// seconds, within [`MAX_RATE_LIMIT_WAIT_SECS`], or two seconds when it says
-/// nothing usable.
-fn rate_limit_wait(retry_after: Option<&reqwest::header::HeaderValue>) -> std::time::Duration {
-    let secs = retry_after
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(2)
-        .clamp(1, MAX_RATE_LIMIT_WAIT_SECS);
-    std::time::Duration::from_secs(secs)
 }
 
 /// What one page of history asks us to do, after folding repeats: a message
@@ -519,16 +505,6 @@ mod tests {
         let got = fetch_messages(&client, "token", &base, &ids).await.unwrap();
         let order: Vec<&str> = got.iter().filter_map(|m| m["id"].as_str()).collect();
         assert_eq!(order, ["a", "b", "c"]);
-    }
-
-    #[test]
-    fn a_rate_limit_wait_follows_retry_after_within_bounds() {
-        let header = |v: &'static str| reqwest::header::HeaderValue::from_static(v);
-        assert_eq!(rate_limit_wait(Some(&header("5"))).as_secs(), 5);
-        assert_eq!(rate_limit_wait(Some(&header("600"))).as_secs(), MAX_RATE_LIMIT_WAIT_SECS);
-        assert_eq!(rate_limit_wait(Some(&header("0"))).as_secs(), 1);
-        assert_eq!(rate_limit_wait(Some(&header("Wed, 21 Oct 2026 07:28:00 GMT"))).as_secs(), 2);
-        assert_eq!(rate_limit_wait(None).as_secs(), 2);
     }
 
     #[test]

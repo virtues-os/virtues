@@ -14,7 +14,9 @@ import myna from '$lib/myna-icons.json';
 // the bundle; scripts/myna-icons.mjs writes the file.
 addCollection(myna);
 
-// Simple Icons
+// Simple Icons used outside the Sources page. The Sources page's brand
+// marks register in lib/sources/brands.ts, so they load with that page and
+// stay out of the first paint (tools/perf/bundle-budget.mjs).
 import siNotion from '@iconify-icons/simple-icons/notion';
 import siUnsplash from '@iconify-icons/simple-icons/unsplash';
 

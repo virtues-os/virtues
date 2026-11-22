@@ -13,7 +13,8 @@
 	import { search } from "$lib/stores/search.svelte";
 	import Background from "$lib/components/Background.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
-	import NewTaskDialog from "$lib/components/tasks/NewTaskDialog.svelte";
+	import { newTaskDialog } from "$lib/stores/newTask.svelte";
+	import { newThreadDialog } from "$lib/stores/newThread.svelte";
 	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -122,6 +123,17 @@
 
 	// Track initialization state
 	let initialized = $state(false);
+
+	// Whether the New task or New thread dialog has opened yet: each loads
+	// on its first open (see the markup below).
+	let taskDialogUsed = $state(false);
+	let threadDialogUsed = $state(false);
+	$effect(() => {
+		if (newTaskDialog.isOpen) taskDialogUsed = true;
+	});
+	$effect(() => {
+		if (newThreadDialog.isOpen) threadDialogUsed = true;
+	});
 
 	// THE APP OPENING (2026-09-23). Armed by Setup's close just before
 	// it hands a new owner into the app; read once, on this first render, so
@@ -428,7 +440,19 @@
 
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
-<NewTaskDialog />
+<!-- The New task and New thread dialogs load the first time one opens, so
+     neither is in the window's first paint. Each stays mounted after that,
+     so it can play its closing animation. -->
+{#if taskDialogUsed}
+	{#await import("$lib/components/tasks/NewTaskDialog.svelte") then { default: NewTaskDialog }}
+		<NewTaskDialog />
+	{/await}
+{/if}
+{#if threadDialogUsed}
+	{#await import("$lib/components/threads/NewThreadDialog.svelte") then { default: NewThreadDialog }}
+		<NewThreadDialog />
+	{/await}
+{/if}
 
 <!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
      is where it used to live: the sidebar doesn't render on the phone shell,
@@ -699,9 +723,19 @@
 		-webkit-mask-image: var(--window-scene-mask);
 		mask-image: var(--window-scene-mask);
 		/* When the window opens the painting settles into place out of a
-		   slight zoom and haze, once. */
+		   slight zoom and haze, once. The fill is backwards only, so once it
+		   settles the opacity below can transition. */
 		transform-origin: 70% 100%;
-		animation: scene-settle 1100ms var(--ease-premium) both;
+		animation: scene-settle 1100ms var(--ease-premium) backwards;
+		/* Behind a page or a chat the painting fades to the strength set in
+		   Settings · Appearance (stores/pageBackground), and comes back in
+		   full when a pane shows home. */
+		opacity: var(--page-scene-opacity, 0.5);
+		transition: opacity 700ms var(--ease-premium);
+	}
+
+	.app-shell:has(:global(.tab-slot[data-active] .page-container.home)) .window-scene {
+		opacity: 1;
 	}
 
 	@keyframes scene-settle {
@@ -714,6 +748,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.window-scene {
 			animation: none;
+			transition: none;
 		}
 	}
 

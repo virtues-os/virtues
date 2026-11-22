@@ -44,7 +44,7 @@ hosted AI stops.
   `connect.html` ("setup never mentions money") and the open-relay decision say
   setup's only questions are network and ownership, and the subscription is
   offered the first time hosted AI is invoked. `agents/archive/setup-plan.md`
-  and the built stepper (`routes/(onboarding)/setup/[[step]]/+page.svelte`,
+  and the built stepper (`routes/(onboarding)/onboarding/[[step]]/+page.svelte`,
   `StepSubscription.svelte`) make Subscription a required step with no skip,
   passable by subscribing, signing in, or bringing your own AI. Either the
   airlock comment and the open-relay record's principle are narrowed to "the
@@ -100,8 +100,7 @@ each checked against `services/virtues-api/src/routes/oauth.rs` on 2026-09-29.
   navigation, so the box cannot put its api_key on it; the session is guarded
   only by the *shape* of its `return_url`. The box should register the session
   server-to-server first, then send the browser. Needs a box release.
-- **Require `X-Virtues-Api-Key` on the proxy.** `caller_api_key` reads it and
-  enforces nothing, because boxes that have not upgraded do not send it. Flip it
-  to required once the logs show the fleet has moved — `/refresh` first (worst
-  exposure, one known caller), then the rest.
+- **Require `X-Virtues-Api-Key` on the proxy.** Every box release since v0.1.1
+  sends it. `/refresh` refuses a missing or unknown key with a 401 (written
+  2026-11-02, not yet deployed). `/exchange` does not check it yet.
 - **Count linked-free accounts.** One query on atlas, not yet run.

@@ -521,11 +521,11 @@ async fn execute_prepared_inner(
             Err(e) => {
                 let msg = e.to_string();
                 tracing::error!(applet_id, error = %msg, "subprocess phase failed");
-                // A Google sign-in made through virtues-api can end where
-                // this box cannot see it. Ask once, on a failure, so the
+                // A sign-in made through virtues-api can end where this
+                // box cannot see it. Ask once, on a failure, so the
                 // credential says so and the owner is asked to reconnect.
                 if let Some(creds) = &credentials {
-                    crate::api::google_api::mark_if_ended(&deps.db, creds).await;
+                    crate::api::vendor_api::mark_if_ended(&deps.db, creds).await;
                 }
                 return fail(&deps, &run_id, &applet_id, msg).await;
             }
@@ -623,6 +623,11 @@ async fn execute_prepared_inner(
                         .await
                         {
                             tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
+                        }
+                        // A task of the assistant's that repeats shows its newest
+                        // result on its row in the task list.
+                        if let Err(e) = crate::api::repeating_tasks::file_result(&deps.db, &action, &run_id, &summary).await {
+                            tracing::error!(applet_id, error = %e, "could not file the run's result on its task");
                         }
                         maybe_archive_on_until(&deps.db, &action).await;
                         return AppletRunResult {
@@ -836,17 +841,13 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
         serde_json::json!({})
     };
 
-    // A Google sign-in made through virtues-api holds no Google token. Its
-    // applets get this box's Virtues key and the address that stands in for
-    // Google's hosts instead (`api::google_api`).
-    let secrets = if source_id == "google" {
-        match crate::api::google_api::applet_secrets(db, &metadata).await {
-            Ok(Some(routed)) => routed,
-            Ok(None) => secrets,
-            Err(e) => return Err(Error::Other(format!("could not route credential {credential_id}: {e}"))),
-        }
-    } else {
-        secrets
+    // A sign-in made through virtues-api holds no vendor token. Its applets
+    // get this box's Virtues key and the address that stands in for the
+    // vendor's hosts instead (`api::vendor_api`).
+    let secrets = match crate::api::vendor_api::applet_secrets(db, &source_id, &metadata).await {
+        Ok(Some(routed)) => routed,
+        Ok(None) => secrets,
+        Err(e) => return Err(Error::Other(format!("could not route credential {credential_id}: {e}"))),
     };
 
     Ok(serde_json::json!({

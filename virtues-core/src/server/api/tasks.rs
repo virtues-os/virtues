@@ -20,6 +20,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/tasks", get(list_tasks_handler).post(create_task_handler))
         .route("/api/tasks/:id", get(get_task_handler).patch(update_task_handler))
+        .route("/api/tasks/:id/seen", post(seen_task_handler))
         .route("/api/tasks/:id/notes", post(add_note_handler))
         .route("/api/tasks/:id/events", get(list_events_handler))
 }
@@ -55,6 +56,12 @@ async fn update_task_handler(
     Json(patch): Json<TaskPatch>,
 ) -> Response {
     api_response(tasks::update_task(state.db.pool(), &id, patch, &Writer::owner()).await)
+}
+
+/// POST /api/tasks/:id/seen — the owner opened the task. A task that repeats
+/// keeps its result and stops waiting; any other task is returned unchanged.
+async fn seen_task_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(tasks::mark_standing_seen(state.db.pool(), &id).await)
 }
 
 #[derive(Debug, Deserialize)]

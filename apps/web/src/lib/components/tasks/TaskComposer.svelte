@@ -95,7 +95,7 @@
 		border: none;
 		padding: 0.125rem 0;
 		font: inherit;
-		font-size: 0.8125rem;
+		font-size: var(--text-small);
 		font-weight: 500;
 		color: var(--color-foreground);
 		cursor: pointer;

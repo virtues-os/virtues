@@ -357,38 +357,39 @@
 	   surface.
 
 	   Every wash is mixed from --wash-ink, the theme's one gray pigment. On
-	   Light it is the stone of --surface-elevated (#F4F3F0) taken as dark as
-	   that hue goes, so a wash over the white sheet comes out as a darker
-	   stone and sits in one family with the sidebar and a sent message. Black
-	   would come out a flat gray beside them. On Dark it is white (set in the
-	   dark-theme block below). It is never the text color: Light's ink is
-	   navy, and navy over cream is a cool gray. Components that need a wash
-	   of their own strength mix it from --wash-ink too.
+	   Light it is a neutral near-black, as dark as the text's ink and with
+	   no hue, so a wash comes out as a plain gray like every ground and line
+	   in Light. A pigment with a hue tints everything it touches: a warm one
+	   comes out beige on the white sheet. On Dark it is white (set in the
+	   dark-theme block below). Components that need a wash of their own
+	   strength mix it from --wash-ink too.
 
 	   --fill-bg is the resting fill, for a tinted block that is not a state:
-	   a sent message, an open card, a chip, a key cap. 6% of the pigment over
-	   #FFFFFF is exactly #F4F3F0, so on the sheet it equals
-	   --surface-elevated. It is a wash, so it also shows on a stone ground,
-	   where --surface-elevated would vanish (a chip inside a sent message, a
-	   chip on the sidebar). --surface-elevated is for a pane's own ground.
+	   a sent message, an open card, a chip, a key cap. It is a wash, so it
+	   shows on any ground, where --surface-elevated would vanish on a ground
+	   of its own gray (a chip inside a sent message, a chip on the sidebar).
+	   --surface-elevated is for a pane's own ground. On the sheet the two
+	   come out within a step of each other.
 
-	   Hover, selected and press are states and are each stronger than the
-	   fill. The pigment is lighter than black, so their strengths are set to
-	   darken the sheet by 7%, 12% and 16%.
+	   Hover, selected and press are states. They are kept light, so a chosen
+	   row stays quiet beside its text: they darken the sheet by about 3%, 6%
+	   and 9%. Hover is lighter than the fill, so a block that rests on
+	   --fill-bg must not change to --hover-bg under the pointer: it would
+	   get lighter.
 
 	   TODO(2026-11-18): migrate the tinted blocks that still use
-	   --color-surface-elevated as a resting fill to --fill-bg. They match on
-	   the sheet today and differ on any other ground. */
-	--wash-ink: #483705;
+	   --color-surface-elevated as a resting fill to --fill-bg. They nearly
+	   match on the sheet and differ on any other ground. */
+	--wash-ink: #202020;
 	--fill-bg: color-mix(in srgb, var(--wash-ink) 6%, transparent);
-	--hover-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
-	--active-bg: color-mix(in srgb, var(--wash-ink) 15%, transparent);
-	--press-bg: color-mix(in srgb, var(--wash-ink) 20%, transparent);
+	--hover-bg: color-mix(in srgb, var(--wash-ink) 4%, transparent);
+	--active-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
+	--press-bg: color-mix(in srgb, var(--wash-ink) 10%, transparent);
 
 	/* The scrollbar's thumb, on the same ramp and for the same reason: a
 	   translucent step off the ground, so it reads in both themes
-	   instead of landing on whichever surface token looked close. 28% is a shade above
-	   --active-bg (15%) — a scrollbar has to be findable against content, not
+	   instead of landing on whichever surface token looked close. 28% is well above
+	   --active-bg (7%) — a scrollbar has to be findable against content, not
 	   just against a ground. The track is always transparent; a painted track
 	   is a chrome object standing on the page permanently, and design.md's
 	   rule is that nothing on the desk may out-shout the page. */
@@ -498,29 +499,29 @@
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Warm paper, a whisper of cream (de-yellowed).
-	   --surface-elevated is what the sidebar sits on, so it is the largest
-	   field of colour in the window. At #F5F4EF it was 23% saturation on a
-	   50° (yellow) hue — fine on a card, too much across a full-height panel,
-	   where it read as a wash rather than as paper. Held at the same lightness
-	   and taken down to ~12%. */
-	--background: #FDFCF9;
+	/* Surface colors: neutral grays with no hue of their own, so every
+	   ground, line and wash in Light is one family of gray and the only
+	   color on a page is its ink and its accent. --surface-elevated is what
+	   the sidebar sits on, so it is the largest field of color in the
+	   window, where any tint reads as a wash over the whole panel. */
+	--background: #FCFCFC;
 	--surface: #FFFFFF;
-	--surface-elevated: #F4F3F0;
-	/* White sheets on a near-white warm gray desk. The step is only about 4%,
+	--surface-elevated: #F3F3F3;
+	/* White sheets on a near-white gray desk. The step is only about 4%,
 	   too little to draw an edge on its own, so a light hairline does. */
-	--desk: #F5F4F2;
+	--desk: #F4F4F4;
 	--surface-overlay: #FFFFFF;
 	/* The page is the same white as the sidebar's card, so the two panes read
-	   as one paper on the warm ground; a card on it lifts by its border. */
+	   as one paper on the gray ground; a card on it lifts by its border. */
 	--page: var(--surface);
 
-	/* Content Colors - Navy-black ink on ivory */
+	/* Content colors: navy-black ink on white. The inks keep their navy;
+	   only what sits under and around them is neutral. */
 	--foreground: #1A2030;
 	--foreground-muted: #3E4459;
 	/* 5:1 on the desk: the 12px group labels need AA at their size. */
 	--foreground-subtle: #626779;
-	--foreground-disabled: #A8A395;
+	--foreground-disabled: #A3A3A3;
 
 	/* The accent (design.md, "Accent"): the one color a page carries, for
 	   what is pressable and what is now, and the fill of the page's one
@@ -549,21 +550,20 @@
 	--info: #1E4E8C;
 	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Greige, genuinely de-yellowed: they were ~42° hue at
-	   19–28% saturation, which is gold, not greige — and a rule is a thin line,
-	   so saturation reads far more strongly on it than across a fill. */
-	--border: #E3E1DD;
-	--border-subtle: #EFEEEB;
-	--border-strong: #D4D1CC;
-	--border-field: #8F8A82; /* 3.4:1 on the page */
+	/* Border colors: neutral grays. A rule is a thin line, so any saturation
+	   reads far more strongly on it than across a fill. */
+	--border: #E1E1E1;
+	--border-subtle: #EEEEEE;
+	--border-strong: #D1D1D1;
+	--border-field: #8A8A8A; /* 3.4:1 on the page */
 	--border-focus: var(--primary);
 
 	/* Selection/Highlight - A yellow highlighter, warmed toward gold. Not the
 	   accent: a marked passage in the accent would read as a link rather
 	   than as something someone marked. Yellow is what a pen does to
 	   paper, and the hue is nobody else's here. Warm (HSL 46°, 85%, 71%) so it
-	   reads as a mark on the ivory page and not as a tint of it: over the page
-	   it lands at #F9ECC3, over a white card at #FAEEC6. */
+	   reads as a mark on the page and not as a tint of it: over the white
+	   page it lands at #FAEEC6. */
 	--highlight: rgba(244, 215, 120, 0.42);
 	--highlight-foreground: #1A2030;
 
@@ -670,8 +670,9 @@
 [data-theme="asgard"] {
 	--illustration-filter: invert(1);
 	/* The interaction ramp's pigment (see :root): light on a dark ground.
-	   The steps are quieter than Light's: white at 7% on near-black reads
-	   as a lit slab, so a hover is 5%, selected 9% and press 12%. The
+	   The steps are kept low, because white at more than about 12% on
+	   near-black reads as a lit slab: a hover is 5%, selected 9% and press
+	   12%. The
 	   resting fill is 3%, which over --surface (#151517) is #1C1C1E, one
 	   step of 255 from --surface-elevated. */
 	--wash-ink: #ffffff;

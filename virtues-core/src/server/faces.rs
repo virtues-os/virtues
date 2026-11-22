@@ -474,12 +474,13 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str, schema: Optio
 /// Idempotent grants for the two applet DB roles. Called at server boot and
 /// after each applet setup's schema apply.
 ///
-/// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
-///   `applet_*` schema (the faces' read-only bridge); on the columns of
+/// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables, every
+///   `applet_*` schema (the faces' read-only bridge), pages, tasks and
+///   threads; on the columns of
 ///   `app_applet_runs` that say when each applet ran, which an applet's
 ///   `run: sql` reads to wait between runs; and on the columns of
 ///   `app_chats` and `app_chat_messages` that say who wrote what, in which
-///   chat and when.
+///   chat and thread and when.
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
@@ -516,9 +517,11 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
             -- app_pages is named explicitly because it is neither data_ nor
             -- wiki_ and the wiki_articles join hint points at it: an article's
             -- prose lives there, so without it the hint the model is given
-            -- cannot be followed either. app_tasks is named for the same
-            -- reason: the task tools send the model to sql_query to read the
-            -- list, and this is the role it reads as.
+            -- cannot be followed either. app_tasks and app_task_links are
+            -- named for the same reason: the task tools send the model to
+            -- sql_query to read the list, and this is the role it reads as.
+            -- app_threads and app_thread_items are the owner's threads and
+            -- what is filed in each, which the SQL catalog describes.
             FOR t IN
                 SELECT n.nspname AS schemaname, c.relname AS tablename
                 FROM pg_class c
@@ -527,7 +530,8 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
                   AND ((n.nspname = 'public'
                         AND (c.relname LIKE 'data\_%'
                              OR c.relname LIKE 'wiki\_%'
-                             OR c.relname IN ('app_pages', 'app_tasks')))
+                             OR c.relname IN ('app_pages', 'app_tasks', 'app_task_links',
+                                             'app_threads', 'app_thread_items')))
                        OR n.nspname LIKE 'applet\_%')
             LOOP
                 EXECUTE format('GRANT SELECT ON %I.%I TO virtues_face_reader',
@@ -572,10 +576,10 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .map_err(|e| crate::error::Error::Database(format!("grant on app_applet_runs failed: {e}")))?;
     // Chats with Virtues, readable as chats with other AI apps already are in
     // `data_content_conversation`, so an applet can read a day of both
-    // (`clarity-review`). Only who wrote what, in which chat and when: tool
-    // calls, their results and reasoning stay the server's.
+    // (`clarity-review`). Only who wrote what, in which chat and thread and
+    // when: tool calls, their results and reasoning stay the server's.
     for grant in [
-        "GRANT SELECT (id, title, created_at, updated_at, deleted_at) ON public.app_chats TO virtues_face_reader",
+        "GRANT SELECT (id, title, thread_id, created_at, updated_at, deleted_at) ON public.app_chats TO virtues_face_reader",
         "GRANT SELECT (id, chat_id, role, content, subject, sequence_num, created_at) \
          ON public.app_chat_messages TO virtues_face_reader",
     ] {
@@ -638,10 +642,10 @@ pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables 
    kept under the name applets already use. */
 :root {
   --color-surface: #ffffff;
-  --color-surface-elevated: #f4f3f0;
+  --color-surface-elevated: #f3f3f3;
   --color-foreground: #1a2030;
   --color-foreground-subtle: #626779;
-  --color-border: #e3e1dd;
+  --color-border: #e1e1e1;
   --color-accent: #1d4572;
   --color-primary: #1d4572;
   --color-success: #2e6b43;

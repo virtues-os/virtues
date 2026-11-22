@@ -5,13 +5,14 @@
 //! the `credential_refresh` cron action (Phase 4).
 
 pub mod error;
+pub mod own_app;
 pub mod proxy;
 pub mod refresh;
 pub mod state;
 pub mod vault;
 
 pub use error::{AuthError, Result};
-pub use proxy::{proxy_exchange, proxy_refresh, proxy_url, ProxyExchangeResponse};
+pub use proxy::{proxy_error_code, proxy_exchange, proxy_refresh, proxy_revoke, proxy_url, ProxyExchangeResponse};
 pub use refresh::{ensure_fresh, RefreshOutcome};
 pub use state::{sign_oauth_state, verify_oauth_state};
 pub use vault::{

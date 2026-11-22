@@ -1083,6 +1083,43 @@ pub fn origin_of(owner: &str, anchored: bool) -> &'static str {
     }
 }
 
+/// What an applet is to the person who meets it, from the parts it has. The
+/// app shows three words (site, task, skill), and a task is either the
+/// assistant's or the server's, so there are four kinds. The rule is read in
+/// order: a view makes it a site; a program makes it one of the server's
+/// tasks; anything else that starts on its own is a task the assistant does;
+/// and what is left is a skill, a prompt someone starts from a chat.
+///
+/// Nothing stores this. A stored kind can disagree with the fields it
+/// summarizes, so every caller asks here.
+pub fn kind_of(has_view: bool, runs_program: bool, starts_itself: bool) -> &'static str {
+    if has_view {
+        "site"
+    } else if runs_program {
+        "server_task"
+    } else if starts_itself {
+        "assistant_task"
+    } else {
+        "skill"
+    }
+}
+
+/// Whether something other than a person starts it: a time, new data, or a
+/// post from outside.
+pub fn starts_itself(schedule: Option<&str>, watches: bool, triggers: &[String]) -> bool {
+    schedule.is_some_and(|s| !s.trim().is_empty()) || watches || triggers.iter().any(|t| t == "webhook")
+}
+
+/// [`kind_of`] for a built applet. Whether it has a view is a file on disk,
+/// which the caller reads.
+pub fn derived_kind(a: &Applet, has_view: bool) -> &'static str {
+    kind_of(
+        has_view,
+        a.command.as_ref().is_some_and(|c| !c.is_empty()),
+        starts_itself(a.schedule.as_deref(), a.watch.is_some(), &a.triggers),
+    )
+}
+
 /// Clear the archived state — used when a user explicitly re-authors a
 /// completed applet (re-arm). Distinct from reconcile, which must NOT
 /// un-archive (that would resurrect completed one-shots on every boot).
@@ -1135,6 +1172,30 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The four kinds, each from the parts that make it, and the order the
+    /// rule reads them in.
+    #[test]
+    fn a_kind_follows_from_the_parts_in_order() {
+        let cron = Some("0 0 7 * * *");
+        let webhook = vec!["webhook".to_string()];
+        let by_hand = vec!["manual".to_string(), "message".to_string()];
+
+        // A prompt nobody starts is a skill; one that starts itself is the assistant's task.
+        assert_eq!(kind_of(false, false, starts_itself(None, false, &by_hand)), "skill");
+        assert_eq!(kind_of(false, false, starts_itself(cron, false, &by_hand)), "assistant_task");
+        assert_eq!(kind_of(false, false, starts_itself(None, true, &by_hand)), "assistant_task");
+        assert_eq!(kind_of(false, false, starts_itself(None, false, &webhook)), "assistant_task");
+        assert!(!starts_itself(Some("  "), false, &by_hand), "an empty schedule starts nothing");
+
+        // A program is the server's task whether or not anything starts it.
+        assert_eq!(kind_of(false, true, true), "server_task");
+        assert_eq!(kind_of(false, true, false), "server_task");
+
+        // A view wins over everything: a site that refreshes is still a site.
+        assert_eq!(kind_of(true, true, true), "site");
+        assert_eq!(kind_of(true, false, false), "site");
+    }
 
     /// A run's requests show per host on the run and its log line.
     #[sqlx::test]

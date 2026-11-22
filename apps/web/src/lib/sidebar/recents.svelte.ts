@@ -20,6 +20,7 @@ import { pinsStore } from '$lib/stores/pins.svelte';
 import { visits } from '$lib/stores/visits.svelte';
 import { isUntitled, untitled } from '$lib/refs/identity.svelte';
 import type { Applet, PageSummary, ProjectSummary } from '$lib/api/client';
+import { homeOf } from '$lib/applets/kind';
 
 export type RecentKind = 'chat' | 'page' | 'thread' | 'applet';
 
@@ -99,7 +100,8 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 	}
 
 	for (const project of projectStore.projects) {
-		if (project.archived_at) continue;
+		// An unlisted thread stays out of the sidebar until you list it.
+		if (project.archived_at || project.is_listed === false) continue;
 		rows.push({
 			kind: 'thread',
 			url: `/thread/${project.id}`,
@@ -114,7 +116,7 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 		if (!ts) continue;
 		rows.push({
 			kind: 'applet',
-			url: `/applet/${applet.id}`,
+			url: homeOf(applet),
 			...named(applet.name, 'applet'),
 			ts,
 			applet,

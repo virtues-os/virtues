@@ -22,7 +22,7 @@
 				{
 					"title": "Connecting your sources",
 					"pages": [
-						{ "slug": "setup/sources", "title": "How sources work", "planned": true },
+						{ "slug": "setup/sources", "title": "How sources work" },
 						{ "slug": "setup/sources/google", "title": "Google", "planned": true },
 						{ "slug": "setup/sources/apple-health", "title": "Apple Health", "planned": true },
 						{ "slug": "setup/sources/finance", "title": "Banks & cards", "planned": true }
@@ -44,7 +44,8 @@
 				{ "slug": "use/asking", "title": "Asking questions", "planned": true },
 				{ "slug": "use/wiki", "title": "People & places", "planned": true },
 				{ "slug": "use/pages-and-projects", "title": "Pages & projects", "planned": true },
-				{ "slug": "use/sites", "title": "Sites", "planned": true }
+				{ "slug": "use/sites", "title": "Sites", "planned": true },
+				{ "slug": "use/backgrounds", "title": "Backgrounds" }
 			]
 		},
 		{

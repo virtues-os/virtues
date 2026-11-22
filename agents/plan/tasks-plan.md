@@ -300,8 +300,9 @@ None of these changes the object; each adds columns or a producer.
   messages arrive as tentative rows and lapse if nothing confirms them. This
   adds a `confidence` column and a `lapses_on` date.
 - **Recurring requests.** "Every Sunday, summarize my week" is an applet
-  today. If owners start making requests for this, a request with a
-  schedule could replace the applet, but not before the two are compared.
+  today. The two were compared on 2026-11-21, and
+  [task-skill-site-plan.md](task-skill-site-plan.md) (slice D) has the
+  result: it shows as one task here, and the applet keeps running it.
 
 ## Open
 

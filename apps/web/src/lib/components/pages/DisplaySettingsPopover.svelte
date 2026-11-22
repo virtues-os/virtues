@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import type { Masthead, PageLayout, PagePaper } from "$lib/api/client";
 	import {
 		pageDisplay,
 		type FontMode,
@@ -10,9 +11,22 @@
 	interface Props {
 		/** Open the page's markdown, read only; absent where the page already shows it. */
 		onViewMarkdown?: () => void;
+		/**
+		 * This page's own layout, kept with the page for everyone who opens
+		 * it: its paper, its columns and its report header. Absent where the
+		 * view has no page.
+		 */
+		layout?: { paper: PagePaper; column_count: 1 | 2; masthead: Masthead | null } | null;
+		onLayout?: (patch: PageLayout) => void;
 	}
 
-	let { onViewMarkdown }: Props = $props();
+	let { onViewMarkdown, layout = null, onLayout }: Props = $props();
+
+	const papers: { value: PagePaper; label: string; title: string }[] = [
+		{ value: "screen", label: "Screen", title: "As wide as the reading column" },
+		{ value: "a4", label: "A4", title: "An A4 sheet, as it prints" },
+		{ value: "letter", label: "Letter", title: "A US Letter sheet, as it prints" },
+	];
 
 	const fontModes: { value: FontMode; label: string }[] = [
 		{ value: "sans", label: "Sans" },
@@ -83,6 +97,52 @@
 			{/each}
 		</div>
 	</div>
+
+	{#if layout && onLayout}
+		{@const l = layout}
+		<div class="divider"></div>
+		<p class="section-label">This page</p>
+		<div class="row">
+			<span class="row-label">Paper</span>
+			<div class="segmented">
+				{#each papers as opt (opt.value)}
+					<button class="seg" class:active={l.paper === opt.value} title={opt.title} onclick={() => onLayout({ paper: opt.value })}>
+						{opt.label}
+					</button>
+				{/each}
+			</div>
+		</div>
+		<div class="row">
+			<span class="row-label">Columns</span>
+			<div class="segmented">
+				{#each [1, 2] as n (n)}
+					<button
+						class="seg"
+						class:active={l.column_count === n}
+						disabled={l.paper === "screen"}
+						title={l.paper === "screen" ? "Two columns are for a page on paper" : n === 2 ? "Printed in two columns" : undefined}
+						onclick={() => onLayout({ column_count: n as 1 | 2 })}
+					>
+						{n === 1 ? "One" : "Two"}
+					</button>
+				{/each}
+			</div>
+		</div>
+		<!-- Off hides the header and keeps it, so on brings back what was in it. -->
+		{@const shown = !!l.masthead && !l.masthead.hidden}
+		<button
+			class="focus-toggle"
+			aria-pressed={shown}
+			onclick={() =>
+				onLayout({
+					masthead: l.masthead ? { ...l.masthead, hidden: shown } : { label: "Report", byline: "Written by you" },
+				})}
+		>
+			<Icon icon="mynaui:file-text" width="16" />
+			<span class="focus-label">Report header</span>
+			<span class="focus-state" class:on={shown}>{shown ? "On" : "Off"}</span>
+		</button>
+	{/if}
 
 	<div class="divider"></div>
 
@@ -173,6 +233,17 @@
 		color: var(--color-foreground);
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
+	}
+
+	.section-label {
+		margin: 0;
+		font-size: var(--text-caption);
+		color: var(--color-foreground-muted);
+	}
+
+	.seg:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
 
 	.divider {

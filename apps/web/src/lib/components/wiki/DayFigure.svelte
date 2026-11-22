@@ -7,7 +7,7 @@
 	- route: where the phone was (lib/wiki/dayRoute.ts), one map of the day's
 	  city when it has anything to frame, and a second of the long move when
 	  the day crossed one.
-	- thread: messages from one thread set as dialogue.
+	- thread: messages from one conversation set as dialogue.
 	- picture: a painting of a place the page names (api/day_picture.rs), with
 	  its caption. The caption veils the place as the page does.
 

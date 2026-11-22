@@ -31,7 +31,7 @@ Every change below is checked against the five personas in
   group, a corner control at top right, the icon rail, and white sheets on the
   desk.
 - **Color:** the Oxford theme tokens as they are in `themes.css`. Desk
-  `#F5F4F2`, sheet `#FFFFFF`, hairline `--border` `#E3E1DD`, ink
+  `#F4F4F4`, sheet `#FFFFFF`, hairline `--border` `#E1E1E1`, ink
   `--foreground`, navy `--primary` for actions and citation tags, claret
   `--secondary` used once per screen, and `--highlight` (the yellow
   highlighter) for a cited passage.

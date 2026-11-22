@@ -51,6 +51,33 @@ pub struct ColumnInfo {
     pub is_nullable: bool,
 }
 
+/// The columns of a public relation that the reader login may SELECT, in
+/// table order. `query` runs as that login, while `get_schema` and the
+/// failure explainer run on the server's own pool, so without the filter they
+/// would name columns a query then cannot read, such as a chat message's tool
+/// calls.
+async fn readable_columns(pool: &sqlx::PgPool, table: &str) -> Result<Vec<ColumnInfo>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT column_name AS name, data_type AS \"type\", is_nullable AS nullable \
+         FROM information_schema.columns \
+         WHERE table_schema = 'public' AND table_name = $1 \
+           AND has_column_privilege($2, format('public.%I', table_name), column_name, 'SELECT') \
+         ORDER BY ordinal_position",
+    )
+    .bind(table)
+    .bind(crate::database::restricted::Login::Reader.role())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| ColumnInfo {
+            name: row.get("name"),
+            data_type: row.get("type"),
+            is_nullable: row.get::<String, _>("nullable") == "YES",
+        })
+        .collect())
+}
+
 /// SQL Query tool
 #[derive(Clone)]
 pub struct SqlQueryTool {
@@ -122,7 +149,7 @@ impl SqlQueryTool {
 
     /// List all queryable tables (data_*, wiki_*)
     async fn list_tables(&self) -> Result<ToolResult, ToolError> {
-        // Get all queryable tables: data_*, wiki_*
+        // Every public relation; the catalog below decides which are shown.
         let rows = sqlx::query(
             r#"
             SELECT name FROM (
@@ -134,9 +161,6 @@ impl SqlQueryTool {
                 SELECT viewname AS name FROM pg_views
                 WHERE schemaname = 'public'
             ) rels
-            -- app_pages is where an article's text lives; the catalog sends
-            -- the model there, so it is listable like the wiki_ relations.
-            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%' OR name = 'app_pages'
             ORDER BY
                 CASE
                     WHEN name LIKE 'data_%' THEN 1
@@ -237,46 +261,26 @@ impl SqlQueryTool {
                 )));
             }
 
-            // Postgres catalog equivalent of PRAGMA table_info — pull from
-            // information_schema. Bound parameter for the table name.
-            let rows = sqlx::query(
-                "SELECT column_name AS name, data_type AS \"type\", \
-                 is_nullable AS nullable \
-                 FROM information_schema.columns \
-                 WHERE table_schema = 'public' AND table_name = $1 \
-                 ORDER BY ordinal_position",
-            )
-            .bind(table)
-            .fetch_all(self.pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get table info: {}", e)))?;
+            let columns = readable_columns(self.pool.as_ref(), table)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get table info: {}", e)))?;
 
-            if rows.is_empty() {
+            if columns.is_empty() {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Table '{}' not found",
                     table
                 )));
             }
 
-            let columns: Vec<ColumnInfo> = rows
-                .iter()
-                .map(|row| {
-                    let nullable: String = row.get("nullable");
-                    ColumnInfo {
-                        name: row.get("name"),
-                        data_type: row.get("type"),
-                        is_nullable: nullable == "YES",
-                    }
-                })
-                .collect();
-
-            // Get row count
+            // A failed count is null, never a plausible zero, as in list_tables.
             let count_query = format!("SELECT COUNT(*) as cnt FROM \"{}\"", table);
-            let count_row = sqlx::query(&count_query)
-                .fetch_one(self.pool.as_ref())
-                .await
-                .ok();
-            let row_count: i64 = count_row.map(|r| r.get("cnt")).unwrap_or(0);
+            let row_count: Option<i64> = match sqlx::query(&count_query).fetch_one(self.pool.as_ref()).await {
+                Ok(r) => Some(r.get::<i64, _>("cnt")),
+                Err(e) => {
+                    tracing::warn!(table = %table, error = %e, "get_schema count failed");
+                    None
+                }
+            };
 
             // Get metadata if available
             let table_meta = metadata.get(table.as_str());
@@ -366,10 +370,12 @@ impl SqlQueryTool {
             return out;
         }
 
-        // 42703 undefined_column, 42P01 undefined_table, 42702 ambiguous_column.
-        // For anything else (a type error, a bad cast) the columns are not the
-        // thing in question and listing them is noise.
-        if !matches!(code.as_str(), "42703" | "42P01" | "42702") {
+        // 42703 undefined_column, 42P01 undefined_table, 42702 ambiguous_column,
+        // 42501 insufficient_privilege (a column the reader login cannot read,
+        // such as a chat message's tool calls). For anything else (a type
+        // error, a bad cast) the columns are not the thing in question and
+        // listing them is noise.
+        if !matches!(code.as_str(), "42703" | "42P01" | "42702" | "42501") {
             return out;
         }
 
@@ -392,24 +398,17 @@ impl SqlQueryTool {
         }
 
         for table in tables {
-            let cols: Vec<String> = sqlx::query_scalar(
-                "SELECT column_name FROM information_schema.columns \
-                 WHERE table_schema = 'public' AND table_name = $1 \
-                 ORDER BY ordinal_position",
-            )
-            .bind(table)
-            .fetch_all(self.pool.as_ref())
-            .await
             // absent-ok: this is `explain_failure` — it runs only after a query
             // has ALREADY failed, and it returns a String, not a Result. If the
             // catalog lookup fails too, the honest outcome is the best
             // explanation we can still build, not a failure inside the
             // failure-explainer.
-            .unwrap_or_default();
+            let cols = readable_columns(self.pool.as_ref(), table).await.unwrap_or_default();
             if cols.is_empty() {
                 continue;
             }
-            out.push_str(&format!("\n{table} has: {}", cols.join(", ")));
+            let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+            out.push_str(&format!("\n{table} has: {}", names.join(", ")));
         }
         out.push_str("\nRewrite the query using these column names.");
         out
@@ -1078,6 +1077,58 @@ mod tests {
             "the catalog names columns the schema does not have, so the model is \
              being taught to write them:\n  {}",
             missing.join("\n  ")
+        );
+    }
+
+    /// `get_schema` and the failure explainer must not name a column the
+    /// reader login cannot read, or the model writes a query that is refused.
+    #[sqlx::test]
+    async fn readable_columns_leave_out_what_the_reader_cannot_read(pool: sqlx::PgPool) {
+        crate::server::faces::ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        let names: Vec<String> = readable_columns(&pool, "app_chat_messages")
+            .await
+            .expect("column lookup")
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(names.iter().any(|n| n == "content"), "{names:?}");
+        for hidden in ["tool_calls", "reasoning", "parts"] {
+            assert!(!names.iter().any(|n| n == hidden), "{hidden} is listed: {names:?}");
+        }
+    }
+
+    /// `query` runs as the reader login, so a cataloged table or key column
+    /// that login cannot SELECT is one the model is shown and then refused.
+    /// `app_task_links` was cataloged without a grant this way. The grants
+    /// are the ones the server makes at boot.
+    #[sqlx::test]
+    async fn the_reader_login_can_read_every_cataloged_key_column(pool: sqlx::PgPool) {
+        crate::server::faces::ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        let reader = crate::database::restricted::Login::Reader.role();
+        let mut refused: Vec<String> = Vec::new();
+        for (table, meta) in get_table_metadata() {
+            for col in meta.key_columns {
+                let check = sqlx::query_scalar::<_, bool>("SELECT has_column_privilege($1, $2, $3, 'SELECT')")
+                    .bind(reader)
+                    .bind(format!("public.{table}"))
+                    .bind(*col)
+                    .fetch_one(&pool)
+                    .await;
+                let allowed = match check {
+                    Ok(allowed) => allowed,
+                    Err(e) => panic!("privilege check on {table}.{col} failed: {e}"),
+                };
+                if !allowed {
+                    refused.push(format!("{table}.{col}"));
+                }
+            }
+        }
+        refused.sort();
+        assert!(
+            refused.is_empty(),
+            "the catalog shows the model columns the reader login cannot read; \
+             grant them in server/faces.rs or drop them from the catalog:\n  {}",
+            refused.join("\n  ")
         );
     }
 

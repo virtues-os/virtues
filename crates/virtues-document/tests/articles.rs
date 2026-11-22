@@ -260,7 +260,7 @@ fn a_figure_with_an_unknown_key_stays_its_fence() {
     for (body, why) in [
         ("```figure\nkind: quote\ncolor: red\n```", "a figure has no `color`"),
         ("```figure\nkind: quote\nkind: route\n```", "it gives `kind` twice"),
-        ("```figure\nkind: chart\n```", "`kind` is one of"),
+        ("```figure\nkind: poll\n```", "`kind` is one of"),
         ("```figure\nkind: picture\nsrc: javascript:alert(1)\n```", "cannot use `javascript:`"),
         ("```figure\ntext: no kind\n```", "it gives no `kind`"),
         ("```figure\nkind: quote\njust words\n```", "is not `key: value`"),

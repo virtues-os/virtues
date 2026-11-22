@@ -56,7 +56,7 @@
 	<p class="sec-hint">
 		For tasks you assign to {assistantName} to work on in the background. A task that reaches its
 		limit stops and shows you what it has so far. When the last 24 hours reach the day's limit,
-		tasks wait until spending drops below it. Chats and sites have no limit, and neither does
+		tasks wait until spending drops below it. Chats have no limit, a site or a task that repeats has its own, and no limit applies to
 		anything that runs on your own AI provider.
 	</p>
 	<div class="limit">

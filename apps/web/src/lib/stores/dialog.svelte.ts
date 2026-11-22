@@ -9,6 +9,7 @@
  * Usage (anywhere, including plain .ts):
  *     if (!(await confirmAction({ title: 'Delete page?', danger: true }))) return;
  *     const name = await promptText({ title: 'Project name' });
+ *     const id = await chooseFrom({ title: 'All threads', options });
  *
  * A single <DialogHost /> in the app layout renders whatever is pending.
  */
@@ -32,6 +33,23 @@ export interface PromptOptions {
 	cancelLabel?: string;
 }
 
+export interface ChoiceOption {
+	id: string;
+	label: string;
+	icon?: string;
+	/** Where the thing already is: shown with a check. */
+	checked?: boolean;
+}
+
+export interface ChooseOptions {
+	title: string;
+	body?: string;
+	/** The search field's placeholder. */
+	placeholder?: string;
+	options: ChoiceOption[];
+	cancelLabel?: string;
+}
+
 type PendingConfirm = ConfirmOptions & {
 	kind: 'confirm';
 	resolve: (ok: boolean) => void;
@@ -41,8 +59,13 @@ type PendingPrompt = PromptOptions & {
 	resolve: (value: string | null) => void;
 };
 
+type PendingChoose = ChooseOptions & {
+	kind: 'choose';
+	resolve: (id: string | null) => void;
+};
+
 export class DialogStore {
-	pending = $state<PendingConfirm | PendingPrompt | null>(null);
+	pending = $state<PendingConfirm | PendingPrompt | PendingChoose | null>(null);
 
 	/** Ask for confirmation. Resolves true only on an explicit confirm. */
 	confirm(options: ConfirmOptions): Promise<boolean> {
@@ -62,12 +85,21 @@ export class DialogStore {
 		});
 	}
 
-	/** Confirm the open dialog with `value` (text dialogs) or true. */
+	/** Pick one from a list you can search by typing. Resolves its id, or null on cancel. */
+	choose(options: ChooseOptions): Promise<string | null> {
+		this.settle();
+		return new Promise((resolve) => {
+			this.pending = { kind: 'choose', ...options, resolve };
+		});
+	}
+
+	/** Confirm the open dialog with `value` (text dialogs, the chosen id) or true. */
 	accept(value?: string): void {
 		const p = this.pending;
 		if (!p) return;
 		this.pending = null;
 		if (p.kind === 'confirm') p.resolve(true);
+		else if (p.kind === 'choose') p.resolve(value ?? null);
 		else p.resolve(value?.trim() ? value.trim() : null);
 	}
 
@@ -94,3 +126,7 @@ export const confirmAction = (options: ConfirmOptions): Promise<boolean> =>
 /** Shorthand: `const name = await promptText({ title: '…' });` */
 export const promptText = (options: PromptOptions): Promise<string | null> =>
 	dialogStore.prompt(options);
+
+/** Shorthand: `const id = await chooseFrom({ title: '…', options });` */
+export const chooseFrom = (options: ChooseOptions): Promise<string | null> =>
+	dialogStore.choose(options);

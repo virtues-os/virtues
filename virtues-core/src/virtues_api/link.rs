@@ -293,12 +293,10 @@ pub async fn poll(
 #[serde(rename_all = "snake_case")]
 pub enum LoginStart {
     /// Magic link was emailed; the box should keep polling /init/poll
-    /// (same loop as Stripe Checkout flow — the device_link flips to
-    /// `ready` once the user clicks the link).
+    /// (the device_link flips to `ready` once the owner opens the link and
+    /// chooses Attach box). Any address gets one: a new address creates its
+    /// account when the link is used.
     Sent,
-    /// No Virtues subscription found for this email. Box should surface
-    /// "no account — subscribe?" CTA to the user.
-    NoAccount,
     /// Too many recent attempts from this email — wait an hour.
     RateLimited,
 }
@@ -348,7 +346,6 @@ pub async fn login(
 
     match v["status"].as_str().unwrap_or("") {
         "sent" => Ok(LoginStart::Sent),
-        "no_account" => Ok(LoginStart::NoAccount),
         other => Err(anyhow!("unexpected login status: {other}")),
     }
 }

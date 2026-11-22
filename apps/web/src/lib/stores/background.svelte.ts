@@ -9,26 +9,34 @@
  *
  * Under a rotating setting the home control's arrows choose another picture
  * for the rest of the day (`ui_preferences.background_today`), and rotation
- * resumes the next day. Under one picture they change the setting to its
- * neighbor in the collection.
+ * resumes the next day. What the arrows do is in lib/backgrounds/browse.ts,
+ * which loads with the home control rather than at launch.
+ *
+ * A site of yours can be the background too (`site:<applet id>`). Home draws
+ * it behind a new chat and it takes clicks (ChatView); the window's painting
+ * shows nothing under it.
  */
 
 import { backendUrl } from '$lib/config/backend';
-import { getAssistantProfile, request, updateUiPreferences } from '$lib/api/client';
+import { getAssistantProfile, listApplets, request, updateUiPreferences } from '$lib/api/client';
+import { isYours, kindOf } from '$lib/applets/kind';
 import { getTheme, isThemeDark } from '$lib/utils/theme';
+import { BUILTIN_STYLES, isBuiltin } from '$lib/backgrounds/builtin';
 import {
 	dayNumber,
 	find,
 	formatAddress,
-	narrowest,
+	isDrawn,
 	parseSetting,
 	pickForDay,
 	pool,
 	srcset,
-	stepFrom,
 	widest,
 	type Address,
 	type Appearance,
+	type AvailableStyle,
+	type DrawnRenderer,
+	type DownloadProgress,
 	type Picture,
 	type StyleManifest,
 } from '$lib/backgrounds/resolve';
@@ -36,11 +44,25 @@ import {
 const SETTING_KEY = 'virtues-background';
 const PICTURE_KEY = 'virtues-background-picture';
 
-/** What to draw. `lake` is the bundled default; `none` draws nothing. */
+/**
+ * What to draw. `lake` is the bundled default; `none` draws nothing; a
+ * `picture` is files from an image style, `dim` when it stands in for a dark
+ * version it does not have; `drawn` is drawn by its renderer
+ * (lib/backgrounds/renderers.ts); `site` is one of your sites, which home
+ * draws itself.
+ */
 export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
-	| { kind: 'picture'; key: string; avif: string; webp: string; src: string; title: string };
+	| { kind: 'picture'; key: string; avif: string; src: string; title: string; dim: boolean }
+	| { kind: 'drawn'; key: string; renderer: DrawnRenderer; params: unknown }
+	| { kind: 'site'; key: string; appletId: string };
+
+/** A site that can be the background: its applet id and its name. */
+export interface BackgroundSite {
+	id: string;
+	name: string;
+}
 
 /** Another picture for one day of a rotating setting. */
 interface DayChoice {
@@ -61,7 +83,8 @@ interface CachedPicture {
 	picture: Picture;
 }
 
-function fileUrl(style: string) {
+/** The URL of a style's file, from its path in the manifest. */
+export function fileUrl(style: string) {
 	return (rel: string) => backendUrl(`/api/backgrounds/files/${style}/${rel}`);
 }
 
@@ -102,14 +125,27 @@ class BackgroundStore {
 	appearance = $state<Appearance>(appearance());
 	day = $state(dayNumber(new Date()));
 	dayChoice = $state<DayChoice | null>(null);
+	/** Styles the server can download, downloads in progress, and failed ones. */
+	available = $state<AvailableStyle[]>([]);
+	installing = $state<Record<string, DownloadProgress>>({});
+	failed = $state<Record<string, string>>({});
+	/** Whether the server was fetching its catalog at the last listing. */
+	catalogPending = $state(false);
+	/** Whether the last attempt to load the styles failed, before any loaded. */
+	stylesUnavailable = $state(false);
+	/** Your sites, then the ones that came with the server, once a picker asks. */
+	sites = $state<BackgroundSite[] | null>(null);
 	#cached = typeof window === 'undefined' ? null : readCachedPicture();
 	#started = false;
+	/** Set once the person changes the setting here, so a late profile does not undo it. */
+	#changedHere = false;
+	#midnight: ReturnType<typeof setTimeout> | null = null;
 
 	/** Today's picture for the setting, or null when the setting has none. */
 	readonly today = $derived.by((): { address: string; picture: Picture } | null => {
 		const setting = parseSetting(this.setting);
 		if (setting.kind !== 'path') return null;
-		if (this.styles === null) {
+		if (this.styles === null && !isBuiltin(setting.style)) {
 			// Not loaded yet: the picture cached for this setting today, if any.
 			const c = this.#cached;
 			return c && c.setting === this.setting && c.day === this.day ? { address: c.address, picture: c.picture } : null;
@@ -122,48 +158,43 @@ class BackgroundStore {
 				: undefined;
 		const address = chosen ?? pickForDay(items, this.setting, this.day);
 		if (!address) return null;
-		const picture = find(this.styles, address);
+		const picture = find(this.allStyles, address);
 		return picture ? { address: formatAddress(address), picture } : null;
 	});
 
-	/** Every picture the setting covers, once the styles are loaded. */
-	readonly pool = $derived.by((): Address[] => (this.styles ? pool(this.styles, parseSetting(this.setting)) : []));
+	/** The styles the app draws itself, then the ones installed on the server. */
+	readonly allStyles = $derived.by((): StyleManifest[] => [...BUILTIN_STYLES, ...(this.styles ?? [])]);
 
-	/** Whether the setting changes picture each day. */
-	readonly rotating = $derived.by(() => {
-		const s = parseSetting(this.setting);
-		return s.kind === 'path' && !s.picture;
-	});
-
-	/** Today's picture with the names of its style and collection, for the home control. */
-	readonly current = $derived.by(() => {
-		const today = this.today;
-		if (!today || !this.styles) return null;
-		const [style, collection] = today.address.split('/');
-		const c = this.styles.find((s) => s.style === style)?.collections.find((x) => x.id === collection);
-		return { address: today.address, style, collection, collectionTitle: c?.title ?? collection, title: today.picture[this.appearance].title };
-	});
+	/** Every picture the setting covers. */
+	readonly pool = $derived.by((): Address[] => pool(this.allStyles, parseSetting(this.setting)));
 
 	readonly shown = $derived.by((): Shown => {
 		const setting = parseSetting(this.setting);
 		if (setting.kind === 'default') return { kind: 'lake' };
 		if (setting.kind === 'plain') return { kind: 'none' };
+		if (setting.kind === 'site') return { kind: 'site', key: setting.id, appletId: setting.id };
 		const today = this.today;
 		if (!today) {
 			// Still loading: draw nothing rather than flash the lake. Loaded and
-			// the style is gone: fall back to the lake.
-			return this.styles === null ? { kind: 'none' } : { kind: 'lake' };
+			// the style is gone, or the styles could not load and nothing is
+			// cached for today: fall back to the lake.
+			return this.styles === null && !this.stylesUnavailable ? { kind: 'none' } : { kind: 'lake' };
+		}
+		const style = today.address.split('/')[0];
+		if (isDrawn(today.picture)) {
+			const manifest = this.allStyles.find((s) => s.style === style);
+			if (!manifest || manifest.renderer === 'image') return { kind: 'lake' };
+			return { kind: 'drawn', key: today.address, renderer: manifest.renderer, params: today.picture.params };
 		}
 		const v = today.picture[this.appearance];
-		const style = today.address.split('/')[0];
 		const url = fileUrl(style);
 		return {
 			kind: 'picture',
 			key: `${today.address}:${this.appearance}`,
 			avif: srcset(v, 'avif', url),
-			webp: srcset(v, 'webp', url),
 			src: widest(v, url),
 			title: v.title,
+			dim: this.appearance === 'dark' && !!v.dim,
 		};
 	});
 
@@ -173,6 +204,14 @@ class BackgroundStore {
 		this.#started = true;
 
 		window.addEventListener('themechange', () => (this.appearance = appearance()));
+		// A laptop asleep at midnight, or a background tab, misses its timer:
+		// when the window comes back, take up the date again, and try the
+		// styles again if they could not load.
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState !== 'visible') return;
+			this.#newDay();
+			if (this.stylesUnavailable) void this.#loadStyles();
+		});
 		this.#scheduleMidnight();
 
 		void this.#load();
@@ -183,8 +222,10 @@ class BackgroundStore {
 			const profile = await getAssistantProfile<{ ui_preferences?: { background?: unknown; background_today?: unknown } }>();
 			const stored = profile.ui_preferences?.background;
 			const choice = profile.ui_preferences?.background_today;
-			this.dayChoice = isDayChoice(choice) ? choice : null;
-			this.#remember(typeof stored === 'string' ? stored : '');
+			if (!this.#changedHere) {
+				this.dayChoice = isDayChoice(choice) ? choice : null;
+				this.#remember(typeof stored === 'string' ? stored : '');
+			}
 		} catch (error) {
 			// No server yet (setup) or unreachable: keep the cached setting.
 			console.warn('Background setting not loaded:', error);
@@ -194,19 +235,72 @@ class BackgroundStore {
 
 	/** Load the installed styles if they are not loaded yet, for the pickers. */
 	async ensureStyles(): Promise<void> {
-		if (this.styles === null) await this.#loadStyles();
+		if (this.styles === null || this.stylesUnavailable) await this.#loadStyles();
+	}
+
+	/** Load the sites that can be the background, for the pickers. */
+	async ensureSites(): Promise<void> {
+		if (this.sites !== null) return;
+		try {
+			const applets = await listApplets();
+			this.sites = applets
+				.filter((a) => kindOf(a) === 'site' && !a.archived_at)
+				.sort((a, b) => Number(isYours(b)) - Number(isYours(a)) || a.name.localeCompare(b.name))
+				.map((a) => ({ id: a.id, name: a.name }));
+		} catch (error) {
+			// The pickers show no sites; the next open asks again.
+			console.warn('Sites for the background not loaded:', error);
+		}
+	}
+
+	/** A site's name, once the sites have loaded. */
+	siteName(id: string): string | null {
+		return this.sites?.find((s) => s.id === id)?.name ?? null;
+	}
+
+	/** Load the styles again: after a download starts, and while it runs. */
+	async refresh(): Promise<void> {
+		await this.#loadStyles();
 	}
 
 	async #loadStyles(): Promise<void> {
 		try {
-			const res = await request<{ styles: StyleManifest[] }>('/backgrounds');
+			const res = await request<{
+				styles: StyleManifest[];
+				available?: AvailableStyle[];
+				installing?: Record<string, DownloadProgress>;
+				failed?: Record<string, string>;
+				catalog_pending?: boolean;
+			}>('/backgrounds');
 			this.styles = res.styles;
+			this.available = res.available ?? [];
+			this.installing = res.installing ?? {};
+			this.failed = res.failed ?? {};
+			this.catalogPending = res.catalog_pending ?? false;
+			this.stylesUnavailable = false;
 			this.#cacheToday();
 		} catch (error) {
-			// Without the manifests a path setting shows the cached picture or the lake.
+			// Styles that loaded before stay as they are, so the picture does not
+			// change. With none loaded yet, home shows today's cached picture, or
+			// the lake; the next ensureStyles() or a return to the window tries
+			// again.
 			console.warn('Background styles not loaded:', error);
-			this.styles = [];
+			if (this.styles === null) this.stylesUnavailable = true;
 		}
+	}
+
+	/** Downloads in progress and failed, without the manifests, while a download runs. */
+	async refreshDownloads(): Promise<void> {
+		const res = await request<{ installing: Record<string, DownloadProgress>; failed: Record<string, string> }>(
+			'/backgrounds/downloads',
+		);
+		this.installing = res.installing;
+		this.failed = res.failed;
+	}
+
+	/** A download that did not start, said on its card. */
+	noteFailure(style: string, message: string): void {
+		this.failed = { ...this.failed, [style]: message };
 	}
 
 	#remember(setting: string): void {
@@ -225,56 +319,42 @@ class BackgroundStore {
 		writeStorage(PICTURE_KEY, JSON.stringify(value));
 	}
 
+	/** Move to today's date if it changed, and set the next midnight timer. */
+	#newDay(): void {
+		const today = dayNumber(new Date());
+		if (today !== this.day) {
+			this.day = today;
+			if (this.styles) this.#cacheToday();
+		}
+		this.#scheduleMidnight();
+	}
+
 	#scheduleMidnight(): void {
+		if (this.#midnight) clearTimeout(this.#midnight);
 		const now = new Date();
 		const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
-		setTimeout(() => {
-			this.day = dayNumber(new Date());
-			if (this.styles) this.#cacheToday();
-			this.#scheduleMidnight();
-		}, next.getTime() - now.getTime());
+		this.#midnight = setTimeout(() => this.#newDay(), next.getTime() - now.getTime());
 	}
 
 	/**
-	 * The previous or next picture. Under a rotating setting it is today's
-	 * picture until midnight; under one picture it becomes the setting.
+	 * Another picture for today under a rotating setting, until midnight.
+	 * The home control's arrows choose it (lib/backgrounds/controls.ts).
 	 */
-	async step(dir: 1 | -1): Promise<void> {
-		await this.ensureStyles();
-		const current = this.today?.address ?? '';
-		if (this.rotating) {
-			const next = stepFrom(this.pool, current, dir);
-			if (!next) return;
-			const choice: DayChoice = { setting: this.setting, day: this.day, address: formatAddress(next) };
-			this.dayChoice = choice;
-			this.#cacheToday();
-			await updateUiPreferences({ background_today: choice });
-			return;
-		}
-		const setting = parseSetting(this.setting);
-		if (setting.kind !== 'path' || !this.styles) return;
-		const siblings = pool(this.styles, { kind: 'path', style: setting.style, collection: setting.collection });
-		const next = stepFrom(siblings, current, dir);
-		if (next) await this.set(formatAddress(next));
-	}
-
-	/** Keep today's picture: the setting becomes that one picture. */
-	async keep(): Promise<void> {
-		const address = this.today?.address;
-		if (address) await this.set(address);
-	}
-
-	/** A small picture for a thumbnail, in the current appearance. */
-	thumbnail(style: string, picture: Picture): string {
-		return narrowest(picture[this.appearance], fileUrl(style));
+	async chooseForToday(address: string): Promise<void> {
+		this.#changedHere = true;
+		const choice: DayChoice = { setting: this.setting, day: this.day, address };
+		this.dayChoice = choice;
+		this.#cacheToday();
+		await updateUiPreferences({ background_today: choice });
 	}
 
 	/** Change the setting and save it to the server. */
 	async set(setting: string): Promise<void> {
 		const parsed = parseSetting(setting);
 		const value = parsed.kind === 'default' ? '' : setting;
+		this.#changedHere = true;
 		this.#remember(value);
-		if (parsed.kind === 'path' && this.styles === null) await this.#loadStyles();
+		if (parsed.kind === 'path' && this.styles === null && !isBuiltin(parsed.style)) await this.#loadStyles();
 		else this.#cacheToday();
 		await updateUiPreferences({ background: value });
 	}

@@ -21,6 +21,7 @@ export function browserLabel(url: string | null): string {
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { THREAD_ICON } from '$lib/utils/iconHelpers';
+import { SERVER_TASKS_ROUTE, SITES_ROUTE, homeRoute, readAddress, type AddressWord } from '$lib/applets/routes';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -31,13 +32,15 @@ const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/History
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
-const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
+/** A tab's label before its page has loaded and given it a name. */
+const ADDRESS_LABEL: Record<AddressWord, string> = { site: 'Site', skill: 'Skill', 'server-task': 'Server task' };
+
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
-const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
 const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
 const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
 const DesignView: ViewLoader = () => import('$lib/components/tabs/views/DesignView.svelte');
+const InboxView: ViewLoader = () => import('$lib/components/tabs/views/InboxView.svelte');
 const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView.svelte');
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
@@ -51,7 +54,6 @@ const InsightView: ViewLoader = () => import('$lib/components/tabs/views/Insight
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
-const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -90,13 +92,10 @@ export const WIKI_SECTION_RE =
 	/^\/wiki\/(days|years|entities|identity|chapters|things|stories|lifeline|history|people|places|orgs|unlinked)$/;
 
 /**
- * Sections of the Sources room. Same one-list rule as the wiki above, and here
- * it also disambiguates: `/sources/<x>` is a credential detail unless `<x>` is
- * one of these words, so the router and the view must agree about which words
- * are reserved or a section silently becomes a lookup for a credential that
- * does not exist.
- *
- * Overview is the bare `/sources` and so is not in this list.
+ * Words that were sections of the Sources room and now only forward
+ * (SourcesView's FORWARDS): Catalog and Activity to `/sources`, Streams and
+ * Query to Settings › Your data. They stay reserved so `/sources/<x>` cannot
+ * read an old link as a source id. `/sources` itself is not in this list.
  */
 export const SOURCES_SECTIONS = ['catalog', 'activity', 'streams', 'query'] as const;
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
@@ -649,10 +648,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /sources, /sources/<section>, /sources/<credential_id>
-	//   - `/sources` (and `/source` legacy alias) → Overview
-	//   - `/sources/catalog`, `/sources/activity` → the other two sections
-	//   - `/sources/<id>` → CredentialDetailView for one connection
+	// SOURCE NAMESPACE: /sources, /sources/<source_id>, /sources/<credential_id>
+	//   - `/sources` (and `/source` legacy alias) → the one Sources page
+	//   - `/sources/<word in SOURCES_SECTIONS>` → forwards (see SourcesView)
+	//   - `/sources/<id>` → one source, or one connection for `cred_…`
 	// "Source" in the URL is user-facing vocabulary; under the hood a connection
 	// is a credential (OAuth/API-key) or a paired device (iOS/Mac).
 	//
@@ -662,13 +661,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	source: {
 		match: (path) =>
 			path === '/sources' || path === '/source' || /^\/sources\/[^/]+$/.test(path),
-		parse: (path) => {
+		parse: (path, params) => {
 			if (path === '/sources' || path === '/source') {
+				// The OAuth callback lands here as `?connected=<id>` or
+				// `?source=<id>&error=<reason>`. Keep those on the tab route so
+				// the Sources page can say how the connect went; it strips them once
+				// read, so a refresh does not repeat the notice.
+				const kept = new URLSearchParams();
+				for (const k of ['connected', 'source', 'error']) {
+					const v = params?.get(k);
+					if (v) kept.set(k, v);
+				}
+				const query = kept.size > 0 ? `?${kept}` : '';
 				return {
 					type: 'source',
 					label: 'Sources',
 					icon: 'mynaui:database',
-					normalizedRoute: '/sources',
+					normalizedRoute: `/sources${query}`,
 				};
 			}
 			const m = path.match(/^\/sources\/([^/]+)$/);
@@ -701,71 +710,68 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// APPLETS: /applets (legacy /actions/* still resolves)
+	// SITES: /sites, the door for what you set up. The addresses it had
+	// before (/applets, /actions/*) still resolve.
 	// ========================================================================
 	applets: {
 		match: (path) =>
+			path === SITES_ROUTE ||
 			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'applets',
-			label: 'Applets',
+			label: 'Sites',
 			icon: 'atlas:applets',
+			normalizedRoute: SITES_ROUTE,
 		}),
 		serialize: () => 'applets',
-		deserialize: () => '/applets',
+		deserialize: () => SITES_ROUTE,
 		icon: 'atlas:applets',
-		defaultLabel: 'Applets',
+		defaultLabel: 'Sites',
 		component: AppletsView,
 	},
 
 	// ========================================================================
-	// APPLET VIEW: /applet/applet_{id}/view — the applet's face, full-page.
-	// Must precede `applet` (whose match ends at $, so order is belt-and-braces).
+	// A tab saved while a site's view had a tab type of its own. No route
+	// resolves to it now; the entry keeps such a tab opening, on the page
+	// that draws the view.
 	// ========================================================================
 	'applet-view': {
-		match: (path) => /^\/(?:applet|action)\/applet_[^/]+\/view$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)\/view$/);
-			return {
-				type: 'applet-view',
-				label: 'Applet',
-				icon: 'mynaui:layout',
-				entityId: match?.[1],
-			};
-		},
-		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
-		deserialize: (serialized) => {
-			const id = serialized.replace(/__view$/, '');
-			if (id.startsWith('applet_')) return `/applet/${id}/view`;
-			return '/applets';
-		},
-		icon: 'mynaui:layout',
-		defaultLabel: 'Applet',
-		component: AppletView,
+		match: () => false,
+		parse: () => ({ type: 'applet-view', label: 'Site', icon: 'atlas:applets' }),
+		serialize: () => 'applet-view',
+		deserialize: () => SITES_ROUTE,
+		icon: 'atlas:applets',
+		defaultLabel: 'Site',
+		component: AppletDetailView,
 	},
 
 	// ========================================================================
-	// APPLET DETAIL: /applet/applet_{id} — settings, prompt, runs (no face).
+	// A SITE, A SKILL OR A SERVER TASK: /site/{name}, /skill/{name} and
+	// /server-task/{name}, each with /options for its other side
+	// (`applets/routes.ts`). The addresses used before (/applet/applet_{id},
+	// with /view or ?panel=, and /job/{name}) resolve to these.
 	// ========================================================================
 	applet: {
-		match: (path) => /^\/(applet|action)\/applet_[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)$/);
+		match: (path) => readAddress(path) !== null,
+		parse: (path, params) => {
+			const query = params?.toString();
+			const address = readAddress(query ? `${path}?${query}` : path);
 			return {
 				type: 'applet',
-				label: 'Applet',
+				label: address ? ADDRESS_LABEL[address.word] : 'Site',
 				icon: 'atlas:applets',
-				entityId: match?.[1],
+				entityId: address?.id,
+				normalizedRoute: address?.route,
 			};
 		},
 		serialize: (id) => (id ? `applet_${id}` : 'applet'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
-			return '/applets';
+			const id = serialized.replace(/^applet_(?=applet_)/, '');
+			return id.startsWith('applet_') ? homeRoute(id) : SITES_ROUTE;
 		},
 		icon: 'atlas:applets',
-		defaultLabel: 'Applet',
+		defaultLabel: 'Site',
 		component: AppletDetailView,
 		detailComponent: AppletDetailView,
 	},
@@ -950,23 +956,25 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
-	// moments, with the day's inspector and scrubber. `/timeline/YYYY-MM-DD`
-	// opens it on that day; the view then puts the route back to `/timeline`,
-	// so there is one Timeline tab and the rail's tile finds it.
+	// INBOX: /inbox. Tasks, insights and what your server needs, with the
+	// chosen one whole beside the list. The page opens on its list; any
+	// other view is in the query (`?view=radar`, and the others InboxView
+	// names). The sidebar's Inbox row opens it. The day on a map is its Map
+	// view, so the address the Timeline page had (`/timeline`, and
+	// `/timeline/YYYY-MM-DD` from an old link or pin) opens that view.
 	// ========================================================================
-	timeline: {
-		match: (path) => path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
-		parse: () => ({
-			type: 'timeline',
-			label: 'Timeline',
-			icon: 'mynaui:path',
-		}),
-		serialize: () => 'timeline',
-		deserialize: () => '/timeline',
-		icon: 'mynaui:path',
-		defaultLabel: 'Timeline',
-		component: TimelineView,
+	inbox: {
+		match: (path) => path === '/inbox' || path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
+		parse: (path, params) => {
+			const view = path.startsWith('/timeline') ? 'map' : params?.get('view');
+			const query = view && ['radar', 'cards', 'graph', 'map', 'week'].includes(view) ? `?view=${view}` : '';
+			return { type: 'inbox', label: 'Inbox', icon: 'mynaui:inbox', normalizedRoute: `/inbox${query}` };
+		},
+		serialize: () => 'inbox',
+		deserialize: () => '/inbox',
+		icon: 'mynaui:inbox',
+		defaultLabel: 'Inbox',
+		component: InboxView,
 	},
 
 	// ========================================================================
@@ -993,12 +1001,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	virtues: {
 		match: (path) => path === '/virtues' || path.startsWith('/virtues/'),
 		parse: (path) => {
-			const page = path === '/virtues' ? 'you' : path.replace('/virtues/', '');
+			// The Server tasks page was at /virtues/applets, then /virtues/jobs.
+			const moved = path === '/virtues/applets' || path === '/virtues/jobs';
+			const page = path === '/virtues' ? 'you' : moved ? 'server-tasks' : path.replace('/virtues/', '');
 			return {
 				type: 'virtues',
 				label: 'Settings',
 				icon: 'mynaui:cog',
 				virtuesPage: page,
+				...(moved ? { normalizedRoute: SERVER_TASKS_ROUTE } : {}),
 			};
 		},
 		serialize: (id) => (id ? `virtues_${id}` : 'virtues'),
@@ -1049,9 +1060,8 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
-		'applets', // Applets list page (must come before singular 'applet')
-		'applet-view', // Applet full-page face (must come before 'applet')
-		'applet', // Applet detail page
+		'applets', // The Sites door
+		'applet', // A site's, a skill's or a server task's page
 		'record', // /record/<ontology>/<id> — single raw record
 		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern
@@ -1059,8 +1069,8 @@ export function parseRoute(route: string): ParsedRoute {
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
-		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
 		'design', // The design system: /design
+		'inbox', // /inbox, and the Timeline page's old /timeline
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /

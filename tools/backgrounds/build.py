@@ -6,26 +6,34 @@ The source folder is laid out as the painting sets are:
     <source>/new-chat-light/<collection>/<name>.<jpg|png|webp>
     <source>/new-chat-dark/<collection>/<name>.<jpg|png|webp>
 
-and a prompts file lists each picture's title, its path and the prompt that
-made it. The tool writes, under --out:
+and an optional prompts file lists each picture's title, its path and the
+prompt that made it. The tool writes, under --out:
 
     manifest.json                 every picture with its light and dark versions
-    <collection>/<theme>/<name>-<width>.avif / .webp
+    <collection>/<theme>/<name>-<width>.avif
     review.html                   the light and dark pairs side by side
 
-A picture is a light version and a dark version. The two sets hold different
-places, so the pairs are chosen by hand and kept in pairs/<style>.tsv beside
-this script. When a collection has no pairs yet the tool proposes them from
-the words of each picture's title, file name and prompt, and writes them to
-that file. Your corrections in the file win on every later run.
+A picture is a light version and a dark version. In the painting sets the
+two hold different places, so the pairs are chosen by hand and kept in
+pairs/<style>.tsv beside this script. When a collection has no pairs yet the
+tool proposes them from the words of each picture's title, file name and
+prompt, and writes them to that file. Your corrections in the file win on
+every later run.
+
+A set with no new-chat-dark folder (photographs, say) has one version of
+each picture: its dark version is the light one marked `"dim": true`, which
+the apps dim in Dark as they dim the lake. No pairs file is needed.
+
+Pictures are AVIF only: every browser the apps run in shows it, and a second
+format would double each download.
 
 The images are large and stay out of git. Only this script and the pairs
 files are tracked. See agents/plan/backgrounds-plan.md.
 
-    python3 tools/backgrounds/build.py --style paintings-muted --title "Muted paintings" \\
+    python3 tools/backgrounds/build.py --style watercolors --title "Watercolors" \\
         --source ~/Desktop/muted-paintings/in-app \\
         --prompts ~/Desktop/muted-paintings/prompts.txt \\
-        --out ~/virtues-backgrounds/paintings-muted
+        --out ~/virtues-backgrounds/watercolors
 """
 
 from __future__ import annotations
@@ -48,7 +56,6 @@ THEMES = ("light", "dark")
 WIDTHS = (1792, 896)
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 AVIF = {"quality": 55, "speed": 6}
-WEBP = {"quality": 80, "method": 4}
 PAIRS_DIR = Path(__file__).resolve().parent / "pairs"
 
 # Words every prompt in a set shares say nothing about the place, and the
@@ -65,18 +72,23 @@ STOP = set(
 
 
 def scan_source(source: Path) -> dict[str, dict[str, dict[str, Path]]]:
-    """theme -> collection -> picture name -> file."""
+    """theme -> collection -> picture name -> file. A set with no dark folder
+    has an empty "dark"; its pictures are dimmed for Dark instead."""
     found: dict[str, dict[str, dict[str, Path]]] = {}
+    if not (source / "new-chat-light").is_dir():
+        sys.exit(f"build.py: {source / 'new-chat-light'} is missing; --source must hold new-chat-light")
     for theme in THEMES:
         root = source / f"new-chat-{theme}"
-        if not root.is_dir():
-            sys.exit(f"build.py: {root} is missing; --source must hold new-chat-light and new-chat-dark")
         found[theme] = {}
+        if not root.is_dir():
+            continue
         for col in sorted(p for p in root.iterdir() if p.is_dir()):
             files = {p.stem: p for p in sorted(col.iterdir()) if p.suffix.lower() in IMAGE_EXTS}
             if files:
                 found[theme][col.name] = files
     light, dark = set(found["light"]), set(found["dark"])
+    if not dark:
+        return found
     if light != dark:
         sys.exit(f"build.py: collections differ between light and dark: {sorted(light ^ dark)}")
     for col in light:
@@ -317,13 +329,13 @@ def process(job: tuple[str, str, str, str, str]) -> tuple[str, str, str, dict]:
     img.load()
     has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
     img = img.convert("RGBA" if has_alpha else "RGB")
-    files: dict[str, dict[str, str]] = {"avif": {}, "webp": {}}
+    files: dict[str, dict[str, str]] = {"avif": {}}
     src_mtime = os.path.getmtime(src)
     for w in WIDTHS:
         if w > img.width:
             continue
         sized = img if w == img.width else img.resize((w, round(w * img.height / img.width)), Image.LANCZOS)
-        for fmt, opts in (("avif", AVIF), ("webp", WEBP)):
+        for fmt, opts in (("avif", AVIF),):
             rel = f"{col}/{theme}/{name}-{w}.{fmt}"
             dest = Path(out_dir) / rel
             if not dest.exists() or dest.stat().st_mtime < src_mtime:
@@ -348,8 +360,8 @@ def write_review(out: Path, style: str, manifest: dict, scores) -> None:
             note = f"{score:.2f}" if score is not None else "set by hand"
             rows.append(
                 '<figure class="pair">'
-                f'<div class="v light"><img loading="lazy" src="{lt["files"]["webp"]["896"]}" alt=""></div>'
-                f'<div class="v dark"><img loading="lazy" src="{dk["files"]["webp"]["896"]}" alt=""></div>'
+                f'<div class="v light"><img loading="lazy" src="{lt["files"]["avif"]["896"]}" alt=""></div>'
+                f'<div class="v dark{" dim" if dk.get("dim") else ""}"><img loading="lazy" src="{dk["files"]["avif"]["896"]}" alt=""></div>'
                 f'<figcaption><span>{html.escape(lt["title"])}</span><span>{html.escape(dk["title"])}</span>'
                 f'<code>{lt["source"]}\t{dk["source"]}</code><em>{note}</em></figcaption></figure>'
             )
@@ -367,6 +379,7 @@ h2 {{ font-size:15px; margin:32px 0 12px; }} h2 code {{ color:var(--mute); font-
 .grid {{ display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:16px; }}
 .pair {{ margin:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }}
 .v {{ aspect-ratio:1792/768; }} .v img {{ width:100%; height:100%; display:block; }}
+.v.dim img {{ filter:brightness(0.55) saturate(0.8); }}
 .light {{ background:var(--light); }} .dark {{ background:var(--dark); }}
 figcaption {{ display:grid; grid-template-columns:1fr 1fr; gap:2px 12px; padding:8px 10px; font-size:13px; }}
 figcaption code, figcaption em {{ grid-column:1 / -1; color:var(--mute); font-size:12px; font-style:normal; }}
@@ -386,7 +399,7 @@ def main() -> None:
     ap.add_argument("--style", required=True, help="style id, as it appears in the setting path")
     ap.add_argument("--title", required=True, help="the style's name in the pickers")
     ap.add_argument("--source", required=True, type=Path)
-    ap.add_argument("--prompts", required=True, type=Path)
+    ap.add_argument("--prompts", type=Path, help="titles and prompts; without it titles come from file names")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--repropose", action="store_true", help="replace the pairs file with fresh proposals")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 2))
@@ -394,13 +407,19 @@ def main() -> None:
 
     source, out = args.source.expanduser(), args.out.expanduser()
     found = scan_source(source)
-    entries, col_titles = parse_prompts(args.prompts.expanduser())
+    entries, col_titles = parse_prompts(args.prompts.expanduser()) if args.prompts else ({}, {})
+    single = not found["dark"]
 
     pairs_path = PAIRS_DIR / f"{args.style}.tsv"
-    pairs = {} if args.repropose else read_pairs(pairs_path)
-    proposed, scores = propose_pairs(found, entries)
+    if single:
+        # One version of each picture: no pairs to choose.
+        pairs = {col: [(n, n) for n in files] for col, files in found["light"].items()}
+        scores: dict = {}
+    else:
+        pairs = {} if args.repropose else read_pairs(pairs_path)
+        proposed, scores = propose_pairs(found, entries)
     changed = False
-    for col in sorted(found["light"]):
+    for col in sorted(found["light"]) if not single else []:
         if col in pairs:
             problem = check_pairs(col, pairs[col], found)
             if problem:
@@ -408,7 +427,7 @@ def main() -> None:
         else:
             pairs[col] = proposed[col]
             changed = True
-    for col in set(pairs) - set(found["light"]):
+    for col in set(pairs) - set(found["light"]) if not single else []:
         print(f"build.py: {col} is in the pairs file but not in the source; dropping it", file=sys.stderr)
         del pairs[col]
         changed = True
@@ -416,6 +435,14 @@ def main() -> None:
         # Keep a score only where the pair is still the proposal.
         write_pairs(pairs_path, args.style, pairs, scores)
         print(f"wrote {pairs_path}")
+
+    # Every id becomes part of a stored setting, which the apps read only in
+    # this shape (lib/backgrounds/resolve.ts); any other name would make the
+    # setting read as the default.
+    names = [args.style, *(col for t in THEMES for col in found[t]), *(n for t in THEMES for c in found[t].values() for n in c)]
+    bad = sorted({n for n in names if not re.fullmatch(r"[a-z0-9-]{1,64}", n)})
+    if bad:
+        sys.exit("names must be lowercase letters, digits and hyphens, at most 64 characters: " + ", ".join(bad))
 
     jobs = [
         (str(path), str(out), col, theme, name)
@@ -437,10 +464,24 @@ def main() -> None:
         for light, dark in sorted(pairs[col]):
             pic = {"id": light}
             for theme, name in (("light", light), ("dark", dark)):
+                if single and theme == "dark":
+                    # The light picture, dimmed by the apps in Dark.
+                    pic["dark"] = {**pic["light"], "dim": True}
+                    continue
                 e = entries.get((theme, col, name), {})
                 pic[theme] = {"source": name, "title": e.get("title") or fallback_title(name), **measured[(theme, col, name)]}
             pictures.append(pic)
         collections.append({"id": col, "title": col_titles.get(col) or fallback_title(col), "pictures": pictures})
+
+    narrow = [
+        f"{c['id']}/{p['id']} ({theme})"
+        for c in collections
+        for p in c["pictures"]
+        for theme in THEMES
+        if not p[theme]["files"]["avif"]
+    ]
+    if narrow:
+        sys.exit(f"narrower than {min(WIDTHS)} px, so no file was made: " + ", ".join(narrow))
 
     manifest = {"version": 1, "style": args.style, "title": args.title, "renderer": "image", "collections": collections}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")

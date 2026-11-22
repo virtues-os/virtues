@@ -1,6 +1,6 @@
 ---
 name: new-applet
-description: Write a new applet with Virtues, a prompt you run again by typing / and its name
+description: Write a new skill with Virtues, a prompt you run again by typing / and its name
 allowed-tools: applet
 metadata:
   invoke: chat
@@ -8,7 +8,7 @@ metadata:
   icon: ri:add-line
 ---
 <new_applet>
-Help the person write an applet: a prompt they can run again from the / menu in the composer.
+Help the person write a skill: a prompt they can run again from the / menu in the composer. Call it a skill when you talk to them.
 
 Find out what it is for before you write anything. Ask, in one or two short questions at a time, what they want it to do, when they would use it, and what a good result looks like. Stop asking once you could write it.
 

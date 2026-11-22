@@ -9,6 +9,15 @@ import { getApplet } from '$lib/api/client';
 /** The frame's height when the block says none, in CSS pixels. */
 export const DEFAULT_APPLET_HEIGHT = 420;
 
+/**
+ * An applet block as page text, for a page that starts with one. The tag and
+ * its attribute are the document contract's (`contract.json`, `applet`).
+ */
+export function appletBlockText(ref: string): string {
+	const safe = ref.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+	return `<virtues-applet ref="${safe}"></virtues-applet>`;
+}
+
 const names = new Map<string, Promise<string | null>>();
 
 /** An applet's name, asked once per applet however many blocks show it; null when it cannot be read. */

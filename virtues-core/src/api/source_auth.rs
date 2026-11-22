@@ -131,6 +131,56 @@ pub struct OauthStartRequest {
     /// Defaults to the canonical `<self>/oauth/callback`.
     #[serde(default)]
     pub return_url: Option<String>,
+    /// The Client ID of an app the person created at the vendor, for a source
+    /// signed in that way (`own_app`: Spotify's recent plays).
+    #[serde(default)]
+    pub client_id: Option<String>,
+}
+
+/// A sign-in with the person's own app between its start and its callback:
+/// the PKCE verifier and the Client ID, keyed by the signed state. Kept in
+/// memory because the verifier must never travel with the browser; a server
+/// restarted mid-sign-in asks the person to start again.
+struct OwnAppPending {
+    verifier: String,
+    client_id: String,
+    started: std::time::Instant,
+}
+
+/// How long a started own-app sign-in waits for its callback.
+const OWN_APP_PENDING_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+fn own_app_pending() -> &'static std::sync::Mutex<std::collections::HashMap<String, OwnAppPending>> {
+    static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, OwnAppPending>>> =
+        std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+fn remember_own_app(state: &str, verifier: String, client_id: String) {
+    let mut map = own_app_pending().lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, p| p.started.elapsed() < OWN_APP_PENDING_TTL);
+    map.insert(state.to_string(), OwnAppPending { verifier, client_id, started: std::time::Instant::now() });
+}
+
+fn take_own_app(state: &str) -> Option<OwnAppPending> {
+    let mut map = own_app_pending().lock().unwrap_or_else(|e| e.into_inner());
+    map.remove(state).filter(|p| p.started.elapsed() < OWN_APP_PENDING_TTL)
+}
+
+/// Start a sign-in with the person's own app: remember the verifier and send
+/// the browser to the vendor, which returns through virtues-api's bounce
+/// route to this box's callback, marked `via=own_app`.
+fn start_own_app(
+    app: &virtues_helpers::auth::own_app::OwnApp,
+    client_id: &str,
+    return_url: &str,
+    signed_state: &str,
+) -> String {
+    let (verifier, challenge) = virtues_helpers::auth::own_app::pkce_pair();
+    remember_own_app(signed_state, verifier, client_id.to_string());
+    let sep = if return_url.contains('?') { '&' } else { '?' };
+    let back = format!("{return_url}{sep}via=own_app");
+    app.authorize_url(client_id, &challenge, &virtues_helpers::auth::own_app::bounce_state(&back, signed_state))
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +196,28 @@ pub async fn oauth_start_handler(
     let Some(source) = lookup_source(&source_id) else {
         return not_found(format!("unknown source: {source_id}"));
     };
+
+    // A source signed in with the person's own app (Spotify's recent plays)
+    // goes to the vendor directly; the OAuth proxy is only the way back.
+    if let Some(app) = virtues_helpers::auth::own_app::for_source(&source_id) {
+        let Some(client_id) = req.client_id.as_deref().map(str::trim).filter(|c| !c.is_empty()) else {
+            return bad_request(format!("Paste your {} app's Client ID, then continue.", source.display_name));
+        };
+        let Some(return_url) = req.return_url.as_deref().filter(|u| u.starts_with("http")) else {
+            return bad_request("return_url must be this server's own /oauth/callback address");
+        };
+        if let Some(id) = &req.credential_id {
+            if let Err(response) = reconnect_target(state.db.pool(), id, &source_id).await {
+                return response;
+            }
+        }
+        let signed_state = match sign_oauth_state(&source_id, req.credential_id.as_deref()) {
+            Ok(s) => s,
+            Err(e) => return auth_error_response(e),
+        };
+        let redirect_url = start_own_app(app, client_id, return_url, &signed_state);
+        return (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response();
+    }
 
     let start_path = match &source.auth {
         SourceAuth::ViaProxy { start_path } => start_path.as_str(),
@@ -170,26 +242,39 @@ pub async fn oauth_start_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    // Google: when virtues-api offers its own sign-in, use it. The browser
-    // comes back to the same callback, marked `via=api`, and the credential
-    // then holds no Google token (`api::google_api`). Otherwise the direct
-    // sign-in below runs, as it does for every other source.
-    if source_id == "google" {
+    // Google and Outlook: when virtues-api offers its own sign-in, use it.
+    // The browser comes back to the same callback, marked `via=api`, and the
+    // credential then holds no vendor token (`api::vendor_api`). Otherwise a
+    // Google sign-in runs the direct one below, as every other source does.
+    // Outlook has no direct sign-in.
+    if super::vendor_api::serves(&source_id) {
         if let Some(return_url) = req.return_url.as_deref().filter(|u| u.starts_with("http")) {
             let sep = if return_url.contains('?') { '&' } else { '?' };
             let redirect_uri = format!("{return_url}{sep}via=api&state={}", urlencoding::encode(&signed_state));
             let reconnecting = match &req.credential_id {
-                Some(id) => match api_connection_of(state.db.pool(), id).await {
+                Some(id) => match api_connection_of(state.db.pool(), id, &source_id).await {
                     Ok(connection) => connection,
                     Err(e) => return auth_error_response(e.into()),
                 },
                 None => None,
             };
             if let Some(redirect_url) =
-                super::google_api::sign_in_link(state.db.pool(), &redirect_uri, reconnecting.as_deref()).await
+                super::vendor_api::sign_in_link(state.db.pool(), &source_id, &redirect_uri, reconnecting.as_deref()).await
             {
                 return (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response();
             }
+        }
+        if super::vendor_api::only_through_api(&source_id) {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "{} can't be connected right now. Check that this server is linked to your Virtues account, then try again.",
+                        source.display_name
+                    )
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -200,15 +285,84 @@ pub async fn oauth_start_handler(
         .return_url
         .unwrap_or_else(|| "/oauth/callback".to_string());
 
-    let redirect_url = format!(
-        "{proxy}{start}?return_url={ret}&state={state}",
-        proxy = proxy_url(),
-        start = start_path,
-        ret = urlencoding::encode(&return_url),
-        state = urlencoding::encode(&signed_state),
-    );
+    // Register the connect with the proxy first, so the proxy hands the
+    // provider's tokens only to this box (`register_connect`). The browser
+    // then carries just the ticket. An unlinked box has no key to register
+    // with, and a proxy that predates `/sessions` answers 404; both fall back
+    // to the unregistered link, which the proxy accepts until it sets
+    // `OAUTH_REQUIRE_REGISTERED`.
+    let api_key = match virtues_helpers::auth::read_box_api_key(state.db.pool()).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read box api_key to register the connect");
+            None
+        }
+    };
+    let ticket = match api_key {
+        Some(key) => match register_connect(&proxy_url(), start_path, &return_url, &signed_state, &key).await {
+            Ok(ticket) => Some(ticket),
+            Err(e) => {
+                tracing::warn!(source_id = %source_id, error = %e, "could not register the connect; using an unregistered link");
+                None
+            }
+        },
+        None => None,
+    };
+    let redirect_url = match ticket {
+        Some(ticket) => format!(
+            "{proxy}{start}?ticket={ticket}",
+            proxy = proxy_url(),
+            start = start_path,
+            ticket = urlencoding::encode(&ticket),
+        ),
+        None => format!(
+            "{proxy}{start}?return_url={ret}&state={state}",
+            proxy = proxy_url(),
+            start = start_path,
+            ret = urlencoding::encode(&return_url),
+            state = urlencoding::encode(&signed_state),
+        ),
+    };
 
     (StatusCode::OK, Json(OauthStartResponse { redirect_url })).into_response()
+}
+
+/// Register a connect with the OAuth proxy before the owner's browser starts
+/// it, and return the ticket the browser carries to `/start`.
+///
+/// The call is server-to-server and carries the box's key. The proxy ties the
+/// session to that key and answers `/exchange` only for it, so an exchange
+/// token that reached any other address cannot be spent there. Without this,
+/// anyone could send an owner a `/start` link naming their own address.
+async fn register_connect(
+    proxy: &str,
+    start_path: &str,
+    return_url: &str,
+    signed_state: &str,
+    api_key: &str,
+) -> anyhow::Result<String> {
+    let base = start_path
+        .strip_suffix("/start")
+        .ok_or_else(|| anyhow::anyhow!("start_path {start_path} does not end in /start"))?;
+    let resp = crate::http_client::virtues_api_client()
+        .post(format!("{proxy}{base}/sessions"))
+        .header("X-Virtues-Api-Key", api_key)
+        .timeout(std::time::Duration::from_secs(15))
+        .json(&serde_json::json!({ "return_url": return_url, "state": signed_state }))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("proxy unreachable: {}", e.without_url()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("proxy answered {status}: {body}");
+    }
+    let body: serde_json::Value = resp.json().await?;
+    body.get("ticket")
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("proxy answered without a ticket"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,10 +403,14 @@ pub struct OauthCallbackQuery {
     #[serde(default)]
     pub next: Option<String>,
     /// `"api"` when the sign-in was made through virtues-api
-    /// (`api::google_api`): there is no exchange token, and the box asks
+    /// (`api::vendor_api`): there is no exchange token, and the box asks
     /// virtues-api what was connected.
     #[serde(default)]
     pub via: Option<String>,
+    /// The vendor's authorization code, for a sign-in made with the person's
+    /// own app (`via=own_app`), which this box exchanges itself.
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 /// Accept only a same-origin absolute path: starts with exactly one `/`
@@ -276,10 +434,41 @@ pub async fn oauth_callback_handler(
         Err(e) => return auth_error_response(e),
     };
 
-    if q.via.as_deref() == Some("api") && claims.source_id == "google" {
+    let own_app = virtues_helpers::auth::own_app::for_source(&claims.source_id);
+    if let (Some("own_app"), Some(app)) = (q.via.as_deref(), own_app) {
+        // The person's own app returned through virtues-api's bounce route.
+        // Exchange the code here with the verifier only this box holds.
+        // The iOS sign-in sheet closes on every outcome, as it does for the
+        // proxy's sign-ins; elsewhere the page says what happened.
+        let incomplete = |reason: &str| {
+            if q.sheet.as_deref() == Some("1") {
+                return Redirect::to(CLOSE_SHEET).into_response();
+            }
+            oauth_incomplete_response(&claims.source_id, reason, q.shell.as_deref(), q.next.as_deref())
+        };
+        let Some(pending) = take_own_app(&q.state) else {
+            return incomplete("sign_in_expired");
+        };
+        let Some(code) = q.code.as_deref().filter(|c| !c.is_empty()) else {
+            let reason = q.error.as_deref().unwrap_or("no_code");
+            tracing::info!(source_id = %claims.source_id, reason, "own-app sign-in returned without a code");
+            return incomplete(reason);
+        };
+        let mut grant = match app.exchange_code(&pending.client_id, code, &pending.verifier).await {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(source_id = %claims.source_id, error = %e, "own-app code exchange failed");
+                return incomplete("token_exchange_failed");
+            }
+        };
+        name_the_account(&claims.source_id, &mut grant).await;
+        if let Err(e) = store_grant(pool, &claims.source_id, claims.existing_credential_id.as_deref(), &grant).await {
+            return auth_error_response(e);
+        }
+    } else if q.via.as_deref() == Some("api") && super::vendor_api::serves(&claims.source_id) {
         // The sign-in went through virtues-api. Store what it connected; a
         // sign-in the owner backed out of connected nothing, which is fine.
-        if let Err(e) = store_api_connections(pool, claims.existing_credential_id.as_deref()).await {
+        if let Err(e) = store_api_connections(pool, &claims.source_id, claims.existing_credential_id.as_deref()).await {
             return auth_error_response(e);
         }
     } else {
@@ -321,6 +510,15 @@ pub async fn oauth_callback_handler(
         };
         let mut resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
             Ok(r) => r,
+            // The proxy refused the grant for a reason the owner can act on
+            // (the plan's limit on linked banks): show it as a connect that
+            // did not finish, with that reason, not as a raw error.
+            Err(e) if virtues_helpers::auth::proxy_error_code(&e).as_deref() == Some("bank_limit") => {
+                if q.sheet.as_deref() == Some("1") {
+                    return Redirect::to(CLOSE_SHEET).into_response();
+                }
+                return oauth_incomplete_response(&claims.source_id, "bank_limit", q.shell.as_deref(), q.next.as_deref());
+            }
             Err(e) => return auth_error_response(e),
         };
 
@@ -370,18 +568,19 @@ pub async fn oauth_callback_handler(
     (StatusCode::FOUND, headers).into_response()
 }
 
-/// The virtues-api connection behind a Google credential, if it has one.
-async fn api_connection_of(pool: &PgPool, credential_id: &str) -> sqlx::Result<Option<String>> {
+/// The virtues-api connection behind a credential of this source, if it has one.
+async fn api_connection_of(pool: &PgPool, credential_id: &str, source_id: &str) -> sqlx::Result<Option<String>> {
     let metadata: Option<serde_json::Value> =
-        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1 AND kind = 'source' AND key = 'google'")
+        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1 AND kind = 'source' AND key = $2")
             .bind(credential_id)
+            .bind(source_id)
             .fetch_optional(pool)
             .await?;
-    Ok(metadata.as_ref().and_then(super::google_api::connection_id).map(String::from))
+    Ok(metadata.as_ref().and_then(super::vendor_api::connection_id).map(String::from))
 }
 
-/// Store what a Google sign-in through virtues-api connected, and return how
-/// many credentials it added or repaired.
+/// Store what a sign-in through virtues-api connected, and return how many
+/// credentials it added or repaired.
 ///
 /// virtues-api lists this account's connections. One no credential names yet
 /// is new: it becomes a credential that holds no Google token, only the
@@ -391,21 +590,24 @@ async fn api_connection_of(pool: &PgPool, credential_id: &str) -> sqlx::Result<O
 /// one. Either way a credential that held Google's own tokens moves over
 /// with its applets and sync cursors. A connection a credential already names is marked active
 /// again, which is what reconnecting one that had ended asks for.
-async fn store_api_connections(pool: &PgPool, reconnecting: Option<&str>) -> virtues_helpers::auth::Result<usize> {
-    let connections = super::google_api::connections(pool).await.map_err(|e| AuthError::Proxy(e.to_string()))?;
-    store_connections(pool, reconnecting, &connections).await
+async fn store_api_connections(pool: &PgPool, source_id: &str, reconnecting: Option<&str>) -> virtues_helpers::auth::Result<usize> {
+    let connections =
+        super::vendor_api::connections(pool, source_id).await.map_err(|e| AuthError::Proxy(e.to_string()))?;
+    store_connections(pool, source_id, reconnecting, &connections).await
 }
 
 /// [`store_api_connections`], given what virtues-api listed.
 async fn store_connections(
     pool: &PgPool,
+    source_id: &str,
     reconnecting: Option<&str>,
-    connections: &[super::google_api::Connection],
+    connections: &[super::vendor_api::Connection],
 ) -> virtues_helpers::auth::Result<usize> {
     let known: Vec<(String, Option<String>, String, Option<String>)> = sqlx::query_as(
         "SELECT id, metadata->>'api_connection_id', status, metadata->>'email' FROM credentials \
-          WHERE kind = 'source' AND key = 'google' AND status <> 'revoked'",
+          WHERE kind = 'source' AND key = $1 AND status <> 'revoked'",
     )
+    .bind(source_id)
     .fetch_all(pool)
     .await?;
     let mut stored = 0;
@@ -435,17 +637,17 @@ async fn store_connections(
             .filter(|e| c.email.as_deref().is_some_and(|new| new.eq_ignore_ascii_case(e)))
             .or(c.email.as_deref());
         let grant = ProxyExchangeResponse {
-            // No Google token is kept here; virtues-api reaches Google.
+            // No vendor token is kept here; virtues-api reaches the vendor.
             secrets: serde_json::json!({}),
             metadata: serde_json::json!({
                 "email": email,
-                super::google_api::CONNECTION_KEY: c.id,
+                super::vendor_api::CONNECTION_KEY: c.id,
                 "granted_scopes": c.scope,
             }),
             expires_in: None,
             scopes: None,
         };
-        store_grant(pool, "google", target, &grant).await?;
+        store_grant(pool, source_id, target, &grant).await?;
         stored += 1;
     }
     Ok(stored)
@@ -678,11 +880,16 @@ mod account_lookup {
         },
     ];
 
+    /// Spotify names the account by its user id, which `/me` returns without
+    /// any scope beyond the sign-in itself.
+    const SPOTIFY: &[Lookup<'static>] = &[Lookup { url: "https://api.spotify.com/v1/me", pointer: "/id" }];
+
     /// The lookups for a source whose grants arrive naming no account. Empty
     /// for every other source.
     pub(super) fn lookups_for(source_id: &str) -> &'static [Lookup<'static>] {
         match source_id {
             "google" => GOOGLE,
+            "spotify" => SPOTIFY,
             _ => &[],
         }
     }
@@ -799,6 +1006,11 @@ fn oauth_incomplete_response(
             (
                 format!("{source} wasn't connected"),
                 "You closed the connection flow before it finished. You can close this tab and try again from Virtues.",
+            )
+        } else if reason == "bank_limit" {
+            (
+                "You've linked the most banks a subscription covers".to_string(),
+                "A subscription covers 10 linked banks. Remove one in Sources, then add this one again.",
             )
         } else {
             (
@@ -1042,6 +1254,23 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn an_own_app_sign_in_keeps_its_verifier_for_one_callback() {
+        let url = start_own_app(
+            &virtues_helpers::auth::own_app::SPOTIFY,
+            "cid-7",
+            "http://192.168.1.20:7117/oauth/callback",
+            "state-own-app-1",
+        );
+        let parsed = reqwest::Url::parse(&url).unwrap();
+        assert_eq!(parsed.host_str(), Some("accounts.spotify.com"));
+        let pending = take_own_app("state-own-app-1").expect("remembered");
+        assert_eq!(pending.client_id, "cid-7");
+        assert_eq!(pending.verifier.len(), 64);
+        assert!(take_own_app("state-own-app-1").is_none(), "a verifier is spent once");
+        assert!(take_own_app("never-started").is_none());
+    }
+
     async fn source_rows(pool: &PgPool, source_id: &str) -> i64 {
         sqlx::query_scalar("SELECT count(*) FROM credentials WHERE kind = 'source' AND key = $1")
             .bind(source_id)
@@ -1058,8 +1287,8 @@ mod tests {
             .unwrap();
     }
 
-    fn api_connection(id: &str, email: &str, status: &str) -> crate::api::google_api::Connection {
-        crate::api::google_api::Connection {
+    fn api_connection(id: &str, email: &str, status: &str) -> crate::api::vendor_api::Connection {
+        crate::api::vendor_api::Connection {
             id: id.into(),
             email: Some(email.into()),
             status: Some(status.into()),
@@ -1081,7 +1310,7 @@ mod tests {
     async fn a_connection_from_virtues_api_becomes_a_credential_once(pool: PgPool) {
         ensure_test_key();
         let listed = [api_connection("c-1", "nick@example.com", "active"), api_connection("c-2", "david@example.com", "needs_reauth")];
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 1, "only the active one");
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 1, "only the active one");
         assert_eq!(source_rows(&pool, "google").await, 1);
         let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
             .fetch_one(&pool)
@@ -1091,8 +1320,28 @@ mod tests {
         let secrets = read_credential_secrets(&pool, &id).await.unwrap();
         assert!(secrets.get("access_token").is_none(), "no Google token is kept: {secrets}");
 
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 0);
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 0);
         assert_eq!(source_rows(&pool, "google").await, 1);
+    }
+
+    /// An Outlook sign-in through virtues-api becomes an Outlook credential,
+    /// and a Google credential for the same address is left alone.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_outlook_connection_is_stored_under_outlook(pool: PgPool) {
+        ensure_test_key();
+        let google = [api_connection("c-g", "nick@example.com", "active")];
+        store_connections(&pool, "google", None, &google).await.unwrap();
+        let outlook = [api_connection("c-o", "nick@example.com", "active")];
+        assert_eq!(store_connections(&pool, "outlook", None, &outlook).await.unwrap(), 1);
+        assert_eq!(source_rows(&pool, "google").await, 1);
+        assert_eq!(source_rows(&pool, "outlook").await, 1);
+        let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'outlook'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-o".to_string()), true));
+        assert_eq!(api_connection_of(&pool, &id, "outlook").await.unwrap().as_deref(), Some("c-o"));
+        assert_eq!(api_connection_of(&pool, &id, "google").await.unwrap(), None, "not a Google credential");
     }
 
     /// Signing in again to an address that already has a credential holding
@@ -1103,7 +1352,7 @@ mod tests {
         ensure_test_key();
         let direct = store_grant(&pool, "google", None, &email_grant("at-direct", Some("nick@example.com"))).await.unwrap();
         let listed = [api_connection("c-1", "Nick@Example.com", "active"), api_connection("c-2", "david@example.com", "active")];
-        assert_eq!(store_connections(&pool, None, &listed).await.unwrap(), 2);
+        assert_eq!(store_connections(&pool, "google", None, &listed).await.unwrap(), 2);
         assert_eq!(source_rows(&pool, "google").await, 2);
         assert_eq!(api_row(&pool, &direct).await, ("active".to_string(), Some("c-1".to_string()), true));
         let secrets = read_credential_secrets(&pool, &direct).await.unwrap();
@@ -1116,7 +1365,7 @@ mod tests {
     async fn reconnecting_an_ended_connection_revives_its_credential(pool: PgPool) {
         ensure_test_key();
         let listed = [api_connection("c-1", "nick@example.com", "active")];
-        store_connections(&pool, None, &listed).await.unwrap();
+        store_connections(&pool, "google", None, &listed).await.unwrap();
         let id: String = sqlx::query_scalar("SELECT id FROM credentials WHERE kind = 'source' AND key = 'google'")
             .fetch_one(&pool)
             .await
@@ -1125,7 +1374,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store_connections(&pool, Some(&id), &listed).await.unwrap(), 1);
+        assert_eq!(store_connections(&pool, "google", Some(&id), &listed).await.unwrap(), 1);
         assert_eq!(source_rows(&pool, "google").await, 1);
         assert_eq!(api_row(&pool, &id).await, ("active".to_string(), Some("c-1".to_string()), true));
     }
@@ -1221,9 +1470,9 @@ mod tests {
         assert!(last_seen_recently(&pool, &oauth).await, "an OAuth connect");
         let pasted = finalize_apikey_credential(
             &pool,
-            "github",
-            "GitHub",
-            &serde_json::json!({ "token": "tok-example" }),
+            "x",
+            "X",
+            &serde_json::json!({ "auth_token": "tok-example", "ct0": "csrf-example" }),
         )
         .await
         .unwrap();
@@ -1236,8 +1485,8 @@ mod tests {
         vault::update_credential_secrets(&pool, &oauth, &grant("at-second", None).secrets, Some(3600))
             .await
             .unwrap();
-        let fields = serde_json::json!({ "token": "tok-second" });
-        assert!(vault::reauth_credential(&pool, &pasted, "github", &fields, None, None)
+        let fields = serde_json::json!({ "auth_token": "tok-second", "ct0": "csrf-second" });
+        assert!(vault::reauth_credential(&pool, &pasted, "x", &fields, None, None)
             .await
             .unwrap());
         assert!(last_seen_recently(&pool, &oauth).await, "new secrets");
@@ -1595,6 +1844,47 @@ mod tests {
         assert_eq!(
             virtues_helpers::auth::read_box_api_key(&pool).await.unwrap().as_deref(),
             Some("vk-second")
+        );
+    }
+
+    /// The box registers a connect with its key and the browser carries only
+    /// the ticket. A proxy without `/sessions` is an error the caller falls
+    /// back from.
+    #[tokio::test]
+    async fn register_connect_sends_the_key_and_returns_the_ticket() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let app = axum::Router::new().route(
+            "/google/sessions",
+            axum::routing::post(move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                let key = headers
+                    .get("x-virtues-api-key")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                record.lock().unwrap().push((key, body));
+                async { Json(serde_json::json!({ "ticket": "t-1", "expires_in": 300 })) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let ret = "http://192.168.1.40:7117/oauth/callback";
+        let ticket = register_connect(&proxy, "/google/start", ret, "signed", "box-key").await.unwrap();
+        assert_eq!(ticket, "t-1");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![(
+                "box-key".to_string(),
+                serde_json::json!({ "return_url": ret, "state": "signed" })
+            )]
+        );
+
+        assert!(
+            register_connect(&proxy, "/notion/start", ret, "signed", "box-key").await.is_err(),
+            "a proxy without the route answers 404"
         );
     }
 }

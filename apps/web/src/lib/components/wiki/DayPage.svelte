@@ -644,17 +644,6 @@
 		scrollContainerEl?.scrollTo({ top: 0 });
 	}
 
-	/** The same day on the map, in the one Timeline tab: brought forward and
-	 *  moved to this day when it is open, else opened on it. */
-	function openInTimeline() {
-		const route = `/timeline/${currentDateSlug}`;
-		const open = windowShellStore.findTab((t) => t.type === "timeline");
-		if (open) {
-			windowShellStore.setActiveTab(open.tab.id);
-			windowShellStore.updateTab(open.tab.id, { route });
-		} else windowShellStore.openTabFromRoute(route, { label: "Timeline" });
-	}
-
 	function showRecord() {
 		view = "record";
 	}
@@ -1313,13 +1302,6 @@
 						onclick={() => {
 							close();
 							openHistory();
-						}}
-					/>
-					<MenuItem
-						label="Open in Timeline"
-						onclick={() => {
-							close();
-							openInTimeline();
 						}}
 					/>
 					<MenuItem

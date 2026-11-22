@@ -3,9 +3,10 @@
  *
  * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
  * full screen at `/onboarding`: Welcome (the cold open, and light or dark),
- * Server (finding and pairing it), Names, this device's Connections,
- * Subscription, then Arrival and the app. Connections can be skipped; its
- * "Finish later" opens the app only once nothing required follows it.
+ * Server (finding and pairing it), Names, this device's Connections, Chats
+ * (bringing history from other AI chat sites), Subscription, then Arrival and
+ * the app. Connections and Chats can be skipped; "Finish later" opens the app
+ * only once nothing required follows it.
  * Everything else is required. The founder's letter waits at Arrival.
  * Chapters and the interview are not part of setup.
  *
@@ -14,8 +15,9 @@
  * the streams arriving — so a step that is true elsewhere (a phone paired
  * from Settings) is already ticked, and reopening the app lands on the first
  * step still to do. The one stored fact is a skip — and, on this device
- * only, how far through Welcome and the letter someone has read, which no
- * row can say (see `introStage`).
+ * only, how far through Welcome and the letter someone has read, and whether
+ * they moved past Chats, which no row can say (see `introStage`,
+ * `chatsPassed`).
  *
  * Server is the first half, before this device has a server
  * (`prepair.svelte.ts`). It runs here from the app's own copy; anywhere
@@ -23,10 +25,12 @@
  * there without a paired device on a connected server.
  */
 import {
+	getChatHistory,
 	getProfile,
 	getAssistantProfile,
 	getStreamHealth,
 	listDevices,
+	type ChatHistory,
 	type Profile,
 	type StreamHealth,
 	type GettingStartedStepId,
@@ -42,7 +46,8 @@ export type SetupStepId =
 	| 'server'
 	| 'subscription'
 	| 'names'
-	| 'connections';
+	| 'connections'
+	| 'chats';
 
 export type StepStatus = 'done' | 'open' | 'skipped';
 
@@ -80,6 +85,9 @@ export const ORDER: SetupStepId[] = [
 	// account, and Messages and Safari history are the slowest sources to
 	// arrive, so they start while the person finishes the rest.
 	'connections',
+	// Other AI chats right after this device: the exports arrive by email,
+	// sometimes days later, so they are asked for while the rest is done.
+	'chats',
 	'subscription',
 ];
 // TODO(2026-11-15): steps/StepTimeline.svelte and steps/StepInterview.svelte
@@ -94,9 +102,10 @@ const LABELS: Record<SetupStepId, string> = {
 	subscription: 'Subscription',
 	names: 'Names',
 	connections: 'Connections',
+	chats: 'Chats',
 };
 
-const OPTIONAL = new Set<SetupStepId>(['connections']);
+const OPTIONAL = new Set<SetupStepId>(['connections', 'chats']);
 
 /** The server's step each flow step reads its status from, if any. */
 export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
@@ -106,6 +115,8 @@ export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
 	subscription: 'connect_ai',
 	names: 'introductions',
 	connections: 'connect_world',
+	// Read off the imported chats instead (`SetupStore.status`).
+	chats: null,
 };
 
 export function isSetupStep(s: string | null | undefined): s is SetupStepId {
@@ -124,6 +135,7 @@ const INTO: Record<SetupStepId, string> = {
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
 	connections: 'Add your devices',
+	chats: 'Bring your other AI chats',
 };
 
 /** The label for a button that moves on to `id`, or opens the app. */
@@ -169,6 +181,18 @@ function readIntro(): number {
 	}
 }
 
+/** Whether this device has moved past Chats, with Continue or Skip. A
+ *  per-device convenience like `INTRO_KEY`: losing it only shows the step
+ *  again, and chats that have arrived settle it on every device. */
+const CHATS_KEY = 'virtues-setup-chats-passed';
+function readChatsPassed(): boolean {
+	try {
+		return localStorage.getItem(CHATS_KEY) === '1';
+	} catch {
+		return false;
+	}
+}
+
 class SetupStore {
 	profile = $state<Profile | null>(null);
 	assistantName = $state(DEFAULT_ASSISTANT_NAME);
@@ -176,6 +200,9 @@ class SetupStore {
 	devices = $state<Device[]>([]);
 	loaded = $state(false);
 	introStage = $state(typeof window === 'undefined' ? 0 : readIntro());
+	/** What has arrived from other AI chat sites, by site and month. */
+	chats = $state<ChatHistory[]>([]);
+	chatsPassed = $state(typeof window === 'undefined' ? false : readChatsPassed());
 	/** Keystrokes in a step that is talking to the assistant (Names). The
 	 *  mark at the top ripples on each: it is the assistant listening. */
 	heard = $state(0);
@@ -197,6 +224,16 @@ class SetupStore {
 		}
 	}
 
+	/** Moved past Chats on this device. */
+	passChats(): void {
+		this.chatsPassed = true;
+		try {
+			localStorage.setItem(CHATS_KEY, '1');
+		} catch {
+			/* the step shows again on the next visit; nothing else is lost */
+		}
+	}
+
 	refresh(): Promise<void> {
 		// No server yet: there is nothing to read, and every step after the
 		// first half is simply still to do.
@@ -208,17 +245,21 @@ class SetupStore {
 		this.inflight = (async () => {
 			// Each read stands alone: a failed stream read must not hide the
 			// profile, and none of them may hold the flow shut.
-			const [profile, assistant, streams, devices] = await Promise.allSettled([
+			const [profile, assistant, streams, devices, chats] = await Promise.allSettled([
 				getProfile(),
 				getAssistantProfile<{ assistant_name?: string | null }>(),
 				getStreamHealth(),
 				listDevices<DevicesResponse>(),
+				getChatHistory(),
 				gettingStarted.refresh(),
 			]);
 			if (profile.status === 'fulfilled') this.profile = profile.value;
 			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || DEFAULT_ASSISTANT_NAME;
 			if (streams.status === 'fulfilled') this.streams = streams.value;
 			if (devices.status === 'fulfilled') this.devices = devices.value.devices ?? [];
+			// A server older than the route rejects this read; the step then
+			// shows nothing as arrived, which is all it can know.
+			if (chats.status === 'fulfilled') this.chats = chats.value;
 			this.loaded = true;
 			this.inflight = null;
 		})();
@@ -304,6 +345,14 @@ class SetupStore {
 		}
 		// The first half: settled here, on this device, before any server.
 		if (id === 'server') return prePair.active ? 'open' : 'done';
+		// Chats: done once any have arrived, from Setup or from Sources. Set
+		// aside once this device moved past it with none, or once the
+		// subscription after it is done: then Setup got past this point on
+		// another device, or before the step existed.
+		if (id === 'chats') {
+			if (this.chats.length) return 'done';
+			return this.chatsPassed || this.status('subscription') === 'done' ? 'skipped' : 'open';
+		}
 		const key = SERVER[id];
 		if (!key) return 'done';
 		const own = gettingStarted.step(key)?.status;

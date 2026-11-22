@@ -7,6 +7,11 @@ sync reports a dead session as one, a dead sign-in is one attention item, and
 a sync replays a session with the user agent of the browser that made it.
 None has run against a live site, on a server or in a built app.
 
+**2026-11-20:** the Grok sync was removed with the Sources redesign
+([sources-redesign-plan.md](sources-redesign-plan.md)). X and Instagram are
+the syncs left that replay a session. Read every mention of Grok below as
+history.
+
 Some syncs have no API to use, so they act as the owner's browser. The owner
 signs in once in the Mac app, the app hands the session's cookies to the
 server, and the sync uses them. This plan covers what happens after that

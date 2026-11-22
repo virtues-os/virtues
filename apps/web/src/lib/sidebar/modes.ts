@@ -69,6 +69,7 @@ export interface SidebarMode {
 const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/assistant': { icon: 'mynaui:sparkles', glyph: 'assistant' },
 	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
+	'/virtues/assistant/skills': { icon: 'mynaui:zap' },
 	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
 	'/virtues/data': { icon: 'mynaui:database' },
 	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
@@ -80,7 +81,7 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/devices/this': { icon: 'mynaui:desktop' },
 	'/virtues/backup': { icon: 'mynaui:archive' },
 	'/virtues/search': { icon: 'mynaui:search', glyph: 'search' },
-	'/virtues/applets': { icon: 'atlas:applets', glyph: 'applets' },
+	'/virtues/server-tasks': { icon: 'atlas:applets', glyph: 'applets' },
 	'/virtues/developer/terminal': { icon: 'mynaui:terminal' },
 };
 
@@ -111,12 +112,14 @@ function settingsRows(): ModeRow[] {
 			rows.push(settingsRow(route, plain?.l.label ?? group.title, group.title));
 		}
 	}
-	// Pages Your server links to rather than the site map: Search, Applets
-	// and Terminal. This device's line appears only on a device with a page
-	// of its own, so its row is here rather than in LANDING.
+	// Pages another page links to rather than the site map: Skills (from
+	// What it can do), and Search, Server tasks and Terminal (from Your
+	// server). This device's line appears only on a device with a page of
+	// its own, so its row is here rather than in LANDING.
 	rows.push(
+		settingsRow('/virtues/assistant/skills', 'Skills', 'Your assistant'),
 		settingsRow('/virtues/search', 'Search', 'Your server'),
-		settingsRow('/virtues/applets', 'Jobs', 'Your server'),
+		settingsRow('/virtues/server-tasks', 'Server tasks', 'Your server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);
@@ -194,9 +197,6 @@ export const WIKI_MODE: SidebarMode = {
 				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
 			group: 'Time',
 		},
-		// The day on the box's own map. It was a rail room of its own; with the
-		// rail gone it is the Time group's live view, beside the days it draws.
-		{ id: 'timeline', label: 'Timeline', icon: 'mynaui:path', glyph: 'timeline', href: '/timeline', group: 'Time' },
 		{ id: 'days', label: 'Days', icon: 'mynaui:calendar', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',

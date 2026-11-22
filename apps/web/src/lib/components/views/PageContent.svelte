@@ -27,6 +27,7 @@
 	import PageStatusNote from "$lib/components/pages/PageStatusNote.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
+	import PageMasthead from "$lib/components/pages/PageMasthead.svelte";
 	import Rail from "$lib/components/Rail.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
 	import { Popover } from "$lib/floating";
@@ -36,8 +37,12 @@
 		listPublications,
 		request,
 		ApiError,
+		setPageLayout,
 		type Backlink,
+		type Masthead,
 		type PageFormat,
+		type PageLayout,
+		type PagePaper,
 	} from "$lib/api/client";
 	import { toast } from "svelte-sonner";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
@@ -91,6 +96,44 @@
 	// chat start their text at one edge when you switch tabs. The page bar
 	// changes it, and offers the A4 sheet the page prints on.
 	const width = usePageWidth(() => "reading", { sheet: true });
+
+	// ── layout: paper, columns and a report's masthead ──────────────────────
+	// A page set on paper is that sheet whatever width this device picked,
+	// and prints on it; two columns are set when it prints. The layout is
+	// read with the page (`layoutFor` names which), so a click before the
+	// page has loaded never writes the last page's layout onto this one.
+	let paper = $state<PagePaper>("screen");
+	let columnCount = $state<1 | 2>(1);
+	let masthead = $state<Masthead | null>(null);
+	let layoutFor = $state<string | null>(null);
+	const onPaper = $derived(paper !== "screen");
+	/** The masthead as drawn: a hidden one is kept, not shown. */
+	const shownMasthead = $derived(masthead && !masthead.hidden ? masthead : null);
+
+	/**
+	 * Save part of the page's layout, shown at once. A failed save puts back
+	 * what was there, unless the page changed or a newer save started since.
+	 * Resolves whether it saved.
+	 */
+	let layoutSaves = 0;
+	async function saveLayout(patch: PageLayout, id = pageId): Promise<boolean> {
+		if (!id || id !== pageId || layoutFor !== id) return false;
+		const mine = ++layoutSaves;
+		const before = { paper, columnCount, masthead };
+		if (patch.paper) paper = patch.paper;
+		if (patch.column_count) columnCount = patch.column_count;
+		if (patch.masthead !== undefined) masthead = patch.masthead;
+		try {
+			await setPageLayout(id, patch);
+			return true;
+		} catch (e) {
+			if (id === pageId && mine === layoutSaves) ({ paper, columnCount, masthead } = before);
+			toast.error("Your server couldn't change the page's layout", {
+				description: e instanceof Error ? e.message : "Nothing changed. Try again",
+			});
+			return false;
+		}
+	}
 
 	// A block page's state, as the action toolbar's status mark. The phone
 	// has no toolbar, and there PageStatusNote says it in the page's corner.
@@ -163,6 +206,10 @@
 		format?: PageFormat;
 		/** The newest contract the server reads; absent from a box from before block pages. */
 		box_contract?: number;
+		/** How the page is laid out; absent from a box from before page layout. */
+		paper?: PagePaper;
+		column_count?: 1 | 2;
+		masthead?: Masthead | null;
 		/** `article` for a wiki article or a day page, `page` for a person's own; absent from an older box. */
 		kind?: string;
 	}
@@ -473,6 +520,7 @@
 			loading = false;
 			return;
 		}
+		layoutFor = null;
 
 		// Cancel any in-flight fetch
 		loadAbortController?.abort();
@@ -504,6 +552,10 @@
 				signal: loadAbortController.signal,
 			});
 			pageData = data;
+			paper = data.paper ?? "screen";
+			columnCount = data.column_count ?? 1;
+			masthead = data.masthead ?? null;
+			layoutFor = data.id;
 			title = data.title;
 			icon = data.icon;
 			iconColor = data.icon_color ?? null;
@@ -811,6 +863,8 @@
 		onViewMarkdown={format === "tree" ? () => (viewingMarkdown = true) : undefined}
 		onPrint={format === "tree" && canPrint ? printPage : undefined}
 		onDelete={deletePage}
+		layout={layoutFor === pageId ? { paper, column_count: columnCount, masthead } : null}
+		onLayout={saveLayout}
 	/>
 	</div>
 	{/if}
@@ -859,6 +913,7 @@
 					<PageCoverImage
 						{coverUrl}
 						width={width.width}
+						{paper}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;
@@ -870,10 +925,19 @@
 				<div
 					class="page-inner"
 					bind:clientWidth={columnWidth}
-					class:width-sheet={width.width === "sheet"}
-					style:max-width={width.width === "sheet" ? undefined : width.css}
+					class:width-sheet={width.width === "sheet" || onPaper}
+					class:paper-letter={paper === "letter"}
+					class:two-columns={onPaper && columnCount === 2}
+					class:paper-a4={paper === "a4"}
+					class:has-masthead={!!shownMasthead}
+					style:max-width={width.width === "sheet" || onPaper ? undefined : width.css}
 					class:prose--marks-inline={marksInline}
 				>
+					{#if shownMasthead && pageData}
+						{#key pageId}
+							<PageMasthead masthead={shownMasthead} part="top" writtenAt={pageData.created_at} />
+						{/key}
+					{/if}
 					<!-- Header -->
 					<div class="page-header">
 						<!-- Add an icon or a cover, over the title as the pointer
@@ -966,6 +1030,19 @@
 							class="page-title-input"
 						></textarea>
 					</div>
+					{#if shownMasthead && pageData}
+						{#key pageId}
+							{@const id = pageId}
+							<PageMasthead
+								masthead={shownMasthead}
+								part="below"
+								writtenAt={pageData.created_at}
+								editable={!refusedReason}
+								onAbstract={(text) =>
+									shownMasthead ? saveLayout({ masthead: { ...shownMasthead, abstract: text || undefined } }, id) : Promise.resolve(false)}
+							/>
+						{/key}
+					{/if}
 
 					<!-- Editor area: overlay pattern to avoid destroying the editor -->
 					<div class="page-editor-area" bind:this={editorContainerEl}>
@@ -1147,6 +1224,30 @@
 		background: var(--color-background);
 	}
 
+	/* US Letter: 8.5 by 11 inches, with the same margins. */
+	.page-inner.width-sheet.paper-letter {
+		max-width: 8.5in;
+		min-height: 11in;
+	}
+
+
+	/* A report reads as a paper: its text in the article's serif, whatever
+	   face this device picked for pages, and its title centered between its
+	   running head and byline. */
+	/* The editor sets the device's face on its own root, so the report's is
+	   set again on the document inside it. */
+	.page-inner.has-masthead :global(.ProseMirror) {
+		--prose-family: var(--md-article-family);
+		--prose-size: var(--md-article-size);
+		--prose-lh: var(--md-article-lh);
+		font-family: var(--md-article-family);
+		font-size: var(--md-article-size);
+		line-height: var(--md-article-lh);
+	}
+	.page-inner.has-masthead .page-title-input {
+		text-align: center;
+	}
+
 	.page-inner.width-sheet :global(.doc-page-view) {
 		width: auto;
 		min-height: 0;
@@ -1158,6 +1259,9 @@
 		.page-inner.width-sheet {
 			padding: 16px;
 			border: none;
+			min-height: 0;
+		}
+		.page-inner.width-sheet.paper-letter {
 			min-height: 0;
 		}
 	}
@@ -1356,8 +1460,30 @@
 			color: black;
 		}
 
+		/* Each sheet prints on its own size (named pages, document.css). */
+		.page-inner.paper-a4 {
+			page: a4-sheet;
+		}
+		.page-inner.paper-letter {
+			page: letter-sheet;
+		}
+
+		/* Two columns, as a journal sets them: the masthead and title across
+		   the sheet, the text in two columns under them. Only on paper, where
+		   the sheets break the columns; on screen the sheet has no end, so the
+		   text would run down one very tall column first. A figure, a table or
+		   a code block is kept whole. */
+		.page-inner.two-columns :global(.ProseMirror) {
+			column-count: 2;
+			column-gap: 8mm;
+		}
+		.page-inner :global(.ProseMirror > :is(.doc-widget, table, pre, .tableWrapper)) {
+			break-inside: avoid;
+		}
+
 		/* Paper has its own margins (`@page`, document.css). */
-		.page-inner.width-sheet {
+		.page-inner.width-sheet,
+		.page-inner.width-sheet.paper-letter {
 			max-width: none;
 			min-height: 0;
 			padding: 0;

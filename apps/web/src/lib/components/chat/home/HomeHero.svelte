@@ -1,6 +1,7 @@
 <script lang="ts">
 	/** The top of home: the day and its part as a serif headline. */
 	import { onMount } from 'svelte';
+	import { dayPartHeadline } from '$lib/utils/dateUtils';
 
 	let now = $state(new Date());
 	onMount(() => {
@@ -8,12 +9,7 @@
 		return () => clearInterval(t);
 	});
 
-	const headline = $derived.by(() => {
-		const day = now.toLocaleDateString(undefined, { weekday: 'long' });
-		const h = now.getHours();
-		const part = h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : 'night';
-		return `${day} ${part}`;
-	});
+	const headline = $derived(dayPartHeadline(now));
 </script>
 
 <div class="home-hero">

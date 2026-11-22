@@ -38,6 +38,7 @@
 		collectorOf,
 		isCollector,
 		deniedPermissions,
+		sourcePageOf,
 		type Device,
 		type DevicesResponse,
 	} from "$lib/devices/shared";
@@ -83,6 +84,11 @@
 	}
 
 	function open(d: Device) {
+		const page = sourcePageOf(d, devices);
+		if (page) {
+			windowShellStore.navigate(page, { label: page === '/sources/ios' ? 'iPhone' : 'Mac' });
+			return;
+		}
 		windowShellStore.navigate(deviceHref(d), { label: d.is_current ? "Settings · This device" : `Settings · ${deviceName(d)}` });
 	}
 

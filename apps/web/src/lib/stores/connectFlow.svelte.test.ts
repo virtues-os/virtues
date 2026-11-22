@@ -46,23 +46,31 @@ function sentBody(): Record<string, unknown> {
 beforeEach(() => {
 	vi.mocked(oauthStart).mockClear();
 	connectFlow.close();
-	connectFlow.awaitingExternal = false;
 });
 
 describe('starting a connect', () => {
+	it('opens an account window and sends nothing until Continue', async () => {
+		await connectFlow.start(source('google', 'via_proxy'));
+
+		expect(oauthStart).not.toHaveBeenCalled();
+		expect(connectFlow.pending).toMatchObject({ kind: 'account', step: 'intro' });
+	});
+
 	it('sends the credential being reconnected as credential_id', async () => {
 		await connectFlow.start(source('google', 'via_proxy'), 'cred_example');
+		await connectFlow.continueAccount();
 
 		expect(vi.mocked(oauthStart).mock.calls.at(-1)![0]).toBe('google');
 		expect(sentBody()).toEqual({
 			return_url: 'http://127.0.0.1:7117/oauth/callback?shell=native',
 			credential_id: 'cred_example',
 		});
-		expect(connectFlow.awaitingExternal).toBe(true);
+		expect(connectFlow.pending).toMatchObject({ kind: 'account', step: 'waiting' });
 	});
 
 	it('sends no credential id for a fresh connect', async () => {
 		await connectFlow.start(source('google', 'via_proxy'));
+		await connectFlow.continueAccount();
 
 		expect(sentBody()).toEqual({
 			return_url: 'http://127.0.0.1:7117/oauth/callback?shell=native',

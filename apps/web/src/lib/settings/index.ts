@@ -96,7 +96,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'subjects', title: 'Subjects {name} never raises', section: 'assistant', kind: 'control', words: ['rules', 'avoid', 'never bring up', 'topics'], route: '/virtues/assistant' },
 
 	// What the assistant can do
-	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
+	{ id: 'capabilities', title: 'Tools {name} can use', section: 'tools', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'mail', 'email', 'calendar', 'google', 'permissions', 'allow', 'turn off', 'what it can do'], route: '/virtues/assistant/tools' },
 
 	// Models and spending
 	{ id: 'models', title: 'Models {name} runs on', section: 'spending', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant/spending' },
@@ -111,6 +111,8 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'export', title: 'Export everything', section: 'data', kind: 'action', words: ['download', 'copy', 'takeout', 'leave', 'my data', 'json'], route: '/virtues/data' },
 	{ id: 'keep-recordings', title: 'Keep recordings', section: 'data', kind: 'control', words: ['audio', 'delete recordings', 'retention', 'microphone', 'voice', 'how long'], route: '/virtues/data' },
 	{ id: 'deleted-records', title: 'Deleted records', section: 'data', kind: 'page', words: ['delete', 'remove', 'erase', 'forget', 'purchase', 'visit', 'record', 'delete-data', 'tombstone', 'collect again', 'for good'], route: '/virtues/data/deleted' },
+	{ id: 'streams', title: 'Streams', section: 'data', kind: 'page', words: ['streams', 'raw', 'records', 'lake', 'arrived', 'storage', 'how full'], route: '/virtues/data/streams' },
+	{ id: 'query', title: 'Query', section: 'data', kind: 'page', words: ['sql', 'query', 'tables', 'console', 'developer', 'select'], route: '/virtues/data/query' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/data/shared' },
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/data/keys' },
 
@@ -119,6 +121,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'background', title: 'Background', section: 'appearance', kind: 'control', words: ['background', 'picture', 'painting', 'wallpaper', 'image', 'home', 'lake', 'plain'], route: '/virtues/appearance' },
 	{ id: 'accent', title: 'Accent', section: 'appearance', kind: 'control', words: ['accent', 'color', 'colour', 'tint', 'highlight', 'brand', 'personalize'], route: '/virtues/appearance' },
 	{ id: 'glass', title: 'Glass', section: 'appearance', kind: 'control', words: ['glass', 'transparency', 'translucent', 'blur', 'see-through', 'solid', 'frosted'], route: '/virtues/appearance' },
+	{ id: 'page-background', title: 'Background on pages', section: 'appearance', kind: 'control', words: ['background', 'picture', 'fade', 'opacity', 'transparency', 'dim', 'faded', 'quieter', 'wallpaper'], route: '/virtues/appearance' },
 	{ id: 'reading-font', title: 'Reading font', section: 'appearance', kind: 'control', words: ['font', 'typeface', 'serif', 'sans', 'mono', 'pages', 'reading'], route: '/virtues/appearance' },
 	{ id: 'text-size', title: 'Text size', section: 'appearance', kind: 'control', words: ['font size', 'bigger text', 'smaller text', 'larger', 'zoom', 'readable'], route: '/virtues/appearance' },
 	{ id: 'reduce-motion', title: 'Reduce motion', section: 'appearance', kind: 'control', words: ['animation', 'motion', 'movement', 'still', 'accessibility', 'dizzy'], route: '/virtues/appearance' },
@@ -132,7 +135,7 @@ export const SETTINGS: readonly Setting[] = [
 	// Your server
 	{ id: 'server-health', title: 'Your server', section: 'server', kind: 'page', words: ['status', 'system', 'storage', 'disk', 'memory', 'cpu', 'health', 'temperature'], route: '/virtues/system' },
 	{ id: 'search-runs-on', title: 'Where search runs', section: 'server', kind: 'page', words: ['search', 'accelerator', 'npu', 'cpu', 'index'], route: '/virtues/search' },
-	{ id: 'applets', title: 'Applets', section: 'server', kind: 'page', words: ['scheduled', 'background', 'jobs', 'runs', 'failed'], route: '/virtues/applets' },
+	{ id: 'server-tasks', title: 'Server tasks', section: 'server', kind: 'page', words: ['scheduled', 'background', 'jobs', 'applets', 'syncs', 'runs', 'failed'], route: '/virtues/server-tasks' },
 
 	// Updates
 	{ id: 'updates', title: 'Check for updates', section: 'updates', kind: 'action', words: ['update', 'version', 'upgrade', 'release', 'install'], route: '/virtues/updates' },

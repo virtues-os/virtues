@@ -1,15 +1,36 @@
+<script lang="ts" module>
+	import { getByoKey } from '$lib/api/client';
+	import { placeOf } from '$lib/tasks/requests';
+
+	/* Where your own account runs, asked once per load: the preview remounts
+	   this for every task you point at. */
+	let byoPlaceOnce: Promise<string> | null = null;
+	function byoPlace(): Promise<string> {
+		byoPlaceOnce ??= getByoKey<{ endpoint_url?: string | null }>()
+			.then((s) => placeOf(s.endpoint_url))
+			.catch(() => 'on your own account');
+		return byoPlaceOnce;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * What can be done with a task, on its page and in the door's preview.
 	 *
+	 *   A task that repeats  its newest result, when it runs, and Options.
+	 *                     Nothing to accept: opening it is all it asks.
 	 *   A ready request   the assistant's result, then Accept and Reply.
 	 *   A request at work where it runs and what it has cost, Start or Take it
 	 *                     back, and a note for its next run.
-	 *   Your own task     Ask the assistant to do it (once, never a recurring
-	 *                     one), and Dismiss.
+	 *   Your own task     Ask the assistant (once, never a recurring one), and
+	 *                     Dismiss.
+	 *
+	 * Each is a real button: the one that moves the task forward is primary,
+	 * the rest are secondary, and Dismiss is ghost because it puts the task away.
 	 */
 	import type { Task, TaskPatch } from '$lib/api/client';
-	import { addTaskNote, getByoKey } from '$lib/api/client';
+	import { addTaskNote } from '$lib/api/client';
+	import { Button } from '$lib';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import RefCard from '$lib/components/RefCard.svelte';
 	import TaskComposer from '$lib/components/tasks/TaskComposer.svelte';
@@ -17,7 +38,15 @@
 	import { modelSlots } from '$lib/stores/modelSlots.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { isClosed } from '$lib/tasks/actions';
-	import { placeOf, requestState } from '$lib/tasks/requests';
+	import { appletOf, isRepeating, requestState } from '$lib/tasks/requests';
+	import { describeTriggers } from '$lib/applets/palette';
+	import { actionOf, problemOf } from '$lib/applets/standing';
+	import { optionsOf } from '$lib/applets/kind';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { getAppletPages, runApplet, type AppletPage } from '$lib/api/client';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import { whenInWords } from '$lib/utils/dateUtils';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { recurrenceOf } from '$lib/tasks/recur';
 	import { formatMicrosUSD } from '$lib/utils/currency';
 	import { toast } from 'svelte-sonner';
@@ -26,22 +55,75 @@
 	let { task, onChanged }: { task: Task; onChanged?: () => void } = $props();
 
 	const request = $derived(task.assignee === 'assistant');
+
+	// A task that repeats is run by its applet, which says when it runs and
+	// whether its last run went wrong.
+	const repeating = $derived(isRepeating(task));
+	const applet = $derived(appletOf(task));
+	const trouble = $derived(applet ? problemOf(applet) : null);
+	const fix = $derived(applet ? actionOf(applet) : null);
+	let starting = $state(false);
+
+	function openOptions() {
+		if (applet) windowShellStore.openRouteBeside(optionsOf(applet), applet.name);
+	}
+
+	// The pages its earlier runs wrote, newest first. The newest result is
+	// already shown above, so its page is left out of this list.
+	const EARLIER = 6;
+	let wrote = $state<AppletPage[]>([]);
+	$effect(() => {
+		const id = task.applet_id;
+		// Read so that a new result reads the list again.
+		void task.result_url;
+		wrote = [];
+		if (!id) return;
+		let gone = false;
+		getAppletPages(id)
+			.then((pages) => {
+				if (!gone) wrote = pages;
+			})
+			.catch(() => {
+				// The result above still shows. Its earlier pages are in Pages.
+			});
+		return () => {
+			gone = true;
+		};
+	});
+	const earlier = $derived(wrote.filter((p) => `/page/${p.page_id}` !== task.result_url).slice(0, EARLIER));
+
+	function openPage(id: string, title: string) {
+		windowShellStore.openRouteBeside(`/page/${id}`, title);
+	}
+
+	async function actOnTrouble() {
+		if (!applet || !fix) return;
+		if (fix.kind === 'fix') {
+			windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+			return;
+		}
+		starting = true;
+		try {
+			await runApplet(applet.id);
+			await appletsStore.load();
+		} catch (e) {
+			toast.error("Your server didn't start it", { description: e instanceof Error ? e.message : undefined });
+		} finally {
+			starting = false;
+		}
+	}
 	let replying = $state(false);
-	let byoPlace = $state('on your own account');
+	let place = $state('on your own account');
 
 	onMount(() => {
 		if (!modelSlots.loaded) void modelSlots.load();
-		void getByoKey<{ endpoint_url?: string | null }>()
-			.then((s) => (byoPlace = placeOf(s.endpoint_url)))
-			.catch(() => {
-				// The line keeps its general wording.
-			});
+		void byoPlace().then((p) => (place = p));
 	});
 
 	const where = $derived.by(() => {
 		if (!task.run_model) return null;
 		const name = modelSlots.nameOf(task.run_model);
-		return task.run_route === 'byo' ? `${name} ${byoPlace}` : `${name} through Virtues`;
+		return task.run_route === 'byo' ? `${name} ${place}` : `${name} through Virtues`;
 	});
 
 	async function save(patch: TaskPatch, failure: string) {
@@ -95,7 +177,48 @@
 
 {#if !isClosed(task)}
 	<div class="task-actions">
-		{#if request && task.status === 'ready'}
+		{#if repeating}
+			{#if task.result}
+				<div class="result">
+					<Markdown content={task.result} />
+					{#if task.result_url}
+						<RefCard type={task.result_url.split('/')[1] ?? null} label={resultLabel(task.result_url)} url={task.result_url} />
+					{/if}
+				</div>
+			{/if}
+			<p class="state">
+				{#if !applet}
+					It repeats on its own.
+				{:else if !applet.enabled}
+					It is off. Turn it on in Options.
+				{:else if trouble}
+					{trouble}.
+				{:else}
+					{describeTriggers(applet)}.{#if !task.result}{' '}Its first result shows here.{/if}
+				{/if}
+			</p>
+			<div class="buttons">
+				{#if applet?.enabled && fix}
+					<Button onclick={actOnTrouble} loading={starting}>{fix.label}</Button>
+				{/if}
+				{#if applet}
+					<Button variant="secondary" onclick={openOptions}>Options</Button>
+				{/if}
+			</div>
+			{#if earlier.length > 0}
+				<div class="earlier">
+					<h4 class="earlier-head">Earlier</h4>
+					<ul role="list">
+						{#each earlier as p (p.page_id)}
+							<li>
+								<TextAction onclick={() => openPage(p.page_id, p.title)}>{p.title}</TextAction>
+								<span class="earlier-when">{whenInWords(p.written_at)}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+		{:else if request && task.status === 'ready'}
 			<div class="result">
 				<Markdown content={task.result ?? ''} />
 				{#if task.result_url}
@@ -112,8 +235,8 @@
 				/>
 			{/if}
 			<div class="buttons">
-				<button type="button" class="action strong" onclick={() => save({ status: 'done' }, "Your server couldn't close that request")}>Accept</button>
-				<button type="button" class="action" onclick={() => (replying = !replying)}>{replying ? 'Cancel reply' : 'Reply'}</button>
+				<Button onclick={() => save({ status: 'done' }, "Your server couldn't close that request")}>Accept</Button>
+				<Button variant="secondary" onclick={() => (replying = !replying)}>{replying ? 'Cancel reply' : 'Reply'}</Button>
 			</div>
 		{:else if request}
 			<p class="state">
@@ -123,10 +246,10 @@
 			</p>
 			<div class="buttons">
 				{#if task.status === 'open' && !task.next_run_at}
-					<button type="button" class="action strong" onclick={() => save({ assignee: 'assistant' }, "Your server couldn't start that")}>Start</button>
+					<Button onclick={() => save({ assignee: 'assistant' }, "Your server couldn't start that")}>Start</Button>
 				{/if}
-				<button type="button" class="action" onclick={() => save({ assignee: 'owner' }, "Your server couldn't take that back")}>Take it back</button>
-				<button type="button" class="action" onclick={dismiss}>Dismiss</button>
+				<Button variant="secondary" onclick={() => save({ assignee: 'owner' }, "Your server couldn't take that back")}>Take it back</Button>
+				<Button variant="ghost" onclick={dismiss}>Dismiss</Button>
 			</div>
 			<TaskComposer
 				label="Add a note for the assistant"
@@ -137,9 +260,15 @@
 		{:else}
 			<div class="buttons">
 				{#if !recurrenceOf(task)}
-					<button type="button" class="action" onclick={() => save({ assignee: 'assistant' }, "Your server couldn't hand that over")}>Ask the assistant to do it</button>
+					<Button
+						variant="secondary"
+						icon="mynaui:sparkles"
+						onclick={() => save({ assignee: 'assistant' }, "Your server couldn't hand that over")}
+					>
+						Ask the assistant
+					</Button>
 				{/if}
-				<button type="button" class="action" onclick={dismiss}>Dismiss</button>
+				<Button variant="ghost" onclick={dismiss}>Dismiss</Button>
 			</div>
 		{/if}
 	</div>
@@ -152,41 +281,43 @@
 		gap: 12px;
 	}
 	.result {
-		font-size: 15px;
+		font-size: var(--text-body);
 		line-height: 24px;
 		color: var(--color-foreground);
 	}
+	.earlier-head {
+		margin: 0 0 4px;
+		font-size: var(--text-small);
+		font-weight: 400;
+		color: var(--color-foreground-subtle);
+	}
+	.earlier ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.earlier li {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 4px 0;
+		font-size: var(--text-label);
+	}
+	.earlier-when {
+		flex-shrink: 0;
+		font-size: var(--text-small);
+		color: var(--color-foreground-muted);
+	}
 	.state {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--text-label);
 		line-height: 20px;
 		color: var(--color-foreground-muted);
 	}
 	.buttons {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 16px;
-	}
-	.action {
-		padding: 0;
-		border: 0;
-		background: none;
-		font: inherit;
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.action:not(.strong) {
-		color: var(--color-foreground-muted);
-		font-weight: 400;
-	}
-	.action:hover {
-		color: var(--color-foreground);
-	}
-	.action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
+		gap: 8px;
 	}
 </style>

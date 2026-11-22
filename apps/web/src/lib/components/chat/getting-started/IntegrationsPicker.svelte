@@ -1,5 +1,5 @@
 <!--
-	The integrations step, inline in the thread. A short table of the sources
+	The integrations step, inline in the chat. A short table of the sources
 	that pay off first, each with one line of what it holds and one button.
 	Connecting happens in a modal over the room or, for OAuth, in the
 	browser — never on a page beside it: the whole setup is this one
@@ -15,6 +15,7 @@
 	import ApiKeyConnectModal from "$lib/components/sources/ApiKeyConnectModal.svelte";
 	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
 	import { copyFor } from "$lib/components/onboarding/document/sources-copy";
+	import { isImportSource } from "$lib/imports";
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem, type Credential } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { GETTING_STARTED_CHAT_ID } from "./getting-started";
@@ -53,7 +54,8 @@
 		const byId = new Map(catalog.map((s) => [s.id, s]));
 		const lead = LEAD.map((id) => byId.get(id)).filter((s): s is SourceCatalogItem => !!s);
 		if (!showAll) return lead;
-		const rest = catalog.filter((s) => !LEAD.includes(s.id));
+		// Imports take a file the person downloads, so they live in Sources.
+		const rest = catalog.filter((s) => !LEAD.includes(s.id) && !isImportSource(s.id));
 		return [...lead, ...rest];
 	});
 
@@ -93,8 +95,8 @@
 			if (intent.kind === "pair") pair = { deviceType: intent.deviceType, displayName: intent.displayName };
 			else if (intent.kind === "api_key") apiKey = intent.source;
 			else if (intent.kind === "oauth" && intent.external) reloadOnReturn(refresh);
-			else if (intent.kind === "chat_import")
-				error = "Chat history takes a file you export yourself, so it is done in Sources rather than here. Everything else on this list is one button.";
+			else if (intent.kind === "import")
+				error = "This takes a file you download yourself, so it is done in Sources rather than here. Everything else on this list is one button.";
 			else if (intent.kind === "error") error = intent.message;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

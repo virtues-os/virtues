@@ -12,15 +12,24 @@ const RELOAD_MS = 60_000;
 
 class NotesStore {
 	items = $state<Note[]>([]);
+	/** The list has arrived at least once, so an empty one is really empty. */
+	loaded = $state(false);
+	/** The last load failed; the list keeps what it had. */
+	failed = $state(false);
+	/** Counts loads, so a view showing one note can read it again after Undo. */
+	revision = $state(0);
 	private watchers = 0;
 	private timer: ReturnType<typeof setInterval> | null = null;
 
 	async load(): Promise<void> {
 		try {
 			this.items = await getNotes();
+			this.loaded = true;
+			this.failed = false;
+			this.revision += 1;
 		} catch (e) {
-			// A server older than notes has no list; nothing is shown.
 			console.error('[notes] load failed:', e);
+			this.failed = true;
 		}
 	}
 
@@ -54,7 +63,10 @@ class NotesStore {
 			toast('Set aside', {
 				action: {
 					label: 'Undo',
-					onClick: () => void restoreNote(note.key).then(() => this.load()),
+					onClick: () =>
+						void restoreNote(note.key)
+							.then(() => this.load())
+							.catch(() => toast.error("Your server couldn't bring that back", { description: 'Try again' })),
 				},
 			});
 		} catch (e) {

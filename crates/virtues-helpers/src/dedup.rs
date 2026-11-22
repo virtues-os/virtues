@@ -126,6 +126,40 @@ pub fn build_batch_upsert_query(
     query
 }
 
+/// [`build_batch_upsert_query`] that leaves an existing row alone when none of
+/// the `update_columns` would change. `RETURNING` then names only rows that
+/// were inserted or changed, and `updated_at` moves only on a real change.
+///
+/// For a sync that reads a whole window on every run rather than a list of
+/// changes, such as the Outlook calendar. With the plain upsert, every event in
+/// the window would be rewritten every run and look freshly updated to
+/// everything that reads `updated_at`.
+pub fn build_batch_upsert_changed_query(
+    table: &str,
+    columns: &[&str],
+    conflict_column: &str,
+    update_columns: &[&str],
+    num_rows: usize,
+) -> String {
+    let query = build_batch_upsert_query(table, columns, conflict_column, update_columns, num_rows);
+    let returning = " RETURNING (xmax = 0) AS inserted";
+    let head = query
+        .strip_suffix(returning)
+        .expect("build_batch_upsert_query ends with its RETURNING clause");
+    let changed: Vec<String> = update_columns
+        .iter()
+        .map(|c| {
+            if *c == "metadata" {
+                // metadata is merged, so it changes only if the merge would.
+                format!("({table}.{c} || EXCLUDED.{c}) IS DISTINCT FROM {table}.{c}")
+            } else {
+                format!("{table}.{c} IS DISTINCT FROM EXCLUDED.{c}")
+            }
+        })
+        .collect();
+    format!("{head} WHERE {}{returning}", changed.join(" OR "))
+}
+
 /// Default batch size for bulk inserts. iOS payloads are typically smaller than
 /// this, but HealthKit initial sync (90 days) can send thousands of records per stream.
 pub const BATCH_SIZE: usize = 500;
@@ -183,6 +217,23 @@ mod tests {
         // And a corrected row must be distinguishable from a new one.
         assert!(sql.contains("RETURNING (xmax = 0) AS inserted"));
         assert!(!sql.contains("DO NOTHING"));
+    }
+
+    #[test]
+    fn a_changed_upsert_skips_rows_that_would_not_change() {
+        let sql = build_batch_upsert_changed_query(
+            "data_calendar_event",
+            &["id", "title", "metadata", "source_stream_id"],
+            "source_stream_id",
+            &["title", "metadata"],
+            1,
+        );
+        assert!(sql.contains("DO UPDATE SET title = EXCLUDED.title"));
+        assert!(sql.ends_with(
+            " WHERE data_calendar_event.title IS DISTINCT FROM EXCLUDED.title \
+             OR (data_calendar_event.metadata || EXCLUDED.metadata) IS DISTINCT FROM data_calendar_event.metadata \
+             RETURNING (xmax = 0) AS inserted"
+        ));
     }
 
     #[test]

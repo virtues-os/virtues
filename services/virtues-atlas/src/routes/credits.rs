@@ -331,9 +331,8 @@ pub(crate) async fn resolve_active_customer(
 ) -> Result<(String, String), axum::response::Response> {
     let key_hash = sha256(api_key.as_bytes());
 
-    // Per-box keys first (box_key), legacy customers.api_key_hash as
-    // fallback — the ONE shared lookup (claim.rs), so every key-authed door
-    // moves together.
+    // The ONE shared lookup (claim.rs), so every key-authed door moves
+    // together.
     let cid = super::claim::customer_id_by_key_hash(&state.pool, &key_hash[..])
         .await
         .map_err(|e| {

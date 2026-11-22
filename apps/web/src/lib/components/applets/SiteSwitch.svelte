@@ -1,39 +1,35 @@
 <script lang="ts">
 	/**
-	 * The two sides of a site's page: the site, and its options (when it
-	 * runs, what it may spend, its runs, its prompt). Both are the same tab.
-	 * Switching replaces the tab's place in history, so Back leaves the site
-	 * instead of flipping the switch.
+	 * The two sides of a site's, a skill's or a task's page: the thing
+	 * itself, and its options (when it runs, what it may spend, its runs, its
+	 * prompt). Both are the same tab. Switching replaces the tab's place in
+	 * history, so Back leaves the page instead of flipping the switch.
 	 */
 	import Segmented from '$lib/components/Segmented.svelte';
+	import type { Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { optionsRoute, siteRoute } from '$lib/applets/sites.svelte';
+	import { KIND_WORD, kindOf, optionsOf, pageOf } from '$lib/applets/kind';
 
 	let {
 		tabId,
-		appletId,
-		name,
-		hasView,
+		applet,
 		showing
 	}: {
 		tabId: string;
-		appletId: string;
-		name: string;
-		/** A site with no view shows what it made on its own page. */
-		hasView: boolean;
+		applet: Applet;
 		showing: 'site' | 'options';
 	} = $props();
 
-	const OPTIONS = [
-		{ value: 'site', label: 'Site' },
-		{ value: 'options', label: 'Options' }
-	] as const;
+	// The first side is named for what the thing is: Site, Task or Skill.
+	const options = $derived([
+		{ value: 'site' as const, label: KIND_WORD[kindOf(applet)] },
+		{ value: 'options' as const, label: 'Options' }
+	]);
 
 	function show(next: 'site' | 'options') {
 		if (next === showing) return;
-		const route = next === 'options' ? optionsRoute(appletId) : hasView ? siteRoute(appletId) : `/applet/${appletId}`;
-		windowShellStore.retarget(tabId, route, name);
+		windowShellStore.retarget(tabId, next === 'options' ? optionsOf(applet) : pageOf(applet), applet.name);
 	}
 </script>
 
-<Segmented value={showing} options={OPTIONS} label={`${name}: the site or its options`} onchange={show} />
+<Segmented value={showing} {options} label={`${applet.name}, or its options`} onchange={show} />

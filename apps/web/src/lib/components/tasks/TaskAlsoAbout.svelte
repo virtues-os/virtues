@@ -101,7 +101,7 @@
 		border-radius: var(--radius-sm);
 		background: transparent;
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--text-small);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
@@ -129,16 +129,19 @@
 		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
-	.plain .fact,
-	.plain .none {
-		font-size: 14px;
+	.plain .fact {
+		font-size: var(--text-label);
 		color: var(--color-foreground);
+	}
+	.plain .none {
+		font-size: var(--text-label);
+		color: var(--color-foreground-subtle);
 	}
 	.plain .add {
 		color: var(--color-primary);
 	}
 	.none {
-		font-size: 13px;
+		font-size: var(--text-small);
 		color: var(--color-foreground-muted);
 	}
 	@media (prefers-reduced-motion: reduce) {

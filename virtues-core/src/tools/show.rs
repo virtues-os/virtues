@@ -144,7 +144,8 @@ const MAX_TABLE_COLUMNS: usize = 8;
 const MAX_NUMBERS: usize = 4;
 const MAX_SERIES: usize = 3;
 const MAX_TITLE_CHARS: usize = 80;
-const MAX_OPTION_CHARS: usize = 40;
+/// A button reads as 1-3 words; the question and context carry the detail.
+const MAX_OPTION_CHARS: usize = 24;
 const MAX_CONTEXT_CHARS: usize = 240;
 
 fn invalid(msg: impl Into<String>) -> ToolError {
@@ -1404,7 +1405,7 @@ fn choices(options: Vec<String>) -> Result<Vec<String>, ToolError> {
     }
     if let Some(long) = options.iter().find(|o| o.chars().count() > MAX_OPTION_CHARS) {
         return Err(invalid(format!(
-            "an option is a button label, at most {MAX_OPTION_CHARS} characters; '{long}' is longer"
+            "an option is a button label of 1-3 words, at most {MAX_OPTION_CHARS} characters; '{long}' is longer. Put the detail in `title` or `context`"
         )));
     }
     Ok(options)
@@ -1744,7 +1745,7 @@ mod tests {
         assert!(choices(vec![]).is_err());
         assert!(choices(vec!["Look into it".into()]).is_ok());
         assert!(choices(vec!["a".into(), "b".into(), "c".into(), "d".into()]).is_err());
-        assert!(choices(vec!["Yes".into(), "x".repeat(41)]).is_err());
+        assert!(choices(vec!["Yes".into(), "x".repeat(25)]).is_err());
         assert_eq!(choices(vec![" Yes ".into(), "".into(), "No".into()]).unwrap(), vec!["Yes", "No"]);
     }
 

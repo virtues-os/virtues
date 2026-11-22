@@ -172,6 +172,12 @@ async fn refresh_locked(db: &PgPool, credential_id: &str) -> Result<RefreshOutco
     let encryptor = TokenEncryptor::from_env()?;
     let plaintext = encryptor.decrypt(&row.secrets_ciphertext)?;
     let secrets: serde_json::Value = serde_json::from_str(&plaintext)?;
+    // A sign-in made with the person's own app keeps its Client ID and
+    // refreshes at the vendor itself (`own_app`); the proxy holds no secret
+    // for it.
+    let own_app = super::own_app::for_source(&row.key).zip(
+        secrets.get("client_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from),
+    );
     let refresh_token = match serde_json::from_value::<OauthSecrets>(secrets) {
         Ok(s) => match s.refresh_token {
             Some(t) if !t.is_empty() => t,
@@ -180,17 +186,23 @@ async fn refresh_locked(db: &PgPool, credential_id: &str) -> Result<RefreshOutco
         Err(_) => return Ok(RefreshOutcome::NoRefreshable),
     };
 
-    // Identify this box to the proxy (see proxy_refresh). An unlinked box has
-    // no key and the proxy refuses its refresh. An unreadable vault is logged
-    // rather than passed off as "no key".
-    let api_key = match super::vault::read_box_api_key(db).await {
-        Ok(k) => k,
-        Err(e) => {
-            tracing::warn!(credential_id, error = %e, "could not read box api_key for proxy refresh");
-            None
+    let refreshed = match &own_app {
+        Some((app, client_id)) => app.refresh(client_id, &refresh_token).await,
+        None => {
+            // Identify this box to the proxy (see proxy_refresh). An unlinked
+            // box has no key and the proxy refuses its refresh. An unreadable
+            // vault is logged rather than passed off as "no key".
+            let api_key = match super::vault::read_box_api_key(db).await {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!(credential_id, error = %e, "could not read box api_key for proxy refresh");
+                    None
+                }
+            };
+            proxy_refresh(&row.key, &refresh_token, api_key.as_deref()).await
         }
     };
-    match proxy_refresh(&row.key, &refresh_token, api_key.as_deref()).await {
+    match refreshed {
         Ok(resp) => {
             let ciphertext = encryptor.encrypt(&serde_json::to_string(&resp.secrets)?)?;
             let stored = store_refreshed(

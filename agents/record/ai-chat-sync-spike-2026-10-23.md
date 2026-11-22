@@ -181,6 +181,10 @@ for other reasons.
 - Not exercised: the `pageToken` parameter name for the next page, and the
   sort order of the list.
 
+**Removed 2026-11-20** with the Sources redesign
+(`agents/plan/sources-redesign-plan.md`), before any live run; the rows it
+wrote stay. What follows describes the build.
+
 **Built 2026-10-26 as `applets/grok_chats_sync`, without a live run.** The
 owner chose to skip the live test. These parts are assumed, not observed, until
 the first real sync:

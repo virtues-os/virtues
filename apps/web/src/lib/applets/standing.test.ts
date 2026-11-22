@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { actionOf, appletLine, appletsLead, groupApplets, problemOf, troubleOf } from './standing';
+import { actionOf, appletLine, appletsLead, groupServerTasks, problemOf, troubleOf } from './standing';
 
 const NOW = new Date('2026-10-06T12:00:00').getTime();
 const at = (local: string) => new Date(local).toISOString();
@@ -42,6 +42,7 @@ describe('whenInWords', () => {
 describe('troubleOf', () => {
 	it("gives a failed run's own reason when it has one", () => {
 		expect(problemOf(failed('The weather service did not answer'), NOW)).toBe('The weather service did not answer');
+		expect(problemOf(failed('failed to spawn action command: No such file or directory (os error 2)'), NOW)).toBe("Its program couldn't start");
 		expect(problemOf(failed(null), NOW)).toBe(`Its last run didn't finish today at ${clock('2026-10-06T06:00:00')}`);
 	});
 
@@ -98,24 +99,33 @@ describe('appletLine', () => {
 	});
 });
 
-describe('groupApplets', () => {
-	it('lists what needs you on its own, and the rest by who made it', () => {
-		const groups = groupApplets(
+describe('groupServerTasks', () => {
+	it('lists the server\'s tasks by account, and leaves skills and what you set up to their own pages', () => {
+		const program = { command: ['run'] };
+		const groups = groupServerTasks(
 			[
 				applet({ id: 'a', name: 'Rent reminder' }),
 				applet({ id: 'b', name: 'Garden watering', ...failedRun('timed out') }),
-				applet({ id: 'c', name: 'Backup', origin: 'system' }),
-				applet({ id: 'd', name: 'Calendar sync', origin: 'source' }),
-				applet({ id: 'e', name: 'Heart rate dashboard', origin: 'ai' }),
-				applet({ id: 'f', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
+				applet({ id: 'c', name: 'Backup', origin: 'system', schedule: '0 0 4 * * *', ...program }),
+				applet({ id: 'd', name: 'Mail sync', origin: 'source', credential_id: 'cred_1', schedule: '0 */15 * * * *', ...program }),
+				applet({ id: 'e', name: 'Calendar sync', origin: 'source', credential_id: 'cred_1', ...program, ...failedRun('timed out') }),
+				applet({ id: 'f', name: 'Phone', origin: 'source', device_id: 'dev_1', schedule: null, triggers: ['webhook'], ...program }),
+				applet({ id: 'g', name: 'Trip planner', origin: 'system', schedule: null }),
+				applet({ id: 'h', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
+				applet({ id: 'i', name: 'Chat import', origin: 'system', schedule: null, ...program }),
+				applet({ id: 'j', name: 'Morning examen', origin: 'system' }),
 			],
 			NOW,
 		);
-		expect(groups.needsYou.map((a) => a.id)).toEqual(['b']);
-		expect(groups.yours.map((a) => a.id)).toEqual(['e', 'a']);
-		expect(groups.server.map((a) => a.id)).toEqual(['c']);
-		expect(groups.connected.map((a) => a.id)).toEqual(['d']);
-		expect(groups.finished.map((a) => a.id)).toEqual(['f']);
+		expect(groups.accounts.map((g) => [g.kind, g.id, g.tasks.map((a) => a.id)])).toEqual([
+			['credential', 'cred_1', ['e', 'd']],
+			['device', 'dev_1', ['f']],
+		]);
+		// The shipped task of the assistant's sits here until Tasks can show it.
+		expect(groups.server.map((a) => a.id)).toEqual(['c', 'j']);
+		expect(groups.whenAsked.map((a) => a.id)).toEqual(['i']);
+		expect(groups.finished.map((a) => a.id)).toEqual(['h']);
+		expect(groups.yoursNeedingYou.map((a) => a.id)).toEqual(['b']);
 	});
 });
 

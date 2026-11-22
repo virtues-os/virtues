@@ -63,8 +63,6 @@ export interface Connection {
 	 * permission failure before it trusts this list.
 	 */
 	denied: string[];
-	/** Where clicking it goes, or null when the row has no detail surface. */
-	route: string | null;
 	/** Devices only: this is the device you're reading this on. */
 	isCurrent: boolean;
 }
@@ -108,7 +106,6 @@ function fromCredential(c: Credential, sourceName: string | undefined): Connecti
 		appletCount: c.applet_count,
 		broken: isBrokenStatus(c.status),
 		denied: [],
-		route: `/sources/${c.id}`,
 		isCurrent: false
 	};
 }
@@ -182,7 +179,6 @@ function fromDevice(d: DeviceRow): Connection {
 			appletCount: null,
 			broken: false,
 			denied,
-			route: null,
 			isCurrent: d.is_current
 		};
 	}
@@ -205,9 +201,6 @@ function fromDevice(d: DeviceRow): Connection {
 		appletCount: null,
 		broken: denied.length > 0,
 		denied,
-		// Devices have no per-connection page in this room yet; the current one
-		// has "This Mac" / "This device", the rest live under Settings → Devices.
-		route: null,
 		isCurrent: d.is_current
 	};
 }
@@ -215,6 +208,10 @@ function fromDevice(d: DeviceRow): Connection {
 class SourcesStore {
 	catalog = $state<SourceCatalogItem[]>([]);
 	connections = $state<Connection[]>([]);
+	/** Sources whose connections the server released when its subscription
+	 *  lapsed (`status_reason` `subscription_ended`) and that have no live
+	 *  connection now. The Sources page says so once. */
+	released = $state<string[]>([]);
 	loading = $state(true);
 	error = $state<string | null>(null);
 
@@ -255,6 +252,14 @@ class SourcesStore {
 			]);
 			this.catalog = catalog;
 			const catalogById = this.catalogById;
+			const live = new Set(creds.filter((c) => c.status === 'active').map((c) => c.provider));
+			this.released = [
+				...new Set(
+					creds
+						.filter((c) => c.status === 'revoked' && c.status_reason === 'subscription_ended' && !live.has(c.provider))
+						.map((c) => c.provider)
+				)
+			];
 			this.connections = [
 				// `pending` credentials are a transient pre-pairing state the server
 				// hard-deletes on cancel; they should never reach a list.

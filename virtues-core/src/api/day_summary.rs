@@ -48,7 +48,7 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Device presence** (`[device]` lines) is a stretch the owner was demonstrably AT a machine — typing, clicking, or holding the screen awake. It is weak evidence of WHAT they were doing and strong evidence of WHERE THEY WERE NOT: a body at a keyboard is not a body at a dinner. Read the tail of the line — `screen locked` and `machine slept` mean they stopped; `collector stopped` means WE stopped watching and says nothing at all about them.
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
 - **Audio sessions** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes. The voices are never named: a name heard in a recording is someone MENTIONED, not someone present.
-- **Messages** (`[messages]` lines) are a run of one thread, placed in time, with a few excerpts. `you:` is the owner; `them:` is someone else on the thread. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
+- **Messages** (`[messages]` lines) are a run of one message conversation, placed in time, with a few excerpts. `you:` is the owner; `them:` is someone else in it. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
 - **Muted audio** (`[audio MUTED by schedule]` / `[audio MUTED by place]` lines) is a stretch the owner chose not to record. It is COVERAGE — the phone was alive and present — but it is not evidence of anything, and it is not a gap to explain. Never name a stretch by it, never call it a blind spot, never guess what was happening inside it.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when the owner was actually travelling, and how far in words — see MOVEMENT.
@@ -2413,7 +2413,7 @@ async fn build_dossier(
         // "incoming messages" is reporting the record, not the day.
         for b in day_message_bursts(pool, start_str, end_str).await? {
             let mut line = format!(
-                "- [messages] {}–{} — thread with {}",
+                "- [messages] {}–{} — conversation with {}",
                 fmt(&b.start),
                 fmt(&b.end),
                 cap(&b.counterpart, 60),
@@ -3350,8 +3350,8 @@ mod dossier_tests {
             "the owner's own words must survive too"
         );
         assert!(
-            dossier.contains("thread with Sam"),
-            "an unresolved correspondent still names the thread from the message itself"
+            dossier.contains("conversation with Sam"),
+            "an unresolved correspondent still names the conversation from the message itself"
         );
         assert!(
             dossier.contains("    them: still on for 7:30") && dossier.contains("    you: yes!"),

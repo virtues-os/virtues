@@ -35,6 +35,17 @@ pub fn capabilities() -> Vec<(&'static str, Vec<&'static str>)> {
         ("browser", browser),
         ("applets", vec!["applet"]),
         ("pages", vec!["create_page", "edit_page"]),
+        // Google's tools. The Google source's page shows these two switches,
+        // and Settings lists them with the rest.
+        (
+            "email",
+            vec![
+                crate::tools::google::ARCHIVE_TOOL,
+                crate::tools::google::LABEL_TOOL,
+                crate::tools::google::DRAFT_TOOL,
+            ],
+        ),
+        ("calendar", vec![crate::tools::google::CALENDAR_TOOL]),
     ]
 }
 
@@ -213,6 +224,8 @@ pub fn refusal(capability: &str) -> String {
         "browser" => "using the browser",
         "applets" => "making and changing applets (listing and running them still works)",
         "pages" => "writing pages",
+        "email" => "changing your mail",
+        "calendar" => "changing your calendar",
         other => other,
     };
     format!("The owner turned off {what} in Settings. Say so and answer without it.")
@@ -321,6 +334,20 @@ mod tests {
         }
         let offered = without_off(&pool, vec![json!({ "function": { "name": "applet" } })]).await.unwrap();
         assert_eq!(offered.len(), 1, "the tool stays offered for reads and runs");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_mail_switch_covers_only_the_mail_tools(pool: PgPool) {
+        set(&pool, "email", false).await.unwrap();
+        for tool in ["email_archive", "email_label", "email_draft"] {
+            assert_eq!(off_capability(&pool, tool, &json!({})).await.unwrap(), Some("email"), "{tool}");
+        }
+        assert_eq!(
+            off_capability(&pool, "calendar_event", &json!({})).await.unwrap(),
+            None,
+            "the calendar has its own switch"
+        );
+        assert!(refusal("email").contains("changing your mail"));
     }
 
     #[test]

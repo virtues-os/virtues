@@ -10,12 +10,12 @@ use crate::tools::default_enabled_tools;
 /// The canonical default theme for the application.
 /// This is the single source of truth — frontend and spaces.rs reference this.
 ///
-/// Oxford: warm ivory, navy ink, a claret accent. It is the theme the UI
+/// Oxford: white pages on neutral gray, navy ink. It is the theme the UI
 /// names "Virtues Light" (with Asgard as "Virtues Dark"; see `DEFAULT_THEMES`
 /// in apps/web/src/lib/utils/theme.ts). Those two must agree with this
 /// constant, or the label is a claim about a default that new boxes do not
 /// actually get. app.html's pre-paint fallback must also track this theme's
-/// `--background` (#FDFCF9), or every new box flashes a different colour on
+/// `--background` (#FCFCFC), or every new box flashes a different colour on
 /// its very first paint.
 ///
 /// Only new profiles read this. Anyone who has already picked a theme keeps it.

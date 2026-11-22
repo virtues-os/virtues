@@ -11,6 +11,7 @@
 	  Profile      /virtues/profile        — you: name, birthday, work, home
 	  How it talks /virtues/assistant      — its name, its manner, what it never raises
 	  Can do       /virtues/assistant/tools — its tools
+	  Skills       /virtues/assistant/skills — what it knows how to do, yours and the server's
 	  Spending     /virtues/assistant/spending — models, and what tasks may spend
 	               /virtues/assistant/spending/models — the model list (?role= picks one)
 	               /virtues/assistant/spending/cost   — what AI has cost, and every call
@@ -21,6 +22,8 @@
 	               /virtues/data/shared    — every link shared through the door
 	               /virtues/data/keys      — the named keys applets use
 	               /virtues/data/deleted   — every deletion of records, and one (/:id)
+	               /virtues/data/streams   — every stream your server keeps, and how full each is
+	               /virtues/data/query     — SQL against your own records
 	  Your server  /virtues/system         — whether it is all right, what it runs, the machine
 	  Updates      /virtues/updates        — new releases, and which ones it takes
 	  Backup       /virtues/backup         — the newest backup, the drives, restoring
@@ -28,7 +31,8 @@
 	  Devices      /virtues/devices        — paired devices, reaching from away, Start over
 	  This device  /virtues/devices/this   — the device you're using (iOS: its own panel)
 	               /virtues/devices/:id    — another device, as the box knows it
-	  Applets      /virtues/applets        — what runs on its own, and how its last runs went
+	                                         (an iPhone or Mac forwards to Sources)
+	  Server tasks /virtues/server-tasks   — what runs on its own, and how its last runs went
 	  Terminal     /virtues/developer/terminal — a shell on your server, from Your server or ⌘K
 
 	There is no "Sign out": auth is the device's proven iroh key, not a server
@@ -58,7 +62,10 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
+	import StreamsView from '$lib/components/tabs/views/StreamsView.svelte';
+	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import AppletsPage from '$lib/components/settings/AppletsPage.svelte';
+	import SkillsPage from '$lib/components/settings/SkillsPage.svelte';
 	import DeletedRecordsPage from '$lib/components/settings/DeletedRecordsPage.svelte';
 	import DeletionPage from '$lib/components/settings/DeletionPage.svelte';
 	import SearchPage from '$lib/components/settings/SearchPage.svelte';
@@ -128,6 +135,13 @@
 		// Shared links and Keys open from Your data.
 		'/virtues/shared': '/virtues/data/shared',
 		'/virtues/keys': '/virtues/data/keys',
+		// Streams and SQL open from Your data, as Streams and Query.
+		'/virtues/lake': '/virtues/data/streams',
+		'/virtues/developer/lake': '/virtues/data/streams',
+		'/virtues/developer': '/virtues/data/query',
+		'/virtues/developer/sql': '/virtues/data/query',
+		'/virtues/developer/console': '/virtues/data/query',
+		'/virtues/sql': '/virtues/data/query',
 	};
 
 	// Sources left Settings for its own door. `/sources` is a different tab
@@ -140,28 +154,10 @@
 		'/virtues/tools',
 	];
 
-	// Streams and SQL are sections of Sources now (Streams, Query). Their old
-	// doors land there through `retarget`, like Sources' aliases. Terminal
-	// keeps its route; ⌘K opens it.
-	const STREAMS_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
-	const QUERY_ALIASES = ['/virtues/developer', '/virtues/developer/sql', '/virtues/developer/console', '/virtues/sql'];
-
 	$effect(() => {
-		// Services the assistant can act in are rows in the Sources catalog.
-		if (tab.route === '/virtues/connections') {
-			windowShellStore.retarget(tab.id, '/sources/catalog', 'Sources · Catalog');
-			return;
-		}
-		if (SOURCES_ALIASES.includes(tab.route)) {
+		// Settings' old Sources and connection pages all land on Sources.
+		if (tab.route === '/virtues/connections' || SOURCES_ALIASES.includes(tab.route)) {
 			windowShellStore.retarget(tab.id, '/sources', 'Sources');
-			return;
-		}
-		if (STREAMS_ALIASES.includes(tab.route)) {
-			windowShellStore.retarget(tab.id, '/sources/streams', 'Sources · Streams');
-			return;
-		}
-		if (QUERY_ALIASES.includes(tab.route)) {
-			windowShellStore.retarget(tab.id, '/sources/query', 'Sources · Query');
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
@@ -187,7 +183,7 @@
 		| 'system'
 		| 'search'
 		| 'devices'
-		| 'applets'
+		| 'server-tasks'
 		| 'developer';
 
 	const SECTIONS = [
@@ -201,7 +197,7 @@
 		'system',
 		'search',
 		'devices',
-		'applets',
+		'server-tasks',
 		'developer',
 	];
 
@@ -210,7 +206,8 @@
 	// The query (`?role=` on the model list) is not part of the path.
 	const routePath = $derived(tab.route.split('?')[0]);
 	const routeQuery = $derived(tab.route.split('?')[1] ?? '');
-	const raw = $derived(routePath.replace(/^\/virtues\/?/, ''));
+	// The Server tasks page was at /virtues/applets and /virtues/jobs, and a saved tab may still say so.
+	const raw = $derived(routePath.replace(/^\/virtues\/?/, '').replace(/^(applets|jobs)(?=\/|$)/, 'server-tasks'));
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
@@ -238,6 +235,10 @@
 				<SharedLinksView />
 			{:else if sub === 'keys'}
 				<KeysView />
+			{:else if sub === 'streams'}
+				<StreamsView />
+			{:else if sub === 'query'}
+				<DeveloperSqlView {tab} {active} />
 			{:else if sub === 'deleted'}
 				{@const deletionId = raw.split('/')[2]}
 				{#if deletionId}
@@ -253,6 +254,8 @@
 		{:else if section === 'assistant'}
 			{#if sub === 'tools'}
 				<SettingsSection section="tools" />
+			{:else if sub === 'skills'}
+				<SkillsPage />
 			{:else if sub === 'spending' && subPage === 'models'}
 				<ModelCatalogView {role} />
 			{:else if sub === 'spending' && subPage === 'cost'}
@@ -270,7 +273,7 @@
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
 			<SearchPage />
-		{:else if section === 'applets'}
+		{:else if section === 'server-tasks'}
 			<AppletsPage />
 		{:else if section === 'devices'}
 			{#if !sub}

@@ -542,21 +542,22 @@ fn score_local(baseline: &Baseline, emb: &[f32]) -> Option<(f64, f64)> {
 // Kernels & helpers
 // ============================================================================
 
-/// Exponential recency weight: 1.0 today, 0.5 at one half-life.
-fn time_weight(days_ago: f64) -> f64 {
+/// Exponential recency weight: 1.0 today, 0.5 at one half-life. Shared with
+/// the chat sky's place routine (`api::sky`).
+pub(crate) fn time_weight(days_ago: f64) -> f64 {
     (-(days_ago.max(0.0)) * LN_2 / TIME_HALF_LIFE_DAYS).exp()
 }
 
 /// Product of two von Mises kernels (hour-of-day, weekday). 1.0 at identical
 /// phase, smoothly decaying with circular distance. Replaces the 6× DOW hack.
-fn phase_weight(a: (f64, f64), b: (f64, f64)) -> f64 {
+pub(crate) fn phase_weight(a: (f64, f64), b: (f64, f64)) -> f64 {
     let hour_term = HOUR_KAPPA * ((2.0 * PI * (a.0 - b.0) / 24.0).cos() - 1.0);
     let dow_term = DOW_KAPPA * ((2.0 * PI * (a.1 - b.1) / 7.0).cos() - 1.0);
     (hour_term + dow_term).exp()
 }
 
 /// Local (timezone-aware) hour-of-day and weekday phase of an event.
-fn local_phase(start: DateTime<Utc>, tz: Option<&str>) -> (f64, f64) {
+pub(crate) fn local_phase(start: DateTime<Utc>, tz: Option<&str>) -> (f64, f64) {
     if let Some(z) = tz.and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
         let l = start.with_timezone(&z);
         (

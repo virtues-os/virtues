@@ -9,7 +9,7 @@
  * repaired — the plan's card is the pulse, not a colour scheme.
  */
 
-import type { Applet, AppletWatch } from '$lib/api/client';
+import type { Applet, AppletLogEntry, AppletWatch } from '$lib/api/client';
 
 /** A data trigger in words: "On new workouts", "30 min before calendar events". */
 export function describeWatch(w: AppletWatch): string {
@@ -206,4 +206,87 @@ export function runFix(error: string | null): { label: string; href: string } | 
 export function errorHeadline(error: string, max = 160): string {
 	const line = error.split('\n')[0].trim();
 	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * The kinds of failure a run's error text names, each with the sentence a
+ * person reads. The patterns are the runner's own strings
+ * (`applet_runner/mod.rs`) and the usual shapes of an HTTP or OS error. The
+ * first match wins, so a narrow kind sits above a broad one: an expired
+ * sign-in is also a failed request.
+ */
+const PLAIN_REASONS: { pattern: RegExp; text: string }[] = [
+	{
+		pattern: /sign-in expired|invalid_grant|reauthori[sz]e|token (?:has )?expired|401 unauthorized/i,
+		text: 'An account it uses needs you to sign in again',
+	},
+	{
+		pattern: /failed to load credential|credential refresh failed|could not route credential/i,
+		text: "It couldn't use the account it's connected to",
+	},
+	{ pattern: /timed out|timeout|deadline exceeded/i, text: 'It took too long and was stopped' },
+	{ pattern: /rate limit|too many requests|\b429\b/i, text: 'A service it uses asked it to slow down' },
+	{
+		pattern: /overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0234]\b/i,
+		text: 'A service it uses had a problem',
+	},
+	{
+		pattern:
+			/error sending request|connection refused|connection reset|dns error|failed to lookup address|network is unreachable|no route to host|^Network error/i,
+		text: "It couldn't reach a service it needs",
+	},
+	{ pattern: /failed to spawn action command|action command is empty/i, text: "Its program couldn't start" },
+	{ pattern: /permission denied|os error 13\b|operation not permitted/i, text: "It wasn't allowed to open a file it needs" },
+	{
+		pattern: /condition sql failed|^SQL error|^Database error|error returned from database/i,
+		text: 'A query it runs has an error',
+	},
+	{
+		pattern: /subprocess exited with status|panicked at|Traceback \(most recent call last\)|failed to wait for action subprocess/i,
+		text: 'Its program stopped with an error',
+	},
+];
+
+/**
+ * Why a run failed, as a sentence without a final period, or null when the
+ * error is none of the kinds above. The run log keeps the error's own text.
+ */
+export function plainReason(error: string): string | null {
+	return PLAIN_REASONS.find((r) => r.pattern.test(error))?.text ?? null;
+}
+
+/**
+ * What a row or a page says about a failed run: the plain sentence for a
+ * known kind of failure, and otherwise the error's first line, which is
+ * already a sentence when the server wrote it for a person ("Add
+ * OPENAI_API_KEY in Settings, under Keys"). No final period either way.
+ */
+export function failureReason(error: string, max = 160): string {
+	return plainReason(error) ?? errorHeadline(error, max).replace(/\.$/, '');
+}
+
+const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+	success: 'Ran',
+	error: 'Failed',
+	running: 'Running',
+	skipped: 'Skipped',
+	cancelled: 'Cancelled',
+	budget_exceeded: 'Stopped at its spending limit',
+};
+
+/** One line of a run log in words: what the run said, or why it failed. */
+export function runLine(e: AppletLogEntry): string {
+	const what = e.status === 'error' ? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}` : (e.summary ?? STATUS_WORD[e.status]);
+	return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
+}
+
+/** The hosts a job's logged runs reached, each once, in the order first seen. */
+export function hostsReached(log: AppletLogEntry[]): string[] {
+	const hosts: string[] = [];
+	for (const e of log) {
+		for (const h of e.requests ?? []) {
+			if (h.requests > h.refused && !hosts.includes(h.host)) hosts.push(h.host);
+		}
+	}
+	return hosts;
 }

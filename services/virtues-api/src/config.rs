@@ -114,8 +114,8 @@ pub struct Config {
     /// Plaid app secret (master credential).
     pub plaid_secret: Option<String>,
 
-    /// Truto API token: Google connections through Truto's verified app
-    /// (routes/google.rs). It can reach every connected account, so it stays
+    /// Truto API token: Google and Outlook connections through Truto's
+    /// verified apps (routes/vendor.rs). It can reach every connected account, so it stays
     /// here and never goes to a box. Unset turns those routes off.
     pub truto_api_token: Option<String>,
 

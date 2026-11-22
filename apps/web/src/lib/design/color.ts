@@ -81,7 +81,8 @@ export function readTokens(names: readonly string[]): Record<Theme, Record<strin
 	document.body.appendChild(probe);
 
 	const out = {} as Record<Theme, Record<string, TokenReading>>;
-	const themes = getAvailableThemes().filter((c): c is Theme => c !== 'system');
+	// The two themes themes.css defines; Match system and Follow the day resolve to one of them.
+	const themes = getAvailableThemes().filter((c): c is Theme => c === 'oxford' || c === 'asgard');
 	for (const theme of themes) {
 		html.setAttribute('data-theme', theme);
 		const cs = getComputedStyle(html);

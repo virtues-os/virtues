@@ -257,13 +257,21 @@ async fn verify(
     // The account exists from the first sign-in (0017) — identity needs no
     // payment. Best-effort here: the grant/approve paths ensure it again, so
     // a transient failure costs nothing but this log line.
-    if let Err(e) = ensure_account(&state.pool, &email).await {
-        tracing::warn!("ensure_account at sign-in failed (grant path will retry): {e:#}");
-    }
+    let account_id = match ensure_account(&state.pool, &email).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!("ensure_account at sign-in failed (grant path will retry): {e:#}");
+            None
+        }
+    };
 
     // Advisory: `entitled` still reports subscription state (Settings and
     // billing surfaces read it) but no linking door is gated on it anymore.
-    let entitled = is_entitled(&state, customer_id.as_deref()).await.unwrap_or_else(|e| {
+    let entitled = match account_id.as_deref() {
+        Some(id) => account_is_entitled(&state.pool, id).await,
+        None => Ok(false),
+    }
+    .unwrap_or_else(|e| {
         tracing::warn!("entitlement check at sign-in failed (defaulting to not-entitled): {e:#}");
         false
     });
@@ -474,7 +482,7 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
     };
     // Advisory (same as at sign-in): the grant path re-checks. A read error
     // defaults to not-entitled with a log, never a wrong grant.
-    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await.unwrap_or_else(|e| {
+    let entitled = email_is_entitled(&state.pool, &sess.email).await.unwrap_or_else(|e| {
         tracing::warn!("entitlement check at session_info failed (defaulting to not-entitled): {e:#}");
         false
     });
@@ -551,9 +559,9 @@ pub(crate) async fn ensure_account(
 /// `customers`.
 ///
 /// The healing matters as much as the attach: a box linked before payment
-/// carries `box_key.stripe_customer_id = NULL` and no `customers.api_key_hash`
-/// mirror, so without this the now-paying customer's box answers
-/// `invalid_api_key` on every billing door until a manual re-link.
+/// carries `box_key.stripe_customer_id = NULL`, so without this the
+/// now-paying customer's box answers `no_subscription` on every billing door
+/// until a manual re-link.
 pub(crate) async fn attach_stripe_to_account(
     pool: &sqlx::PgPool,
     account_id: &str,
@@ -577,23 +585,6 @@ pub(crate) async fn attach_stripe_to_account(
     .bind(account_id)
     .execute(pool)
     .await?;
-    // Mirror the newest key into customers.api_key_hash (most-recent-key
-    // semantics, matching mint_box_key) so a rolled-back binary authenticates
-    // boxes that linked while the account was free.
-    let newest: Option<Vec<u8>> = sqlx::query_scalar(
-        "SELECT api_key_hash FROM box_key WHERE account_id = $1 \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(account_id)
-    .fetch_optional(pool)
-    .await?;
-    if let Some(hash) = newest {
-        sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-            .bind(stripe_customer_id)
-            .bind(&hash)
-            .execute(pool)
-            .await?;
-    }
     // Re-point keyless sessions signed in as this account's email (sessions
     // store lowercased emails) — this is what flips `entitled` for billing
     // surfaces.
@@ -634,26 +625,18 @@ pub(super) async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Sess
     row.map(|(email, customer_id)| Session { email, customer_id })
 }
 
-/// Does this customer have an active subscription right now?
-///
-/// Returns `Result` rather than a bare bool BECAUSE the answer gates money:
-/// `/init/approve` routes a `false` to browser checkout, so a swallowed query
-/// error (`.unwrap_or(false)`) would send a paying customer to pay again — the
-/// exact "turn a broken query into a plausible value" failure CLAUDE.md bans.
-/// A `None` customer_id is a real, non-error `false`: no Stripe customer means
-/// nothing is subscribed.
-pub(super) async fn is_entitled(
-    state: &AppState,
-    customer_id: Option<&str>,
-) -> Result<bool, sqlx::Error> {
-    let Some(cid) = customer_id else { return Ok(false) };
-    sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM subscriptions
-         WHERE stripe_customer_id = $1 AND status = 'active')",
-    )
-    .bind(cid)
-    .fetch_one(&state.pool)
-    .await
+/// Is the account signed in as `email` entitled? `false` when no account has
+/// that email yet.
+pub(crate) async fn email_is_entitled(pool: &sqlx::PgPool, email: &str) -> Result<bool, sqlx::Error> {
+    let account: Option<String> =
+        sqlx::query_scalar("SELECT account_id FROM accounts WHERE email = lower($1)")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
+    match account {
+        Some(id) => account_is_entitled(pool, &id).await,
+        None => Ok(false),
+    }
 }
 
 /// Does any of this account's Stripe customers have an active subscription?

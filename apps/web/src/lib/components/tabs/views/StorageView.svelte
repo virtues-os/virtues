@@ -8,8 +8,8 @@
 	//
 	// Bookmarks and Passwords are their own routes (/bookmarks, /passwords)
 	// and are reached from the front page and the crumbs (STORAGE_MODE).
-	// Streams, the raw records your sources send, is a section of Sources
-	// (`/sources/streams`); its old route here forwards there.
+	// Streams, the raw records your sources send, is a page of Settings ›
+	// Your data (`/virtues/data/streams`); its old route here forwards there.
 	//
 	// Files sits under /storage/drive, not /drive: its sub-paths are folder
 	// names, so a tab at /drive/streams would be ambiguous with a folder
@@ -25,9 +25,9 @@
 
 	type Section = "front" | "drive" | "media" | "trash";
 
-	// Streams moved to Sources; an old link or bookmark lands there.
+	// Streams moved to Settings › Your data; an old link or bookmark lands there.
 	$effect(() => {
-		if (tab.route === "/storage/streams") windowShellStore.retarget(tab.id, "/sources/streams", "Sources · Streams");
+		if (tab.route === "/storage/streams") windowShellStore.retarget(tab.id, "/virtues/data/streams", "Settings · Streams");
 	});
 
 	// The legacy `/trash` route lands on Recently deleted, and a folder path

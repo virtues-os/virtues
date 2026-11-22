@@ -343,7 +343,7 @@ export interface AppletRun {
 	trigger: AppletTrigger;
 	result_summary: string | null;
 	/** What the user said, for `message` runs. This plus `result_summary` is
-	 *  the exchange — the conversation lives on the run, not in a thread. */
+	 *  the exchange — the conversation lives on the run, not in a chat. */
 	message: string | null;
 	/** What this run spent with the model, in micros-USD — summed from the
 	 *  gateway's authoritative per-call figures. Zero for runs that called no
@@ -384,6 +384,9 @@ export interface AppletLastRun {
  */
 export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
 
+/** A site, a skill, or a task that is the assistant's or the server's. */
+export type AppletKind = 'site' | 'server_task' | 'assistant_task' | 'skill';
+
 export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
@@ -405,6 +408,13 @@ export interface Applet {
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
+	/** What it is to the person who meets it. Absent from a server older
+	 *  than the field; read it through `kindOf` (lib/applets/kind.ts), which
+	 *  applies the same rule to the parts. */
+	kind?: AppletKind;
+	/** The row in the task list that stands for it, when it is a task of the
+	 *  assistant's that repeats. The Tasks page shows it, and Sites does not. */
+	task_id?: string | null;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
@@ -803,7 +813,7 @@ export async function runApplet(
 	});
 	if (!res.ok && res.status !== 500) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to run applet: ${res.statusText}`);
+		throw new Error(err.error || `Your server didn't start it: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -1192,14 +1202,17 @@ export interface NoteDetail extends Note {
 	is_muted: boolean;
 	/** The "Fewer like this" choice, in words. */
 	mute_label: string;
+	/** The home time zone its sentences are written in (IANA), for showing its times the same way. */
+	time_zone: string;
 }
 
 export function getNote(key: string): Promise<NoteDetail> {
 	return apiGet<NoteDetail>(`/notes/${encodeURIComponent(key)}`);
 }
 
-export function getNotes(): Promise<Note[]> {
-	return apiGet<Note[]>('/notes');
+/** The notes raised now, or with `setAside` the ones set aside with "Not now" whose condition still holds. */
+export function getNotes(opts?: { setAside?: boolean }): Promise<Note[]> {
+	return apiGet<Note[]>('/notes', opts?.setAside ? { set_aside: 'true' } : {});
 }
 
 /** Not now: set a note aside until its condition changes. */
@@ -1279,33 +1292,59 @@ function pairStatus(id: string): Promise<PairStatusResponse> {
 	return apiGet<PairStatusResponse>(`/pair/status/${encodeURIComponent(id)}`);
 }
 
-export interface ChatImportResponse {
-	status: string;
-	summary: string;
+export interface ImportResponse {
+	/** `running` once the import has started in the background. */
+	status: 'running' | 'success' | 'skipped' | 'error' | 'budget_exceeded';
+	summary: string | null;
+	error: string | null;
 	run_id: string | null;
 }
 
 /**
- * POST /api/chat-import/upload — multipart upload of a chat export (Tier 3
- * one-time import). Parsed + ingested box-side; returns the "Imported N
- * messages" summary once the run completes.
+ * POST /api/chat-import/upload — multipart upload of a chat export: the zip
+ * Claude or ChatGPT emails, or the conversations.json inside it. The server
+ * reads which site each chat came from. Returns as soon as the import has
+ * started; follow `run_id` in `listRuns({ applet_id: 'applet_chat_import' })`
+ * for the result. `chat-import.ts` does both. `onProgress` reports the
+ * upload as a percentage; an export can be gigabytes.
  */
-export async function uploadChatImport(
+export function uploadChatImport(
 	file: File,
-	provider: string
-): Promise<ChatImportResponse> {
+	onProgress?: (percent: number) => void
+): Promise<ImportResponse> {
 	const form = new FormData();
-	form.append('provider', provider);
 	form.append('file', file);
-	const res = await fetch(`${API_BASE}/chat-import/upload`, {
-		method: 'POST',
-		body: form
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
-	}
-	return res.json();
+	return postFormWithProgress<ImportResponse>('/chat-import/upload', form, onProgress);
+}
+
+/**
+ * POST /api/imports/:source/upload — multipart upload of a service's data
+ * download (`spotify`, `amazon`, `discord`, `slack`). `fields` are text
+ * fields the source asks for (Slack's `email`); they go before the file,
+ * because the server reads them only until the file starts. Returns as soon
+ * as the import has started; `imports.ts` follows the run.
+ */
+export function uploadImport(
+	source: string,
+	file: File,
+	onProgress?: (percent: number) => void,
+	fields: Record<string, string> = {}
+): Promise<ImportResponse> {
+	const form = new FormData();
+	for (const [k, v] of Object.entries(fields)) form.append(k, v);
+	form.append('file', file);
+	return postFormWithProgress<ImportResponse>(`/imports/${encodeURIComponent(source)}/upload`, form, onProgress);
+}
+
+/** One chat site's history on the server: the months with messages, oldest first. */
+export interface ChatHistory {
+	provider: 'chatgpt' | 'claude' | 'gemini' | 'grok' | string;
+	months: { month: string; messages: number }[];
+}
+
+/** GET /api/chat-import/status — what has arrived from other AI chat sites, by site and month. */
+export function getChatHistory(): Promise<ChatHistory[]> {
+	return apiGet<ChatHistory[]>('/chat-import/status');
 }
 
 export interface MintCollectorResponse {
@@ -1695,26 +1734,19 @@ export function getRecord(ontology: string, recordId: string): Promise<OntologyR
 }
 
 /**
- * Upload a file to drive
- * @param path - Target folder path
- * @param file - File to upload
- * @param onProgress - Optional progress callback (0-100)
+ * POST a multipart form to `path` (under `API_BASE`), reporting upload
+ * progress as a percentage. XMLHttpRequest, because fetch reports no upload
+ * progress; it bypasses the fetch rewrite, so the box's origin is spelled
+ * out.
  */
-export async function uploadDriveFile(
+function postFormWithProgress<T>(
 	path: string,
-	file: File,
+	form: FormData,
 	onProgress?: (percent: number) => void
-): Promise<DriveFile> {
-	const formData = new FormData();
-	formData.append('file', file);
-	formData.append('path', path);
-	formData.append('filename', file.name);
-
-	// Use XMLHttpRequest for progress tracking
+): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
-		xhr.open('POST', backendUrl(`${API_BASE}/drive/upload`));
+		xhr.open('POST', backendUrl(`${API_BASE}${path}`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {
@@ -1736,8 +1768,27 @@ export async function uploadDriveFile(
 		};
 
 		xhr.onerror = () => reject(new Error('Upload failed: network error'));
-		xhr.send(formData);
+		xhr.send(form);
 	});
+}
+
+/**
+ * Upload a file to drive
+ * @param path - Target folder path
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ */
+export async function uploadDriveFile(
+	path: string,
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<DriveFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('path', path);
+	formData.append('filename', file.name);
+
+	return postFormWithProgress<DriveFile>('/drive/upload', formData, onProgress);
 }
 
 /**
@@ -1959,34 +2010,7 @@ export async function uploadMedia(
 	formData.append('file', file);
 	formData.append('filename', file.name);
 
-	// Use XMLHttpRequest for progress tracking
-	return new Promise((resolve, reject) => {
-		const xhr = new XMLHttpRequest();
-		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
-		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
-
-		xhr.upload.onprogress = (e) => {
-			if (e.lengthComputable && onProgress) {
-				onProgress(Math.round((e.loaded / e.total) * 100));
-			}
-		};
-
-		xhr.onload = () => {
-			if (xhr.status >= 200 && xhr.status < 300) {
-				resolve(JSON.parse(xhr.responseText));
-			} else {
-				try {
-					const error = JSON.parse(xhr.responseText);
-					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
-				} catch {
-					reject(new Error(`Upload failed: ${xhr.statusText}`));
-				}
-			}
-		};
-
-		xhr.onerror = () => reject(new Error('Network error during upload'));
-		xhr.send(formData);
-	});
+	return postFormWithProgress<MediaFile>('/media/upload', formData, onProgress);
 }
 
 /**
@@ -2173,6 +2197,12 @@ export interface Project {
 	is_backlog?: boolean;
 	/** Adding is automatic: your server also files what it is sure belongs. */
 	is_adding_automatic?: boolean;
+	/**
+	 * You keep it in view, with its own row in the sidebar. False is an
+	 * unlisted thread: a lesser concern that stays out of the sidebar.
+	 * Absent from a server older than the field, which means listed.
+	 */
+	is_listed?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -2340,6 +2370,7 @@ export function updateProject(
 		current_status?: string | null;
 		is_backlog?: boolean;
 		is_adding_automatic?: boolean;
+		is_listed?: boolean;
 	}
 ): Promise<Project> {
 	return apiSend<Project>('PUT', `/threads/${encodeURIComponent(id)}`, patch);
@@ -2448,6 +2479,12 @@ export interface Page {
 	contract?: number | null;
 	/** The newest contract the server reads (`GET /api/pages/:id` only). */
 	box_contract?: number;
+	/** `screen`, or a printable sheet. Absent from a server older than page layout. */
+	paper?: PagePaper;
+	/** One column or two; two is drawn only on paper. */
+	column_count?: 1 | 2;
+	/** A report's header, when it has one. */
+	masthead?: Masthead | null;
 	/**
 	 * `page` or `article` (`GET /api/pages/:id` only): an article's markdown
 	 * reads as an article, its footnotes, figures and veils included. Absent
@@ -2544,6 +2581,10 @@ export interface Task {
 	next_run_at: string | null;
 	/** Failed runs in a row. */
 	attempts: number;
+	/** Set on the one row that stands for a task of the assistant's that
+	 *  repeats: the applet that runs it. Its result is replaced by each run,
+	 *  and opening it is all it asks. Absent from a server older than it. */
+	applet_id?: string | null;
 	/** The model the request's latest run used. Only reads carry it. */
 	run_model?: string | null;
 	/** Who paid for that run's calls: `wallet` or `byo`. */
@@ -2617,6 +2658,11 @@ export function getTask(id: string): Promise<Task> {
 
 export function createTask(task: NewTask): Promise<Task> {
 	return apiSend('POST', '/tasks', task);
+}
+
+/** The owner opened the task. A task that repeats stops waiting and keeps its result. */
+export function markTaskSeen(id: string): Promise<Task> {
+	return apiSend('POST', `/tasks/${encodeURIComponent(id)}/seen`, {});
 }
 
 export function updateTask(id: string, patch: TaskPatch): Promise<Task> {
@@ -2790,6 +2836,32 @@ export function createPage(
 /**
  * Update an existing page
  */
+export type PagePaper = 'screen' | 'a4' | 'letter';
+
+/** A report's header: the label above the title, the byline, the last day its records cover, its subjects as app routes, and its abstract. */
+export interface Masthead {
+	label?: string;
+	byline?: string;
+	/** `YYYY-MM-DD`. */
+	records_through?: string;
+	subjects?: string[];
+	abstract?: string;
+	/** Kept but not drawn: the page's Report header is off. */
+	hidden?: boolean;
+}
+
+/** How a page is laid out. What is left out keeps its value; `masthead: null` takes the header off. */
+export interface PageLayout {
+	paper?: PagePaper;
+	column_count?: 1 | 2;
+	masthead?: Masthead | null;
+}
+
+/** PUT /api/pages/:id/layout */
+export function setPageLayout(id: string, layout: PageLayout): Promise<Page> {
+	return apiSend<Page>('PUT', `/pages/${encodeURIComponent(id)}/layout`, layout);
+}
+
 export function updatePage(
 	id: string,
 	updates: {
@@ -2995,9 +3067,18 @@ export function updateAssistantProfile<T = unknown>(patch: Record<string, unknow
  * rather than writing, because writing the patch alone would erase every
  * other preference.
  */
-export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
-	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
-	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+// One write at a time: each reads the stored preferences and writes them back
+// merged, so two that overlapped (a theme click during a background change)
+// would each drop the other's key.
+let uiPreferencesWrite: Promise<void> = Promise.resolve();
+
+export function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const write = uiPreferencesWrite.then(async () => {
+		const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+		await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+	});
+	uiPreferencesWrite = write.catch(() => {});
+	return write;
 }
 
 // ── Changed lately (Settings) ────────────────────────────────────────────────
@@ -3036,7 +3117,7 @@ export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
 
 /** One thing the assistant can do, as the owner switched it (`api/capabilities.rs`). */
 export interface Capability {
-	id: 'web_search' | 'browser' | 'applets' | 'pages';
+	id: 'web_search' | 'browser' | 'applets' | 'pages' | 'email' | 'calendar';
 	on: boolean;
 }
 
@@ -3224,6 +3305,10 @@ export function markChatSeen(id: string): Promise<unknown> {
 export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/chats/title', body);
 }
+/** Say no to the thread your server suggested for this chat. It is never suggested for it again. */
+export function declineThreadSuggestion(chatId: string): Promise<unknown> {
+	return apiSend('POST', `/chats/${encodeURIComponent(chatId)}/thread-suggestion/decline`, {});
+}
 export function cancelChat<T = unknown>(chatId: string): Promise<T> {
 	return apiSend<T>('POST', '/chat/cancel', { chatId });
 }
@@ -3349,9 +3434,6 @@ export function sendDeviceCopy(
 // ── Setup (extras beyond getSetupState) ──────────────────────────────────────
 export function setupLinkPoll<T = unknown>(): Promise<T> {
 	return apiSend<T>('POST', '/setup/link/poll');
-}
-export function setupSubscribeStart<T = unknown>(): Promise<T> {
-	return apiSend<T>('POST', '/setup/subscribe/start');
 }
 export function setupLoginStart<T = unknown>(email: string): Promise<T> {
 	return apiSend<T>('POST', '/setup/login/start', { email });

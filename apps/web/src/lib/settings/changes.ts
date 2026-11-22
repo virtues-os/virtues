@@ -5,6 +5,7 @@
  */
 import type { SettingsChange } from '$lib/api/client';
 import { getThemeDisplayName, isValidTheme } from '$lib/utils/theme';
+import { GOOGLE_WORDS } from '$lib/sources/capabilities';
 
 /** Values longer than this read as "Changed" rather than being quoted. */
 const QUOTE_MAX = 40;
@@ -17,8 +18,10 @@ function capitalize(text: string): string {
 function capabilityOf(tool: string): string | null {
 	if (tool === 'web_search') return 'Search the web';
 	if (tool === 'browse' || tool.startsWith('browser_')) return 'Use your browser';
-	if (tool === 'applet') return 'Make and change sites';
+	if (tool === 'applet') return 'Make sites, skills and tasks that repeat';
 	if (tool === 'create_page' || tool === 'edit_page') return 'Write in your pages';
+	if (tool === 'email_archive' || tool === 'email_label' || tool === 'email_draft') return GOOGLE_WORDS.email.label;
+	if (tool === 'calendar_event') return GOOGLE_WORDS.calendar.label;
 	return null;
 }
 
@@ -102,7 +105,7 @@ export function changeRowId(change: SettingsChange): number | null {
 /** Words for the stored values of the settings the agent can draft
  *  (`api/settings_draft.rs`). */
 const VALUE_WORDS: Record<string, Record<string, string>> = {
-	theme: { oxford: 'Light', asgard: 'Dark', system: 'Match system' },
+	theme: { oxford: 'Light', asgard: 'Dark', system: 'Match system', day: 'Follow the day' },
 	glass: { none: 'None', low: 'Low', medium: 'Medium', high: 'High' },
 	'text-size': { s: 'Small', m: 'Medium', l: 'Large' },
 	'reading-font': { sans: 'Sans serif', serif: 'Serif', mono: 'Monospace' },

@@ -20,7 +20,7 @@
 //! account until one has the conversation. A grant made before these scopes
 //! existed fails with a message that says to reconnect Google in Sources.
 
-use crate::api::google_api::Route;
+use crate::api::vendor_api::Route;
 use std::future::Future;
 
 use base64::Engine;
@@ -61,7 +61,7 @@ struct Account {
     credential_id: String,
     email: Option<String>,
     /// Set when the sign-in was made through virtues-api, which then takes
-    /// this account's Google calls (`api::google_api`).
+    /// this account's Google calls (`api::vendor_api`).
     connection: Option<String>,
 }
 
@@ -135,8 +135,8 @@ async fn accounts(pool: &PgPool, account: Option<&str>) -> Result<Vec<Account>, 
 async fn route(pool: &PgPool, account: &Account) -> Result<Route, Failure> {
     let reconnect = |why: String| Failure::Other(format!("{why}. Reconnect Google in Sources."));
     if let Some(connection) = &account.connection {
-        let metadata = json!({ crate::api::google_api::CONNECTION_KEY: connection });
-        return crate::api::google_api::route(pool, &metadata, &Value::Null)
+        let metadata = json!({ crate::api::vendor_api::CONNECTION_KEY: connection });
+        return crate::api::vendor_api::route(pool, &metadata, &Value::Null)
             .await
             .map_err(|e| Failure::Other(format!("Could not reach Google for this sign-in: {e}")));
     }
@@ -146,7 +146,7 @@ async fn route(pool: &PgPool, account: &Account) -> Result<Route, Failure> {
     let secrets = virtues_helpers::auth::vault::read_credential_secrets(pool, &account.credential_id)
         .await
         .map_err(|e| Failure::Other(format!("Could not read the Google sign-in: {e}")))?;
-    crate::api::google_api::route(pool, &json!({}), &secrets)
+    crate::api::vendor_api::route(pool, &json!({}), &secrets)
         .await
         .map_err(|e| reconnect(format!("The Google sign-in cannot be used ({e})")))
 }

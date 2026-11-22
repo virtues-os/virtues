@@ -1,8 +1,8 @@
 //! AI chat messages → `data_content_conversation`.
 //!
-//! Shared by every producer of other providers' chat history — the one-time
-//! `chat_import` of an export file and the live syncs (`grok_chats_sync`) — so
-//! the row shape and the dedup key live in one place. A message's identity is
+//! Shared by every producer of other providers' chat history (today the
+//! one-time `chat_import` of an export file) so the row shape and the dedup
+//! key live in one place. A message's identity is
 //! [`stream_id`] over the provider's own conversation and message ids, so an
 //! export imported after a live sync (or the reverse) adds only what the other
 //! did not already write.
@@ -31,7 +31,8 @@ pub struct ConversationMsg {
     /// When the message was sent, from the provider. Never the wall clock for
     /// a live sync: a guessed time would land the message on the wrong day.
     pub timestamp: DateTime<Utc>,
-    /// The applet that wrote the row (`chat_import`, `grok_chats`).
+    /// The applet that wrote the row (`chat_import`; older rows may say
+    /// `grok_chats`, from a sync that was removed).
     pub source_table: String,
 }
 

@@ -98,7 +98,7 @@
 		bind:this={listEl}
 		onscroll={updateFade}
 		role="listbox"
-		aria-label="Slash commands"
+		aria-label="Skills"
 	>
 		{#each matches as s, i (s.name)}
 			<button
@@ -140,7 +140,7 @@
 			onclick={() => skills.create && onSelect(skills.create)}
 		>
 			<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
-			<span class="skill-name">New site</span>
+			<span class="skill-name">New skill</span>
 		</button>
 	{/if}
 </div>

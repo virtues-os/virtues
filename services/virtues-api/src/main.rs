@@ -191,7 +191,8 @@ async fn main() -> Result<()> {
         .merge(routes::push::router())
         // Gmail and Calendar for accounts connected through Truto's
         // verified Google app: the box calls here, this calls Truto.
-        .merge(routes::google::router())
+        .merge(routes::vendor::router())
+        .merge(routes::byo::router())
         .merge(routes::ai::router())
         // Middleware. The span is at info so a failed request's log line
         // names its route; production filters out debug, where the default
@@ -209,6 +210,9 @@ async fn main() -> Result<()> {
         // which squares a box downloads is location data, and these routes
         // log nothing (routes/maps.rs).
         .merge(routes::maps::router())
+        // Background styles, merged here for the same reason: these routes
+        // log nothing (routes/backgrounds.rs).
+        .merge(routes::backgrounds::router())
         // F2: no CORS. virtues-api is a server-to-server sidecar (the home box
         // calls it with a Bearer or X-Internal-Secret header). No browser
         // should ever talk to it. The previous `allow_origin: Any +

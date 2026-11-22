@@ -8,10 +8,11 @@ import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
 import { canSignInSheet, openSignIn, SIGN_IN_CLOSED } from '$lib/tauri/bridge';
 import { isTauri } from '$lib/utils/platform';
+import { isImportSource } from '$lib/imports';
 
 export type ConnectIntent =
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
-	| { kind: 'chat_import' }
+	| { kind: 'import'; sourceId: string }
 	| { kind: 'api_key'; source: SourceCatalogItem }
 	// `external` = the OAuth dance was handed off to the *system browser*
 	// (Tauri); the SPA stays mounted and should refresh on return. `false` =
@@ -21,9 +22,17 @@ export type ConnectIntent =
 
 /** `next`: where a browser connect lands afterwards. `credentialId`:
  *  reconnecting that credential, which the box repairs in place. */
+/** Sources signed in with an app the person makes at the vendor themselves
+ *  (`own_app` on the server). Spotify also imports, so its catalog entry is
+ *  the import's and the own-app window is opened by name. */
+export const OWN_APP_SOURCES = new Set(['spotify']);
+
 export interface ConnectOptions {
 	next?: string;
 	credentialId?: string;
+	/** The Client ID of an app the person made at the vendor, for a source
+	 *  signed in that way (Spotify's recent plays). */
+	clientId?: string;
 }
 
 /**
@@ -70,7 +79,7 @@ export async function startOAuth(
 	// TODO(2026-10-27): migrate oauthStart's opts type in client.ts to
 	// `credential_id`. Until then `body` is a variable, which TypeScript checks
 	// without the excess-property rule.
-	const body = { return_url: returnUrl, credential_id: opts?.credentialId };
+	const body = { return_url: returnUrl, credential_id: opts?.credentialId, client_id: opts?.clientId };
 	const { redirect_url } = await oauthStart(sourceId, body);
 	if (isTauri) {
 		await openSignIn(redirect_url);
@@ -116,9 +125,10 @@ export async function connectIntent(
 	}
 
 	// One-time import sources open the upload card, not the api-key form.
-	// (chat_import is declared as api_key in the catalog, so test id first.)
-	if (source.id === 'chat_import') {
-		return { kind: 'chat_import' };
+	// (They are declared as api_key with no fields in the catalog, so test the
+	// id first.)
+	if (isImportSource(source.id)) {
+		return { kind: 'import', sourceId: source.id };
 	}
 
 	if (source.auth_kind === 'via_proxy') {

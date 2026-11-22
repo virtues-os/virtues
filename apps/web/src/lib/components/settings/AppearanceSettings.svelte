@@ -1,11 +1,12 @@
 <script lang="ts">
 	/**
 	 * Appearance after the theme and accent, under "On this device": Glass
-	 * (stores/glass), reading font and text size, which are the page display
-	 * settings a page's Aa menu also sets (stores/pageDisplay), and Reduce
-	 * motion (stores/motion). All four are kept in this browser, so a phone
-	 * and a Mac can differ; the theme and accent above are saved to your
-	 * profile and follow you.
+	 * (stores/glass), the background behind pages (stores/pageBackground),
+	 * reading font and text size, which are the page display settings a
+	 * page's Aa menu also sets (stores/pageDisplay), Reduce motion
+	 * (stores/motion), and the chat essay layout (stores/chatEssay). All six
+	 * are kept in this browser, so a phone and a Mac can differ; the theme
+	 * and accent above are saved to your profile and follow you.
 	 */
 	import SettingRow from './SettingRow.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
@@ -13,6 +14,9 @@
 	import { pageDisplay, type FontMode, type TextSize } from '$lib/stores/pageDisplay.svelte';
 	import { motion } from '$lib/stores/motion.svelte';
 	import { glass, type GlassLevel } from '$lib/stores/glass.svelte';
+	import { pageBackground } from '$lib/stores/pageBackground.svelte';
+	import Slider from './Slider.svelte';
+	import { chatEssay } from '$lib/stores/chatEssay.svelte';
 	import { titleOf, findSetting } from '$lib/settings';
 
 	let { assistantName }: { assistantName: string } = $props();
@@ -54,12 +58,20 @@
 		<Segmented id="glass-choice" label={title('glass')} value={glass.level} options={GLASS} onchange={(v) => glass.set(v)} />
 	</SettingRow>
 
+	<SettingRow id="page-background" label={title('page-background')} help="How strongly the background picture shows behind a page or a chat. Home always shows it in full.">
+		<Slider value={pageBackground.percent} label={title('page-background')} onchange={(v) => pageBackground.set(v)} />
+	</SettingRow>
+
 	<SettingRow id="reading-font" label={title('reading-font')} help="The typeface your pages are set in.">
 		<Segmented id="reading-font-choice" label={title('reading-font')} value={pageDisplay.fontMode} options={FONTS} onchange={(v) => pageDisplay.setFontMode(v)} />
 	</SettingRow>
 
 	<SettingRow id="text-size" label={title('text-size')} help="How large text is on your pages.">
 		<Segmented id="text-size-choice" label={title('text-size')} value={pageDisplay.textSize} options={SIZES} onchange={(v) => pageDisplay.setTextSize(v)} />
+	</SettingRow>
+
+	<SettingRow id="chat-essay" label="Essay layout for chats" help="Replies are set in the serif under the chat's name, with charts and tables framed. You can also switch it from a chat's menu.">
+		<Switch checked={chatEssay.on} label="Essay layout for chats" onchange={(on) => chatEssay.set(on)} />
 	</SettingRow>
 
 	<SettingRow id="reduce-motion" label={title('reduce-motion')} help={motionHelp}>

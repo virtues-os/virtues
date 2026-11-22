@@ -154,135 +154,18 @@ pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let staged = match stage_chat_import(&mut multipart).await {
-        Ok(path) => path,
-        Err(e) => return error_response(e),
-    };
-    let file_path = staged.path.clone();
-
-    let deps = crate::applet_runner::RunnerDeps {
-        db: state.db.pool().clone(),
-        yjs: state.yjs_state.clone(),
-    };
-    let payload = serde_json::json!({ "file_path": file_path.to_string_lossy() });
-
-    match crate::applet_runner::run_applet_detached(
-        &deps,
-        "applet_chat_import",
-        "manual",
-        Some(&payload),
+    let staged = match super::imports::stage_upload(
+        &mut multipart,
+        "chat-import",
+        "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.",
+        &[],
     )
     .await
     {
-        Ok(result) => {
-            // A run that started reads the file and removes it; any other
-            // outcome leaves it to `staged`'s drop.
-            if matches!(result.status, crate::applet_runner::AppletRunStatus::Running) {
-                staged.keep();
-            }
-            run_status_response(result, "applet_chat_import")
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-/// An upload in the staging folder, removed when dropped unless kept for a
-/// run that has started. Covers every early return and a request the client
-/// drops mid-upload.
-struct StagedUpload {
-    path: std::path::PathBuf,
-    kept: bool,
-}
-
-impl StagedUpload {
-    fn keep(mut self) {
-        self.kept = true;
-    }
-}
-
-impl Drop for StagedUpload {
-    fn drop(&mut self) {
-        if !self.kept {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// Where uploads wait for the import: `chat-import` under the state root on a
-/// box, or `virtues-chat-import` in the temp folder in a dev checkout with no
-/// state root. `chat_import` reads only from a folder of one of these names.
-fn chat_import_staging_dir() -> std::path::PathBuf {
-    let root = crate::data_disk::data_dir();
-    if root.is_dir() {
-        root.join("chat-import")
-    } else {
-        std::env::temp_dir().join("virtues-chat-import")
-    }
-}
-
-/// Remove uploads an earlier server process left behind (killed mid-upload,
-/// or its import killed mid-read), once per process and before its first
-/// upload. Only this route writes the folder, and a run from an earlier
-/// process is not running any more.
-fn sweep_chat_import_staging(dir: &std::path::Path) {
-    static SWEPT: std::sync::Once = std::sync::Once::new();
-    SWEPT.call_once(|| {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
-        let removed = entries
-            .flatten()
-            .filter(|e| std::fs::remove_file(e.path()).is_ok())
-            .count();
-        if removed > 0 {
-            tracing::info!("removed {removed} chat export upload(s) an earlier server left in {}", dir.display());
-        }
-    });
-}
-
-/// Stream the upload's `file` field into the staging folder, mode 0600.
-async fn stage_chat_import(multipart: &mut axum::extract::Multipart) -> Result<StagedUpload, Error> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    use tokio::io::AsyncWriteExt;
-
-    let dir = chat_import_staging_dir();
-    sweep_chat_import_staging(&dir);
-    let stage_failed = |e: std::io::Error| Error::Other(format!("could not save the upload in {}: {e}", dir.display()));
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&dir)
-        .map_err(stage_failed)?;
-
-    let cut_off = |e: axum::extract::multipart::MultipartError| {
-        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            Error::InvalidInput(
-                "This file is larger than 4 GB. Upload the conversations.json from inside the zip instead.".into(),
-            )
-        } else {
-            Error::InvalidInput(format!("The upload was cut off. Try it again. ({e})"))
-        }
+        Ok(s) => s,
+        Err(e) => return error_response(e),
     };
-
-    while let Some(mut field) = multipart.next_field().await.map_err(cut_off)? {
-        if field.name() != Some("file") {
-            continue;
-        }
-        let path = dir.join(format!("{}.upload", uuid::Uuid::new_v4()));
-        let std_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(stage_failed)?;
-        // Owned from here, so any failure below removes the file.
-        let staged = StagedUpload { path, kept: false };
-        let mut out = tokio::fs::File::from_std(std_file);
-        while let Some(chunk) = field.chunk().await.map_err(cut_off)? {
-            out.write_all(&chunk).await.map_err(stage_failed)?;
-        }
-        out.flush().await.map_err(stage_failed)?;
-        return Ok(staged);
-    }
-    Err(Error::InvalidInput("No file was sent. Choose the export and try again.".into()))
+    super::imports::start_import(&state, "applet_chat_import", staged).await
 }
 
 /// One chat site's history on this server: the months that have messages,
@@ -356,6 +239,9 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             -- requests PER APPLET — around fifty on a page — for two small
             -- facts that the database can hand over in the same pass.
             p.pulse,
+            -- The row in the task list that stands for it, when it is a task
+            -- of the assistant's that repeats.
+            (SELECT st.id FROM app_tasks st WHERE st.applet_id = t.id) AS task_id,
             s.summary AS last_success_summary,
             w.cost_micros AS spend_week_micros
            FROM app_applets t
@@ -440,6 +326,11 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
                     );
+                    let kind = crate::scheduler::applets::kind_of(
+                        has_face,
+                        command.as_ref().is_some_and(|c| !c.is_empty()),
+                        crate::scheduler::applets::starts_itself(cron.as_deref(), watch.is_some(), &triggers),
+                    );
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -453,6 +344,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
+                    let task_id: Option<String> = r.try_get("task_id").unwrap_or(None);
                     // The SQL COALESCEs to 0, so a real "spent nothing" arrives
                     // as 0 and NULL can only mean the decode failed. Those must
                     // not collapse into each other: this is a money figure, and
@@ -499,6 +391,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "device_id": device_id,
                         "origin": origin,
+                        "kind": kind,
+                        "task_id": task_id,
                         "command": command,
                         "until": until,
                         "watch": watch,
@@ -524,7 +418,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
 /// One shape for "a run was requested" — shared by the manual-run and the
 /// message handlers so the two can never disagree about what a status means.
-fn run_status_response(
+pub(crate) fn run_status_response(
     result: crate::applet_runner::AppletRunResult,
     applet_id: &str,
 ) -> Response {
@@ -646,6 +540,48 @@ async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow
         .collect())
 }
 
+/// One applet as the app reads it: its row, with what the row cannot say on
+/// its own (whose it is, what kind of thing it is, whether it has a view, the
+/// keys it names and its last run). The GET and the PATCH both answer with
+/// this, so a page that takes the PATCH reply as the applet loses nothing.
+async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::Applet) -> Result<serde_json::Value, Error> {
+    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await.ok().flatten();
+    let secrets = declared_secrets_status(pool, &action.id)
+        .await
+        .map_err(|e| Error::Other(format!("{e:#}")))?;
+    let has_view = crate::server::faces::face_for(&action.id).is_some();
+    let task_id = crate::api::tasks::standing_task_id(pool, &action.id).await?;
+    Ok(serde_json::json!({
+        "id": action.id,
+        "owner": action.owner,
+        "name": action.name,
+        "description": action.description,
+        "agent": action.agent,
+        "schedule": action.schedule,
+        "enabled": action.enabled,
+        "config": action.config,
+        "triggers": action.triggers,
+        "memory": action.memory,
+        "command": action.command,
+        "credential_id": action.credential_id,
+        "device_id": action.device_id,
+        "origin": crate::scheduler::applets::derived_origin(action),
+        "kind": crate::scheduler::applets::derived_kind(action, has_view),
+        "task_id": task_id,
+        "until": action.until,
+        "watch": action.watch,
+        "archived_at": action.archived_at,
+        "next_due_at": action.next_due_at,
+        "last_slot_at": action.last_slot_at,
+        "has_face": has_view,
+        "has_override": action.has_override,
+        "secrets": secrets,
+        "created_at": action.created_at,
+        "updated_at": action.updated_at,
+        "last_run": last_run,
+    }))
+}
+
 /// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
@@ -653,53 +589,14 @@ pub async fn get_applet_handler(
 ) -> Response {
     let pool = state.db.pool();
     match crate::scheduler::applets::get_applet(pool, &applet_id).await {
-        Ok(action) => {
-            let last_run = crate::scheduler::applets::last_run(pool, &applet_id)
-                .await
-                .ok()
-                .flatten();
-            let secrets = match declared_secrets_status(pool, &action.id).await {
-                Ok(s) => s,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({ "error": format!("{e:#}") })),
-                    )
-                        .into_response()
-                }
-            };
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "id": action.id,
-                    "owner": action.owner,
-                    "name": action.name,
-                    "description": action.description,
-                    "agent": action.agent,
-                    "schedule": action.schedule,
-                    "enabled": action.enabled,
-                    "config": action.config,
-                    "triggers": action.triggers,
-                    "memory": action.memory,
-                    "command": action.command,
-                    "credential_id": action.credential_id,
-                    "device_id": action.device_id,
-                    "origin": crate::scheduler::applets::derived_origin(&action),
-                    "until": action.until,
-                    "watch": action.watch,
-                    "archived_at": action.archived_at,
-                    "next_due_at": action.next_due_at,
-                    "last_slot_at": action.last_slot_at,
-                    "has_face": crate::server::faces::face_for(&action.id).is_some(),
-                    "has_override": action.has_override,
-                    "secrets": secrets,
-                    "created_at": action.created_at,
-                    "updated_at": action.updated_at,
-                    "last_run": last_run,
-                })),
+        Ok(action) => match applet_detail(pool, &action).await {
+            Ok(detail) => (StatusCode::OK, Json(detail)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
             )
-                .into_response()
-        }
+                .into_response(),
+        },
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -720,7 +617,7 @@ pub async fn patch_applet_handler(
     caller: Option<axum::Extension<crate::console_socket::ConsoleCaller>>,
     Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
-) -> Result<Json<crate::scheduler::applets::Applet>, Error> {
+) -> Result<Json<serde_json::Value>, Error> {
     // An outside agent reaches this route for `virtues applet enable` and
     // nothing else (`console_socket::agent_may`): it may turn an applet on
     // or off, never rewrite its schedule, config or triggers.
@@ -729,9 +626,19 @@ pub async fn patch_applet_handler(
     {
         return Err(Error::Unauthorized("an agent key may only turn an applet on or off".into()));
     }
-    Ok(Json(
-        crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await?,
-    ))
+    let pool = state.db.pool();
+    let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
+    // A change can make it a task of the assistant's (a schedule added to a
+    // prompt you made), which gives it its row in the task list.
+    crate::api::repeating_tasks::ensure(pool, &applet, None).await?;
+    // The row as it serializes, with the detail's fields over it. The app
+    // replaces the applet it holds with this reply, so a reply without
+    // `has_face` or `kind` would turn a site's page into a list of runs.
+    let mut reply = serde_json::to_value(&applet).map_err(|e| Error::Other(e.to_string()))?;
+    if let (Some(row), serde_json::Value::Object(detail)) = (reply.as_object_mut(), applet_detail(pool, &applet).await?) {
+        row.extend(detail);
+    }
+    Ok(Json(reply))
 }
 
 /// An agent's patch: exactly `{"enabled": <bool>}`.

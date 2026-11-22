@@ -64,6 +64,11 @@ pub struct Source {
     /// `api_key` sources; the paste form stays the fallback.
     #[serde(default)]
     pub login: Option<SourceLogin>,
+    /// Release this source's connections 30 days after the box's subscription
+    /// lapses, because the provider bills Virtues for each one while it
+    /// exists (Plaid charges per linked bank). See `credentials::lapse`.
+    #[serde(default)]
+    pub release_on_lapse: bool,
     /// Which package contributed this row, relative to whichever root it was
     /// found in. Empty for the box's own top-level `sources.toml`. Populated by
     /// the loader from the on-disk path, never read from TOML — a file cannot
@@ -1902,7 +1907,7 @@ mod tests {
         );
         // Two sources can fill one stream, and both should be offered.
         let bookmarks = sources_writing("content_bookmark");
-        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"github".to_string()));
+        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"x".to_string()));
         // And a stream nothing writes must stay empty rather than guess.
         // (data_activity_listening itself was deleted 2026-08-28 — no
         // collector ever existed — so the probe uses another absent name.)
@@ -1966,6 +1971,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             repo: None,
             repo_ref: None,
             login: None,
+            release_on_lapse: false,
             dir: String::new(),
         }];
         for s in found {

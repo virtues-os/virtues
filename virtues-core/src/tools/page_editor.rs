@@ -136,6 +136,156 @@ pub struct CreatePageArgs {
     /// Initial content (optional)
     #[serde(default)]
     pub content: Option<String>,
+    /// A report's page: its paper, columns and masthead.
+    #[serde(default)]
+    pub layout: Option<pages::PageLayout>,
+}
+
+/// Draw every chart figure in `markdown` and keep what `show` returned in
+/// it, so the page holds the figure as it was when written: a report's
+/// snapshot, which the page draws without asking the server again. The
+/// query stays with it (`sql`) so the reader can see how it was made.
+///
+/// A writer gives a chart as a fence of three backticks in the language
+/// `figure`, one `key: value` line each: `kind: chart`, `sql` (one SELECT on
+/// one line), `caption`, and the keys `show` takes for that chart (`chart`
+/// for its purpose, `split_at` and `split_label` for a before and after,
+/// and so on). A page reads figure fences as code (only an article reads
+/// them as figures), so each chart is written out as the contract's own
+/// `<virtues-figure>` tag, which every page reads. The rows are always
+/// drawn here from the query, never taken from the writer.
+///
+/// Refused, naming the figure, so the writer can fix it and write the page
+/// again: a chart `show` cannot draw, one with no closing fence, and one
+/// whose rows are too large to keep in a page. A fence inside another code
+/// block is left as written.
+async fn fill_charts(pool: &Arc<PgPool>, markdown: &str) -> Result<String, ToolError> {
+    let zone = crate::timezone::home_timezone_or_utc(pool, chrono::Utc::now().date_naive()).await;
+    let sql_tool = super::sql_query::SqlQueryTool::new(pool.clone());
+    let mut out = String::with_capacity(markdown.len());
+    let mut lines = markdown.split_inclusive('\n');
+    let mut figure_no = 0;
+    // The fence of another code block the lines are inside, if any.
+    let mut inside: Option<String> = None;
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if let Some(fence) = &inside {
+            if trimmed.starts_with(fence.as_str()) && trimmed.trim_start_matches(fence.chars().next().unwrap_or('`')).is_empty() {
+                inside = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if trimmed != "```figure" {
+            if let Some(fence) = code_fence(trimmed) {
+                inside = Some(fence);
+            }
+            out.push_str(line);
+            continue;
+        }
+        let mut body: Vec<&str> = vec![];
+        let mut close = None;
+        for inner in lines.by_ref() {
+            if inner.trim() == "```" {
+                close = Some(inner);
+                break;
+            }
+            body.push(inner);
+        }
+        figure_no += 1;
+        let fields: Vec<(String, String)> = body
+            .iter()
+            .filter_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                Some((k.trim().to_ascii_lowercase(), v.trim().to_string()))
+            })
+            .collect();
+        let field = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        if field("kind").as_deref() != Some("chart") {
+            out.push_str(line);
+            for inner in &body {
+                out.push_str(inner);
+            }
+            match close {
+                Some(close) => out.push_str(close),
+                None => break,
+            }
+            continue;
+        }
+        if close.is_none() {
+            return Err(ToolError::InvalidParameters(format!(
+                "chart figure {figure_no} has no closing ```: close its fence and write the page again"
+            )));
+        }
+        let sql = field("sql").filter(|s| !s.is_empty()).ok_or_else(|| {
+            ToolError::InvalidParameters(format!("chart figure {figure_no} has no `sql`: give it one SELECT on one line"))
+        })?;
+        // Every key but the figure's own goes to show, which says what a
+        // chart is missing. The caption goes under the figure, as a paper
+        // sets it, so the chart draws no title of its own.
+        let mut call = serde_json::Map::new();
+        for (k, v) in &fields {
+            if !["kind", "caption", "data"].contains(&k.as_str()) && !v.is_empty() {
+                call.insert(k.clone(), json!(v));
+            }
+        }
+        let drawn = super::show::execute(&sql_tool, Value::Object(call), Some(zone.as_str()), None)
+            .await
+            .map_err(|e| ToolError::InvalidParameters(format!("chart figure {figure_no} could not be drawn: {e}")))?;
+        if !drawn.success {
+            return Err(ToolError::InvalidParameters(format!(
+                "chart figure {figure_no} could not be drawn: {}",
+                drawn.error.unwrap_or_default()
+            )));
+        }
+        let data = serde_json::to_string(&drawn.data).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        if data.len() > MAX_CHART_BYTES {
+            return Err(ToolError::InvalidParameters(format!(
+                "chart figure {figure_no} holds too many rows to keep in a page ({} KB, at most {} KB): aggregate it, \
+                 by week instead of by day or with fewer columns",
+                data.len() / 1024,
+                MAX_CHART_BYTES / 1024
+            )));
+        }
+        let attr = |name: &str, value: Option<String>| {
+            value.filter(|v| !v.is_empty()).map(|v| format!(" {name}=\"{}\"", html_attr(&v))).unwrap_or_default()
+        };
+        out.push_str(&format!(
+            "\n<virtues-figure kind=\"chart\"{}{}{}{}></virtues-figure>\n\n",
+            attr("chart", field("chart")),
+            attr("sql", Some(sql)),
+            attr("caption", field("caption")),
+            attr("data-rows", Some(data)),
+        ));
+    }
+    Ok(out)
+}
+
+/// The most a chart's kept rows may take in a page: well inside one read of
+/// the page, which is also what every edit of it reads.
+const MAX_CHART_BYTES: usize = 16 * 1024;
+
+/// The fence a line opens, when it opens a code block: three or more
+/// backticks or tildes, then its info string.
+fn code_fence(trimmed: &str) -> Option<String> {
+    let mark = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let run = trimmed.chars().take_while(|c| *c == mark).count();
+    (run >= 3).then(|| mark.to_string().repeat(run))
+}
+
+/// A page read with its report header, when it shows one: the header is the
+/// page's own (its byline, subjects and abstract), not a block in its text,
+/// so the reader would otherwise never see the abstract.
+fn with_masthead(mut out: Value, page: &pages::Page) -> Value {
+    if let Some(m) = page.masthead.as_ref().filter(|m| !m.hidden) {
+        out["masthead"] = json!(m.0);
+    }
+    out
+}
+
+/// A value escaped for a double-quoted HTML attribute.
+fn html_attr(v: &str) -> String {
+    v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Arguments for get_page_content tool
@@ -260,6 +410,21 @@ impl PageEditorTool {
             .content
             .map(|c| Self::strip_critic_markup(&c))
             .unwrap_or_default();
+        // The page draws its title as its heading, so a first line that
+        // repeats it would show the title twice.
+        let clean_content = drop_title_heading(&args.title, &clean_content);
+        // A chart figure is drawn now and its rows kept with the page. A
+        // markdown page (block pages switched off) has no figure to keep it.
+        let clean_content = if pages::default_page_format() == PageFormat::Tree {
+            fill_charts(&self.pool, &clean_content).await?
+        } else {
+            clean_content
+        };
+
+        // A layout the page cannot draw is refused before anything is written.
+        if let Some(layout) = &args.layout {
+            layout.check().map_err(|e| ToolError::InvalidParameters(e.to_string()))?;
+        }
 
         let req = pages::CreatePageRequest {
             title: args.title.clone(),
@@ -272,9 +437,14 @@ impl PageEditorTool {
             format: None,
         };
 
-        let created = pages::create_page_reporting(self.pool.as_ref(), req)
+        let mut created = pages::create_page_reporting(self.pool.as_ref(), req)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to create page: {}", e)))?;
+        if let Some(layout) = &args.layout {
+            created.page = pages::set_layout(self.pool.as_ref(), &created.page.id, layout)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("The page was created, but its layout didn't save: {e}")))?;
+        }
         Ok(ToolResult::success(created_result(created)))
     }
 
@@ -445,7 +615,7 @@ impl PageEditorTool {
             if holds_proposal(&wholes(&shown.parts)) {
                 out["suggestions"] = json!(SUGGESTIONS_NOTE);
             }
-            return Ok(ToolResult::success(out));
+            return Ok(ToolResult::success(with_masthead(out, &page)));
         }
 
         if let (Some(prior), Some(after)) = (prior.as_ref(), after.as_deref()) {
@@ -493,7 +663,7 @@ impl PageEditorTool {
                 if holds_proposal(&wholes(&shown.parts)) {
                     out["suggestions"] = json!(SUGGESTIONS_NOTE);
                 }
-                return Ok(ToolResult::success(out));
+                return Ok(ToolResult::success(with_masthead(out, &page)));
             };
             let window = page_reads::markdown_window(
                 &tree,
@@ -518,7 +688,7 @@ impl PageEditorTool {
             if holds_proposal(&wholes(&window.shown.parts)) {
                 out["suggestions"] = json!(SUGGESTIONS_NOTE);
             }
-            return Ok(ToolResult::success(out));
+            return Ok(ToolResult::success(with_masthead(out, &page)));
         }
 
         // A full read: the whole page as HTML, or a long page's markdown as
@@ -559,7 +729,7 @@ impl PageEditorTool {
         }
         out["how_to_edit"] = json!(HOW_TO_EDIT);
         out["tags"] = json!(virtues_document::tag_guide());
-        Ok(ToolResult::success(out))
+        Ok(ToolResult::success(with_masthead(out, &page)))
     }
 
     /// Edit a page: a block page by ops against a base, a markdown page by
@@ -2895,10 +3065,94 @@ fn string_list(value: Value) -> Result<Vec<String>, ToolError> {
     Ok(out)
 }
 
+/// `content` without a first heading that says the same as `title`.
+/// Models open a page's markdown with `# <title>` however they are asked,
+/// and the page already shows its title above the text. Only a heading that
+/// matches, ignoring case, spacing, emphasis and end punctuation, is
+/// dropped; a different first heading is the page's own.
+fn drop_title_heading(title: &str, content: &str) -> String {
+    fn plain(s: &str) -> String {
+        s.chars()
+            .filter(|c| !matches!(c, '*' | '_' | '`'))
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_end_matches(|c: char| matches!(c, '.' | ':' | '!' | '?'))
+            .to_lowercase()
+    }
+    let body = content.trim_start_matches(['\n', '\r']);
+    let (first, rest) = body.split_once('\n').unwrap_or((body, ""));
+    let heading = first.trim();
+    let level = heading.chars().take_while(|c| *c == '#').count();
+    if !(1..=6).contains(&level) || !heading[level..].starts_with(' ') {
+        return content.to_string();
+    }
+    if plain(&heading[level..]) != plain(title) || plain(title).is_empty() {
+        return content.to_string();
+    }
+    rest.trim_start_matches(['\n', '\r']).to_string()
+}
+
+#[cfg(test)]
+mod title_heading_tests {
+    use super::drop_title_heading;
+
+    #[test]
+    fn a_first_heading_that_repeats_the_title_goes() {
+        let c = "# Kitchen remodel — notes\n\nA place for the decisions.";
+        assert_eq!(drop_title_heading("Kitchen remodel — notes", c), "A place for the decisions.");
+        assert_eq!(drop_title_heading("Garden plan", "\n## **Garden Plan:**\nBeds first."), "Beds first.");
+    }
+
+    #[test]
+    fn other_headings_and_text_stay() {
+        let c = "# Budget\n\nTile is the open item.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        let c = "Kitchen remodel\n\nNot a heading.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        let c = "#Kitchen remodel\nNo space, not a heading.";
+        assert_eq!(drop_title_heading("Kitchen remodel", c), c);
+        assert_eq!(drop_title_heading("Notes", ""), "");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::server::yjs::extract_text_content;
+
+    /// A chart figure is drawn when the page is written: its rows are kept
+    /// in the figure with its query and caption, and the page reads it as
+    /// a figure. A chart `show` cannot draw is refused, naming the figure.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_chart_figure_keeps_its_rows(pool: PgPool) {
+        let pool = Arc::new(pool);
+        let md = "Before.\n\n```figure\nkind: chart\nchart: change_over_time\n\
+                  sql: SELECT d::date AS day, 2 AS \"Hours\" FROM generate_series('2030-01-01'::date, '2030-01-04'::date, '1 day') d\n\
+                  caption: Figure 1. Hours each day.\n```\n\nAfter.\n";
+        let filled = fill_charts(&pool, md).await.unwrap();
+        let read = virtues_document::parse_written_markdown(&filled);
+        assert!(read.errors.is_empty(), "{:?}", read.errors);
+        let figure = read.nodes.iter().find(|n| n.kind == "figure").expect("a figure");
+        assert_eq!(figure.attrs["kind"], json!("chart"));
+        assert_eq!(figure.attrs["caption"], json!("Figure 1. Hours each day."));
+        let data: Value = serde_json::from_str(figure.attrs["data"].as_str().unwrap()).unwrap();
+        assert_eq!(data["rows"].as_array().map(Vec::len), Some(4));
+        assert!(figure.attrs["sql"].as_str().unwrap().starts_with("SELECT d::date"));
+
+        let broken = "```figure\nkind: chart\nsql: SELECT nope FROM nowhere\n```\n";
+        let err = fill_charts(&pool, broken).await.unwrap_err().to_string();
+        assert!(err.contains("chart figure 1"), "{err}");
+        // A figure that is no chart passes through as written.
+        assert_eq!(fill_charts(&pool, "```figure\nkind: quote\ntext: Hi\n```\n").await.unwrap(), "```figure\nkind: quote\ntext: Hi\n```\n");
+        // A chart fence left open is refused instead of eating the text after it.
+        let open = "```figure\nkind: chart\nsql: SELECT 1 AS n\n\n## 5. Limits\n\nFew cases.\n";
+        assert!(fill_charts(&pool, open).await.unwrap_err().to_string().contains("no closing"));
+        // A chart written inside another code block, as an example, stays code.
+        let example = "````markdown\n```figure\nkind: chart\nsql: SELECT nope\n```\n````\n";
+        assert_eq!(fill_charts(&pool, example).await.unwrap(), example);
+    }
 
     /// A block in a cell of a row too long for any read, which fits a read
     /// alone but not with the way to it (the row's tags and its other
