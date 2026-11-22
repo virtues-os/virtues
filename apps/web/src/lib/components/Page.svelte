@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { twMerge } from "tailwind-merge";
     import type { Snippet } from "svelte";
     import PageHeading from "./PageHeading.svelte";
     import { usePageActions } from "$lib/stores/paneActions.svelte";
@@ -76,7 +75,7 @@
     const width = usePageWidth(() => (maxWidth === "none" ? null : maxWidth));
 </script>
 
-<div class={twMerge("page-container h-full", paddingClass, scrollable && "overflow-y-auto", className)}>
+<div class={["page-container h-full", paddingClass, scrollable && "overflow-y-auto", className]}>
     {#if maxWidth !== "none"}
         <div class="page-column" style:max-width={width.css}>
             {#if heading}

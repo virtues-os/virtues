@@ -12,7 +12,8 @@ import { DOMSerializer, type Node as PmNode } from '@tiptap/pm/model';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { contract, contractSchema } from './schema';
+import { contract } from './schema';
+import { contractSchema } from './page-bases';
 
 const schema = contractSchema();
 

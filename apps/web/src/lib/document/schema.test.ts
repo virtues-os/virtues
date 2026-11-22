@@ -10,14 +10,13 @@ import { DOMParser, DOMSerializer, type Node as PmNode } from '@tiptap/pm/model'
 import { describe, expect, it } from 'vitest';
 import {
 	contract,
-	contractExtensions,
-	contractSchema,
 	fits,
 	isLabel,
 	normalizeUrl,
 	typed,
 	type AttrSpec,
 } from './schema';
+import { contractSchema, pageExtensions } from './page-bases';
 
 const schema = contractSchema();
 
@@ -341,7 +340,7 @@ describe('an article’s nodes and mark', () => {
 
 /** An editor on the contract's extensions, holding `html`. */
 function editorWith(html: string): Editor {
-	return new Editor({ element: document.createElement('div'), extensions: contractExtensions(), content: html });
+	return new Editor({ element: document.createElement('div'), extensions: pageExtensions(), content: html });
 }
 
 /** Type `text` at the cursor one character at a time, as a person does, input rules running. */
@@ -394,7 +393,7 @@ describe('what an editor writes stays inside the contract', () => {
 		type(editor, 'see ftp://files.example.com and https://example.com ');
 		expect(links(editor)).toEqual(['https://example.com']);
 		editor.destroy();
-		const link = contractExtensions().find((e) => e.name === 'link')!;
+		const link = pageExtensions().find((e) => e.name === 'link')!;
 		expect(link.options.shouldAutoLink('ftp://files.example.com')).toBe(false);
 		expect(link.options.shouldAutoLink('https://example.com')).toBe(true);
 	});

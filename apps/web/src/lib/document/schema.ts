@@ -19,7 +19,6 @@ import {
 	Node,
 	PasteRule,
 	getExtensionField,
-	getSchema,
 	markInputRule,
 	markPasteRule,
 	wrappingInputRule,
@@ -35,12 +34,10 @@ import type {
 	Mark as PmMark,
 	MarkType,
 	Node as PmNode,
-	NodeType,
 	ParseRule,
-	Schema,
 	TagParseRule,
 } from '@tiptap/pm/model';
-import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state';
+import { Plugin, PluginKey, type Transaction } from '@tiptap/pm/state';
 import {
 	AddMarkStep,
 	AddNodeMarkStep,
@@ -48,7 +45,6 @@ import {
 	ReplaceAroundStep,
 	ReplaceStep,
 	canJoin,
-	findWrapping,
 	type Step,
 } from '@tiptap/pm/transform';
 import { Y_SYNC_KEY } from './ykeys';
@@ -58,30 +54,20 @@ import Code, { pasteRegexMatch as codePasteMatch } from '@tiptap/extension-code'
 import CodeBlock from '@tiptap/extension-code-block';
 import Document from '@tiptap/extension-document';
 import HardBreak from '@tiptap/extension-hard-break';
-import Heading, { type Level } from '@tiptap/extension-heading';
 import Highlight from '@tiptap/extension-highlight';
-import HorizontalRule from '@tiptap/extension-horizontal-rule';
-import Image, { inputRegex as imageInputRegex } from '@tiptap/extension-image';
 import Italic from '@tiptap/extension-italic';
 import Link from '@tiptap/extension-link';
 import {
 	BulletList,
 	ListItem,
 	OrderedList,
-	TaskItem,
-	TaskList,
-	inputRegex as taskInputRegex,
 	orderedListInputRegex,
 } from '@tiptap/extension-list';
 import Paragraph from '@tiptap/extension-paragraph';
 import Strike from '@tiptap/extension-strike';
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import Text from '@tiptap/extension-text';
-import Underline from '@tiptap/extension-underline';
 import contractJson from '$contract';
 import { readsAsCode } from './code-text';
-import { altWidth, kindOfLink, type MediaKind } from './media-kind';
-import { insertBlockAt } from './place';
 
 export type AttrSpec = {
 	/**
@@ -148,93 +134,6 @@ export type Contract = {
 };
 
 export const contract = contractJson as unknown as Contract;
-
-/** Heading levels as the contract lists them, for the stock keymap and input rules. */
-function headingLevels(): Level[] {
-	const levels = contract.nodes.heading?.attrs?.level?.enum;
-	if (!levels?.length) throw new Error('contract: heading.level has no enum');
-	return levels as Level[];
-}
-
-/** A URL attribute's value as the server takes it, or null when it refuses it. */
-function contractUrl(spec: AttrSpec | undefined, raw: unknown): string | null {
-	if (!spec || typeof raw !== 'string') return null;
-	const value = typed(spec, raw);
-	return typeof value === 'string' ? value : null;
-}
-
-/**
- * What a typed `![name](src)` makes of a `kind`: the block `kindOfLink`
- * reads it as (an image, audio, video or a file), as the server's
- * converter reads it, a `|600` after the name
- * being an image's width (`altWidth`); nothing when it is another kind, or
- * the contract refuses its `src`. The match is the `![name](src)` alone,
- * not the space before it.
- */
-function typedMedia(kind: MediaKind) {
-	return (text: string) => {
-		const m = imageInputRegex.exec(text);
-		const src = m ? contractUrl(contract.nodes[kind]?.attrs?.src, m[3]) : null;
-		if (!m || src === null) return null;
-		const { alt, width } = altWidth(m[2]);
-		if (kindOfLink(src, alt) !== kind) return null;
-		const data = kind === 'image' ? { src, alt: alt || null, width } : { src, name: alt || null };
-		return { index: m.index + m[0].lastIndexOf(m[1]), text: m[1], data };
-	};
-}
-
-/**
- * The block a typed `![name](src)` makes, in place of what was typed: in
- * place of the line when that was all it held, else after its words or
- * between them. The caret goes on in the text after the block, on a new
- * line when nothing follows it there.
- */
-function typedBlock(type: NodeType, kind: MediaKind): InputRule {
-	return new InputRule({
-		find: typedMedia(kind),
-		handler: ({ state, range, match }) => {
-			const { tr } = state;
-			tr.delete(range.from, range.to);
-			const end = insertBlockAt(tr, range.from, type.create(match.data ?? {}));
-			const $end = tr.doc.resolve(end);
-			const paragraph = state.schema.nodes.paragraph;
-			if ($end.nodeAfter?.isTextblock) {
-				tr.setSelection(TextSelection.create(tr.doc, end + 1));
-			} else if ($end.parent.canReplaceWith($end.index(), $end.index(), paragraph)) {
-				tr.insert(end, paragraph.create());
-				tr.setSelection(TextSelection.create(tr.doc, end + 1));
-			}
-			tr.scrollIntoView();
-		},
-	});
-}
-
-/**
- * The stock image, whose `setImage` and `![alt](src)` input rule take any
- * `src`: here a `src` the contract refuses (`data:`, `javascript:`) inserts
- * nothing, and the typed text stays text. The typed form makes the block
- * the address is (`typedMedia`): audio for an `.mp3`, a file for a `.pdf`.
- */
-const ContractImage = Image.extend({
-	addCommands() {
-		return {
-			setImage:
-				(options) =>
-				({ commands }) => {
-					const src = contractUrl(contract.nodes.image?.attrs?.src, options.src);
-					if (src === null) return false;
-					return commands.insertContent({ type: this.name, attrs: { ...options, src } });
-				},
-		};
-	},
-	addInputRules() {
-		const kinds: MediaKind[] = ['image', 'audio', 'video', 'file'];
-		return kinds.flatMap((kind) => {
-			const type = this.editor.schema.nodes[kind];
-			return type ? [typedBlock(type, kind)] : [];
-		});
-	},
-});
 
 /**
  * The stock code block, its Enter keeping the line's indent, as a code
@@ -323,87 +222,6 @@ export function joinListsAround(tr: Transaction, pos: number): void {
 }
 
 /**
- * Tiptap's to-do, its box ticked without taking the keyboard. The stock
- * box focuses the editor before it writes the tick, which on a phone raises
- * the keyboard over half the screen for someone only reading the page, and
- * puts the caret back where it last was. Here the tick is written as it
- * is, ahead of the stock handler, and the editor takes the focus back only
- * when a pointer ticked the box while the editor had it; a tick by Space
- * leaves the focus on the box. A page that is read only is the stock
- * handler's: it puts the box back.
- *
- * Keys pressed on the box are the box's, as a widget's controls keep theirs
- * (`nodeviews.svelte.ts`): the editor would read them as typed where the
- * caret is, splitting a paragraph elsewhere on Enter or nesting another
- * item on Tab. ⌘Enter ticks the to-do the caret is in, from the text
- * (`TodoKeys` in commands.ts).
- */
-const QuietTaskItem = TaskItem.extend({
-	// Tiptap's typed `[ ] `, joining the to-do list it makes to one just
-	// above or below. The stock rule joins only an item of the type it
-	// wraps in, and the node beside a new to-do is a list.
-	addInputRules() {
-		return [
-			new InputRule({
-				find: taskInputRegex,
-				handler: ({ state, range, match }) => {
-					const tr = state.tr.delete(range.from, range.to);
-					const block = tr.doc.resolve(range.from).blockRange();
-					const wrapping = block && findWrapping(block, this.type, { checked: match[match.length - 1] === 'x' });
-					if (!block || !wrapping) return null;
-					tr.wrap(block, wrapping);
-					joinListsAround(tr, block.start);
-				},
-			}),
-		];
-	},
-	addNodeView() {
-		// The stock view itself, not `this.parent`: the contract extends this
-		// extension again, and Tiptap hands that level this one as its parent,
-		// so `this.parent` there is this wrapper, its listeners added twice.
-		const stock = getExtensionField<NonNullable<NodeConfig['addNodeView']>>(TaskItem, 'addNodeView', {
-			name: this.name,
-			options: this.options,
-			storage: this.storage,
-			editor: this.editor,
-			type: this.type,
-		})();
-		if (!stock) return null;
-		return (props) => {
-			const rendered = stock(props);
-			const dom = rendered.dom as HTMLElement;
-			const box = dom.querySelector('input[type="checkbox"]');
-			const label = box?.parentElement;
-			if (!(box instanceof HTMLInputElement) || !label) return rendered;
-			const { editor } = props;
-			// Whether the editor had the focus when a pointer went down on the
-			// box: set by that pointer, and spent by the tick it makes.
-			let hadFocus = false;
-			label.addEventListener('pointerdown', () => (hadFocus = editor.view.hasFocus()), true);
-			label.addEventListener('keydown', () => (hadFocus = false), true);
-			// On the way down to the box, so the stock handler never runs.
-			label.addEventListener(
-				'change',
-				(event) => {
-					if (event.target !== box || !editor.isEditable) return;
-					event.stopPropagation();
-					const refocus = hadFocus;
-					hadFocus = false;
-					const pos = typeof props.getPos === 'function' ? props.getPos() : undefined;
-					const node = typeof pos === 'number' ? editor.state.doc.nodeAt(pos) : null;
-					if (typeof pos !== 'number' || !node) return;
-					editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: box.checked }));
-					if (refocus) editor.view.focus();
-				},
-				true,
-			);
-			rendered.stopEvent = (event: Event) => label.contains(event.target as globalThis.Node | null);
-			return rendered;
-		};
-	},
-});
-
-/**
  * The veil: words an article's writer marked as what the device's veil
  * hides (a name, a hard passage). Typed as `⟦words⟧`, as the writers write
  * it and the export does, it becomes the mark.
@@ -415,6 +233,13 @@ const Veil = Mark.create({
 	},
 });
 
+/** A URL attribute's value as the server takes it, or null when it refuses it. */
+export function contractUrl(spec: AttrSpec | undefined, raw: unknown): string | null {
+	if (!spec || typeof raw !== 'string') return null;
+	const value = typed(spec, raw);
+	return typeof value === 'string' ? value : null;
+}
+
 /** Whether a link may point at `url`: the contract's schemes, not the stock list. */
 export function linkAllowed(url: string): boolean {
 	return contractUrl(contract.marks.link?.attrs?.href, url) !== null;
@@ -422,7 +247,10 @@ export function linkAllowed(url: string): boolean {
 
 const stockShouldAutoLink = Link.options.shouldAutoLink;
 
-/** The stock extension each contract node extends. Others are created from the contract alone. */
+/**
+ * The stock extension each node a message can hold extends. A page's own
+ * nodes take theirs from `PageBases`; others are made from the contract alone.
+ */
 function nodeBase(name: string): Node | undefined {
 	switch (name) {
 		case 'doc':
@@ -431,8 +259,6 @@ function nodeBase(name: string): Node | undefined {
 			return Paragraph;
 		case 'text':
 			return Text;
-		case 'heading':
-			return Heading.configure({ levels: headingLevels() });
 		case 'blockquote':
 			return Blockquote;
 		case 'bulletList':
@@ -441,24 +267,8 @@ function nodeBase(name: string): Node | undefined {
 			return CountingOrderedList;
 		case 'listItem':
 			return ListItem;
-		case 'taskList':
-			return TaskList;
-		case 'taskItem':
-			return QuietTaskItem.configure({ nested: true });
 		case 'codeBlock':
 			return IndentingCodeBlock;
-		case 'horizontalRule':
-			return HorizontalRule;
-		case 'image':
-			return ContractImage;
-		case 'table':
-			return Table.configure({ resizable: false });
-		case 'tableRow':
-			return TableRow;
-		case 'tableHeader':
-			return TableHeader;
-		case 'tableCell':
-			return TableCell;
 		case 'hardBreak':
 			return HardBreak;
 		default:
@@ -682,8 +492,6 @@ function markBase(name: string): Mark | undefined {
 			return Bold.extend(delimitedMark(['**', '__']));
 		case 'italic':
 			return Italic.extend(delimitedMark(['*', '_']));
-		case 'underline':
-			return Underline;
 		// Each with a second key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
 			return Strike.extend({
@@ -1210,11 +1018,11 @@ export type Extras = {
  * least the priority of the mark after it in the contract; the sort keeps
  * equal priorities in the order given, which is the contract's.
  */
-function markPriorities(): Record<string, number> {
+function markPriorities(page: PageBases): Record<string, number> {
 	const out: Record<string, number> = {};
 	let floor = 0;
 	for (const name of Object.keys(contract.marks).reverse()) {
-		const base = markBase(name);
+		const base = markBase(name) ?? page.mark(name);
 		const own = (base ? getExtensionField<number>(base, 'priority') : undefined) ?? 100;
 		floor = Math.max(own, floor);
 		out[name] = floor;
@@ -1229,27 +1037,45 @@ function markPriorities(): Record<string, number> {
  */
 export type ContractPart = { nodes: readonly string[]; marks: readonly string[] };
 
-export function contractExtensions(extras: Extras = {}, part?: ContractPart): Extensions {
+/**
+ * The stock extensions for what only a page holds: headings, rules, images,
+ * to-dos, tables and underline (`PAGE_BASES` in page-bases.ts). They are
+ * passed in rather than imported here, so the chat composer, which loads
+ * with the first paint and holds a message, never loads them.
+ */
+export type PageBases = { node(name: string): Node | undefined; mark(name: string): Mark | undefined };
+
+/**
+ * No page bases: a page's own nodes are made from the contract alone. Their
+ * parse and render rules are the contract's either way, so this schema reads
+ * pasted HTML into the same nodes a page's would; it has none of their
+ * commands, input rules or views.
+ */
+export const CONTRACT_ONLY: PageBases = { node: () => undefined, mark: () => undefined };
+
+/**
+ * An editor's extensions: the whole contract, or `part` of it. A whole page
+ * takes `PAGE_BASES` (`pageExtensions` in page-bases.ts), or `CONTRACT_ONLY`
+ * to parse without an editor; a part takes the bases of what it holds.
+ */
+export function contractExtensions(extras: Extras = {}, part?: ContractPart, page?: PageBases): Extensions {
+	if (!part && !page) throw new Error('contractExtensions: a whole page needs its bases (pageExtensions in page-bases.ts) or CONTRACT_ONLY');
+	const bases = page ?? CONTRACT_ONLY;
 	const extensions: Extensions = [ContractGuard, DropsReadAsPastes];
 	for (const [name, spec] of Object.entries(contract.nodes)) {
 		if (part && !part.nodes.includes(name)) continue;
 		const config = { ...nodeConfig(name, spec), ...(extras.nodes?.[name] ?? {}) };
-		const base = nodeBase(name);
+		const base = nodeBase(name) ?? bases.node(name);
 		extensions.push(base ? base.extend(config) : Node.create(config));
 	}
-	const priority = markPriorities();
+	const priority = markPriorities(bases);
 	for (const [name, spec] of Object.entries(contract.marks)) {
 		if (part && !part.marks.includes(name)) continue;
 		const config = { ...markConfig(name, spec), priority: priority[name], ...(extras.marks?.[name] ?? {}) };
-		const base = markBase(name);
+		const base = markBase(name) ?? bases.mark(name);
 		extensions.push(base ? base.extend(config) : Mark.create(config));
 	}
 	return extensions;
-}
-
-/** The ProseMirror schema alone, for parsing and serializing without an editor. */
-export function contractSchema(): Schema {
-	return getSchema(contractExtensions());
 }
 
 /** Node types that carry a block id. */

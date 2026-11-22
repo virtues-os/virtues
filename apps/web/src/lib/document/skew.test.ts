@@ -17,7 +17,8 @@ import { Editor } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { contract, contractExtensions } from './schema';
+import { contract } from './schema';
+import { pageExtensions } from './page-bases';
 
 const FUTURE_TYPE = 'pollWidget';
 
@@ -62,7 +63,7 @@ describe('contract version skew', () => {
 		const editor = new Editor({
 			element: document.createElement('div'),
 			extensions: [
-				...contractExtensions(),
+				...pageExtensions(),
 				Collaboration.configure({ document: ydoc, field: contract.fragment }),
 			],
 		});

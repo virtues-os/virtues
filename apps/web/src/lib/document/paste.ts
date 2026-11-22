@@ -67,7 +67,6 @@
 import { Extension } from '@tiptap/core';
 import { DOMParser as PmDOMParser, Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type Selection, type Transaction } from '@tiptap/pm/state';
-import { CellSelection } from '@tiptap/pm/tables';
 import { canSplit } from '@tiptap/pm/transform';
 import type { EditorView } from '@tiptap/pm/view';
 import { toast } from 'svelte-sonner';
@@ -509,7 +508,9 @@ export function pasteHandling(convert: Convert = convertPaste): Extension {
 							if (!text) return false;
 							// Selected cells take a paste as cells, each the text pasted
 							// (prosemirror-tables), never one of them the converted blocks.
-							if (view.state.selection instanceof CellSelection) return false;
+							// By the selection's JSON type, so the composer, which shares
+							// this handler and holds no table, never loads that library.
+							if (view.state.selection.toJSON().type === 'cell') return false;
 							if (pastingPlain(view)) {
 								// No `uiEvent`: the paste rules would format its words.
 								place(view, view.state.tr.replaceSelection(plainSlice(view.state.schema, text)));

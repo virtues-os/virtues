@@ -54,7 +54,8 @@ import { DOMParser, DOMSerializer, type Node as PmNode } from '@tiptap/pm/model'
 import { prosemirrorToYXmlFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { contract, contractExtensions, contractSchema } from './schema';
+import { contract } from './schema';
+import { contractSchema, pageExtensions } from './page-bases';
 import { toMarkdown } from './markdown';
 
 // Not `new URL(…, import.meta.url)`: under happy-dom `URL` is the DOM's, which
@@ -156,7 +157,7 @@ function editedInAnEditor(update: string): string {
 	const editor = new Editor({
 		element: document.createElement('div'),
 		extensions: [
-			...contractExtensions(),
+			...pageExtensions(),
 			Collaboration.configure({ document: ydoc, field: contract.fragment }),
 		],
 	});

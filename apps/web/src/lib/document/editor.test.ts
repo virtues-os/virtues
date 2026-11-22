@@ -95,7 +95,8 @@ import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { filterCommands, menuKey } from '$lib/components/menuCommand';
 import { createPageEditor } from './editor';
-import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema';
+import { contract, ITEM_NUMBER, itemNumbers } from './schema';
+import { pageExtensions } from './page-bases';
 import { appletCommands, insertEntity, moveBlock, moveUnitTo, treeCommands, unitAround, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
@@ -2896,7 +2897,7 @@ describe('media', () => {
 			new Editor({
 				element,
 				content: '<p>Before.</p><virtues-file src="/drive/%E0%A4%A"></virtues-file><p>After.</p>',
-				extensions: contractExtensions({
+				extensions: pageExtensions({
 					nodes: { file: { addNodeView: () => svelteNodeView(throwing as never, 'div') } },
 				}),
 			}),

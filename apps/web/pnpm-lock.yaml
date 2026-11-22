@@ -166,9 +166,6 @@ importers:
       svelte-streamdown:
         specifier: ^3.1.2
         version: 3.1.2(svelte@5.57.0)
-      tailwind-merge:
-        specifier: ^3.6.0
-        version: 3.6.0
       y-indexeddb:
         specifier: ^9.0.12
         version: 9.0.12(yjs@13.6.32)
