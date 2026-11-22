@@ -513,6 +513,30 @@
 	white-space: pre-wrap;
 }
 
+/* ── An essay reply: chat's essay layout puts `prose--essay` on the reply's
+   wrapper (ChatView). The serif ships one regular cut, so a bold lead-in
+   would read as plain text: bold names the semibold the Abstract's lead
+   word uses (agents/build/design.md, Type), with synthesis off as there. A
+   bolded link is set apart by its color and line already, so it stays
+   regular. A table takes the card-in-card frame the reply's figures have:
+   a hairline and a second hairline 6px out. */
+
+.prose--essay .prose strong:not(:has(.ref-link)) {
+	font-family: var(--font-serif-lead);
+	font-weight: 600;
+	font-synthesis-weight: none;
+}
+
+.prose--essay .prose table {
+	font-family: var(--font-sans);
+	background: var(--color-surface);
+	border-radius: var(--radius-xl);
+	border: 1px solid var(--color-border-subtle);
+	outline: 1px solid var(--color-border-subtle);
+	outline-offset: 6px;
+	margin: 1.5rem 8px;
+}
+
 /* ── Images: within the column, on the radius every picture has. */
 
 .prose img {

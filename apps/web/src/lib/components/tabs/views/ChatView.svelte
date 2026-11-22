@@ -2154,6 +2154,7 @@
 									<div
 										class="message-wrapper"
 										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === GS_INTERVIEW_OPENING_ID}
+										class:prose--essay={message.role === "assistant" && chatEssay.on && !inRoom && !inInterview}
 										class:settled={isSettledLine(message)}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
@@ -2536,7 +2537,7 @@
 								     compacts. The block inside the reply takes over from
 								     the same clock, so the count does not restart. -->
 								<div class="flex justify-start">
-									<div class="message-wrapper" data-role="assistant">
+									<div class="message-wrapper" class:prose--essay={chatEssay.on && !inRoom && !inInterview} data-role="assistant">
 										<ThinkingBlock
 											isThinking={true}
 											startedAt={turnPhase.startedAt}
@@ -3460,15 +3461,8 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
-	/* The serif ships one regular cut, so a bold lead-in would read as plain
-	   text. Bold names the semibold the Abstract's lead word uses
-	   (agents/build/design.md, Type), with synthesis off as there. A bolded
-	   link is set apart by its color and line already, so it stays regular. */
-	.page-container.essay .message-wrapper[data-role="assistant"] :global(.markdown strong:not(:has(.ref-link))) {
-		font-family: var(--font-serif-lead);
-		font-weight: 600;
-		font-synthesis-weight: none;
-	}
+	/* A reply's bold and its tables are prose.css's, under `.prose--essay`,
+	   which the reply's wrapper carries in this layout. */
 	/* Your turn reads in the same serif as the reply, in its bubble. */
 	.page-container.essay .message-wrapper[data-role="user"] :global(.user-message-content) {
 		font-family: var(--font-serif);
@@ -3516,15 +3510,6 @@
 		outline: 1px solid var(--color-border-subtle);
 		outline-offset: 6px;
 		margin: 0.75rem 8px 1.25rem;
-	}
-	.page-container.essay .message-wrapper[data-role="assistant"] :global(.markdown table) {
-		font-family: var(--font-sans);
-		background: var(--color-surface);
-		border-radius: var(--radius-xl);
-		border: 1px solid var(--color-border-subtle);
-		outline: 1px solid var(--color-border-subtle);
-		outline-offset: 6px;
-		margin: 1.5rem 8px;
 	}
 	.page-container.essay :global(.chat-input) {
 		font-family: var(--font-serif);
