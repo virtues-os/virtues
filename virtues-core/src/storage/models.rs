@@ -76,6 +76,9 @@ pub struct UserProfile {
     /// How long audio recordings are kept, in days; None keeps them forever
     /// (`api::recordings`).
     pub keep_recordings_days: Option<i32>,
+    /// What excites the owner most about Virtues, as one of
+    /// `api::profile::StartWith`'s ids; None when they have not said.
+    pub start_with: Option<String>,
     /// Getting-started sections the owner dismissed from Home (section ids).
     /// Dismissed means gone, not collapsed — the features stay reachable where
     /// they permanently live. See agents/record/getting-started.md.

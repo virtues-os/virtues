@@ -40,6 +40,12 @@ recording goes out as audio, because the model does the transcription. If you
 point the writing slot at a model on your own hardware, neither of these
 leaves your network.
 
+Apart from your record, Setup asks one optional question: what excites you
+most about Virtues. If you pick one of its five answers and your server is
+linked to an account, your server sends that one answer to our account
+service, which keeps it with your account so we can learn who Virtues helps.
+Skip the question, or clear the answer in Settings, and nothing is kept.
+
 Nothing comes in. The server opens no inbound port. Your devices reach it by
 key, the server keeps the list of allowed keys, and we are not on that list.
 The relay forwards encrypted bytes it cannot read.

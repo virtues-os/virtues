@@ -1459,6 +1459,9 @@ export interface Profile {
 	units?: 'us' | 'metric';
 	/** Days audio recordings are kept (30, 90, 365); null keeps them forever. */
 	keep_recordings_days?: number | null;
+	/** What excites you most about Virtues; null when you have
+	 *  not said (`$lib/settings/startWith`). */
+	start_with?: 'days' | 'patterns' | 'memory' | 'habit' | 'ownership' | null;
 	home_place_id?: string | null;
 	/** Which wiki_people row is the owner (migration 0080). */
 	self_person_id?: string | null;

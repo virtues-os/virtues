@@ -261,6 +261,11 @@ pub async fn poll(
                     tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)")
                 }
             }
+            // The account now exists for this server, so it gets the one
+            // answer Setup may already have taken (best-effort).
+            if let Err(e) = super::start_with::send(db, http, atlas_url, api_key).await {
+                tracing::warn!("start_with not sent at link: {e:#}");
+            }
             Ok(LinkStatus::Ready)
         }
         // Atlas gave the key to an earlier poll of this link. Ready only if

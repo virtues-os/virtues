@@ -12,6 +12,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import LoadError from './LoadError.svelte';
 	import Segmented from '$lib/components/Segmented.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
 	import LinkRow from '$lib/components/settings/LinkRow.svelte';
 	import LocationField from '$lib/components/settings/LocationField.svelte';
@@ -20,6 +21,7 @@
 	import type { Units } from '$lib/utils/units';
 	import { getProfile, updateProfile, type Profile } from '$lib/api/client';
 	import { findSetting, titleOf } from '$lib/settings';
+	import { START_WITH, type StartWith } from '$lib/settings/startWith';
 
 	let { assistantName }: { assistantName: string } = $props();
 
@@ -33,6 +35,8 @@
 		employer: '',
 	});
 	let home = $state({ city: '', zone: '' });
+	/** What they asked for first; '' when they have not said. */
+	let startWith = $state<StartWith | ''>('');
 	let phase = $state<'loading' | 'ready' | 'error'>('loading');
 
 	async function load() {
@@ -47,6 +51,7 @@
 				employer: p.employer ?? '',
 			};
 			home = { city: p.home_city ?? '', zone: p.home_timezone ?? '' };
+			startWith = p.start_with ?? '';
 			phase = 'ready';
 		} catch {
 			phase = 'error';
@@ -95,6 +100,25 @@
 			unitsError = "Your server couldn't save your units. Try again.";
 		}
 	}
+
+	const START_OPTIONS = [
+		{ value: '', label: 'Not chosen' },
+		...START_WITH.map((c) => ({ value: c.id, label: c.title })),
+	] as const satisfies readonly { value: StartWith | ''; label: string }[];
+	let startError = $state<string | null>(null);
+
+	async function chooseStart(next: StartWith | '') {
+		const was = startWith;
+		startWith = next;
+		startError = null;
+		try {
+			await updateProfile({ start_with: next || null });
+			invalidate('/api/profile');
+		} catch {
+			startWith = was;
+			startError = "Your server couldn't save that. Try again.";
+		}
+	}
 </script>
 
 <section class="group">
@@ -137,6 +161,13 @@
 		</SettingRow>
 		<SettingRow id="units" label={label('units')} help={unitsError ?? `For distances, weights and temperatures, here and in what ${assistantName} writes.`}>
 			<Segmented id="profile-units" label={label('units')} value={units.current} options={UNITS} disabled={phase !== 'ready'} onchange={chooseUnits} />
+		</SettingRow>
+		<SettingRow
+			id="start-with"
+			label={label('start-with')}
+			help={startError ?? `What you picked in Setup. Clearing it also clears the copy Virtues keeps with your account.`}
+		>
+			<Select id="profile-start-with" label={label('start-with')} value={startWith} options={START_OPTIONS} disabled={phase !== 'ready'} block onchange={chooseStart} />
 		</SettingRow>
 	{/if}
 </section>

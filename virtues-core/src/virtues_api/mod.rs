@@ -12,6 +12,7 @@ pub mod link;
 pub mod relay;
 pub mod renew;
 pub mod request;
+pub mod start_with;
 
 /// Default cloud endpoints. A real box always has `VIRTUES_API_URL` /
 /// `VIRTUES_ATLAS_URL` set (the installer writes them into `virtues.env`;
