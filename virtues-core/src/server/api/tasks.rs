@@ -59,9 +59,19 @@ async fn update_task_handler(
 }
 
 /// POST /api/tasks/:id/seen — the owner opened the task. A task that repeats
-/// keeps its result and stops waiting; any other task is returned unchanged.
+/// keeps its result and stops waiting; one whose applet has finished closes
+/// as done. Any other task is returned unchanged.
 async fn seen_task_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(tasks::mark_standing_seen(state.db.pool(), &id).await)
+    let pool = state.db.pool();
+    let seen = async {
+        let task = tasks::mark_standing_seen(pool, &id).await?;
+        let Some(applet_id) = task.applet_id.as_deref() else {
+            return Ok(task);
+        };
+        crate::api::repeating_tasks::settle(pool, applet_id).await?;
+        tasks::get_task(pool, &id).await
+    };
+    api_response(seen.await)
 }
 
 #[derive(Debug, Deserialize)]

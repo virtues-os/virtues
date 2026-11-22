@@ -647,6 +647,13 @@ pub async fn update_task(
                 "a task that repeats has no end to mark. Turn it off or delete it from its page.".into(),
             ));
         }
+        // The row is named after its applet, and the next run would put the
+        // applet's name back.
+        if patch.title.as_deref().is_some_and(|t| t.trim() != before.title) {
+            return Err(Error::InvalidInput(
+                "a task that repeats is named by what was set up. Rename it from its options.".into(),
+            ));
+        }
     }
 
     // Handing over a request that is open but not queued (one from before
@@ -1159,7 +1166,7 @@ pub async fn open_standing_task(
     let mut tx = pool.begin().await?;
     // A thread that has been deleted is no home. The row opens without one.
     let thread_id: Option<String> = match thread_id {
-        Some(id) => sqlx::query_scalar("SELECT id FROM app_threads WHERE id = $1")
+        Some(id) => sqlx::query_scalar(Subject::Thread.exists_sql())
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?,
@@ -1191,17 +1198,21 @@ pub async fn open_standing_task(
             task
         }
         None => {
+            // The row is named after its applet. Its notes are the owner's
+            // once the row exists, so they are left alone. A row that was
+            // closed when its applet finished opens again.
             let sql = format!(
                 "UPDATE app_tasks
-                 SET title = $2, notes = COALESCE($3, notes),
-                     updated_at = CASE WHEN title = $2 THEN updated_at ELSE now() END
+                 SET title = $2,
+                     status = CASE WHEN status IN ('done', 'dismissed') THEN 'open' ELSE status END,
+                     closed_at = CASE WHEN status IN ('done', 'dismissed') THEN NULL ELSE closed_at END,
+                     updated_at = CASE WHEN title = $2 AND status NOT IN ('done', 'dismissed') THEN updated_at ELSE now() END
                  WHERE applet_id = $1
                  RETURNING {TASK_COLUMNS}"
             );
             sqlx::query_as::<_, Task>(&sql)
                 .bind(applet_id)
                 .bind(&title)
-                .bind(&notes)
                 .fetch_one(&mut *tx)
                 .await?
         }
@@ -1218,26 +1229,46 @@ pub async fn standing_task_id(pool: &PgPool, applet_id: &str) -> Result<Option<S
         .await?)
 }
 
+/// The applet behind a row finished, lost its schedule or gained a view, so
+/// the row has nothing more to wait for. It closes as done and keeps its last
+/// result. A row with a result the owner has not opened stays as it is, and
+/// closes when they open it (`repeating_tasks::settle`).
+pub async fn close_standing_task(pool: &PgPool, applet_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE app_tasks SET status = 'done', closed_at = now(), updated_at = now()
+         WHERE applet_id = $1 AND status IN ('open', 'active')",
+    )
+    .bind(applet_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// A run of the applet finished with something to read. Its result replaces
-/// the one the row had, and the row waits as `ready` until the owner opens
-/// it. False when the applet has no row, or its row is closed.
+/// the one the row had. When `new` is true the row waits as `ready` until the
+/// owner opens it; a run the owner started themselves is not new to them, so
+/// the row keeps its status. False when the applet has no row, or its row is
+/// closed.
 pub async fn file_standing_result(
     pool: &PgPool,
     applet_id: &str,
     result: &str,
     result_url: Option<&str>,
+    new: bool,
 ) -> Result<bool> {
     let Some(result) = clean_text(Some(result.to_string())) else {
         return Ok(false);
     };
     let filed = sqlx::query(
         "UPDATE app_tasks
-         SET result = $2, result_url = $3, status = 'ready', updated_at = now()
+         SET result = $2, result_url = $3,
+             status = CASE WHEN $4 THEN 'ready' ELSE status END, updated_at = now()
          WHERE applet_id = $1 AND status IN ('open', 'active', 'ready')",
     )
     .bind(applet_id)
     .bind(result)
     .bind(result_url)
+    .bind(new)
     .execute(pool)
     .await?;
     Ok(filed.rows_affected() > 0)
@@ -1433,8 +1464,8 @@ mod tests {
         assert_eq!(standing_task_id(&pool, "applet_user__week_in_review").await.unwrap().as_deref(), Some(task.id.as_str()));
 
         // Two results before the owner looks are still one row with the newer one.
-        assert!(file_standing_result(&pool, "applet_user__week_in_review", "A quiet week.", None).await.unwrap());
-        assert!(file_standing_result(&pool, "applet_user__week_in_review", "A full week.", Some("/page/page_1")).await.unwrap());
+        assert!(file_standing_result(&pool, "applet_user__week_in_review", "A quiet week.", None, true).await.unwrap());
+        assert!(file_standing_result(&pool, "applet_user__week_in_review", "A full week.", Some("/page/page_1"), true).await.unwrap());
         let ready = get_task(&pool, &task.id).await.unwrap();
         assert_eq!((ready.status.as_str(), ready.result.as_deref(), ready.result_url.as_deref()), ("ready", Some("A full week."), Some("/page/page_1")));
         assert_eq!(list_tasks(&pool, &ListFilter::default()).await.unwrap().len(), 1);
@@ -1450,8 +1481,8 @@ mod tests {
         assert!(claim_next_request(&pool).await.unwrap().is_none());
 
         // An empty result, and an applet with no row, file nothing.
-        assert!(!file_standing_result(&pool, "applet_user__week_in_review", "  ", None).await.unwrap());
-        assert!(!file_standing_result(&pool, "applet_user__nothing", "Hello.", None).await.unwrap());
+        assert!(!file_standing_result(&pool, "applet_user__week_in_review", "  ", None, true).await.unwrap());
+        assert!(!file_standing_result(&pool, "applet_user__nothing", "Hello.", None, true).await.unwrap());
     }
 
     /// The owner cannot take a task that repeats, or end it by a status. An
@@ -1460,12 +1491,24 @@ mod tests {
     async fn a_task_that_repeats_is_not_taken_ended_or_queued_by_an_edit(pool: PgPool) {
         applet(&pool, "applet_user__week_in_review", "Week in review").await;
         let id = open_standing_task(&pool, "applet_user__week_in_review", "Week in review", None, None).await.unwrap().id;
-        file_standing_result(&pool, "applet_user__week_in_review", "A full week.", None).await.unwrap();
+        file_standing_result(&pool, "applet_user__week_in_review", "A full week.", None, true).await.unwrap();
 
         let take = update_task(&pool, &id, TaskPatch { assignee: Some(Actor::Owner), ..Default::default() }, &Writer::owner()).await;
         assert!(take.unwrap_err().to_string().contains("stays with the assistant"));
         let end = update_task(&pool, &id, TaskPatch { status: Some(Status::Done), ..Default::default() }, &Writer::owner()).await;
         assert!(end.unwrap_err().to_string().contains("no end to mark"));
+
+        // Its name is its applet's, and its notes are the owner's to keep.
+        let rename = update_task(&pool, &id, TaskPatch { title: Some("My review".into()), ..Default::default() }, &Writer::owner()).await;
+        assert!(rename.unwrap_err().to_string().contains("Rename it from its options"));
+        let noted = update_task(&pool, &id, TaskPatch { notes: Some(Some("Read it on Monday.".into())), ..Default::default() }, &Writer::owner())
+            .await
+            .unwrap();
+        assert_eq!(noted.notes.as_deref(), Some("Read it on Monday."));
+        let reopened = open_standing_task(&pool, "applet_user__week_in_review", "Week in review", Some("Looks back over your week."), None)
+            .await
+            .unwrap();
+        assert_eq!(reopened.notes.as_deref(), Some("Read it on Monday."), "the applet's description does not replace them");
 
         // Ready to open is the path that queues a one-time request. Not this one.
         let opened = update_task(&pool, &id, TaskPatch { status: Some(Status::Open), ..Default::default() }, &Writer::owner())
