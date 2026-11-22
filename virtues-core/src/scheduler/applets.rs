@@ -157,7 +157,7 @@ pub async fn get_applet(db: &PgPool, applet_id: &str) -> Result<Applet> {
         .bind(applet_id)
         .fetch_optional(db)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Applet not found: {}", applet_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("nothing set up on this server has the id {applet_id}")))?;
 
     applet_from_row(&row)
 }
@@ -173,7 +173,7 @@ pub async fn update_memory(db: &PgPool, applet_id: &str, memory: &str) -> Result
     .await?
     .rows_affected();
     if affected == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {}", applet_id)));
+        return Err(Error::NotFound(format!("nothing set up on this server has the id {applet_id}")));
     }
     Ok(())
 }
@@ -192,7 +192,7 @@ pub async fn delete_applet(db: &PgPool, applet_id: &str, drop_data: bool) -> Res
         .fetch_optional(db)
         .await?;
     if owner.as_deref() == Some("system") {
-        return Err(crate::Error::InvalidInput("Cannot delete system action".into()));
+        return Err(crate::Error::InvalidInput("This came with your server. You can turn it off, but not delete it.".into()));
     }
 
     // Resolve the on-disk folder BEFORE the row goes away. Only chat-authored
@@ -431,7 +431,7 @@ pub async fn update_applet(
         .execute(db)
         .await?;
         if res.rows_affected() == 0 {
-            return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+            return Err(Error::NotFound(format!("nothing set up on this server has the id {applet_id}")));
         }
     }
     if let Some(v) = obj.get("memory") {
@@ -909,7 +909,7 @@ pub async fn mark_seen(db: &PgPool, applet_id: &str) -> Result<()> {
         .execute(db)
         .await?;
     if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+        return Err(Error::NotFound(format!("nothing set up on this server has the id {applet_id}")));
     }
     Ok(())
 }

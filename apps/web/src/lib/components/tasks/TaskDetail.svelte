@@ -223,7 +223,7 @@
 							value={task.title}
 							rows="1"
 							aria-label="Title"
-							readonly={isClosed(task)}
+							readonly={isClosed(task) || isRepeating(task)}
 							onblur={(e) => saveTitle(e.currentTarget.value)}
 							onkeydown={(e) => {
 								if (e.key === 'Enter') {

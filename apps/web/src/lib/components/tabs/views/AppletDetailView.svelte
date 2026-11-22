@@ -36,6 +36,7 @@
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
 	import { homeOf, optionsOf, pageOf } from '$lib/applets/kind';
+	import { problemOf } from '$lib/applets/standing';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -87,6 +88,12 @@
 	// came with the server. Once one of them has loaded, it is the applet.
 	const loaded = $derived(action && (action.id === address?.id || action.id === address?.otherId) ? action : null);
 	const appletId = $derived(loaded?.id ?? address?.id ?? null);
+	// A tab can move to another applet's address without being rebuilt. The
+	// one it showed is dropped at once, so the page says it is loading, or
+	// that it failed, and never draws the earlier applet under the new address.
+	$effect(() => {
+		if (action && !loaded) action = null;
+	});
 	const asked = $derived(address?.open ?? null);
 	const inInfo = $derived(address?.side === 'options');
 
@@ -209,6 +216,10 @@
 			// weaker requests: one of them failing must not blank the page.
 			const a = await firstFound(ids);
 			const id = a.id;
+			// The tab moved on while this was loading: the answer is for an
+			// applet it no longer shows.
+			const here = readAddress(tab.route);
+			if (here && id !== here.id && id !== here.otherId) return;
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
 			// Opening the page is reading what it made, so its "new" Inbox
@@ -396,8 +407,8 @@
 				: failedNow.error
 					? failureReason(failedNow.error)
 					: 'The run failed'
-			: overdue && action?.next_due_at
-				? `It was due ${relativeTime(action.next_due_at)} and hasn't run`
+			: overdue && action
+				? (problemOf(action) ?? "Hasn't run yet")
 				: null
 	);
 	const missedWhen = $derived(failedNow?.last_at ?? (overdue ? (action?.next_due_at ?? null) : null));
@@ -569,11 +580,17 @@
 				{/if}
 			</p>
 		{/if}
+		{#if err}
+			<p class="needs"><span class="error-msg">{err}</span></p>
+		{/if}
 		<FaceFrame appletId={action.id} height="100%" />
 	{:else if action}
 		<div style:max-width={width.css} class="measure">
 			{#if inInfo}
 				<div class="narrow">
+					{#if err}
+						<p class="error-msg">{err}</p>
+					{/if}
 					<header class="head sub">
 						<!-- The desktop's toolbar holds the Site / Options switch. A
 						     phone has no toolbar, so it gets a way back here. -->
@@ -721,6 +738,10 @@
 				{/if}
 			{/if}
 		</div>
+	{/if}
+	<!-- Outside the branches above: the More menu opens these from a site's
+	     view as well as from its options. -->
+	{#if action}
 		<DeleteAppletModal {action} bind:open={deleting} onDeleted={() => windowShellStore.closeTab(tab.id)} />
 		{#if action.has_face}
 			<ShareSheet open={sharing} producer={{ kind: 'applet', id: action.id }} onClose={() => (sharing = false)} />

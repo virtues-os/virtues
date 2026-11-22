@@ -120,7 +120,7 @@
 				{#if !skills.loaded}
 					<!-- Nothing while the list is on its way. -->
 				{:else if skills.failed}
-					Applets didn't load. Check that your server is reachable, then type / again.
+					Your skills didn't load. Check that your server is reachable, then type / again.
 				{:else if query}
 					Nothing matches "{query}".
 				{:else}

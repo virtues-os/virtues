@@ -240,7 +240,7 @@
 			<span><span class="key ran"></span>Ran</span>
 			<span><span class="key failed"></span>Failed</span>
 			<span><span class="key stopped"></span>Stopped at its limit</span>
-			<span><span class="key missed"></span>Didn't run when due</span>
+			<span><span class="key missed"></span>Didn't run</span>
 			<span><span class="key none"></span>No run</span>
 		</p>
 	{:else}

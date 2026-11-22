@@ -3,6 +3,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { deleteApplet, getAppletData, type Applet, type AppletData } from '$lib/api/client';
+	import { KIND_WORD, kindOf } from '$lib/applets/kind';
 
 	/**
 	 * Deleting an applet, from its page's More menu. Rare and the one thing
@@ -47,11 +48,14 @@
 			deleting = false;
 		}
 	}
+
+	// The dialog deletes a site, a skill or a task, and says which.
+	const word = $derived(KIND_WORD[kindOf(action)].toLowerCase());
 </script>
 
-<Modal {open} onClose={() => (open = false)} title="Delete site" width="sm">
+<Modal {open} onClose={() => (open = false)} title="Delete {word}" width="sm">
 	<div class="del">
-		<p>Delete <strong>{action.name}</strong>? This removes the site and can't be undone.</p>
+		<p>Delete <strong>{action.name}</strong>? This removes the {word} and can't be undone.</p>
 		{#if deleteData && deleteData.tables.length > 0}
 			<label class="drop-opt">
 				<input type="checkbox" bind:checked={dropData} />
@@ -70,7 +74,7 @@
 				{/each}
 			</ul>
 			{#if !dropData}
-				<p class="dim">Your server keeps its data, which can outlive the site.</p>
+				<p class="dim">Your server keeps its data, which can outlive the {word}.</p>
 			{/if}
 		{/if}
 		{#if err}
@@ -80,7 +84,7 @@
 	{#snippet footer()}
 		<Button variant="ghost" onclick={() => (open = false)} disabled={deleting}>Cancel</Button>
 		<Button variant="danger" onclick={doDelete} disabled={deleting}>
-			{deleting ? 'Deleting…' : dropData ? 'Delete site and data' : 'Delete site'}
+			{deleting ? 'Deleting…' : dropData ? `Delete ${word} and data` : `Delete ${word}`}
 		</Button>
 	{/snippet}
 </Modal>

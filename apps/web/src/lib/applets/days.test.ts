@@ -97,7 +97,7 @@ describe('recentSummary', () => {
 
 	it('says when today was missed', () => {
 		const states = [...days.slice(1).map(() => 'ran' as const), 'missed' as const];
-		expect(summary(rows('success', 6), states)).toBe("Didn't run today when it was due");
+		expect(summary(rows('success', 6), states)).toBe("Hasn't run today");
 	});
 
 	it('counts stops at the spending limit', () => {

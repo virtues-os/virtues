@@ -171,7 +171,7 @@ function clause(a: Applet, trouble: Trouble, now: number): string {
 	}
 }
 
-/** The sentence the Jobs page opens with, and the one under it. */
+/** The sentence the Server tasks page opens with, and the one under it. */
 export function appletsLead(applets: Applet[], now = Date.now()): { sentence: string; sub: string } {
 	const living = applets.filter((a) => !a.archived_at);
 	const needing = living

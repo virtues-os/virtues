@@ -38,9 +38,9 @@ function wordFor(id: string, kind?: AppletKind | null): AddressWord {
 	if (kind === 'site') return 'site';
 	if (kind === 'skill') return 'skill';
 	if (kind === 'server_task') return 'server-task';
-	// The assistant's task, or a caller that knows only the id.
-	// TODO(2026-11-21): the assistant's task opens at its task's address once
-	// Tasks shows repeating tasks (agents/plan/task-skill-site-plan.md, slice D).
+	// The assistant's task, or a caller that knows only the id. A task with
+	// a row opens at its task's address (`homeOf` in kind.ts); this one is
+	// the address of its options, and of a task that has no row.
 	return isYoursId(id) ? 'site' : 'server-task';
 }
 

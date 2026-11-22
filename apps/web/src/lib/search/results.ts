@@ -71,6 +71,8 @@ const SCOPES: Record<string, Scope> = {
 	project: 'thread', projects: 'thread',
 	thread: 'thread', threads: 'thread',
 	applet: 'applet', applets: 'applet',
+	site: 'applet', sites: 'applet',
+	skill: 'applet', skills: 'applet',
 	command: 'command', commands: 'command',
 	setting: 'setting', settings: 'setting',
 	action: 'command', actions: 'command',

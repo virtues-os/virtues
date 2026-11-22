@@ -18,7 +18,7 @@ export const DAY_LABEL: Record<DayState, string> = {
 	stopped: 'stopped at its spending limit',
 	ran: 'ran',
 	quiet: 'skipped',
-	missed: "was due and didn't run",
+	missed: "didn't run",
 	none: 'no runs'
 };
 
@@ -171,7 +171,7 @@ export function recentSummary(states: DayState[], counts: Map<string, number>, u
 	const span = `in the last ${states.length} ${unit}`;
 	const failed = counts.get('error') ?? 0;
 	if (failed > 0) return `${failed} failed ${span}`;
-	if (states.at(-1) === 'missed') return unit === 'days' ? "Didn't run today when it was due" : "Didn't run when it was due";
+	if (states.at(-1) === 'missed') return unit === 'days' ? "Hasn't run today" : "Hasn't run this week";
 	const stopped = counts.get('budget_exceeded') ?? 0;
 	if (stopped > 0) {
 		return `Stopped at its spending limit ${stopped === 1 ? 'once' : `${stopped} times`} ${span}`;

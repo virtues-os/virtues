@@ -33,15 +33,19 @@ export function openSiteBeside(appletId: string, name?: string) {
  * What a chat does when the assistant has just made or rebuilt a site: load
  * the new view in any frame showing it, then open it the way the app opens
  * anything the assistant made. That is beside the chat when the window is
- * already split, and otherwise a new tab next to the chat. It never splits
- * the window, and the chat keeps the keyboard. A phone shows one view at a
+ * already split, and otherwise a new tab next to the chat, which comes to
+ * the front. It never splits the window. A phone shows one view at a
  * time, and leaving the chat in the middle of a reply would lose the person's
  * place, so there the chat's own row is the way in.
  */
 export function showBuiltSite(appletId: string, name?: string) {
 	siteBuilds.rebuilt(appletId);
 	if (mobileLayout.isMobile) return;
+	// A site that is already open in a tab was just reloaded where it is. A
+	// second tab for each change the assistant makes would pile them up.
+	const route = homeRoute(appletId, 'site');
+	if (windowShellStore.findTab((t) => t.route === route || t.route === `${route}/options`)) return;
 	const from = windowShellStore.activePaneId;
-	windowShellStore.openRouteInSplitOrActive(homeRoute(appletId, 'site'), name);
+	windowShellStore.openRouteInSplitOrActive(route, name);
 	if (windowShellStore.isSplit) windowShellStore.activePaneId = from;
 }

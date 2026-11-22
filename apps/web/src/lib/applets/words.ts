@@ -18,6 +18,7 @@ export function wordForSetup(input: Record<string, unknown>): MadeWord | null {
 export function wordForMade(output: Record<string, unknown>): MadeWord {
 	const can = Array.isArray(output.capabilities) ? output.capabilities : [];
 	if (output.has_view === true || can.includes('has a view')) return 'site';
-	if (typeof output.schedule === 'string' && output.schedule) return 'task';
+	// A task row means it starts itself, by a schedule, a data watch or a webhook.
+	if ((typeof output.schedule === 'string' && output.schedule) || (typeof output.task_id === 'string' && output.task_id)) return 'task';
 	return 'skill';
 }

@@ -50,7 +50,7 @@
 		'bookmark',
 		'bookmarks',
 		'applets',
-		'applet-view'
+		'applet'
 	]);
 
 	function onMessage(e: MessageEvent) {
