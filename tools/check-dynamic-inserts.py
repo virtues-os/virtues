@@ -54,15 +54,19 @@ METADATA = re.compile(
 # `#[cfg(test)] mod ...` — the test module's own header, not a test-only
 # `use` or a single `#[cfg(test)]` item above real code.
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(?:pub\s+)?mod\b')
-INSERT = re.compile(r'INSERT INTO\s+(?P<table>[a-z_]+)[\s\\]*\((?P<cols>[^)]*)\)', re.S | re.I)
+# The table may carry an alias (`INSERT INTO data_content_photo AS p (...)`,
+# for an upsert that reads the old row); without it here, that writer's
+# columns read as never written.
+INSERT = re.compile(r'INSERT INTO\s+(?P<table>[a-z_]+)(?:\s+AS\s+[a-z_]+)?[\s\\]*\((?P<cols>[^)]*)\)', re.S | re.I)
 UPDATE_HEAD = re.compile(r'UPDATE\s+(?P<table>[a-z_]+)\b', re.I)
 ASSIGN = re.compile(r'([a-z_]+)\s*=')
 # build_batch_insert_query with either an inline &[..] or a named array var,
 # borrowed at the call (`&cols`) or already a slice (`columns`, declared
-# `let columns: &[&str] = &[..]`). Missing the second shape hid the message
-# and transaction writers, which only the demo seed SQL had been covering.
+# `let columns: &[&str] = &[..]`), or a module constant (`&COLUMNS`). Missing
+# the second shape hid the message and transaction writers, which only the
+# demo seed SQL had been covering.
 BATCH = re.compile(
-    r'build_batch_(?:insert|upsert)_query\(\s*"(?P<table>[a-z_]+)"\s*,\s*(?:&\[(?P<inline>.*?)\]|&?(?P<var>[a-z_]+))',
+    r'build_batch_(?:insert|upsert)_query\(\s*"(?P<table>[a-z_]+)"\s*,\s*(?:&\[(?P<inline>.*?)\]|&?(?P<var>[A-Za-z_][A-Za-z0-9_]*))',
     re.S,
 )
 
@@ -163,13 +167,15 @@ def main():
         if f.suffix != ".rs":
             continue
         # Writer columns via build_batch_insert_query — inline arrays AND
-        # named `let cols = [...]` arrays (the weather_sync shape).
+        # named arrays: `let cols = [...]` (the weather_sync shape) or a
+        # module's `const COLUMNS: [&str; N] = [...]` (the listening shape),
+        # whose type has a `;` of its own.
         for m in BATCH.finditer(txt):
             if m.group("inline") is not None:
                 note(m.group("table"), re.findall(r'"([a-z_]+)"', m.group("inline")))
             else:
                 var = m.group("var")
-                decl = re.search(r"let\s+" + var + r"[^=;]*=\s*&?\[([^;]*?)\]\s*;", txt, re.S)
+                decl = re.search(r"\b(?:let|const|static)\s+" + var + r"\b[^=]*=\s*&?\[([^;]*?)\]\s*;", txt, re.S)
                 if decl:
                     note(m.group("table"), re.findall(r'"([a-z_]+)"', decl.group(1)))
         for m in CALL.finditer(txt):
