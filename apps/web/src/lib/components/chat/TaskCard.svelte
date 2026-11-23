@@ -36,9 +36,9 @@
 		}
 	}
 
-	/** Tasks live on the Projects page, above the projects. */
+	/** Tasks live in the Inbox. */
 	function openTasks() {
-		windowShellStore.openTabFromRoute("/threads?view=tasks", { label: "Threads", focusExisting: true });
+		windowShellStore.openTabFromRoute("/inbox", { label: "Inbox", focusExisting: true });
 	}
 </script>
 

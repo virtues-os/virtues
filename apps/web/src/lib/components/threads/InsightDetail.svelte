@@ -237,7 +237,7 @@
 			{@const k = key}
 			<TextAction onclick={() => load(k)}>Try again</TextAction>
 		{:else if layout === 'page'}
-			<TextAction onclick={() => windowShellStore.openTabFromRoute('/threads?view=insights', { focusExisting: true })}>
+			<TextAction onclick={() => windowShellStore.openTabFromRoute('/inbox', { focusExisting: true })}>
 				See the other insights
 			</TextAction>
 		{/if}

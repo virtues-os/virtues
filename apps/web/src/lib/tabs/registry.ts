@@ -455,36 +455,17 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// the Project* types in api/client.ts to thread names once the files that
 	// import them hold no other session's uncommitted work.
 	//
-	// Tasks live in the Threads door. `/tasks` (and `/tasks/assistant`,
-	// `/tasks/all`, from when that page had filter tabs) opens the door's
-	// Tasks view, keeping `?task=<id>`, which opens that task in the list.
+	// `/threads` is the list of every thread. Tasks and insights live in
+	// the Inbox, which also answers the old `/tasks` addresses.
 	// ========================================================================
 	thread: {
 		match: (path) =>
 			path === '/threads' ||
-			/^\/tasks(\/(assistant|all))?$/.test(path) ||
 			path === '/thread' ||
 			/^\/thread\/[^/]+$/.test(path),
-		parse: (path, params) => {
+		parse: (path) => {
 			if (!/^\/thread\/[^/]+$/.test(path)) {
-				// The door. `/tasks` and `?task=` open its Tasks view.
-				const task = params?.get('task');
-				const tasks = path.startsWith('/tasks') || !!task || params?.get('view') === 'tasks';
-				const other = params?.get('view');
-				const threads = other === 'threads' || other === 'insights';
-				const query = task
-					? `?view=tasks&task=${encodeURIComponent(task)}`
-					: tasks
-						? '?view=tasks'
-						: threads
-							? `?view=${other}`
-							: '';
-				return {
-					type: 'thread',
-					label: 'Threads',
-					icon: THREAD_ICON,
-					normalizedRoute: `/threads${query}`,
-				};
+				return { type: 'thread', label: 'Threads', icon: THREAD_ICON, normalizedRoute: '/threads' };
 			}
 			const match = path.match(/^\/thread\/([^/]+)$/);
 			return {
@@ -520,7 +501,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		}),
 		serialize: (id) => (id ? `insight_${id}` : 'insight'),
 		deserialize: (serialized) =>
-			serialized.startsWith('insight_') ? `/insight/${serialized.slice(8)}` : '/threads?view=insights',
+			serialized.startsWith('insight_') ? `/insight/${serialized.slice(8)}` : '/inbox',
 		icon: 'mynaui:sparkles',
 		defaultLabel: 'Insight',
 		component: InsightView,
@@ -542,7 +523,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// `task_task_…`, and the type prefix comes off whole.
 		serialize: (id) => (id ? `task_${id}` : 'task'),
 		deserialize: (serialized) =>
-			serialized.startsWith('task_') && serialized.length > 5 ? `/task/${serialized.slice(5)}` : '/threads?view=tasks',
+			serialized.startsWith('task_') && serialized.length > 5 ? `/task/${serialized.slice(5)}` : '/inbox',
 		icon: 'atlas:tasks',
 		defaultLabel: 'Task',
 		component: TaskView,
@@ -964,7 +945,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// `/timeline/YYYY-MM-DD` from an old link or pin) opens that view.
 	// ========================================================================
 	inbox: {
-		match: (path) => path === '/inbox' || path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
+		match: (path) =>
+			path === '/inbox' ||
+			/^\/tasks(\/(assistant|all))?$/.test(path) ||
+			path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
 		parse: (path, params) => {
 			const view = path.startsWith('/timeline') ? 'map' : params?.get('view');
 			const query = view && ['radar', 'cards', 'graph', 'map', 'week'].includes(view) ? `?view=${view}` : '';
