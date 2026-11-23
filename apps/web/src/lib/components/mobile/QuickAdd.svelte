@@ -20,6 +20,7 @@
 	import { newProject } from "$lib/utils/projectActions";
 	import { kindGlyph } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
+	import { tapHaptic } from "$lib/utils/haptics";
 
 	let { onFiles }: { onFiles: (files: File[]) => void } = $props();
 
@@ -33,6 +34,7 @@
 	type Place = { key: string; title: string; note: string; run: () => void; thread?: (typeof projectStore.projects)[number]; glyph?: string };
 
 	function go(route: string, label: string) {
+		tapHaptic();
 		open = false;
 		windowShellStore.openTabFromRoute(route, { label });
 	}
@@ -74,12 +76,46 @@
 	}
 
 	function act(run: () => void) {
+		tapHaptic();
 		open = false;
 		run();
 	}
 
 	function onKey(e: KeyboardEvent) {
 		if (open && e.key === "Escape") open = false;
+	}
+
+	// A downward swipe on the menu puts it away, by distance or by a flick.
+	let dragY = $state(0);
+	let dragging = $state(false);
+	let startY = 0;
+	let lastY = 0;
+	let lastT = 0;
+	let velocity = 0;
+	function dragStart(e: PointerEvent) {
+		dragging = true;
+		startY = lastY = e.clientY;
+		lastT = e.timeStamp;
+		velocity = 0;
+	}
+	function dragMove(e: PointerEvent) {
+		if (!dragging) return;
+		const dt = e.timeStamp - lastT;
+		if (dt > 0) velocity = (e.clientY - lastY) / dt;
+		lastY = e.clientY;
+		lastT = e.timeStamp;
+		dragY = Math.max(0, e.clientY - startY);
+	}
+	function dragEnd() {
+		if (!dragging) return;
+		dragging = false;
+		if (dragY > 64 || velocity > 0.5) open = false;
+		dragY = 0;
+	}
+
+	function toggle() {
+		open = !open;
+		if (open) tapHaptic();
 	}
 </script>
 
@@ -94,7 +130,18 @@
 	     glass is the only blur. -->
 	<button class="scrim" aria-label="Close" onclick={() => (open = false)}></button>
 
-	<div class="menu lq" role="menu" aria-label="Quick add">
+	<div
+		class="menu lq"
+		class:dragging
+		role="menu"
+		aria-label="Quick add"
+		tabindex="-1"
+		style:transform={dragY ? `translateY(${dragY}px)` : undefined}
+		onpointerdown={dragStart}
+		onpointermove={dragMove}
+		onpointerup={dragEnd}
+		onpointercancel={dragEnd}
+	>
 		{#each places as p (p.key)}
 			<button class="place" role="menuitem" onclick={p.run}>
 				<span class="glyph">
@@ -142,7 +189,7 @@
 	class="fab"
 	class:lq={!open}
 	class:open
-	onclick={() => (open = !open)}
+	onclick={toggle}
 	aria-expanded={open}
 	aria-haspopup="menu"
 	aria-label={open ? "Close" : "Add a task, thread, page or attachment"}
@@ -203,6 +250,11 @@
 		border-radius: var(--radius-xl);
 		transform-origin: 100% 100%;
 		animation: grow 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+		touch-action: none;
+		transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+	}
+	.menu.dragging {
+		transition: none;
 	}
 	@keyframes grow {
 		from {

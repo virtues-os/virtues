@@ -2,6 +2,7 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import ContextMenuItem from './ContextMenuItem.svelte';
 	import ContextMenuSubmenu from './ContextMenuSubmenu.svelte';
+	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { useFloating } from '$lib/floating';
 	import { listenForMenuKeys } from './keys';
@@ -197,7 +198,13 @@
 	);
 </script>
 
-{#if contextMenu.visible}
+{#if contextMenu.visible && mobileLayout.isMobile}
+	<!-- The phone shows the same items as a bottom sheet, nearer the thumb.
+	     Loaded when first shown, so the desktop's first paint never carries it. -->
+	{#await import('./MenuSheet.svelte') then { default: MenuSheet }}
+		<MenuSheet />
+	{/await}
+{:else if contextMenu.visible}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div
 		class="context-menu-backdrop"

@@ -32,6 +32,7 @@
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
+	import { tapHaptic } from "$lib/utils/haptics";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
@@ -141,6 +142,7 @@
 		return opened[id] ?? id === activeThreadId;
 	}
 	function toggle(id: string) {
+		tapHaptic();
 		opened = { ...opened, [id]: !isOpen(id) };
 	}
 

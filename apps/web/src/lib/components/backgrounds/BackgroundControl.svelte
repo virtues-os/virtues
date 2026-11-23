@@ -24,6 +24,7 @@
 	import { openSetting } from '$lib/settings/focus';
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+	import BottomSheet from '$lib/components/mobile/BottomSheet.svelte';
 
 
 	// On the phone the popover opens from the chat's ⋯ menu, so its state
@@ -84,106 +85,119 @@
 	}
 </script>
 
-<div class="corner" class:phone={mobileLayout.isMobile}>
-	<Popover bind:open={() => isOpen, setOpen} placement={mobileLayout.isMobile ? "bottom-end" : "top-end"} offset={10}>
-		{#snippet trigger({ toggle })}
-			<button
-				type="button"
-				class="lq corner-button"
-				aria-label="Background and appearance"
-				aria-expanded={isOpen}
-				aria-haspopup="dialog"
-				onclick={toggle}
-			>
-				<Icon icon="mynaui:image" width="18" />
-			</button>
-		{/snippet}
-		{#snippet children()}
-			<div class="panel" role="dialog" aria-label="Background and appearance">
-				<div class="now">
-					<div class="caption">
-						{#key caption.title}
-							<span class="title" in:fade={{ duration: 220 }}>{caption.title}</span>
-						{/key}
-						<span class="note">
-							<span class="collection-name">{caption.note}</span>
-							{#if isRotating() && now}
-								<span class="sep" aria-hidden="true">·</span>
-								<button type="button" class="keep" onclick={() => keep()}>Keep this picture</button>
-							{/if}
-						</span>
-					</div>
-					<div class="arrows">
-						<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => step(-1)}>
-							<Icon icon="mynaui:chevron-left" width="16" />
-						</button>
-						<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => step(1)}>
-							<Icon icon="mynaui:chevron-right" width="16" />
-						</button>
-					</div>
+{#snippet panel()}
+		<div class="panel" class:phone={mobileLayout.isMobile} role="dialog" aria-label="Background and appearance">
+			<div class="now">
+				<div class="caption">
+					{#key caption.title}
+						<span class="title" in:fade={{ duration: 220 }}>{caption.title}</span>
+					{/key}
+					<span class="note">
+						<span class="collection-name">{caption.note}</span>
+						{#if isRotating() && now}
+							<span class="sep" aria-hidden="true">·</span>
+							<button type="button" class="keep" onclick={() => keep()}>Keep this picture</button>
+						{/if}
+					</span>
 				</div>
+				<div class="arrows">
+					<button type="button" class="arrow" aria-label="Previous picture" disabled={!canStep} onclick={() => step(-1)}>
+						<Icon icon="mynaui:chevron-left" width="16" />
+					</button>
+					<button type="button" class="arrow" aria-label="Next picture" disabled={!canStep} onclick={() => step(1)}>
+						<Icon icon="mynaui:chevron-right" width="16" />
+					</button>
+				</div>
+			</div>
 
-				{#if style}
-					<div class="collections" role="radiogroup" aria-label="Collection">
-						{#each style.collections as c (c.id)}
-							{@const picked = setting.kind === 'path' && setting.style === style.style && setting.collection === c.id}
-							<button
-								type="button"
-								role="radio"
-								class="collection"
-								class:picked
-								aria-checked={picked}
-								onclick={() => background.set(`${style.style}/${c.id}`)}
-							>
-								<span class="thumb">
-									<img src={thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
-								</span>
-								<span class="name">{c.title}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
-				<div class="themes" role="radiogroup" aria-label="Appearance">
-					{#each themes as choice (choice)}
+			{#if style}
+				<div class="collections" role="radiogroup" aria-label="Collection">
+					{#each style.collections as c (c.id)}
+						{@const picked = setting.kind === 'path' && setting.style === style.style && setting.collection === c.id}
 						<button
 							type="button"
 							role="radio"
-							class="theme"
-							class:picked={theme === choice}
-							aria-checked={theme === choice}
-							aria-label={getThemeDisplayName(choice)}
-							title={SHORT_NAMES[choice] ? getThemeDisplayName(choice) : undefined}
-							onclick={() => chooseTheme(choice)}
+							class="collection"
+							class:picked
+							aria-checked={picked}
+							onclick={() => background.set(`${style.style}/${c.id}`)}
 						>
-							<Icon icon={themeMetadata[choice].icon} width="16" />
-							<span>{SHORT_NAMES[choice] ?? getThemeDisplayName(choice)}</span>
+							<span class="thumb">
+								<img src={thumbnail(style.style, c.pictures[0])} alt="" loading="lazy" decoding="async" />
+							</span>
+							<span class="name">{c.title}</span>
 						</button>
 					{/each}
 				</div>
+			{/if}
 
-				<button
-					type="button"
-					class="more"
-					onclick={() => {
-						setOpen(false);
-						openSetting('background', DEFAULT_ASSISTANT_NAME);
-					}}
-				>
-					<span>All backgrounds</span>
-					<Icon icon="mynaui:chevron-right" width="14" />
-				</button>
-
-				{#each preload as p (p.key)}
-					<picture class="preload" aria-hidden="true">
-						<source srcset={p.avif} sizes="100vw" type="image/avif" />
-						<img src={p.src} alt="" decoding="async" />
-					</picture>
+			<div class="themes" role="radiogroup" aria-label="Appearance">
+				{#each themes as choice (choice)}
+					<button
+						type="button"
+						role="radio"
+						class="theme"
+						class:picked={theme === choice}
+						aria-checked={theme === choice}
+						aria-label={getThemeDisplayName(choice)}
+						title={SHORT_NAMES[choice] ? getThemeDisplayName(choice) : undefined}
+						onclick={() => chooseTheme(choice)}
+					>
+						<Icon icon={themeMetadata[choice].icon} width="16" />
+						<span>{SHORT_NAMES[choice] ?? getThemeDisplayName(choice)}</span>
+					</button>
 				{/each}
 			</div>
-		{/snippet}
-	</Popover>
-</div>
+
+			<button
+				type="button"
+				class="more"
+				onclick={() => {
+					setOpen(false);
+					openSetting('background', DEFAULT_ASSISTANT_NAME);
+				}}
+			>
+				<span>All backgrounds</span>
+				<Icon icon="mynaui:chevron-right" width="14" />
+			</button>
+
+			{#each preload as p (p.key)}
+				<picture class="preload" aria-hidden="true">
+					<source srcset={p.avif} sizes="100vw" type="image/avif" />
+					<img src={p.src} alt="" decoding="async" />
+				</picture>
+			{/each}
+		</div>
+{/snippet}
+
+{#if mobileLayout.isMobile}
+	<!-- On the phone the chat's ⋯ menu opens it, as a bottom sheet. -->
+	{#if isOpen}
+		<BottomSheet label="Background and appearance" onClose={() => setOpen(false)}>
+			{@render panel()}
+		</BottomSheet>
+	{/if}
+{:else}
+	<div class="corner">
+		<Popover bind:open={() => isOpen, setOpen} placement="top-end" offset={10}>
+			{#snippet trigger({ toggle })}
+				<button
+					type="button"
+					class="lq corner-button"
+					aria-label="Background and appearance"
+					aria-expanded={isOpen}
+					aria-haspopup="dialog"
+					onclick={toggle}
+				>
+					<Icon icon="mynaui:image" width="18" />
+				</button>
+			{/snippet}
+			{#snippet children()}
+				{@render panel()}
+			{/snippet}
+		</Popover>
+	</div>
+{/if}
 
 <style>
 	.corner {
@@ -193,16 +207,6 @@
 		z-index: 3;
 	}
 
-	/* On the phone the ⋯ in the top bar opens it, so the button is hidden
-	   and only anchors the popover under the bar's right end. */
-	.corner.phone {
-		top: 52px;
-		right: 16px;
-		bottom: auto;
-	}
-	.corner.phone .corner-button {
-		visibility: hidden;
-	}
 
 	.corner-button {
 		display: grid;
@@ -219,6 +223,10 @@
 		flex-direction: column;
 		width: 312px;
 		padding: 6px 0 4px;
+	}
+	/* In the phone's sheet it takes the sheet's width. */
+	.panel.phone {
+		width: auto;
 	}
 
 	/* Today's picture: its name and collection on the left, the arrows to

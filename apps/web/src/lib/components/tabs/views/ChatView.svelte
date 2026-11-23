@@ -1512,12 +1512,15 @@
 			checked: chatEssay.on,
 			action: () => chatEssay.toggle(),
 		});
-		items.push({
-			id: "pin",
-			label: pinned ? "Unpin tab" : "Pin tab",
-			icon: pinned ? "mynaui:pin" : "mynaui:pin",
-			action: () => windowShellStore.togglePin(tab.id),
-		});
+		// The phone has no tabs to pin.
+		if (!mobileLayout.isMobile) {
+			items.push({
+				id: "pin",
+				label: pinned ? "Unpin tab" : "Pin tab",
+				icon: pinned ? "mynaui:pin" : "mynaui:pin",
+				action: () => windowShellStore.togglePin(tab.id),
+			});
+		}
 		if (canManageChat) {
 			items.push({
 				id: "delete",
@@ -2015,6 +2018,11 @@
 			}),
 		});
 	}
+
+	// The phone's quick-add +, on an empty chat until you type. Then it
+	// steps aside, so send stands alone at the bar's right edge and a thumb
+	// reaching for it cannot open the menu instead; attach moves into the bar.
+	const showQuickAdd = $derived(mobileLayout.isMobile && isEmpty && !inRoom && !input.trim());
 
 	// Publish this chat's state to the phone shell, whose top-right button is
 	// modal: ghost toggle while the chat is empty (compose would be a no-op),
@@ -2680,7 +2688,7 @@
 						</div>
 					{/if}
 
-					{#if mobileLayout.isMobile && isEmpty && !inRoom}
+					{#if showQuickAdd}
 						<!-- Phones only, so it loads when first shown, not before every first paint. -->
 						{#await import("$lib/components/mobile/QuickAdd.svelte") then { default: QuickAdd }}
 							<QuickAdd onFiles={(f) => attachments.add(f)} />
@@ -2692,6 +2700,7 @@
 						bind:this={composerEl}
 						class="chat-input-wrapper"
 						class:is-empty={isEmpty}
+						class:with-quick-add={showQuickAdd}
 						class:has-messages={!isEmpty}
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
@@ -2756,7 +2765,7 @@
 						{:else}
 						<ChatInput
 							allowEmptySubmit={attachments.count > 0}
-							onAttach={mobileLayout.isMobile && isEmpty && !inRoom ? undefined : (f) => attachments.add(f)}
+							onAttach={showQuickAdd ? undefined : (f) => attachments.add(f)}
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
@@ -3266,13 +3275,13 @@
 
 	@media (max-width: 768px), (pointer: coarse) {
 		/* 16px from the screen edge, the margin the bar and the quick-add
-		   menu share. The empty chat leaves room for the + (48px and an 8px
-		   gap). */
+		   menu share. While the + shows, the bar leaves room for it (48px
+		   and an 8px gap). */
 		.chat-input-wrapper {
 			padding-left: 16px;
 			padding-right: 16px;
 		}
-		.chat-input-wrapper.is-empty {
+		.chat-input-wrapper.with-quick-add {
 			padding-right: 72px;
 		}
 		.chat-input-wrapper,
