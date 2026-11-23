@@ -1,9 +1,10 @@
 <script lang="ts">
 	/**
 	 * The glass button in the bottom right corner of home (on the phone, the
-	 * chat's ⋯ menu instead), and the popover it opens: today's picture with arrows to the one before and after, the
-	 * collections of the current style to swipe through, and Light, Dark,
-	 * Match system and Follow the day. Settings › Appearance has the full
+	 * chat's ⋯ menu instead), and the popover it opens: today's picture with
+	 * arrows to the one before and after, the collections of the current
+	 * style to swipe through, and Light, Dark, Match system and Follow the
+	 * day. Settings › Appearance has the full
 	 * picker (agents/plan/backgrounds-plan.md, "The home control").
 	 */
 	import Icon from '$lib/components/Icon.svelte';
@@ -33,6 +34,11 @@
 		if (mobileLayout.isMobile) mobileLayout.backgroundOpen = next;
 		else localOpen = next;
 	}
+	// Home goes away as soon as a chat starts. An open popover must not
+	// come back by itself the next time home shows.
+	$effect(() => () => {
+		if (mobileLayout.isMobile) mobileLayout.backgroundOpen = false;
+	});
 
 	let theme = $state<ThemeChoice>(getThemeChoice());
 	const themes = getAvailableThemes();

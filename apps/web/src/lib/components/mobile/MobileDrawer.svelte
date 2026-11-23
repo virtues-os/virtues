@@ -382,7 +382,8 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-		padding: 0 12px 12px;
+		/* Clears the fade above New chat, so the last row can be reached. */
+		padding: 0 12px 32px;
 	}
 
 	.section {
