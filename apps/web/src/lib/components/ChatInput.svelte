@@ -690,6 +690,14 @@
 	.one-row .mic-button { grid-area: 1 / 4; }
 	.one-row .action-btn { grid-area: 1 / 5; }
 
+	/* On a phone the bar is a control, so what you type is in the interface
+	   font, like every other control; the serif is for the assistant's
+	   replies. */
+	.chat-input-wrapper.phone {
+		--prose-family: var(--font-sans);
+		--prose-size: 1rem;
+	}
+
 	/* On a phone the composer is one row with 12px corners, and takes the
 	   card's larger corners once the text wraps. */
 	.chat-input-wrapper.phone:has(.one-row) {
