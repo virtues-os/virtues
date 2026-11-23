@@ -96,9 +96,6 @@
 		"chevron-up": {
 			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"m18 15l-6-6l-6 6\"/>"
 		},
-		"chevrons-right": {
-			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"m12 18l6-6l-6-6M6 18l6-6l-6-6\"/>"
-		},
 		"circle-half": {
 			"body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.875\" d=\"M12 21a9 9 0 1 0 0-18m0 18a9 9 0 1 1 0-18m0 18V3\"/>"
 		},

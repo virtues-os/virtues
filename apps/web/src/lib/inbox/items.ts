@@ -62,6 +62,12 @@ export interface InboxItem {
 	 */
 	noise: number;
 	title: string;
+	/**
+	 * A Myna icon that says what the thing is about, worn in place of its
+	 * kind's mark: a pin for a question about a place, a warning for what
+	 * your server needs. Unset, the kind's mark shows.
+	 */
+	glyph?: string;
 	/** When it is for, or where it came from, in a few words. */
 	meta: string;
 	/** The active thread it sits in, or null. */
@@ -73,13 +79,52 @@ export interface InboxItem {
 }
 
 /**
+ * The icon a thing your server needs wears: a page for something an applet
+ * wrote, a magnifier while search is rebuilt, and a warning for anything
+ * that went wrong.
+ */
+function attentionGlyph(a: AttentionItem): string {
+	if (a.kind === 'applet_new') return 'mynaui:file-text';
+	if (a.kind === 'search') return 'mynaui:search';
+	return 'mynaui:danger-triangle';
+}
+
+/**
  * A question from your server as a thing in the list. It waits on you, so
  * it wears that mark. The signal control thins what your threads ask of
  * you, and a question is not one of those, so the list always shows it.
  * The other views do not draw it.
  */
 export function questionItem(q: Question): InboxItem {
-	return { key: `ask:${q.key}`, kind: 'needs', ring: 0, noise: 0, title: q.text, meta: q.about, threadId: null, question: q };
+	const glyph = q.place.ask === 'home' ? 'mynaui:map-pin-house' : 'mynaui:map-pin';
+	return { key: `ask:${q.key}`, kind: 'needs', ring: 0, noise: 0, title: q.text, glyph, meta: q.about, threadId: null, question: q };
+}
+
+/** A short part of the List: the rows shown, how many more there are, and how to show them. */
+export type Part = { rows: InboxItem[]; more: number; onMore: () => void };
+
+/** A section of the List under its heading. `short` marks a part whose rows come and go one at a time. */
+export type ListSection = { name: string; rows: InboxItem[]; short?: boolean; more?: number; onMore?: () => void };
+
+/**
+ * The Inbox page's List, section by section. Today comes first: your own
+ * things due today or earlier, with the results that wait for you. Then
+ * what your server asks you, what it noticed, the rest of your threads by
+ * day, and last what your server needs to keep running.
+ *
+ * Today holds the Now ring too, since a result that waits for you is for
+ * today. The other views keep Now as a ring of its own.
+ */
+export function listSections(items: InboxItem[], questions?: Part, needs?: Part): ListSection[] {
+	const threads = items.filter((it) => it.kind !== 'insight');
+	return [
+		{ name: 'Today', rows: threads.filter((it) => it.ring <= 1) },
+		{ name: 'Questions', short: true, ...questions, rows: questions?.rows ?? [] },
+		{ name: 'Insights', rows: items.filter((it) => it.kind === 'insight') },
+		{ name: RINGS[2], rows: threads.filter((it) => it.ring === 2) },
+		{ name: RINGS[3], rows: threads.filter((it) => it.ring === 3) },
+		{ name: 'Your server', short: true, ...needs, rows: needs?.rows ?? [] },
+	];
 }
 
 /** Each kind's mark, in px across. */
@@ -135,13 +180,13 @@ export function buildItems(src: {
 		level.set(it.key, l);
 	};
 	for (const a of src.attention) {
-		add({ key: `attention:${a.key}`, kind: 'needs', ring: 0, noise: 0, title: a.title, meta: 'Your server', threadId: null, attention: a }, 5);
+		add({ key: `attention:${a.key}`, kind: 'needs', ring: 0, noise: 0, title: a.title, glyph: attentionGlyph(a), meta: 'Your server', threadId: null, attention: a }, 5);
 	}
 	for (const n of src.notes) {
 		const threadId = home(noteThread(n, src.tasks));
 		const ring = noteRing(n, now);
 		add(
-			{ key: `note:${n.key}`, kind: 'insight', ring, noise: 0, title: n.text, meta: n.when, threadId, note: n },
+			{ key: `note:${n.key}`, kind: 'insight', ring, noise: 0, title: n.title || n.text, meta: n.when, threadId, note: n },
 			threadId && src.unlisted?.has(threadId) ? levelOf(ring, false) : 0,
 		);
 	}

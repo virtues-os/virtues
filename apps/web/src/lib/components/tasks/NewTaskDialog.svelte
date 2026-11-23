@@ -43,8 +43,6 @@
 
 	let draft = $state<Draft>(blank(null));
 	let saving = $state(false);
-	let more = $state(false);
-	let dialog = $state<ReturnType<typeof CreateDialog> | null>(null);
 
 	// On each open, an empty draft takes the opener's home; one with words
 	// in it is kept. Only the opening is tracked, not the draft itself.
@@ -120,14 +118,8 @@
 						}
 					: undefined,
 			});
-			if (more) {
-				// The chips carry over to the next one; the words do not.
-				draft = { ...draft, title: '', notes: '', due: null };
-				dialog?.focusTitle();
-			} else {
-				draft = blank(null);
-				newTaskDialog.close();
-			}
+			draft = blank(null);
+			newTaskDialog.close();
 		} catch (e) {
 			toast.error("Your server couldn't add that task", {
 				description: e instanceof Error ? e.message : 'Try again',
@@ -139,7 +131,6 @@
 </script>
 
 <CreateDialog
-	bind:this={dialog}
 	open={newTaskDialog.isOpen}
 	onClose={() => newTaskDialog.close()}
 	label="New task"
@@ -147,7 +138,6 @@
 	titlePlaceholder="What do you need to do?"
 	bind:body={draft.notes}
 	bodyPlaceholder="Add a description"
-	bind:more
 	canCreate={!!cleanTitle}
 	{saving}
 	createLabel="Create task"
@@ -255,23 +245,24 @@
 				</CreateChip>
 			{/if}
 		</span>
+
+		<!-- Inside the dialog, so it stacks over it as the chips' pickers do. -->
+		{#if search}
+			<RefPicker
+				mode="single"
+				position={search.at}
+				placeholder={search.for === 'home' ? 'Find a person, place or organization…' : 'Find a thread, person, place, organization or thing…'}
+				filter={(e) => {
+					const link = linkFromUrl(e.url);
+					if (!link) return false;
+					return search?.for === 'home' ? link.kind === 'person' || link.kind === 'place' || link.kind === 'org' : true;
+				}}
+				onSelect={found}
+				onClose={() => (search = null)}
+			/>
+		{/if}
 	{/snippet}
 </CreateDialog>
-
-{#if search}
-	<RefPicker
-		mode="single"
-		position={search.at}
-		placeholder={search.for === 'home' ? 'Find a person, place or organization…' : 'Find a thread, person, place, organization or thing…'}
-		filter={(e) => {
-			const link = linkFromUrl(e.url);
-			if (!link) return false;
-			return search?.for === 'home' ? link.kind === 'person' || link.kind === 'place' || link.kind === 'org' : true;
-		}}
-		onSelect={found}
-		onClose={() => (search = null)}
-	/>
-{/if}
 
 <style>
 	.crumb-home {

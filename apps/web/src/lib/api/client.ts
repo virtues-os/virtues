@@ -1140,6 +1140,8 @@ export interface Note {
 	kind: string;
 	/** The note, in one sentence. */
 	text: string;
+	/** The note in a few words, for a row in a list. An older server sends none. */
+	title?: string;
 	/** What it is about (`/thread/…`, `/task/…`); the first is the one it is listed under. */
 	subjects: string[];
 	/** The first subject's name. */

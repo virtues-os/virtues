@@ -29,7 +29,7 @@
 			{#each cards as it (it.key)}
 				<Card padding="none">
 					<button type="button" class="card" class:on={it.key === picked} aria-pressed={it.key === picked} data-inbox-key={it.key} onclick={() => onPick(it.key)}>
-						<span class="top"><InboxMark kind={it.kind} /><span class="aside">{it.meta}</span></span>
+						<span class="top"><InboxMark kind={it.kind} glyph={it.glyph} /><span class="aside">{it.meta}</span></span>
 						<span class="title">{it.title}</span>
 						{#if threadName(it)}<span class="aside">{threadName(it)}</span>{/if}
 					</button>
@@ -57,10 +57,11 @@
 	}
 	.group {
 		margin: 0 0 4px;
-		font-size: var(--text-small);
+		font-family: var(--font-serif);
+		font-size: var(--text-lead);
 		font-weight: 400;
-		line-height: 20px;
-		color: var(--color-foreground-muted);
+		line-height: 24px;
+		color: var(--color-foreground);
 	}
 	.card {
 		display: flex;

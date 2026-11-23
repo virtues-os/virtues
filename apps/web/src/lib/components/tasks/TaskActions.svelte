@@ -17,6 +17,7 @@
 	import { addTaskNote } from '$lib/api/client';
 	import { Button } from '$lib';
 	import Markdown from '$lib/components/Markdown.svelte';
+	import Folded from '$lib/components/Folded.svelte';
 	import RefCard from '$lib/components/RefCard.svelte';
 	import TaskComposer from '$lib/components/tasks/TaskComposer.svelte';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
@@ -161,7 +162,7 @@
 		{#if repeating}
 			{#if task.result}
 				<div class="result">
-					<Markdown content={task.result} />
+					<Folded><Markdown content={task.result} /></Folded>
 					{#if task.result_url}
 						<RefCard type={task.result_url.split('/')[1] ?? null} label={resultLabel(task.result_url)} url={task.result_url} />
 					{/if}
@@ -201,7 +202,7 @@
 			{/if}
 		{:else if request && task.status === 'ready'}
 			<div class="result">
-				<Markdown content={task.result ?? ''} />
+				<Folded><Markdown content={task.result ?? ''} /></Folded>
 				{#if task.result_url}
 					<RefCard type={task.result_url.split('/')[1] ?? null} label={resultLabel(task.result_url)} url={task.result_url} />
 				{/if}

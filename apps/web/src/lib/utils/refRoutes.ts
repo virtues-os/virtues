@@ -32,7 +32,7 @@ const TYPE_TO_ICON: Record<string, string> = {
 	thing: 'mynaui:box',
 	page: 'mynaui:file-text',
 	chat: 'mynaui:message',
-	project: THREAD_ICON,
+	thread: THREAD_ICON,
 	file: 'mynaui:file',
 	day: 'mynaui:calendar',
 	year: 'mynaui:calendar',

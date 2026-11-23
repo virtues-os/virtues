@@ -1,15 +1,17 @@
 <script lang="ts">
 	/**
 	 * The Inbox: everything that asks something of you, in one place. That is
-	 * your open tasks, what your server noticed, and what your server asks or
-	 * needs.
+	 * your open tasks, what your server asks you, what it noticed, and what
+	 * it needs.
 	 *
 	 * The page is always split. The left side is how you find a thing, and
 	 * the right side is the thing itself: a task's page, an insight's page or
-	 * a thread. The left side has six views of the same list:
+	 * a thread. The left side has seven views of the same list:
 	 *
-	 *   List    one row each: your server first, then insights, then the
-	 *           things in your threads, nearest first. The page opens here.
+	 *   List    one row each: what is yours today first, then what your
+	 *           server asks you, what it noticed, the rest of your threads
+	 *           by day, and what your server needs last. The page opens here.
+	 *   Calendar a month, each thing on its day
 	 *   Radar   you in the middle, sooner things closer, one slice per thread
 	 *   Cards   a column for now, today, this week and later
 	 *   Graph   what is linked to what, in the radar's frame
@@ -45,9 +47,12 @@
 	import InboxMap from '$lib/components/inbox/InboxMap.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
 	import QuestionDetail from '$lib/components/inbox/QuestionDetail.svelte';
+	import ReaderChat from '$lib/components/inbox/ReaderChat.svelte';
+	import InboxCalendar from '$lib/components/inbox/InboxCalendar.svelte';
 	import SignalSlider from '$lib/components/inbox/SignalSlider.svelte';
+	import PaneDivider from '$lib/components/PaneDivider.svelte';
 	import type { ExtraLink } from '$lib/inbox/graph';
-	import { buildItems, questionItem, type InboxItem } from '$lib/inbox/items';
+	import { buildItems, listSections, questionItem, RINGS, type InboxItem, type Part } from '$lib/inbox/items';
 	import type { PlaceAnswer } from '$lib/inbox/questions';
 	import { LOOSE } from '$lib/inbox/radar';
 	import { attention } from '$lib/stores/attention.svelte';
@@ -65,9 +70,10 @@
 
 	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
-	type View = 'list' | 'radar' | 'cards' | 'graph' | 'map' | 'week';
+	type View = 'list' | 'calendar' | 'radar' | 'cards' | 'graph' | 'map' | 'week';
 	const VIEWS: { id: View; label: string }[] = [
 		{ id: 'list', label: 'List' },
+		{ id: 'calendar', label: 'Calendar' },
 		{ id: 'radar', label: 'Radar' },
 		{ id: 'cards', label: 'Cards' },
 		{ id: 'graph', label: 'Graph' },
@@ -136,20 +142,27 @@
 	const todays = $derived(items.filter((it) => it.ring <= 1));
 
 	/**
-	 * The list's first part: what your server asks, then what it needs. The
-	 * signal control thins what your threads ask of you, so it leaves this
-	 * part alone. A few show at a time, so the part stays short.
+	 * Two parts of the list come from your server itself: the questions it
+	 * asks you, and what it needs to keep running. The signal control thins
+	 * what your threads ask of you, so it leaves both alone. A few rows of
+	 * each show at a time, so neither pushes your threads far down.
 	 */
-	const SERVER_SHOWN = 4;
+	const PART_SHOWN = 4;
 	const asks = $derived(questionsStore.items.map(questionItem));
-	const serverAll = $derived(show === 'all' ? [...asks, ...items.filter((it) => it.attention)] : []);
-	let serverOpen = $state(false);
-	const serverRows = $derived(serverOpen ? serverAll : serverAll.slice(0, SERVER_SHOWN));
+	const askAll = $derived(show === 'all' ? asks : []);
+	const needAll = $derived(show === 'all' ? items.filter((it) => it.attention) : []);
+	let asksOpen = $state(false);
+	let needsOpen = $state(false);
+	const askRows = $derived(asksOpen ? askAll : askAll.slice(0, PART_SHOWN));
+	const needRows = $derived(needsOpen ? needAll : needAll.slice(0, PART_SHOWN));
 	/** Every part of the list has arrived once, so its rows do not move down as you start to read. */
 	const listReady = $derived(tasksStore.loaded && questionsStore.loaded && attention.loaded);
-	/** The rest of the list: insights, then the things in your threads. */
+	/** The rest of the list: the things in your threads and what your server noticed. */
 	const listRows = $derived(listed.filter((it) => !it.attention));
-	const listOrder = $derived([...serverRows, ...listRows.filter((it) => it.kind === 'insight'), ...listRows.filter((it) => it.kind !== 'insight')]);
+	const askPart = $derived<Part>({ rows: askRows, more: askAll.length - askRows.length, onMore: () => (asksOpen = true) });
+	const needPart = $derived<Part>({ rows: needRows, more: needAll.length - needRows.length, onMore: () => (needsOpen = true) });
+	/** The rows in the order the list draws them. */
+	const listOrder = $derived(listSections(listRows, askPart, needPart).flatMap((s) => s.rows));
 	/** What J and K walk: the things the view shows, in the order it shows them. */
 	const walked = $derived(view === 'map' ? todays.filter(matches) : view === 'list' ? listOrder : listed);
 
@@ -196,6 +209,62 @@
 	let doorWidth = $state(0);
 	const wide = $derived(doorWidth === 0 || doorWidth >= 960);
 
+	/**
+	 * Where the line between the two sides sits, when you have dragged it.
+	 * Widths are kept in this browser only, as a choice of layout, and unset
+	 * means the page's own share.
+	 *
+	 * The List view sets the list's width, as a mail app does: the list
+	 * keeps room for a row and the right side room for a map. The other views
+	 * set the right side's width, since a radar or a map takes whatever is
+	 * left: each side keeps room for what it draws.
+	 */
+	const LIST_W_KEY = 'virtues-inbox-list-width';
+	const READER_W_KEY = 'virtues-inbox-reader-width';
+	const LIST_MIN = 320;
+	const LIST_READER_MIN = 420;
+	const VIEW_MIN = 480;
+	const READER_MIN = 380;
+	let listW = $state<number | null>(readWidth(LIST_W_KEY));
+	let readerW = $state<number | null>(readWidth(READER_W_KEY));
+	const listMax = $derived(Math.max(LIST_MIN, doorWidth - LIST_READER_MIN));
+	const readerMax = $derived(Math.max(READER_MIN, doorWidth - VIEW_MIN));
+	const clamp = (lo: number, v: number, hi: number) => Math.round(Math.max(lo, Math.min(v, hi)));
+	/**
+	 * A side's width as drawn: the one you chose, held to the room there is,
+	 * else the page's own share, worked out as the styles below work it out
+	 * (`.main.list`, `.reader`). Working it out, where measuring would lag a
+	 * frame behind a change of view, keeps a key press stepping from the
+	 * width you see.
+	 */
+	const listShown = $derived(listW ? Math.min(listW, listMax) : clamp(400, doorWidth * 0.36, 520));
+	const readerShown = $derived(readerW ? Math.min(readerW, readerMax) : clamp(380, doorWidth * 0.38, 560));
+	function readWidth(key: string): number | null {
+		try {
+			const w = Number(localStorage.getItem(key));
+			return w > 0 ? w : null;
+		} catch {
+			// Storage can be off (a private window). The page's own width serves.
+			return null;
+		}
+	}
+	function saveWidth(key: string, w: number | null) {
+		try {
+			if (w === null) localStorage.removeItem(key);
+			else localStorage.setItem(key, String(w));
+		} catch {
+			// Storage can be off. The width holds until the page is left.
+		}
+	}
+	function setListW(w: number | null) {
+		listW = w;
+		saveWidth(LIST_W_KEY, w);
+	}
+	function setReaderW(w: number | null) {
+		readerW = w;
+		saveWidth(READER_W_KEY, w);
+	}
+
 	// A thing that has since gone (a task you finished) no longer counts as chosen.
 	const pickedKey = $derived(choice.kind === 'item' ? choice.key : null);
 	const picked = $derived(pickedKey ? ([...asks, ...items].find((it) => it.key === pickedKey) ?? null) : null);
@@ -208,8 +277,8 @@
 	 * app opens on its first message, until you choose another or let go.
 	 * The other views show only what you chose.
 	 *
-	 * It waits for the server's part of the list, which arrives on its own
-	 * requests, so the right side does not open one thing and then another.
+	 * It waits for the questions and what your server needs, which arrive on
+	 * their own requests, so the right side does not open one thing and then another.
 	 */
 	const first = $derived(listReady ? (listOrder[0] ?? null) : null);
 	const current = $derived(picked ?? (view === 'list' && wide && choice.kind === 'rest' && !released ? first : null));
@@ -233,10 +302,41 @@
 		else if (it.attention) windowShellStore.openTabFromRoute(it.attention.route, { focusExisting: true });
 	}
 
-	/** A question has no page of its own. In a narrow pane it opens under its row. */
+	/**
+	 * What the box at the end of the right side asks for. A task and an
+	 * insight draw their own box, at the end of their history; these are the
+	 * rest, mockups so far.
+	 */
+	function chatAsk(it: InboxItem): string {
+		if (it.question) return 'Tell your server about this place in your own words';
+		return 'Ask about this';
+	}
+
+	/**
+	 * The name of the part of the list a thing sits in, for the bar over the
+	 * right side. The thing's own page says what it is, so the bar says where
+	 * it is.
+	 */
+	function sectionOf(it: InboxItem): string {
+		if (it.question) return 'Questions';
+		if (it.attention) return 'Your server';
+		if (it.kind === 'insight') return 'Insights';
+		// The List holds the Now ring under Today, as `listSections` does.
+		if (view === 'list' && it.ring === 0) return 'Today';
+		return RINGS[it.ring];
+	}
+
+	/**
+	 * A question has no page of its own. In a narrow pane it opens under its
+	 * row, and choosing it again closes it.
+	 */
 	function pick(key: string) {
 		const it = [...asks, ...items].find((i) => i.key === key);
 		if (!it) return;
+		if (!wide && it.question && pickedKey === key) {
+			choice = { kind: 'rest' };
+			return;
+		}
 		released = false;
 		if (wide || it.question) choice = { kind: 'item', key };
 		else openItem(it);
@@ -406,13 +506,17 @@
 
 {#snippet questionUnder(it: InboxItem)}
 	{#if it.question}
-		<QuestionDetail question={it.question} onAnswer={(a) => reply(it, a)} />
+		<QuestionDetail question={it.question} compact onAnswer={(a) => reply(it, a)} />
 	{/if}
 {/snippet}
 
 <div class="door" bind:clientWidth={doorWidth}>
 	<Page title="Inbox" maxWidth="none" padding="none" scrollable={false} class="flex flex-col md:flex-row">
-		<div class="main" class:list={view === 'list' && wide}>
+		<div
+			class="main"
+			class:list={view === 'list' && wide}
+			style:flex-basis={view === 'list' && wide && listW ? `${listShown}px` : undefined}
+		>
 			<div class="bar">
 				<button type="button" class="viewpick" aria-haspopup="menu" onclick={(e) => menuUnder(e, viewItems())}>
 					{VIEWS.find((v) => v.id === view)?.label}
@@ -459,6 +563,8 @@
 					onThread={pickThread}
 					onRest={() => (choice = { kind: 'rest' })}
 				/>
+			{:else if view === 'calendar'}
+				<div class="body"><InboxCalendar items={listed} picked={picked?.key ?? null} onPick={pick} /></div>
 			{:else if view === 'map'}
 				<InboxMap items={todays} {now} picked={picked?.key ?? null} faded={(it) => !matches(it)} onPick={pick} />
 			{:else if view === 'week'}
@@ -497,14 +603,12 @@
 				<div class="body">
 					<InboxList
 						items={listRows}
-						server={serverRows}
-						serverMore={serverAll.length - serverRows.length}
+						questions={askPart}
+						needs={needPart}
 						picked={current?.key ?? null}
 						inbox
 						{threadOf}
 						onPick={pick}
-						onReply={reply}
-						onServerMore={() => (serverOpen = true)}
 						under={wide ? undefined : questionUnder}
 					/>
 				</div>
@@ -548,10 +652,36 @@
 			{/if}
 		</div>
 
+		{#if wide && view === 'list'}
+			<PaneDivider
+				width={listShown}
+				min={LIST_MIN}
+				max={listMax}
+				label="Resize the list. Double-click to put it back"
+				onchange={setListW}
+				onreset={() => setListW(null)}
+			/>
+		{:else if wide}
+			<PaneDivider
+				width={doorWidth - readerShown}
+				min={VIEW_MIN}
+				max={Math.max(VIEW_MIN, doorWidth - READER_MIN)}
+				label="Resize the two sides. Double-click to put them back"
+				onchange={(left) => setReaderW(doorWidth - left)}
+				onreset={() => setReaderW(null)}
+			/>
+		{/if}
+
 		{#if wide}
-			<section class="reader" bind:this={readerEl} aria-label="Chosen" aria-live="polite">
+			<section
+				class="reader"
+				bind:this={readerEl}
+				style:flex-basis={view !== 'list' && readerW ? `${readerShown}px` : undefined}
+				aria-label="Chosen"
+				aria-live="polite"
+			>
 				<div class="reader-bar">
-					<span class="reader-title">{current?.title ?? (thread ? nameOf(thread) : '')}</span>
+					<span class="reader-title">{current ? sectionOf(current) : thread ? 'Thread' : ''}</span>
 					{#if current}
 						<span class="acts">
 							<IconButton icon="mynaui:chevron-up" label="Previous" shortcut="K" onclick={() => step(-1)} />
@@ -596,6 +726,11 @@
 						{/if}
 					</div>
 				{/if}
+				{#if current && !current.task && !current.note}
+					<ReaderChat about={current.key} placeholder={chatAsk(current)} inset />
+				{:else if !current && thread}
+					<ReaderChat about={`thread:${thread.id}`} placeholder="Ask about this thread" inset />
+				{/if}
 			</section>
 		{/if}
 	</Page>
@@ -616,11 +751,14 @@
 		min-height: 0;
 	}
 	/* In the list the page is laid out as a mail app: the list takes a fixed
-	   share of the width and the chosen thing gets the rest. */
+	   share of the width, or the width you dragged it to, and the chosen
+	   thing gets the rest. */
+	/* The default shares here are worked out again in `listShown` and
+	   `readerShown`. Change both together. */
 	.main.list {
 		flex: 0 0 clamp(400px, 36%, 520px);
 	}
-	.main.list + .reader {
+	.main.list ~ .reader {
 		flex: 1 1 auto;
 	}
 
@@ -637,6 +775,7 @@
 		height: 48px;
 		box-sizing: border-box;
 		padding: 0 12px 0 16px;
+		border-top: 1px solid var(--color-border-subtle);
 		border-bottom: 1px solid var(--color-border-subtle);
 	}
 	.viewpick {

@@ -274,6 +274,8 @@
 
 	onMount(() => () => clearTimeout(motionTimer));
 
+	// TODO(2026-11-22): migrate the divider onto PaneDivider, which the Inbox
+	// uses; its snap to the middle and percent widths would become props.
 	// The divider's drag works as the sidebar seam's does: pointer events with
 	// capture on the handle, so the drag follows the pointer anywhere, works
 	// with touch, and ends however it is interrupted.

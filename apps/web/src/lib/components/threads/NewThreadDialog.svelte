@@ -38,9 +38,7 @@
 
 	let draft = $state<Draft>(blank(null));
 	let saving = $state(false);
-	let more = $state(false);
 	let glyphOpen = $state(false);
-	let dialog = $state<ReturnType<typeof CreateDialog> | null>(null);
 
 	// On each open, an empty draft takes the opener's thing; one with words
 	// in it is kept. Only the opening is tracked, not the draft itself.
@@ -69,17 +67,9 @@
 				is_adding_automatic: draft.automatic,
 			});
 			const show = newThreadDialog.onOpen ?? ((route: string, label: string) => windowShellStore.openTabFromRoute(route, { label }));
-			if (more) {
-				toast(`Thread created: ${made.name}`, {
-					action: { label: 'Open', onClick: () => show(`/thread/${made.id}`, made.name) },
-				});
-				draft = { ...draft, name: '', why: '', icon: null, color: null };
-				dialog?.focusTitle();
-			} else {
-				draft = blank(null);
-				newThreadDialog.close();
-				show(`/thread/${made.id}`, made.name);
-			}
+			draft = blank(null);
+			newThreadDialog.close();
+			show(`/thread/${made.id}`, made.name);
 		} catch (e) {
 			toast.error("Your server couldn't create that thread", {
 				description: e instanceof Error ? e.message : 'Nothing changed. Try again',
@@ -91,7 +81,6 @@
 </script>
 
 <CreateDialog
-	bind:this={dialog}
 	open={newThreadDialog.isOpen}
 	onClose={() => newThreadDialog.close()}
 	label="New thread"
@@ -99,7 +88,6 @@
 	titlePlaceholder="What are you following?"
 	bind:body={draft.why}
 	bodyPlaceholder="Why are you following it?"
-	bind:more
 	canCreate={!!draft.name.trim()}
 	{saving}
 	createLabel="Create thread"

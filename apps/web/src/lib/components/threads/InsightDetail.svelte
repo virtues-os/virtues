@@ -10,8 +10,11 @@
 	 * it is about, what kind of insight it is, when it was raised and leaves,
 	 * how it was found, and holds "Fewer like this".
 	 *
-	 * `layout="page"` sits in the page frame; `"pane"` fits the column beside
-	 * a list, with the side column after the insight.
+	 * `layout="page"` sits in the page frame. `"pane"` fits the column beside
+	 * a list (the Inbox) in the two columns a task uses there (PaneColumns):
+	 * the short title, the insight in a sentence with its one action, why it
+	 * was raised, what acting would change, what happened and the box for
+	 * writing about it; and the properties, grouped, on the right.
 	 */
 	import type { NoteDetail, NoteEvent } from '$lib/api/client';
 	import { ApiError, getNote, restoreNote, setNoteMuted } from '$lib/api/client';
@@ -27,6 +30,11 @@
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
+	import PaneColumns from '$lib/components/PaneColumns.svelte';
+	import SideGroup from '$lib/components/SideGroup.svelte';
+	import PreviewRow from '$lib/components/threads/PreviewRow.svelte';
+	import ReaderChat from '$lib/components/inbox/ReaderChat.svelte';
 
 	let {
 		key,
@@ -239,43 +247,10 @@
 {:else if layout === 'page'}
 	<DetailFrame>{@render body(detail)}</DetailFrame>
 {:else}
-	<div class="pane-grid">{@render body(detail)}</div>
+	<div class="pane-grid">{@render paneBody(detail)}</div>
 {/if}
 
-{#snippet body(detail: NoteDetail)}
-			<main class="main">
-				<p class="about-line">
-					<span class="mark" class:quiet={detail.is_dismissed} aria-hidden="true"></span>
-					Insight about
-					{#if detail.task}
-						<span class="about-name">{detail.task.title}</span>
-					{:else}
-						{#each threads as t, i (t.id)}
-							{#if i > 0}and{/if}
-							<span class="about-thread"><ProjectGlyph project={t} size={14} /><span class="about-name">{t.name}</span></span>
-						{/each}
-					{/if}
-				</p>
-				<h1 class="headline">{detail.text}</h1>
-				<p class="leaves">
-					{#if detail.is_dismissed}
-						Set aside. It leaves on its own after {leaves(detail.until)}.
-					{:else}
-						Matters until {leaves(detail.until)}. It leaves on its own after that.
-					{/if}
-				</p>
-				<div class="acts">
-					<Button variant="secondary" onclick={run}>{detail.action}</Button>
-					<Button variant="ghost" icon="mynaui:file-text" onclick={writeUp} tip="The assistant writes it up as a report on a page">
-						Write this up
-					</Button>
-					{#if detail.is_dismissed}
-						<TextAction onclick={bringBack}>Bring it back</TextAction>
-					{:else}
-						<TextAction onclick={notNow}>Not now</TextAction>
-					{/if}
-				</div>
-
+{#snippet whyBlock(detail: NoteDetail)}
 				<section class="block">
 					<h2 class="block-title">Why your server raised it</h2>
 					<p class="why">{detail.why}</p>
@@ -325,11 +300,135 @@
 						</ul>
 					{/if}
 				</section>
+{/snippet}
 
-				<section class="block">
-					<h2 class="block-title">{detail.remedy_title}</h2>
-					<p class="why">{detail.remedy}</p>
-				</section>
+{#snippet remedyBlock(detail: NoteDetail)}
+	<section class="block">
+		<h2 class="block-title">{detail.remedy_title}</h2>
+		<p class="why">{detail.remedy}</p>
+	</section>
+{/snippet}
+
+{#snippet paneBody(detail: NoteDetail)}
+	<PaneColumns sideLabel="About this insight">
+		{#snippet head()}
+			<h1 class="headline">{detail.title || detail.text}</h1>
+		{/snippet}
+
+		<!-- The story: the insight in a sentence, the one thing to do about
+		     it, why it was raised, what acting would change, what happened,
+		     and the box for writing about it. -->
+		{#snippet main()}
+			<section class="standing" aria-label="The insight">
+				{#if detail.title && detail.title !== detail.text}<p class="sentence">{detail.text}</p>{/if}
+				<div class="acts">
+					<Button variant="secondary" onclick={run}>{detail.action}</Button>
+					{#if detail.is_dismissed}
+						<TextAction quiet onclick={bringBack}>Bring it back</TextAction>
+					{:else}
+						<TextAction quiet onclick={notNow}>Not now</TextAction>
+					{/if}
+				</div>
+			</section>
+			{@render whyBlock(detail)}
+			{@render remedyBlock(detail)}
+			<section class="block">
+				<h2 class="block-title">What happened</h2>
+				{#if detail.history.length}
+					<ol class="history">
+						{#each detail.history as h, i (i)}
+							<li>
+								<span class="dot" aria-hidden="true"></span>
+								<span>{HISTORY_LINE[h.kind]}</span>
+								<span class="when">{moment(h.occurred_at)}</span>
+							</li>
+						{/each}
+					</ol>
+				{/if}
+				<div class="write">
+					<ReaderChat about={`note:${detail.key}`} placeholder="Ask about this insight" />
+				</div>
+			</section>
+		{/snippet}
+
+		<!-- The properties, all in one place. -->
+		{#snippet side()}
+			<SideGroup label="Properties">
+				{#if detail.is_dismissed}
+					<PreviewRow icon="mynaui:pause-circle">Set aside</PreviewRow>
+				{/if}
+				<PreviewRow icon="mynaui:tag">{detail.kind_label}</PreviewRow>
+				{#if detail.raised_at}
+					<PreviewRow icon="mynaui:clock-circle" title="When your server raised it">Raised {moment(detail.raised_at).replace(/^Today /, 'today ')}</PreviewRow>
+				{/if}
+				<PreviewRow icon="mynaui:calendar" title="It leaves on its own after this">Leaves {leaves(detail.until)}</PreviewRow>
+				<PreviewRow icon="mynaui:search" title={detail.found_by}>{detail.found_by}</PreviewRow>
+			</SideGroup>
+			<SideGroup label="About">
+				{#if detail.task}
+					{@const t = detail.task}
+					<PreviewRow icon="mynaui:circle" onclick={() => windowShellStore.openRouteBeside(`/task/${t.id}`)}>{t.title}</PreviewRow>
+				{/if}
+				{#each threads as t (t.id)}
+					<PreviewRow
+						icon={t.icon || THREAD_ICON}
+						iconColor={projectColor(t)}
+						onclick={() => windowShellStore.openTabFromRoute(`/thread/${t.id}`, { label: t.name, focusExisting: true })}
+					>
+						{t.name}
+					</PreviewRow>
+				{/each}
+			</SideGroup>
+			<SideGroup label="Fewer like this">
+				<label class="mute">
+					<Switch checked={detail.is_muted} label={detail.mute_label} onchange={(v) => toggleMuted(v)} />
+					<span>{detail.mute_label}</span>
+				</label>
+			</SideGroup>
+			<SideGroup label="More">
+				<PreviewRow icon="mynaui:file-text" onclick={writeUp} title="The assistant writes it up as a report on a page">Write it up as a page</PreviewRow>
+			</SideGroup>
+		{/snippet}
+	</PaneColumns>
+{/snippet}
+
+{#snippet body(detail: NoteDetail)}
+			<main class="main">
+				<p class="about-line">
+					<span class="mark" class:quiet={detail.is_dismissed} aria-hidden="true"></span>
+					Insight about
+					{#if detail.task}
+						<span class="about-name">{detail.task.title}</span>
+					{:else}
+						{#each threads as t, i (t.id)}
+							{#if i > 0}and{/if}
+							<span class="about-thread"><ProjectGlyph project={t} size={14} /><span class="about-name">{t.name}</span></span>
+						{/each}
+					{/if}
+				</p>
+				<h1 class="headline">{detail.text}</h1>
+				<p class="leaves">
+					{#if detail.is_dismissed}
+						Set aside. It leaves on its own after {leaves(detail.until)}.
+					{:else}
+						Matters until {leaves(detail.until)}. It leaves on its own after that.
+					{/if}
+				</p>
+				<div class="acts">
+					<Button variant="secondary" onclick={run}>{detail.action}</Button>
+					<Button variant="ghost" icon="mynaui:file-text" onclick={writeUp} tip="The assistant writes it up as a report on a page">
+						Write this up
+					</Button>
+					{#if detail.is_dismissed}
+						<TextAction onclick={bringBack}>Bring it back</TextAction>
+					{:else}
+						<TextAction onclick={notNow}>Not now</TextAction>
+					{/if}
+				</div>
+
+				{@render whyBlock(detail)}
+
+				{@render remedyBlock(detail)}
 
 				{#if detail.history.length}
 					<section class="block">
@@ -380,13 +479,30 @@
 {/snippet}
 
 <style>
-	/* Beside a list there is no room for a side column, so it follows the
-	   insight. */
 	.pane-grid {
+		padding: 24px 40px 64px;
+	}
+	/* Beside a list the title is a task's size, so the two read as one layout. */
+	.pane-grid .headline {
+		margin: 0;
+		max-width: none;
+		font-size: var(--text-title);
+		line-height: 44px;
+	}
+	.standing {
 		display: flex;
 		flex-direction: column;
-		gap: 40px;
-		padding: 24px 40px 64px;
+		gap: 16px;
+	}
+	.sentence {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: var(--text-lead);
+		line-height: 26px;
+		color: var(--color-foreground);
+	}
+	.write {
+		margin-top: 16px;
 	}
 	.main {
 		min-width: 0;
