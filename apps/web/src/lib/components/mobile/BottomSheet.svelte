@@ -12,6 +12,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import { tapHaptic } from "$lib/utils/haptics";
+	import { portal } from "$lib/actions/portal";
 
 	let {
 		label,
@@ -79,22 +80,14 @@
 		if (e.key === "Escape") onClose();
 	}
 
-	// A sheet opened from inside a view would sit in that view's stacking
-	// context, under its chat bar and any transformed parent. It is moved to
-	// the end of the document, where fixed means the screen.
-	function toBody(node: HTMLElement) {
-		document.body.appendChild(node);
-		return {
-			destroy() {
-				node.remove();
-			},
-		};
-	}
 </script>
 
 <svelte:window onkeydown={onKey} />
 
-<div class="layer" use:toBody>
+<!-- A sheet opened from inside a view would sit in that view's stacking
+     context, under its chat bar and any transformed parent. On the body,
+     fixed means the screen. -->
+<div class="layer" use:portal>
 <button class="scrim" aria-label="Close" onclick={onClose} transition:fade={{ duration: 180 }}></button>
 
 <div

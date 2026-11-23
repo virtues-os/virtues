@@ -3,12 +3,12 @@
 	 * The phone's drawer: the app's navigation, as a full-screen room.
 	 *
 	 * It reads as a menu on the plain page. The mark and Virtues sit small at
-	 * the top with search, Settings and the way back. Under them, the doors
-	 * the owner arranged on the desktop are tiles with ink icons, so color is
-	 * left for threads. Threads come next, the six used most recently, each
-	 * folding open to its latest chats along a tree line; the thread you are
-	 * in opens by itself. Chats outside any thread follow. New chat is the one
-	 * solid button, at the bottom where the thumb is.
+	 * the top with Settings and the way back. The list starts with a search
+	 * field, then the three threads used last, each folding open to its latest
+	 * chats along a tree line; the thread you are in opens by itself. Chats
+	 * outside any thread follow under day labels. The dock at the bottom, where
+	 * the thumb is, holds the doors the owner arranged on the desktop, New chat
+	 * (the one solid button) and the + for everything else (DrawerAdd).
 	 *
 	 * Position, the slide and the gesture all belong to MobileShell; this
 	 * component only renders content (the shell moves it for parallax).
@@ -33,6 +33,8 @@
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import { tapHaptic } from "$lib/utils/haptics";
+	import { tick } from "svelte";
+	import DrawerAdd from "./DrawerAdd.svelte";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
@@ -47,6 +49,17 @@
 	});
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
+
+	// On open, the row you came from scrolls into view, so a chat from last
+	// week is not hidden below the fold.
+	let body: HTMLElement | null = $state(null);
+	$effect(() => {
+		if (!mobileLayout.drawerOpen || !body) return;
+		void tick().then(() => {
+			const row = body?.querySelector<HTMLElement>('[aria-current="page"]');
+			row?.scrollIntoView({ block: "center" });
+		});
+	});
 
 
 	function go(route: string, label: string) {
@@ -81,33 +94,32 @@
 
 
 	/**
-	 * A conversation's recency, said the way a person would: clock time today,
-	 * a weekday inside the week, a date beyond it. Rows carry this as their
-	 * caption, which is what lets the list get by with one section label.
-	 *
-	 * The parse is Safari-proof on purpose: WebKit returns NaN for the
-	 * Postgres-style shapes Chromium happily accepts ("2026-08-27 18:22:33",
-	 * a bare "+00" offset, no timezone at all) — which is exactly why the
-	 * captions rendered in the dev browser and vanished on the phone. Space
-	 * becomes T, "+00" becomes "+00:00", and a timestamp with no zone is
-	 * declared UTC, which is what the server writes.
+	 * A server timestamp as a Date. The parse is Safari-proof: WebKit returns
+	 * NaN for the Postgres-style shapes Chromium accepts ("2026-08-27
+	 * 18:22:33", a bare "+00" offset, no timezone at all). Space becomes T,
+	 * "+00" becomes "+00:00", and a timestamp with no zone is declared UTC,
+	 * which is what the server writes.
 	 */
-	function when(iso: string): string {
+	function parseTs(iso: string): Date | null {
 		let s = iso || "";
 		if (!s.includes("T")) s = s.replace(" ", "T");
 		if (/[+-]\d\d$/.test(s)) s += ":00";
 		else if (!/([zZ]|[+-]\d\d:\d\d)$/.test(s)) s += "Z";
 		const d = new Date(s);
-		if (Number.isNaN(d.getTime())) return "";
+		return Number.isNaN(d.getTime()) ? null : d;
+	}
+
+	/** The day a chat was last used, said the way a person would. */
+	function dayLabel(iso: string): string {
+		const d = parseTs(iso);
+		if (!d) return "Earlier";
 		const midnight = new Date();
 		midnight.setHours(0, 0, 0, 0);
 		const day = 24 * 60 * 60 * 1000;
 		const t = d.getTime();
-		if (t >= midnight.getTime())
-			return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+		if (t >= midnight.getTime()) return "Today";
 		if (t >= midnight.getTime() - day) return "Yesterday";
-		if (t >= midnight.getTime() - 6 * day)
-			return d.toLocaleDateString(undefined, { weekday: "long" });
+		if (t >= midnight.getTime() - 6 * day) return d.toLocaleDateString(undefined, { weekday: "long" });
 		return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 	}
 
@@ -121,7 +133,7 @@
 	);
 	// The threads you used last, by their latest chat, then the rest in the
 	// store's order; All threads holds the full list.
-	const THREAD_CAP = 6;
+	const THREAD_CAP = 3;
 	const threads = $derived.by(() => {
 		const lastUsed = new Map<string, number>();
 		chatSessions.sessions.forEach((s, i) => {
@@ -131,6 +143,17 @@
 		return [...projectStore.projects].sort((a, b) => rank(a.id) - rank(b.id)).slice(0, THREAD_CAP);
 	});
 	const otherChats = $derived(chatSessions.sessions.filter((s) => !s.thread_id).slice(0, OTHER_CAP));
+	// The chats outside threads, in runs that share a day label.
+	const chatDays = $derived.by(() => {
+		const days: { label: string; chats: typeof otherChats }[] = [];
+		for (const s of otherChats) {
+			const label = dayLabel(s.last_message_at || s.first_message_at);
+			const last = days[days.length - 1];
+			if (last?.label === label) last.chats.push(s);
+			else days.push({ label, chats: [s] });
+		}
+		return days;
+	});
 	function chatsIn(threadId: string) {
 		return chatSessions.sessions.filter((s) => s.thread_id === threadId).slice(0, THREAD_CHATS);
 	}
@@ -146,8 +169,8 @@
 		opened = { ...opened, [id]: !isOpen(id) };
 	}
 
-	// The doors other than new chat, as tiles. New chat has its own button.
-	const tileDoors = $derived(sidebarDoors.visible.filter((d) => d.id !== "new-chat"));
+	// The doors other than new chat, along the dock. New chat has its own button.
+	const placeDoors = $derived(sidebarDoors.visible.filter((d) => d.id !== "new-chat"));
 
 	function newChat() {
 		go("/chat", "Chat");
@@ -164,31 +187,24 @@
 			</svg>
 			Virtues
 		</span>
-		<button class="square lq" onclick={openSearch} aria-label="Search">
-			<AtlasIcon name="search" size={19} bare />
-		</button>
-		<button class="square lq" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
+		<button class="square" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
 			<AtlasIcon name="settings" size={19} bare />
 		</button>
 		<!-- Back to the chat, parked off the right edge. The swipe closes the
 		     drawer too; this is the one you can see. -->
-		<button class="square lq" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
+		<button class="square" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
 			<Icon icon="mynaui:x" width={19} />
 		</button>
 	</header>
 
-	{#if tileDoors.length > 0}
-		<div class="tiles" style:--tile-count={Math.min(tileDoors.length, 5)}>
-			{#each tileDoors as door (door.id)}
-				<button class="tile" onclick={doorActions[door.id].open}>
-					<span class="tile-face"><AtlasIcon name={door.glyph} size={20} bare /></span>
-					<span class="tile-label">{door.label}</span>
-				</button>
-			{/each}
-		</div>
-	{/if}
+	<div class="body" bind:this={body}>
+		<!-- Looks like a field; opens the app's search, which already searches
+		     chats, threads and pages. -->
+		<button class="find" onclick={openSearch}>
+			<AtlasIcon name="search" size={18} bare />
+			<span>Search chats, threads, pages</span>
+		</button>
 
-	<div class="body">
 		{#if pinsStore.pins.length > 0}
 			<div class="section"><span>Pinned</span></div>
 			{#each pinsStore.pins as pin (pin.id)}
@@ -270,37 +286,51 @@
 		{/each}
 
 		<div class="section">
-			<span>Other chats</span>
+			<span>Chats</span>
 			<button class="more" onclick={() => go("/chat-history", "All Chats")}>
 				All chats<Icon icon="mynaui:chevron-right" width={12} />
 			</button>
 		</div>
-		{#each otherChats as s (s.conversation_id)}
-			{@const route = `/chat/${s.conversation_id}`}
-			<button
-				class="row"
-				class:active={activeRoute === route}
-				aria-current={activeRoute === route ? "page" : undefined}
-				onclick={() => go(route, s.title || "Chat")}
-			>
-				<span class="text">{s.title || untitled("chat")}</span>
-				{#if chatActivity.running(s.conversation_id)}
-					<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
-				{:else if chatActivity.unread(s.conversation_id)}
-					<span class="row-unread" role="img" aria-label="New reply"></span>
-				{:else}
-					<span class="when">{when(s.last_message_at || s.first_message_at)}</span>
-				{/if}
-			</button>
+		{#each chatDays as group (group.label)}
+			<div class="day">{group.label}</div>
+			{#each group.chats as s (s.conversation_id)}
+				{@const route = `/chat/${s.conversation_id}`}
+				<button
+					class="row"
+					class:active={activeRoute === route}
+					aria-current={activeRoute === route ? "page" : undefined}
+					onclick={() => go(route, s.title || "Chat")}
+				>
+					<span class="text">{s.title || untitled("chat")}</span>
+					{#if chatActivity.running(s.conversation_id)}
+						<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
+					{:else if chatActivity.unread(s.conversation_id)}
+						<span class="row-unread" role="img" aria-label="New reply"></span>
+					{/if}
+				</button>
+			{/each}
 		{:else}
 			<div class="empty">Chats you start outside a thread collect here.</div>
 		{/each}
 	</div>
 
 	<footer class="dock">
-		<button class="compose" onclick={newChat}>
-			<Icon icon="mynaui:plus" width={18} />New chat
-		</button>
+		{#if placeDoors.length > 0}
+			<div class="places" style:--place-count={Math.min(placeDoors.length, 5)}>
+				{#each placeDoors as door (door.id)}
+					<button class="place" onclick={doorActions[door.id].open}>
+						<span class="place-face"><AtlasIcon name={door.glyph} size={20} bare /></span>
+						{door.label}
+					</button>
+				{/each}
+			</div>
+		{/if}
+		<div class="create">
+			<button class="compose" onclick={newChat}>
+				<AtlasIcon name="chats" size={18} bare />New chat
+			</button>
+			<DrawerAdd />
+		</div>
 	</footer>
 </nav>
 
@@ -339,53 +369,39 @@
 		width: 40px;
 		height: 40px;
 		margin: 2px;
-		border: 0;
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
+		background: var(--color-surface);
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 	}
 
-	.tiles {
-		flex: none;
-		display: grid;
-		grid-template-columns: repeat(var(--tile-count), minmax(0, 1fr));
-		gap: 4px;
-		padding: 12px 12px 4px;
-	}
-	.tile {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-		border: 0;
-		background: transparent;
-		color: var(--color-foreground);
-		font: inherit;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-	}
-	.tile-face {
+	.find {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		width: 48px;
-		height: 48px;
+		gap: 12px;
+		width: 100%;
+		height: 44px;
+		margin-bottom: 4px;
+		padding: 0 12px;
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-xl);
 		background: var(--color-surface);
-		box-shadow: 0 0 0 0.5px var(--color-border);
-	}
-	.tile-label {
-		font-size: 0.6875rem;
 		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 1rem;
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.body {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-		/* Clears the fade above New chat, so the last row can be reached. */
-		padding: 0 12px 32px;
+		/* Clears the fade above the dock, so the last row can be reached. */
+		padding: 8px 12px 32px;
 	}
 
 	.section {
@@ -395,6 +411,11 @@
 		padding: 12px 8px 4px;
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
+	}
+	.day {
+		padding: 8px 8px 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
 	}
 	.more {
 		display: flex;
@@ -486,11 +507,6 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.when {
-		flex: none;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-	}
 	.empty {
 		padding: 8px;
 		font-size: 0.875rem;
@@ -508,20 +524,64 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The list fades out above the one solid button. */
+	/* The list fades out above the dock. */
 	.dock {
-		flex: none;
-		padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
-		background: linear-gradient(transparent, var(--color-page) 24px);
-		margin-top: -24px;
 		position: relative;
+		flex: none;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+		border-top: 1px solid var(--color-border);
+		background: var(--color-page);
+	}
+	.dock::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 100%;
+		height: 24px;
+		background: linear-gradient(transparent, var(--color-page));
+		pointer-events: none;
+	}
+	.places {
+		display: grid;
+		grid-template-columns: repeat(var(--place-count), minmax(0, 1fr));
+		gap: 4px;
+	}
+	.place {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		border: 0;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 0.75rem;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.place-face {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		height: 40px;
+		color: var(--color-foreground);
+	}
+	.create {
+		display: flex;
+		gap: 8px;
 	}
 	.compose {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		height: 48px;
 		border: 0;
 		border-radius: var(--radius-xl);
@@ -536,19 +596,21 @@
 	/* The press: a quick shrink under the finger and a spring back. */
 	.row,
 	.square,
-	.tile,
+	.place,
+	.find,
 	.compose {
 		transition:
 			transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
 			background-color 0.2s ease-out;
 	}
 	.square:active,
-	.tile:active,
+	.place:active,
 	.compose:active {
 		transform: scale(0.94);
 		transition-duration: 0.08s;
 	}
-	.row:active {
+	.row:active,
+	.find:active {
 		transform: scale(0.98);
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		transition-duration: 0.08s;
@@ -556,14 +618,16 @@
 	@media (prefers-reduced-motion: reduce) {
 		.row,
 		.square,
-		.tile,
+		.place,
+	.find,
 		.compose,
 		.fold {
 			transition: none;
 		}
 		.row:active,
+		.find:active,
 		.square:active,
-		.tile:active,
+		.place:active,
 		.compose:active {
 			transform: none;
 		}
