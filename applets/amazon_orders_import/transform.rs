@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(rows.len(), 1, "a line naming no item is passed over");
         let r = &rows[0];
         assert_eq!(r.item_name, "The Example Band: Night Market (Vinyl)");
-        assert_eq!(r.occurred_at.to_rfc3339(), "2019-03-15T00:00:00+00:00");
+        assert_eq!(r.occurred_at.to_rfc3339(), "2019-03-15T12:00:00+00:00");
         assert_eq!((r.unit_price_cents, r.total_cents), (Some(2450), Some(2652)));
         assert_eq!(r.status.as_deref(), Some("Shipped"));
         assert_eq!(r.currency, None);

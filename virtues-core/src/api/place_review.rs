@@ -21,6 +21,10 @@
 //! through" and a rejected match in its metadata. Answered once, a place is
 //! never asked again. The map's match is worked out when a place is read and
 //! never stored.
+//!
+//! "Not now" sets a question aside for `LATER_DAYS` (`ask_after` in the
+//! metadata). Each question carries the last four weeks there, day by day,
+//! so the person can see why it is asked.
 
 use std::collections::HashMap;
 
@@ -45,6 +49,8 @@ const TAP_M: f64 = 150.0;
 /// `RECENT_WEEKS` weeks.
 const RECENT_WEEKS: i64 = 4;
 const LEAD_WEEKS: usize = 3;
+/// How long "Not now" sets a question aside.
+const LATER_DAYS: i64 = 7;
 
 /// A place with stays, and where its time went.
 #[derive(Clone)]
@@ -59,6 +65,8 @@ struct Place {
     /// The person said it isn't home, or isn't where they work.
     not_home: bool,
     not_work: bool,
+    /// "Not now": the place is not asked about before this.
+    ask_after: Option<DateTime<Utc>>,
     /// The time-weighted centre of its stays.
     latitude: f64,
     longitude: f64,
@@ -86,6 +94,7 @@ async fn places(pool: &PgPool) -> Result<Vec<Place>> {
                   COALESCE(p.metadata->>'is_work' = 'true', false) AS is_work,
                   COALESCE(p.metadata->>'not_home' = 'true', false) AS not_home,
                   COALESCE(p.metadata->>'not_work' = 'true', false) AS not_work,
+                  (p.metadata->>'ask_after')::timestamptz AS ask_after,
                   v.latitude, v.longitude, v.started_at,
                   COALESCE(v.ended_at, v.started_at + make_interval(mins => COALESCE(v.duration_minutes, 0))) AS ended_at
            FROM data_location_visit v
@@ -116,6 +125,7 @@ async fn places(pool: &PgPool) -> Result<Vec<Place>> {
                 is_work: r.try_get("is_work")?,
                 not_home: r.try_get("not_home")?,
                 not_work: r.try_get("not_work")?,
+                ask_after: r.try_get("ask_after")?,
                 latitude: lat,
                 longitude: lon,
                 tz: chrono_tz::UTC,
@@ -326,6 +336,44 @@ pub struct Question {
     /// least): hours, and nights.
     pub hours_a_week: f64,
     pub nights_a_week: f64,
+    /// The last four weeks there, a day each, oldest first, ending today.
+    pub days: Vec<PlaceDay>,
+}
+
+/// One day at a place, in the place's own time.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlaceDay {
+    pub date: NaiveDate,
+    /// Time there that day, to a tenth of an hour.
+    pub hours: f64,
+    /// The night before this morning was spent there: a stay ran through
+    /// that morning's small hours.
+    pub slept: bool,
+}
+
+/// The last `RECENT_WEEKS` weeks at a place, a day each, ending on `now`'s
+/// local day. A stay that crosses midnight counts toward both days.
+fn recent_days(p: &Place, now: DateTime<Utc>) -> Vec<PlaceDay> {
+    let today = local(now, p.tz).date();
+    let start_of = |d: NaiveDate, h: u32| {
+        d.and_hms_opt(h, 0, 0).and_then(|t| p.tz.from_local_datetime(&t).earliest()).map(|t| t.with_timezone(&Utc))
+    };
+    let overlap = |a: DateTime<Utc>, b: DateTime<Utc>| -> i64 {
+        p.stays.iter().map(|&(s, e)| (e.min(b) - s.max(a)).num_milliseconds().max(0)).sum()
+    };
+    (0..RECENT_WEEKS * 7)
+        .rev()
+        .filter_map(|back| {
+            let date = today - chrono::Duration::days(back);
+            let (from, to) = (start_of(date, 0)?, start_of(date.succ_opt()?, 0)?);
+            let (night_from, night_to) = (start_of(date, SMALL_HOURS.0)?, start_of(date, SMALL_HOURS.1)?);
+            Some(PlaceDay {
+                date,
+                hours: (overlap(from, to) as f64 / 360_000.0).round() / 10.0,
+                slept: overlap(night_from, night_to) > 0,
+            })
+        })
+        .collect()
 }
 
 /// Hours and nights a week at a place, over the weeks from its first stay to
@@ -374,7 +422,8 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
     let mut all = places(pool).await?;
     all.sort_by(|a, b| b.total_ms.cmp(&a.total_ms).then(a.id.cmp(&b.id)));
     let home = set_home(pool).await?;
-    let (ask_home, ask_work) = to_ask(&all, home.as_deref(), Utc::now());
+    let now = Utc::now();
+    let (ask_home, ask_work) = to_ask(&all, home.as_deref(), now);
     let mut tiles = Tiles::default();
     let (mut questions, mut confirmed) = (Vec::new(), Vec::new());
     for p in &all {
@@ -405,6 +454,9 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
                 })
             }
             _ if p.passing_through && ask == "place" => {}
+            // Set aside with "Not now". A Home or Work question waits too,
+            // and no other place is asked about in its stead.
+            _ if p.ask_after.is_some_and(|t| t > now) => {}
             _ => {
                 let (recall, best_day) = recall_line(&p.stays, p.tz);
                 let (hours_a_week, nights_a_week) = per_week(p);
@@ -424,6 +476,7 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
                     best_day,
                     hours_a_week,
                     nights_a_week,
+                    days: recent_days(p, now),
                 });
             }
         }
@@ -527,14 +580,15 @@ pub struct Answer {
     /// through; `not_this`: the map's match is wrong; `home` / `not_home` and
     /// `work` / `not_work`: whether it's home, or where the person works;
     /// `home_here` / `work_here`: not this place, but the one at `lat`,
-    /// `lon`, tapped on the map; `reopen`: Undo of the answer in `undoes`.
+    /// `lon`, tapped on the map; `later`: "Not now", which sets the question
+    /// aside for `LATER_DAYS`; `reopen`: Undo of the answer in `undoes`.
     pub kind: String,
     pub name: Option<String>,
     pub category: Option<String>,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     /// For `reopen`, the answer being undone (`name`, `passing`, `not_this`,
-    /// `home`, `not_home`, `work` or `not_work`). Only that answer's change
+    /// `home`, `not_home`, `work`, `not_work` or `later`). Only that answer's change
     /// is reversed, so undoing Home on a place the person named keeps its
     /// name. Without it, every answer flag and Home are cleared and the name
     /// is kept.
@@ -582,7 +636,7 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
     let name = a.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
     if !matches!(
         a.kind.as_str(),
-        "name" | "passing" | "not_this" | "home" | "not_home" | "work" | "not_work" | "home_here" | "work_here" | "reopen"
+        "name" | "passing" | "not_this" | "home" | "not_home" | "work" | "not_work" | "home_here" | "work_here" | "later" | "reopen"
     ) {
         return Err(Error::InvalidInput(format!("unknown answer `{}`", a.kind)));
     }
@@ -666,6 +720,13 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
         )
         .bind(id)
         .bind(name),
+        "later" => sqlx::query(
+            "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) \
+                 || jsonb_build_object('ask_after', (NOW() + make_interval(days => $2::int))::text), \
+             updated_at = NOW() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(LATER_DAYS as i32),
         _ => match a.undoes.as_deref() {
             // A name is only undoable on a place that had none
             // (`reviewState.svelte.ts` offers no Undo once a place is named),
@@ -690,7 +751,7 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
                     .await?;
                 sqlx::query("UPDATE wiki_places SET updated_at = NOW() WHERE id = $1").bind(id)
             }
-            Some(kind @ ("passing" | "not_this" | "work" | "not_work" | "not_home")) => sqlx::query(
+            Some(kind @ ("passing" | "not_this" | "work" | "not_work" | "not_home" | "later")) => sqlx::query(
                 "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) - $2::text, updated_at = NOW() WHERE id = $1",
             )
             .bind(id)
@@ -698,6 +759,7 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
                 "passing" => "passing_through",
                 "not_this" => "rejected_match",
                 "work" => "is_work",
+                "later" => "ask_after",
                 other => other,
             }),
             Some(other) => return Err(Error::InvalidInput(format!("can't undo `{other}`"))),
@@ -708,7 +770,7 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
                     .await?;
                 sqlx::query(
                     "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) - 'passing_through' - 'rejected_match' \
-                         - 'is_work' - 'not_home' - 'not_work', \
+                         - 'is_work' - 'not_home' - 'not_work' - 'ask_after', \
                      updated_at = NOW() WHERE id = $1",
                 )
                 .bind(id)
@@ -773,6 +835,7 @@ mod tests {
             is_work: false,
             not_home: false,
             not_work: false,
+            ask_after: None,
             latitude: 0.0,
             longitude: 0.0,
             tz: chrono_tz::UTC,
@@ -1006,6 +1069,42 @@ mod tests {
         // A tap near a place with stays is that place.
         let again = answer(&pool, &there, &tap("work_here", Some((0.5005, -30.5)))).await.unwrap();
         assert_eq!(again.place_id.as_deref(), Some(id.as_str()), "55 m from it");
+    }
+
+    #[test]
+    fn the_last_four_weeks_are_a_day_each_and_a_night_counts_toward_its_morning() {
+        let mut p = place("p", 0, 0, 0);
+        p.tz = winnipeg();
+        // Evening of Jul 20 to the morning of Jul 21, then an afternoon on Jul 27.
+        p.stays = vec![(at(7, 20, 22), at(7, 21, 7)), (at(7, 27, 13), at(7, 27, 16))];
+        let days = recent_days(&p, at(7, 28, 12));
+        assert_eq!(days.len(), 28);
+        assert_eq!(days.last().map(|d| d.date), NaiveDate::from_ymd_opt(2026, 7, 28), "ends today");
+        let day = |d: u32| days.iter().find(|x| x.date == NaiveDate::from_ymd_opt(2026, 7, d).unwrap()).unwrap();
+        assert_eq!((day(20).hours, day(20).slept), (2.0, false), "two hours before midnight");
+        assert_eq!((day(21).hours, day(21).slept), (7.0, true), "the night is its morning's");
+        assert_eq!((day(27).hours, day(27).slept), (3.0, false));
+        assert_eq!(day(28).hours, 0.0);
+    }
+
+    #[sqlx::test]
+    async fn not_now_sets_a_question_aside_for_a_week(pool: PgPool) {
+        let id = sea_place(&pool).await;
+        let later = Answer { kind: "later".into(), name: None, category: None, lat: None, lon: None, undoes: None };
+        answer(&pool, &id, &later).await.unwrap();
+        let r = review(&pool).await.unwrap();
+        assert!(r.questions.iter().all(|q| q.id != id), "set aside");
+        assert!(r.confirmed.iter().all(|c| c.id != id), "and not taken as answered");
+        sqlx::query("UPDATE wiki_places SET metadata = metadata || '{\"ask_after\": \"2000-01-01 00:00:00+00\"}'::jsonb WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let q = review(&pool).await.unwrap().questions.into_iter().find(|q| q.id == id).expect("its week is up: asked again");
+        assert_eq!(q.days.len(), 28);
+        answer(&pool, &id, &later).await.unwrap();
+        answer(&pool, &id, &undo("later")).await.unwrap();
+        assert!(review(&pool).await.unwrap().questions.iter().any(|q| q.id == id), "Undo brings it back at once");
     }
 
     #[sqlx::test]

@@ -38,11 +38,13 @@ const WRONG_EMAIL: &str =
 /// Whether a run should fail because the email matches none of the meetings.
 /// `not_theirs` counts meetings dropped for not listing the email, `kept`
 /// counts meetings that did list it (ready or not), and `kept_before` is
-/// whether an earlier run stored a Fathom meeting. A person with the right
-/// email whose team met while they did not still has earlier meetings, so
-/// that case does not fail.
-fn email_matches_none(not_theirs: usize, kept: usize, kept_before: bool) -> bool {
-    not_theirs > 0 && kept == 0 && !kept_before
+/// whether an earlier run stored a Fathom meeting. `teammate` is whether a
+/// dropped meeting was recorded by someone at the email's own domain. A
+/// person with the right email whose team met while they did not either has
+/// earlier meetings or shares a domain with the recorder, so neither case
+/// fails. A personal address entered in place of a work one still does.
+fn email_matches_none(not_theirs: usize, kept: usize, kept_before: bool, teammate: bool) -> bool {
+    not_theirs > 0 && kept == 0 && !kept_before && !teammate
 }
 
 #[tokio::main]
@@ -67,6 +69,7 @@ async fn main() -> Result<()> {
     let mut written = Written::default();
     let mut not_ready = 0usize;
     let mut not_theirs = 0usize;
+    let mut teammate = false;
     let mut kept = 0usize;
     let mut newest: Option<DateTime<Utc>> = None;
     let mut cursor: Option<String> = None;
@@ -110,7 +113,10 @@ async fn main() -> Result<()> {
                     theirs.push(item.clone());
                 }
                 transform::Shaped::NotReady => not_ready += 1,
-                transform::Shaped::NotTheirs => not_theirs += 1,
+                transform::Shaped::NotTheirs => {
+                    not_theirs += 1;
+                    teammate |= transform::recorded_at_domain_of(item, &email);
+                }
                 transform::Shaped::Invalid => tracing::warn!("Fathom sent a meeting without an id or a start time"),
             }
         }
@@ -137,7 +143,7 @@ async fn main() -> Result<()> {
         .bind(transform::PROVIDER)
         .fetch_one(&pool)
         .await?;
-        if email_matches_none(not_theirs, kept, kept_before) {
+        if email_matches_none(not_theirs, kept, kept_before, teammate) {
             bail!(WRONG_EMAIL);
         }
     }
@@ -171,11 +177,13 @@ mod tests {
     #[test]
     fn a_run_fails_only_when_the_email_matches_nothing_now_or_before() {
         // Every meeting dropped for the email, nothing kept ever: wrong email.
-        assert!(email_matches_none(4, 0, false));
+        assert!(email_matches_none(4, 0, false, false));
         // The person kept a meeting this run, or an earlier one did.
-        assert!(!email_matches_none(4, 1, false));
-        assert!(!email_matches_none(4, 0, true));
+        assert!(!email_matches_none(4, 1, false, false));
+        assert!(!email_matches_none(4, 0, true, false));
+        // A teammate at the same domain recorded what was dropped.
+        assert!(!email_matches_none(4, 0, false, true));
         // No meetings in the window at all.
-        assert!(!email_matches_none(0, 0, false));
+        assert!(!email_matches_none(0, 0, false, false));
     }
 }

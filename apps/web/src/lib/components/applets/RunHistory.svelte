@@ -1,113 +1,32 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import DayDot from './DayDot.svelte';
-	import type { Applet, AppletLogEntry, AppletTrigger } from '$lib/api/client';
-	import { relativeTime } from '$lib/applets/palette';
+	import type { AppletLogEntry, AppletTrigger } from '$lib/api/client';
+	import { failureReason, relativeTime, STATUS_WORD } from '$lib/applets/palette';
+	import { sentence } from '$lib/applets/standing';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
-	import {
-		appletDays,
-		busiestDay,
-		DAY_LABEL,
-		dayKey,
-		lastDays,
-		stateOf,
-		type DayIndex,
-		type DayState
-	} from '$lib/applets/days';
 	import { explainRunError } from '$lib/sources/run-errors';
 	import { isTauri } from '$lib/utils/platform';
 
 	/**
-	 * Every run an applet made recently. Days first, so a pattern shows (it
-	 * fails every Monday; it stopped on the 3rd), then the runs themselves.
+	 * The last runs an applet made, newest first, as a list. Each row says
+	 * when it ran, what started it, what it said or made, and what went wrong
+	 * in a sentence, with the error's own text under it.
 	 *
-	 * An applet that runs about once a day gets a calendar, one dot a day. One
-	 * that runs many times a day gets a row per day, one dot a run, because a
-	 * single dot would hide 23 good runs behind one bad one.
+	 * There is no calendar of days and no count of failures. A grid of marked
+	 * days reads as a streak, and someone in recovery sees every page.
 	 *
 	 * A run's row is its whole record. The server keeps what it said, what
 	 * went wrong and what it cost, but not the steps it took, so there is no
 	 * per-run page to open.
 	 */
 	let {
-		action,
 		log,
-		index,
-		daysErr,
 		collectorDenied
 	}: {
-		action: Applet;
 		log: AppletLogEntry[];
-		index: DayIndex;
-		daysErr: string | null;
 		collectorDenied: string[];
 	} = $props();
-
-	// Weeks start on Monday. Four whole weeks plus this one so far, which
-	// stays inside the 49 days the home loads.
-	const today = new Date();
-	const weekday = (today.getDay() + 6) % 7;
-	const shown = lastDays(28 + weekday + 1, today);
-	const trailing = 6 - weekday;
-	// The rest of this week, so the calendar ends on a Sunday like a calendar.
-	const future = Array.from({ length: trailing }, (_, i) => {
-		const d = new Date(today);
-		d.setDate(d.getDate() + i + 1);
-		return d.getDate();
-	});
-
-	const states = $derived(appletDays(action, index, shown));
-	const frequent = $derived(busiestDay(index, action.id) > 1);
-	// Newest first, for the rows.
-	const recentDays = $derived(shown.slice(-14).reverse());
-
-	function dateOf(key: string): Date {
-		const [y, m, d] = key.split('-').map(Number);
-		return new Date(y, m - 1, d);
-	}
-
-	function dayName(key: string): string {
-		const t = dayKey(today);
-		if (key === t) return 'Today';
-		const y = new Date(today);
-		y.setDate(y.getDate() - 1);
-		if (key === dayKey(y)) return 'Yesterday';
-		return dateOf(key).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-	}
-
-	/** One dot per run, worst outcomes first, so a day's problems lead the row. */
-	function runDots(key: string): DayState[] {
-		const order: [string, DayState][] = [
-			['error', 'failed'],
-			['budget_exceeded', 'stopped'],
-			['success', 'ran'],
-			['running', 'ran'],
-			['skipped', 'quiet'],
-			['cancelled', 'quiet']
-		];
-		const statuses = index.get(action.id)?.get(key);
-		const out: DayState[] = [];
-		for (const [status, state] of order) {
-			for (let i = 0; i < (statuses?.get(status) ?? 0); i++) out.push(state);
-		}
-		return out;
-	}
-
-	function daySentence(key: string): string {
-		const statuses = index.get(action.id)?.get(key);
-		let total = 0;
-		for (const n of statuses?.values() ?? []) total += n;
-		if (total === 0) return 'No runs';
-		const failed = statuses?.get('error') ?? 0;
-		const runs = `${total} ${total === 1 ? 'run' : 'runs'}`;
-		return failed ? `${runs}, ${failed} failed` : runs;
-	}
-
-	const MAX_DOTS = 48;
-
-	const entryState = (e: AppletLogEntry): DayState =>
-		stateOf(new Map([[e.status, 1]]));
 
 	const STARTED_BY: Record<AppletTrigger, string> = {
 		cron: 'On schedule',
@@ -119,19 +38,12 @@
 		data: 'From your data'
 	};
 
-	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
-		success: 'Ran',
-		error: 'Failed',
-		running: 'Running',
-		skipped: 'Skipped',
-		cancelled: 'Cancelled',
-		budget_exceeded: 'Stopped at its spending limit'
-	};
 
 	// Newest first, failures among them where they happened. The log already
-	// folds identical runs into one entry with a count. Retrying is the page
-	// header's job: it sits on the problem line under the applet's name.
-	const recent = $derived(log.slice(0, 5));
+	// folds identical runs into one entry. Retrying is the page header's job:
+	// it sits on the problem line under the applet's name.
+	const SHOWN = 8;
+	const recent = $derived(log.slice(0, SHOWN));
 
 	/** "Reached api.weather.gov (3 requests). Refused 1 to elsewhere.example.com." */
 	function reachedLine(e: AppletLogEntry): string {
@@ -168,13 +80,12 @@
 		{@const why = e.error ? explainRunError(e.error, collectorDenied) : null}
 		<li class="run">
 			<div class="run-top">
-				<DayDot state={entryState(e)} />
 				<span class="run-status">{STATUS_WORD[e.status]}</span>
 				{#if e.occurrences > 1}
-					<!-- The applet repeated itself. A poll that finds nothing
-					     still records a run, so saying it once with a count is
-					     shorter and more honest than 600 identical lines. -->
-					<span class="run-meta">{e.occurrences} times</span>
+					<!-- The applet repeated itself: a poll that finds nothing
+					     still records a run. One row stands for all of them,
+					     and the line under it says from when to when. -->
+					<span class="run-meta">More than once</span>
 				{:else if e.trigger}
 					<span class="run-meta">{STARTED_BY[e.trigger]}</span>
 				{/if}
@@ -210,6 +121,8 @@
 							Open {why.label} on this computer
 						</Button>
 					{/if}
+				{:else}
+					<p class="run-text">{sentence(failureReason(e.error))}</p>
 				{/if}
 				<pre class="run-error">{e.error}</pre>
 			{/if}
@@ -220,50 +133,6 @@
 {/snippet}
 
 <div class="history">
-	{#if daysErr}
-		<p class="note">Your server couldn't read the run counts, so the days are missing. The runs below are complete.</p>
-	{:else if !frequent}
-		<div class="cal">
-			{#each ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as d, i (i)}
-				<span class="cal-head" aria-hidden="true">{d}</span>
-			{/each}
-			{#each shown as key, i (key)}
-				<span class="cal-cell {states[i]}" title={`${dayName(key)}: ${DAY_LABEL[states[i]]}`}>
-					{dateOf(key).getDate()}
-				</span>
-			{/each}
-			{#each future as d (d)}
-				<span class="cal-cell future" aria-hidden="true">{d}</span>
-			{/each}
-		</div>
-		<p class="legend">
-			<span><span class="key ran"></span>Ran</span>
-			<span><span class="key failed"></span>Failed</span>
-			<span><span class="key stopped"></span>Stopped at its limit</span>
-			<span><span class="key missed"></span>Didn't run when due</span>
-			<span><span class="key none"></span>No run</span>
-		</p>
-	{:else}
-		<div class="strips">
-			{#each recentDays as key (key)}
-				{@const dots = runDots(key)}
-				<div class="strip">
-					<span class="strip-date">{dayName(key)}</span>
-					<span class="strip-dots">
-						{#each dots.slice(0, MAX_DOTS) as state, i (i)}
-							<DayDot {state} />
-						{/each}
-						{#if dots.length > MAX_DOTS}
-							<span class="more">+{dots.length - MAX_DOTS}</span>
-						{/if}
-					</span>
-					<span class="strip-sum">{daySentence(key)}</span>
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	<h3 class="runs-head">Recent runs</h3>
 	{#if recent.length === 0}
 		<p class="note">No runs yet.</p>
 	{:else}
@@ -285,128 +154,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.cal {
-		display: grid;
-		grid-template-columns: repeat(7, 40px);
-		gap: 8px;
-	}
-	.cal-head {
-		font-size: 12px;
-		text-align: center;
-		color: var(--color-foreground-subtle);
-	}
-	/* A date tile per day, filled with how the day went: the prototype's
-	   calendar, on the theme's state tokens. */
-	.cal-cell {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		height: 32px;
-		border-radius: var(--radius-md);
-		box-sizing: border-box;
-		font-size: 13px;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-muted);
-		border: 1px solid var(--color-border);
-	}
-	.cal-cell.ran,
-	.cal-cell.failed,
-	.cal-cell.stopped {
-		border-color: transparent;
-		color: var(--color-background);
-		font-weight: 500;
-	}
-	.cal-cell.ran {
-		background: var(--color-success);
-	}
-	.cal-cell.failed {
-		background: var(--color-error);
-	}
-	.cal-cell.stopped {
-		background: var(--color-warning);
-	}
-	.cal-cell.quiet {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		border-color: transparent;
-	}
-	.cal-cell.missed {
-		border: 2px solid var(--color-error);
-		color: var(--color-error);
-	}
-	.cal-cell.future {
-		border-color: transparent;
-		color: var(--color-foreground-subtle);
-	}
-	.legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 16px;
-		margin: 0;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-	.legend > span {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-	}
-	.key {
-		width: 14px;
-		height: 14px;
-		border-radius: var(--radius-md);
-		box-sizing: border-box;
-	}
-	.key.ran {
-		background: var(--color-success);
-	}
-	.key.failed {
-		background: var(--color-error);
-	}
-	.key.stopped {
-		background: var(--color-warning);
-	}
-	.key.missed {
-		border: 2px solid var(--color-error);
-	}
-	.key.none {
-		border: 1px solid var(--color-border-strong);
-	}
-
-	.strips {
-		display: flex;
-		flex-direction: column;
-	}
-	.strip {
-		display: grid;
-		grid-template-columns: 120px minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 12px;
-		min-height: 32px;
-		border-bottom: 1px solid var(--color-border);
-		font-size: 13px;
-	}
-	.strip-date {
-		color: var(--color-foreground);
-	}
-	.strip-dots {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 4px;
-	}
-	.strip-sum,
-	.more {
-		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.runs-head {
-		margin: 8px 0 0;
-		font-family: var(--font-sans);
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-	}
 	.runs {
 		list-style: none;
 		margin: 0;

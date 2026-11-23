@@ -31,7 +31,7 @@ wrong, and what is left.
 Four rules keep one word from meaning too much:
 
 1. Your server's tasks never appear in your Tasks list or the Inbox. There are
-   24 of them and none is ever finished.
+   dozens of them and none is ever finished.
 2. Nothing counts tasks or calls one overdue. A late run is said as what
    happened.
 3. Your server's tasks "run". Yours get "done". The state words stay apart.
@@ -74,13 +74,13 @@ fields the row already has, in this order:
    **assistant's task**.
 4. It has a prompt and nothing starts it: a **skill**.
 
-Run against the 37 shipped applets on 2026-11-21, the rule places every one:
+Run against the 46 shipped applets on 2026-11-22, the rule places every one:
 
 | Kind | Count | Examples |
 |---|---|---|
-| Your server's task | 24 | 23 start themselves (syncs, the search index, backups, transcription, the day summary, the wiki editor). `chat-import` runs only when asked. |
+| Your server's task | 34 | 29 start themselves (syncs, the search index, backups, transcription, the day summary, the wiki editor). Five imports run only when asked. |
 | Skill | 11 | 10 in the `/` menu, and `charts` |
-| Site | 1 | `dot-cloud` |
+| Site | 0 | None ships with the server since the dot cloud was removed on 2026-11-22. |
 | The assistant's task | 1 | `morning-examen` |
 
 The day summary and the wiki editor run a program and then a prompt. The rule
@@ -88,7 +88,10 @@ makes them your server's tasks, which is how a person meets them.
 
 ## What is built on wave
 
-None of this is on `staging`, and none has run against a real server.
+All of it reached `staging` in pull request #12 on 2026-11-22, except the
+token check's time limit (`665f89641`) and the audit's fixes (below), which
+are on `wave`. No prerelease has been cut from that merge. It ran on a copy
+of a real server's snapshot on 2026-11-21 (slice G), not on a real server.
 
 | Piece | Commits | What it does |
 |---|---|---|
@@ -97,24 +100,27 @@ None of this is on `staging`, and none has run against a real server.
 | A site's page | `4edbd9b18`, `bf6f6055c` | One component. A "Site / Options" switch in the toolbar, options in the page's own column. |
 | Copy and the manual | `ed0551d0d`, `f06f50577` | "Applet" gone from about 40 files, the glossary and the backup page. |
 | Addresses | `df399386d`, `30abf3ef4`, `bf6f6055c` | `/sites`, `/site/<name>` and `/options`. Earlier addresses still open. |
-| The server's own work | `354920107` | Grouped by purpose, one row per account, rows open in place (`JobOpen.svelte`). |
+| The server's own work | `354920107` | Grouped by purpose, one row per account, rows open in place (`ServerTaskOpen.svelte`). |
 | The three words | `f126783e1` | "Server tasks", "skill", and the addresses `/virtues/server-tasks` and `/server-task/<name>`. |
 | What a row is | `3dee2a53f` | `kind` from the server, addresses and labels chosen from it, and the PATCH reply fixed. |
 | A task that repeats | slice D, 2026-11-21 | One task row per repeating applet, its newest result on it, cleared by opening it. |
 | The site, finished | slice F, 2026-11-21 | Failed runs said in sentences, a view that outlives a server restart, "Add to a new page". |
+| What the run found | `2497c81c1`, `665f89641` | A site's script is a module and setup refuses one that cannot run; the open site's token check has a time limit. |
 
 ### What the built parts now say wrong
 
 - **"Job", "Jobs" and "slash command"** were everywhere the server's work or a
   chat prompt was named. Slice A fixed these.
-- **The Sites door lists things with no view.** A repeating prompt you set up
-  shows there as a card with its description. Under the three words it is the
-  assistant's task and belongs in Tasks. It stays until slice D.
+- **The Sites door listed things with no view.** A repeating prompt you set
+  up showed there as a card with its description. Slices D and E moved those
+  to Tasks and to the Skills page.
 - **The chat said "Setting up a site" for every setup, and the authoring
   guide and the applet tool told the assistant to say "site" for everything.**
   Slice A fixed these.
 
-## What is left
+## The slices
+
+Every slice below is built. Each says what it built and what it left.
 
 ### Slice A: the words
 
@@ -135,20 +141,20 @@ Built on wave on 2026-11-21 and seen in the dev app.
   says "Setting it up". "In this chat" labels what was made the same way.
 - The glossary's Task entry covers your tasks, requests and your server's
   tasks. Skill is new, and Job is gone. It does not yet say the assistant's
-  tasks can repeat, because that is slice D.
+  tasks can repeat. The manual publishes from `main`, so that sentence goes
+  in when slice D is in a release.
 - `applets/AGENTS.md` opens with the three words, and the applet tool's setup
   line tells the assistant which word to use. That line was 47 characters
   over the tool budget, so the view guidance beside it was shortened.
-- Left: the page still folds the server's skills under "Runs only when
-  asked", and the Sites door still lists a repeating task as a site. Both
-  wait for the `kind` function (slice B). Server error messages and the Mac
-  app's six files still say "applet".
+- Left: the Mac app's files still say "applet". The server's error messages
+  were reworded in the audit's fixes.
 
 ### Slice B: one function that says what a row is
 
 Built on wave on 2026-11-21. The web side was seen in the dev app against a
 server from before the field, so what ran there was the app's own copy of the
-rule. The server's side is covered by its test and has not answered a request.
+rule. The server's side is covered by its test, and answered requests in the
+slice G run.
 
 - `kind_of` in `scheduler/applets.rs` applies the rule and returns `site`,
   `server_task`, `assistant_task` or `skill`. The applets list, the detail and
@@ -161,20 +167,18 @@ rule. The server's side is covered by its test and has not answered a request.
   `/skill/<name>`, `/server-task/<name>`. The name drops whether you made it,
   so an address can mean two ids, and the page asks the list which exists
   before it asks the server. A page that opens under the wrong word corrects
-  its own address once it has loaded. The dot cloud opens at
-  `/site/dot_cloud`.
+  its own address once it has loaded.
 - The switch on a page reads "Site", "Task" or "Skill" from the kind.
-- The Server tasks page lists rows whose kind is the server's task. The skills
-  that came with the server sit in their own fold, "Skills", and
-  "Runs only when asked" holds `chat-import` alone.
+- The Server tasks page lists rows whose kind is the server's task.
+  "Runs only when asked" holds the import tasks. Skills are on their own page
+  (slice E).
 - **A bug this fixed.** The PATCH reply was the bare row, without `has_face`.
   The app replaces the applet it holds with that reply, so turning a site off
   and on from its Options drew it as a list of runs until the page reloaded.
   The GET and the PATCH now answer with one builder.
-- Two things are held where they were, each with a dated note in the code,
-  until slice D gives them a home. A task of the assistant's that you set up
-  still shows in the Sites door at a `/site` address, and one that came with
-  the server (the morning examen) still shows on the Server tasks page.
+- A task of the assistant's that came with the server (the morning examen)
+  shows on the Server tasks page and nowhere else, by the owner's decision.
+  One you set up moved to Tasks in slice D.
 - A skill you made still showed in the Sites door until the Skills page was
   built (slice E).
 
@@ -183,8 +187,8 @@ rule. The server's side is covered by its test and has not answered a request.
 - The page has its name and addresses (slice A) and lists by kind (slice B).
 - Whether an account's row opens in place or links to its source's page is
   open (O2).
-- The account group and the "Reaches" line have never been seen with a
-  connected account.
+- The account group was seen with real accounts in the slice G run. The
+  "Reaches" line has not been seen with a task that ran.
 
 ### Slice D: the assistant's tasks that repeat
 
@@ -269,8 +273,8 @@ The small parts are built on wave (2026-11-21) and seen in a scratch app.
   before task rows.
 - Left: the Skills page is not on the Settings landing page or in Settings
   search, because `settings/index.ts` held another change in progress. The
-  shipped skill that writes skills is still named "New applet"; renaming its
-  folder changes its id and needs a migration to drop the old row. Nothing
+  shipped skill that writes skills was renamed from "New applet" to "New
+  skill" on 2026-11-22 (below). Nothing
   in the app suggests a repeating task any more; it is asked for in a chat
   until Tasks can make one (slice D, Left).
 
@@ -300,17 +304,191 @@ Built on wave (2026-11-21) and seen in a scratch app, in the web app only.
 - Left: the reload after a restart loses whatever the view had on screen that
   it had not saved, as the hourly renewal already does. A view could tell the
   app the moment one of its queries is refused, which needs a line in
-  `virtues.js` (`server/faces.rs`); that file held another change in
-  progress. The frame's reload was seen as a new token and a query that
+  `virtues.js` (`server/faces.rs`) and is not written. The frame's reload was seen as a new token and a query that
   answered with it. The built-in browser used for the check refuses to draw a
   sandboxed frame, so the redrawn view itself was not seen.
 
-### Slice G: run it on a real server, then the pull request
+### Slice G: run it on a copy of a real server, then the pull request
 
-Three things have never run end to end: the assistant building a site in a
-chat and the site opening, a card with real content in its preview, and the
-server's tasks with a connected account. After that, one pull request to
-`staging` with whatever else on `wave` is ready.
+The run happened on 2026-11-21 on the owner's Mac. Pull request #12 merged
+`wave` into `staging` on 2026-11-22.
+
+**How it was run.** Committed `wave` was built in a scratch clone, so nothing
+another agent had open was in it. The server ran on a copy of the Mac's
+snapshot of a real server, never on the snapshot itself. Before the first
+start, the copy lost the server's network identity (its key, its relay
+config and its door key), and the relay was off, so the copy could not
+answer as the real server. It refused requests that did not come from the
+Mac itself. Saved sign-ins stayed unreadable there, because the real
+server's key was not on the Mac.
+
+**What ran end to end.**
+
+- The 47 migrations from the snapshot's schema to `wave` applied cleanly.
+- Server tasks listed the real accounts and devices, one row each.
+- The assistant built a site in a chat, the approval card showed, and the
+  site opened in a new tab next to the chat with its card in the Sites door.
+- The assistant set up a repeating task. A run started by hand went through
+  the runner and filed its result on the task. Tasks showed it under "Ready
+  for you" as "New", opening it showed the result and cleared it, and the
+  request worker had nothing to claim. The owner's earlier repeating tasks
+  each had their row.
+- "Add to a new page" made a page holding the site.
+- A site left open got a new token by itself after a real restart.
+
+**What it found, both fixed on `wave`.**
+
+- The first site the assistant built opened empty while the chat said it was
+  up. Its script awaited at the top of a plain `<script>`, which is a syntax
+  error, and the guidance had invited it. The setup line and
+  `applets/AGENTS.md` now say the script is `<script type="module">`, and
+  setup refuses a plain script that awaits with no `async` in it. Asked to
+  fix the site, the assistant rewrote it as a module, and it drew its chart
+  from the real rows.
+- A token check sent as the server went down never got an answer, and the
+  frame made no check after it. The check now has a ten-second limit.
+
+**What it did not show.**
+
+- A site drawing inside the app's own frame, or in a card. The built-in
+  browser used for the run refuses the resources of a sandboxed frame. The
+  site's page was watched drawing through a test page that ran the same
+  document against the same data route, and the server's answer to a
+  sandboxed frame's preflight was read with `curl`.
+- The server's tasks running. The snapshot arrives with every task off, and
+  its sign-ins cannot be read on the Mac.
+- An upgrade on a real server, with its tasks on.
+
+**Seen and left.**
+
+- When several accounts of one source carry the same stored name, their rows
+  on Server tasks read alike.
+- After the person allows a setup, the assistant starts the turn again,
+  which took over a minute for the site.
+- The chat's card for a new repeating task is still the earlier receipt
+  (slice D, Left).
+
+### The audit of 2026-11-22 and its fixes
+
+Four reviews read the server code, the web code, the wording and this plan
+against the code. These were fixed on `wave`:
+
+- **A row closes when its task has no more runs.** A one-time task that ran,
+  a task whose schedule was removed and one that became a site each left an
+  open row the owner could not end. `repeating_tasks::ensure` now closes the
+  row as done, after the owner has opened any result still waiting, and a
+  schedule put back opens it again (`settle`, `close_standing_task`).
+- **Only a run the task started itself is new.** A run started by hand shows
+  its result without "New", and a run from a chat files nothing.
+- **The row's notes are the owner's.** The applet's description fills them
+  once. The row's title follows the applet's name, and renaming the row is
+  refused with where to rename it.
+- **Share and Delete work on a site's view.** Their dialogs were only mounted
+  on the Options side.
+- **A rebuild does not open a second tab** for a site that is already open.
+- **A site can open another site** from inside its view.
+- **A task started by a data watch or a webhook is called a task** in the
+  chat, from the task row setup reports.
+- **A tab that moves to another applet** drops the one it showed at once, and
+  a failed switch or run says so on a site's view and on Options.
+- **Words.** The sidebar's Recent filter says "Sites", the `/` menu's failure
+  says "Your skills didn't load", the delete dialog names what it deletes,
+  search knows `#sites` and `#skills`, a late run reads "Hasn't run since",
+  and the server's errors no longer say "applet" or "action".
+
+These were then checked in a running app, on the same copy of a real
+server's snapshot as slice G: a rename of the row is refused and its notes
+survive a run; a run started by hand is not marked new; a one-time task's row
+closed as done with its result; Share and Delete open from a site's view; the
+delete dialog says "site" or "skill"; a view opened another site and was
+refused a route outside the app; the Recent filter says "Sites"; and three
+changes the assistant made to an open site left the tabs as they were. Not
+checked there: the search scopes, a result marked new by a scheduled run, and
+the error shown on a failed switch.
+
+Two things the check turned up, both left:
+
+- Each rebuild or token renewal of an open site added an entry to the
+  browser's history, because the frame's address changed. Fixed on
+  2026-11-22 (below).
+- Once, the chat's own tab moved to the site after a rebuild. Three repeats
+  with the tabs logged did not show it again, and the cause is not known.
+
+The owner decided the four questions the audit raised on 2026-11-22
+(Decisions), and three were built on `wave` the same day:
+
+- **Options shows past runs as a list.** The Run history row says how the
+  last run went in one sentence, and opens to the last eight runs: what
+  started each, what it said or made, and why it failed in a sentence with
+  the error's own text under it. The day dots, the month calendar, the count
+  of failed runs and the "N times" on a repeated run are gone
+  (`RunHistory.svelte`, `AppletInfo.svelte`). `applets/days.ts`,
+  `RecentDots.svelte` and `DayDot.svelte` are deleted, and `needsYou` moved
+  to `applets/standing.ts`. Seen in a scratch app.
+- **The dot cloud is removed.** Its folder is deleted, and a server drops the
+  row of a shipped applet whose folder is gone when it starts, so no
+  migration was needed. The server's screen, which once defaulted to it, was
+  already dropped. No site ships with the server now, so the kind rule's
+  table above has no site row to count. Seen on a fresh scratch server.
+- **A one-time request names its model only**: "Runs on Standard."
+  (`TaskActions.svelte`). Type-checked, not seen in an app.
+- "Agent" for an outside tool stays as it is. The 2026-11-20 decision stands
+  for everything inside Virtues: nothing the assistant or the server does is
+  called an agent.
+
+Four leftovers were fixed on `wave` on 2026-11-22, with tests and not seen
+in an app (every preview server slot was in use by other sessions):
+
+- **The other-host check** finds a module `import` from another host, a
+  dynamic `import()`, a `fetch` and an address set from a script, since a
+  module that imports from elsewhere never runs and the page stays empty. A
+  plain `<a href>` to another site is a finding of its own, which says the
+  link opens inside the view's frame. `new URL("https://…")` is left alone.
+- **A reload of an open site adds no browser history.** `FaceFrame` makes a
+  new frame for each address.
+- **A failed read is not "never ran".** The applet's detail returns the
+  error when its last run cannot be read, and setup and the list log a
+  failed read where they go on.
+- **The shipped skill that writes skills is `new-skill`**, shown as "New
+  skill". A server drops the old row when it starts. An app that still sends
+  the old name reaches it.
+
+A second audit the same day found flaws in that work, fixed on `wave` with
+tests and not seen in an app:
+
+- **The other-host check read the whole page as one string**, so a page
+  that only mentioned an address was refused and an address on the next
+  line was missed. It moved to `tools/view_check.rs` and reads the page by
+  part: each tag's attributes, each stylesheet and each script, with text,
+  HTML comments, script comments and data blocks left out. In a script an
+  address counts where the code loads it, including through a constant.
+- **A finished repeating task could be reopened by its tick box** and then
+  never closed. A repeating task has no tick box, open or finished, and
+  reopening a finished one is refused with how to bring it back. `ensure`
+  reports no row for a closed one, a run files its result after reading the
+  applet again, and a closed row is not a done dot in its thread's week.
+- **A tab that moved to another site showed the earlier one's runs, pages,
+  failure and dialogs.** All of it is dropped, and the page's loads are
+  numbered so a late answer or failure for the earlier site changes nothing.
+- **A rebuilt site in a tab behind another stayed hidden.** It comes to the
+  front of its pane, found under any of its addresses.
+- **Counts and lateness left over.** The run line on a page and on Server
+  tasks says why a run failed in a sentence and "(more than once)" in place
+  of "(12 times)". The server status line points at Server tasks in place of
+  "hasn't run when it was expected to". Options and Server tasks share one
+  last-run sentence, which no longer says "Last ran" for a skipped run.
+- **Words.** Recent's Sites filter holds only sites, and `#skills` no longer
+  lists them. A skill of yours may not be named `new-applet`.
+- **The guides had no working view.** `applets/AGENTS.md` writes the water
+  log's view out in full, and a test checks setup accepts it.
+- **Dead code.** The run-days route, its query and the web call went with
+  the day dots.
+
+Left from the reviews, not fixed: saving Technical details does not reload
+the lists; the Inbox's "new" item and the task row's "New" clear separately;
+dead exports in `applets/palette.ts`; no test covers the site page's address
+handling or the frame; and a link a site builds at run time from its own
+data still opens inside its frame.
 
 ## Decisions
 
@@ -332,6 +510,11 @@ In the owner's words where he said them.
 | 2026-11-21 | The page that lists your server's tasks is "Server tasks". | He picked it from four names. |
 | 2026-11-21 | A task that came with the server, such as the morning examen, shows on Server tasks and never in your own list. | "th server task list yes not the human one" |
 | 2026-11-21 | Skills are managed on a Skills list under the assistant's settings. | "Add Skills list" |
+| 2026-11-22 | Options shows past runs as a plain list. The count of failed runs, the day dots and the month calendar go, on every Options page. | He picked "Plain list only" from three. |
+| 2026-11-22 | The dot cloud is removed, so no site comes with the server. | He picked "Remove the dot cloud" over listing it in Sites. |
+| 2026-11-22 | A one-time request names its model and not where it runs. | He picked "Model only": "Runs on Standard." |
+| 2026-11-22 | "Agent" stays for an outside AI tool connected to a Mac, with the tool's own name where it is known. | "I like 'agent' and or the agents name too" |
+| 2026-11-22 | He asked for the code and the database to stop saying applet, and after an audit decided on one row per folder with no table per word. Whether the code's word changes is open in [applet-removal-plan.md](applet-removal-plan.md). | "I think we should rename for sites & tasks as such and rm applets", then "Yes, one row" |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -342,8 +525,6 @@ view is a site".
 | # | Question | Pick |
 |---|---|---|
 | O2 | Does an account's row open in place, or link to its source's page? | In place, as built. |
-| O6 | Does the code, the database or a stored id change name? | No. Nobody sees them, and the database is the one part that can lose data or break a rollback. |
-| O9 | Does a site that came with the server show in the Sites door? | No, as built. The door lists what you set up. The dot cloud opens by its address or in a page. |
 
 ## Personas
 
@@ -366,14 +547,15 @@ view is a site".
 
 - **The request worker claims any assistant task that is open and due.** Its
   query is `assignee = 'assistant' AND status = 'open' AND next_run_at <=
-  now()` (`api/tasks.rs`, `claim_next_request`). A repeating task's row must
-  keep `next_run_at` empty, or the worker runs it a second time as a one-time
-  request on the dearer model.
+  now() AND applet_id IS NULL` (`api/tasks.rs`, `claim_next_request`). A
+  repeating task's row is kept from it twice: by that last check, and by
+  keeping `next_run_at` empty. A new query over `app_tasks` needs the same
+  check, or it treats the row as a one-time request.
 - **Do not move applet rows into `app_tasks`.** The server rewrites shipped
   applets from their files when it starts, so moved rows return, and a
   rollback to an older release would find the prompts gone.
-- **A repeating task assigned to the assistant is refused today** in three
-  places in `api/tasks.rs`. Slice D does not lift that. It leaves the task's
+- **A repeating task assigned to the assistant is refused today** in two
+  places in `api/tasks.rs` (create and edit). Slice D does not lift that. It leaves the task's
   repeat fields empty and reads the schedule from the applet.
 - **A release from before slice D does not know the row.** After a rollback
   it shows as a request that has not started, with Take it back and Dismiss.
@@ -396,4 +578,4 @@ view is a site".
   item is slice D here.
 - One-time reminders stay with [reminders-plan.md](reminders-plan.md).
 - Hosting a site on the open web is [publishing-plan.md](publishing-plan.md).
-- Renaming code, routes, tool names, tables or stored ids (O6).
+- Renaming code, routes, tool names, tables or stored ids. That question is open in [applet-removal-plan.md](applet-removal-plan.md).

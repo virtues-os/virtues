@@ -19,7 +19,7 @@
 
 import { backendUrl } from '$lib/config/backend';
 import { getAssistantProfile, listApplets, request, updateUiPreferences } from '$lib/api/client';
-import { isYours, kindOf } from '$lib/applets/kind';
+import { isYours } from '$lib/applets/kind';
 import { getTheme, isThemeDark } from '$lib/utils/theme';
 import { BUILTIN_STYLES, isBuiltin } from '$lib/backgrounds/builtin';
 import {
@@ -244,7 +244,7 @@ class BackgroundStore {
 		try {
 			const applets = await listApplets();
 			this.sites = applets
-				.filter((a) => kindOf(a) === 'site' && !a.archived_at)
+				.filter((a) => a.kind === 'site' && !a.archived_at)
 				.sort((a, b) => Number(isYours(b)) - Number(isYours(a)) || a.name.localeCompare(b.name))
 				.map((a) => ({ id: a.id, name: a.name }));
 		} catch (error) {

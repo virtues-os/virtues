@@ -17,7 +17,7 @@ import { getSchema } from '@tiptap/core';
 import { convertNow, type ConvertResult } from './converter';
 import { messageMarkdown } from './markdown';
 import { inertHtml } from './paste';
-import { contractExtensions, type ContractPart } from './schema';
+import { CONTRACT_ONLY, contractExtensions, type ContractPart } from './schema';
 
 /**
  * What a message holds: paragraphs, lists, a quote, code, line breaks,
@@ -91,7 +91,7 @@ let pageSchema: Schema | null = null;
  * cannot show.
  */
 export function holdsOnlyMessage(html: string): boolean {
-	pageSchema ??= getSchema(contractExtensions());
+	pageSchema ??= getSchema(contractExtensions({}, undefined, CONTRACT_ONLY));
 	const doc = parseHtml(pageSchema, html);
 	let fits = true;
 	doc.descendants((node) => {

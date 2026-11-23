@@ -62,7 +62,53 @@ A tracker with a table and a view:
   "invoke": ["chat", "assistant"],
   "tables": "CREATE TABLE drinks (id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, ml INTEGER NOT NULL, drank_at TIMESTAMPTZ NOT NULL DEFAULT now());",
   "prompt": "Insert one row into drinks for what they drank (250 ml a glass unless they say), then say today's total.",
-  "view": "<!doctype html><link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"virtues.js\"></script>…" }
+  "view": "<!doctype html>…" }
+```
+
+Its view, written out. The call carries it as one string. It links the two
+runtime files, reads its own table with no schema, and draws with nothing
+from another host:
+
+```html
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="virtues.css">
+<script src="virtues.js"></script>
+<style>
+  body { margin: 24px; color: var(--color-foreground); }
+  .bars { display: flex; align-items: flex-end; gap: 8px; height: 160px; }
+  .bar { flex: 1; background: var(--color-accent); border-radius: 4px 4px 0 0; }
+  .days { display: flex; gap: 8px; font-size: 12px; color: var(--color-foreground-subtle); }
+  .days span { flex: 1; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Water this week</h1>
+<p>Milliliters of water you logged on each of the last seven days.</p>
+<div class="bars" id="bars"></div>
+<div class="days" id="days"></div>
+<script type="module">
+  const rows = await virtues.query(`
+    select to_char(d, 'Dy') as day, coalesce(sum(ml), 0) as ml
+      from generate_series(current_date - 6, current_date, interval '1 day') d
+      left join drinks on drank_at::date = d::date
+     group by d order by d`);
+  const most = Math.max(250, ...rows.map((r) => r.ml));
+  for (const r of rows) {
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = `${(r.ml / most) * 100}%`;
+    bar.title = `${r.day}: ${r.ml} ml`;
+    document.getElementById('bars').append(bar);
+    const label = document.createElement('span');
+    label.textContent = r.day;
+    document.getElementById('days').append(label);
+  }
+</script>
+</body>
+</html>
 ```
 
 A one-off reminder:
@@ -132,8 +178,9 @@ A check on new data, with no model call unless a reading is high:
   has no streaks, no count toward a goal and no "days since", because someone
   in recovery may be the one reading it.
 
-Examples that ship: `applets/morning-examen/` (a scheduled prompt with a
-limit) and `applets/dot-cloud/` (a view with no prompt).
+An example that ships: `applets/morning-examen/` (a scheduled prompt with a
+limit). No site ships with the server; the water log's view above is the
+example of one.
 
 ## For builtin (Rust) applet development
 

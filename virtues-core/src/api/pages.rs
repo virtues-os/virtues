@@ -456,7 +456,7 @@ pub struct RefSearchResult {
 #[derive(Debug, Clone, Default)]
 pub struct RefSearchFilter {
     /// Keep only these entity types (`person`, `place`, `org`, `file`,
-    /// `page`, `chat`, `project`). `None` keeps every type.
+    /// `page`, `chat`, `thread`). `None` keeps every type.
     pub kinds: Option<Vec<String>>,
     /// Keep only rows created at or after this instant.
     pub created_after: Option<chrono::DateTime<chrono::Utc>>,
@@ -1167,7 +1167,7 @@ pub async fn search_refs(
         FROM app_chats
         WHERE title ILIKE $1 AND title <> '' AND deleted_at IS NULL
         UNION ALL
-        SELECT id, name, 'project' as entity_type,
+        SELECT id, name, 'thread' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance

@@ -408,10 +408,8 @@ export interface Applet {
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
-	/** What it is to the person who meets it. Absent from a server older
-	 *  than the field; read it through `kindOf` (lib/applets/kind.ts), which
-	 *  applies the same rule to the parts. */
-	kind?: AppletKind;
+	/** What it is to the person who meets it, as the server decides it. */
+	kind: AppletKind;
 	/** The row in the task list that stands for it, when it is a task of the
 	 *  assistant's that repeats. The Tasks page shows it, and Sites does not. */
 	task_id?: string | null;
@@ -760,21 +758,6 @@ export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> 
 	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
 }
 
-/** One applet's runs on one day (in the box's timezone), counted by outcome. */
-export interface RunDay {
-	applet_id: string;
-	/** `YYYY-MM-DD`, the box-local day the runs started on. */
-	day: string;
-	status: AppletRun['status'];
-	runs: number;
-}
-
-/** Every applet's run counts per day for the last `days` days, in one request.
- *  Drives the Applets list's "Last 7 days" column and each applet's history. */
-export function getRunsByDay(days = 30): Promise<RunDay[]> {
-	return apiGet<RunDay[]>('/runs/by-day', { days });
-}
-
 /** Say something to an applet — the `message` wake. Returns once the run row
  *  exists; the agent turn continues detached. */
 export function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
@@ -788,10 +771,8 @@ export interface AppletData {
 	tables: string[];
 }
 
-export async function getAppletData(id: string): Promise<AppletData> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
-	if (!res.ok) return { schema: null, tables: [] };
-	return (await res.json()) as AppletData;
+export function getAppletData(id: string): Promise<AppletData> {
+	return apiGet<AppletData>(`/applets/${encodeURIComponent(id)}/data`);
 }
 
 export interface TriggerActionResponse {
@@ -1155,6 +1136,8 @@ export interface Note {
 	kind: string;
 	/** The note, in one sentence. */
 	text: string;
+	/** The note in a few words, for a row in a list. An older server sends none. */
+	title?: string;
 	/** What it is about (`/thread/…`, `/task/…`); the first is the one it is listed under. */
 	subjects: string[];
 	/** The first subject's name. */
@@ -1459,6 +1442,9 @@ export interface Profile {
 	units?: 'us' | 'metric';
 	/** Days audio recordings are kept (30, 90, 365); null keeps them forever. */
 	keep_recordings_days?: number | null;
+	/** What excites you most about Virtues; null when you have
+	 *  not said (`$lib/settings/startWith`). */
+	start_with?: 'days' | 'patterns' | 'memory' | 'habit' | 'ownership' | null;
 	home_place_id?: string | null;
 	/** Which wiki_people row is the owner (migration 0080). */
 	self_person_id?: string | null;
@@ -2695,6 +2681,8 @@ export interface SkillSummary {
 	description: string;
 	icon?: string | null;
 	source: "shipped" | "authored";
+	/** The applet behind it. A server from before the field leaves it out. */
+	applet_id?: string;
 }
 
 export interface SkillList {

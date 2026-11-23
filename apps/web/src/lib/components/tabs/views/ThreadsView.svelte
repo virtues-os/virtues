@@ -59,7 +59,8 @@
 	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
 	type View = 'overview' | 'tasks' | 'threads' | 'insights';
-	type Filter = 'active' | 'backlog' | 'finished';
+	/** Active: listed and open. Passive: unlisted and open. Archived: ended. */
+	type Filter = 'active' | 'passive' | 'archived';
 
 	const params = $derived(new URLSearchParams(tab.route.split('?')[1] ?? ''));
 	const view = $derived.by<View>(() => {
@@ -259,18 +260,19 @@
 	let filter = $state<Filter>('active');
 	const FILTERS: { id: Filter; label: string }[] = [
 		{ id: 'active', label: 'Active' },
-		{ id: 'backlog', label: 'Backlog' },
-		{ id: 'finished', label: 'Finished' },
+		{ id: 'passive', label: 'Passive' },
+		{ id: 'archived', label: 'Archived' },
 	];
 
 	const firstLoad = $derived(!projectStore.loaded && projectStore.loading);
 	// The overview shows the active threads, as the Active filter does.
 	const listFilter = $derived<Filter>(view === 'overview' ? 'active' : filter);
 	const rows = $derived.by<ProjectSummary[]>(() => {
-		if (listFilter === 'finished') return projectStore.archived;
-		const backlog = listFilter === 'backlog';
-		const open = projectStore.projects.filter((p) => !!p.is_backlog === backlog);
-		if (backlog || !week) return open;
+		if (listFilter === 'archived') return projectStore.archived;
+		const passive = listFilter === 'passive';
+		// A server older than is_listed sends none, which means listed.
+		const open = projectStore.projects.filter((p) => (p.is_listed === false) === passive);
+		if (passive || !week) return open;
 		// Active follows the week's order: threads with time first, then the
 		// quiet ones, so J, K and the pager walk the chart as it is drawn.
 		const busy = (id: string) =>
@@ -627,15 +629,16 @@
 					</ul>
 				{/if}
 			{:else}
-				<div class="filters" role="group" aria-label="Show">
+				<p class="lede">Each thread gathers the chats, pages, events and emails about one part of your life.</p>
+				<div class="filters" role="tablist" aria-label="Show">
 					{#each FILTERS as f (f.id)}
-						<button class="vt" aria-pressed={filter === f.id} onclick={() => (filter = f.id)}>{f.label}</button>
+						<button class="vt" role="tab" aria-selected={filter === f.id} aria-pressed={filter === f.id} onclick={() => (filter = f.id)}>
+							{f.label}
+						</button>
 					{/each}
 				</div>
 
-				{#if filter === 'active' && week && week.threads.length > 0}
-					{@render weekBlock()}
-				{:else if firstLoad}
+				{#if firstLoad}
 					<div class="rows" aria-hidden="true">
 						{#each [0, 1, 2] as i (i)}<div class="row placeholder"></div>{/each}
 					</div>
@@ -645,8 +648,8 @@
 					<p class="empty">
 						{#if filter === 'active'}
 							A thread is something happening in your life that you follow. It keeps its tasks, chats, pages and files together.
-						{:else if filter === 'backlog'}
-							Threads you mean to come back to wait here.
+						{:else if filter === 'passive'}
+							Passive threads stay out of the sidebar. Their things reach your Inbox only when they come near.
 						{:else}
 							Threads you finish or drop wait here.
 						{/if}
@@ -715,9 +718,10 @@
 									{:else}
 										<span class="name">{p.name || 'Untitled thread'}</span>
 									{/if}
-									{#if p.current_status || p.instructions}
-										<span class="line">{p.current_status || p.instructions}</span>
-									{/if}
+									<span class="line">
+										{p.is_adding_automatic ? 'Gathers on its own.' : 'You file things here.'}
+										{#if p.current_status || p.instructions}{p.current_status || p.instructions}{/if}
+									</span>
 								</span>
 								<span class="when">
 									{p.archived_at ? `${outcomeLabel(p)} ${dayOf(p.archived_at)}` : formatRelativeTimestamp(p.updated_at)}

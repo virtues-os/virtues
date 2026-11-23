@@ -8,7 +8,7 @@
 	import { onDestroy, onMount } from "svelte";
 	import { Editor } from "@tiptap/core";
 	import "$lib/document/document.css";
-	import { contractExtensions } from "$lib/document/schema";
+	import { pageExtensions } from "$lib/document/page-bases";
 	import { pageNodeViews } from "$lib/document/views";
 	import { codeHighlight } from "$lib/document/code";
 	import { links } from "$lib/document/links";
@@ -25,7 +25,7 @@
 			element: host,
 			editable: false,
 			content: html,
-			extensions: [...contractExtensions(pageNodeViews()), codeHighlight(), links(), ProposalsRead],
+			extensions: [...pageExtensions(pageNodeViews()), codeHighlight(), links(), ProposalsRead],
 			editorProps: { attributes: { class: "doc-prose prose doc-preview" } },
 		});
 	});

@@ -213,9 +213,13 @@ pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
 
 /// GET /api/skills — the applets `/name` starts, for the composer's `/` menu.
 /// The path is the one the menu read when these were skills, which older
-/// clients still call.
-pub async fn list_skills_handler() -> Response {
-    Json(crate::api::chat_applets::menu()).into_response()
+/// clients still call. A skill turned off is left out.
+pub async fn list_skills_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::chat_applets::off_applets(state.db.pool())
+            .await
+            .map(|off| crate::api::chat_applets::menu(&off)),
+    )
 }
 
 /// POST /api/chats/:id/seen - The person has this chat on screen.

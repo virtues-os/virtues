@@ -20,7 +20,6 @@
 import { Extension } from '@tiptap/core';
 import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type Selection } from '@tiptap/pm/state';
-import { CellSelection } from '@tiptap/pm/tables';
 import type { EditorView } from '@tiptap/pm/view';
 import { toast } from 'svelte-sonner';
 import { decoded } from '$lib/utils/urlUtils';
@@ -165,8 +164,10 @@ export function addFiles(
 		replacing.replace(tr);
 		pos = tr.mapping.map(first, -1);
 		// An emptied cell holds an empty line, and the file takes its place.
+		// A cell selection is known by its JSON type, so the composer, which
+		// shares this module and holds no table, never loads prosemirror-tables.
 		const after = tr.doc.resolve(pos).nodeAfter;
-		if (replacing instanceof CellSelection && after?.isTextblock && !after.content.size) pos += 1;
+		if (replacing.toJSON().type === 'cell' && after?.isTextblock && !after.content.size) pos += 1;
 	}
 	const caretHere = tr.selection.empty && tr.selection.from === pos;
 	const sent: [string, File][] = [];

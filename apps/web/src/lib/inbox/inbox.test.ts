@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AttentionItem, Note, Task } from '$lib/api/client';
 import type { TimelineDay } from '$lib/timeline/day';
-import { buildItems, noteRing, questionItem, taskRing } from './items';
+import { buildItems, listSections, noteRing, questionItem, taskRing, type InboxItem } from './items';
 import { placeQuestion, type PlaceQuestion } from './questions';
 import { buildGraph, hubId } from './graph';
 import { fitLabels, labelWidth, markBox } from './labels';
@@ -83,6 +83,51 @@ describe('buildItems', () => {
 		});
 		expect(items.map((i) => i.key)).toEqual(['attention:backup', 'task:b', 'note:clash:a:b', 'task:a']);
 		expect(items.map((i) => i.kind)).toEqual(['needs', 'task', 'insight', 'task']);
+	});
+
+	it('puts Today first in the List, with what waits for you, and your server last', () => {
+		const items = buildItems({
+			tasks: [
+				task({ id: 'a', due_on: '2026-03-20' }),
+				task({ id: 'b', title: 'Buy seed trays', due_on: '2026-03-12' }),
+				task({ id: 'r', title: 'Find a bike shop', status: 'ready', assignee: 'assistant' }),
+				task({ id: 'w', title: 'Plan the beds', due_on: '2026-03-14' }),
+			],
+			notes: [note],
+			attention: [alert],
+			active: new Set(),
+			now: NOW,
+		});
+		const part = (rows: InboxItem[]) => ({ rows, more: 0, onMore: () => {} });
+		const ask: InboxItem = { key: 'ask:home', kind: 'needs', ring: 0, noise: 0, title: 'Is this home?', meta: '', threadId: null };
+		const sections = listSections(
+			items.filter((it) => !it.attention),
+			part([ask]),
+			part(items.filter((it) => it.attention)),
+		);
+		expect(sections.map((s) => s.name)).toEqual(['Today', 'Questions', 'Insights', 'This week', 'Later', 'Your server']);
+		expect(sections.map((s) => s.rows.map((r) => r.key))).toEqual([
+			['task:r', 'task:b'],
+			['ask:home'],
+			['note:clash:a:b'],
+			['task:w'],
+			['task:a'],
+			['attention:backup'],
+		]);
+	});
+
+	it('lists a note by its short title, and by its sentence when the server sends no title', () => {
+		const at = (n: Note) => buildItems({ tasks: [], notes: [n], attention: [], active: new Set(), now: NOW })[0].title;
+		expect(at({ ...note, title: 'Bike shop pickup overlaps Garden center visit' })).toBe('Bike shop pickup overlaps Garden center visit');
+		expect(at(note)).toBe(note.text);
+	});
+
+	it('marks a problem on your server with a warning, and a page an applet wrote with a page', () => {
+		const wrote: AttentionItem = { key: 'applet_new:r1', kind: 'applet_new', title: 'Morning brief wrote Monday', body: 'Open it to read the page.', route: '/applet/a' };
+		const items = buildItems({ tasks: [], notes: [], attention: [alert, wrote], active: new Set(), now: NOW });
+		const glyph = (key: string) => items.find((i) => i.key === `attention:${key}`)?.glyph;
+		expect(glyph('backup')).toBe('mynaui:danger-triangle');
+		expect(glyph('applet_new:r1')).toBe('mynaui:file-text');
 	});
 
 	it('files a note under its first thread, and shows a thread that is not active as none', () => {
@@ -686,5 +731,11 @@ describe('server questions', () => {
 	it('lists a question as a thing that waits on you and is always shown', () => {
 		const it = questionItem(placeQuestion(place({ ask: 'home' })));
 		expect(it).toMatchObject({ key: 'ask:place:pl_1', kind: 'needs', noise: 0, title: 'Is this home?', meta: 'New Orleans' });
+	});
+
+	it('marks a question with what it is about: a house for home, a pin for any other place', () => {
+		expect(questionItem(placeQuestion(place({ ask: 'home' }))).glyph).toBe('mynaui:map-pin-house');
+		expect(questionItem(placeQuestion(place({ ask: 'work' }))).glyph).toBe('mynaui:map-pin');
+		expect(questionItem(placeQuestion(place())).glyph).toBe('mynaui:map-pin');
 	});
 });

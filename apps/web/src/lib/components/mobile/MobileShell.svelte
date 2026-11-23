@@ -25,17 +25,17 @@
 	 * makes the same journey at a third of the speed (the parallax below), so
 	 * the two planes read as stacked rather than glued.
 	 *
-	 * Chrome above the view returned, minimally, out of necessity: with no tab
-	 * bar and no back gesture, the hamburger is the only exit from any non-chat
-	 * view, so it must exist everywhere. It brings the shell's one other verb —
-	 * New chat — to the opposite corner. Between them, a chat that is in a
-	 * project names it: the phone's title slot, and the way to its menu.
+	 * Glass pills float over the view. The left one opens the drawer, so it is
+	 * the way out of any non-chat view and must exist everywhere. The right one
+	 * is the shell's one other verb, New chat. Between them, a chat that is in
+	 * a project names it: the phone's title slot, and the way to its menu.
 	 */
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
-	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
 	import ProjectChip from "$lib/components/ProjectChip.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
@@ -202,39 +202,8 @@
 		windowShellStore.openTabFromRoute("/chat", { label: "Chat" });
 	}
 
-	// The top-right slot is modal (see ChatChrome in mobileLayout): an empty
-	// chat is already new, so the slot carries the temporary-chat toggle there;
-	// everywhere else it composes.
+	// An empty chat is already new, so its bar has no new-chat button.
 	const chrome = $derived(mobileLayout.chatChrome);
-	const showGhostToggle = $derived(chrome?.empty === true);
-
-	// ── Scroll-edge hairline ─────────────────────────────────────────────────
-	// The bar is transparent chrome over the view; the hairline appears only
-	// once content has actually passed beneath it, so a page at rest keeps its
-	// clean top. Every view owns its own scroller and scroll doesn't bubble,
-	// so this is a capture-phase listener on window (the old tab bar's trick),
-	// filtered to scrollers inside this shell's view region.
-	let viewEl = $state<HTMLElement | null>(null);
-	let scrolledUnderBar = $state(false);
-
-	$effect(() => {
-		function onScroll(e: Event) {
-			const t = e.target;
-			if (!(t instanceof Element) || !viewEl?.contains(t)) return;
-			const el = t as HTMLElement;
-			if (typeof el.scrollTop !== "number") return;
-			scrolledUnderBar = el.scrollTop > 2;
-		}
-		window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-		return () => window.removeEventListener("scroll", onScroll, true);
-	});
-
-	// A fresh view starts at its own top — the hairline belongs to a scroll
-	// position this view hasn't reached yet.
-	$effect(() => {
-		void tab?.route;
-		scrolledUnderBar = false;
-	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -254,7 +223,11 @@
 		style:transform="translateX({drawerShift}px)"
 		inert={!open && !dragging}
 	>
-		<MobileDrawer />
+		<!-- Loaded right after the first paint: it is off screen until it
+		     opens, so the first screen does not wait for it. -->
+		{#await import("$lib/components/mobile/MobileDrawer.svelte") then { default: MobileDrawer }}
+			<MobileDrawer />
+		{/await}
 	</div>
 
 	<!-- One view. Not one of many with the rest hidden — one. -->
@@ -266,16 +239,25 @@
 		inert={open}
 		bind:this={viewportEl}
 	>
-		<header class="topbar" class:edge={scrolledUnderBar}>
-			<button class="bar-btn" onclick={() => mobileLayout.openDrawer()} aria-label="Menu">
-				<Icon icon="mynaui:menu" width={22} />
+		<!-- Glass pills over the view, so the page scrolls under them: the way
+		     back to your chats on the left, the project in the middle, and new
+		     chat (or the temporary-chat switch on an empty chat) on the right. -->
+		{#if chrome && !chrome.empty}
+			<div class="bar-fade" aria-hidden="true"></div>
+		{/if}
+		<header class="topbar">
+			<!-- The ∴ opens the drawer, the way the mark opens the desktop's rail. -->
+			<button class="bar-btn lq" onclick={() => mobileLayout.openDrawer()} aria-label="Threads and chats">
+				<svg viewBox="0 0 12 10.5" width="16" height="14" fill="currentColor" aria-hidden="true">
+					<circle cx="6" cy="2.4" r="1.5" />
+					<circle cx="2.6" cy="8.1" r="1.5" />
+					<circle cx="9.4" cy="8.1" r="1.5" />
+				</svg>
 			</button>
 			{#if chrome?.project}
-				<!-- The title slot: the project this chat is in, where a phone
-				     puts "where am I". A tap is the project's menu (open it,
-				     move the chat, take it out); there is no right-click here,
-				     and opening the project is its first line. -->
-				<div class="bar-title">
+				<!-- A tap is the project's menu (open it, move the chat, take it
+				     out); there is no right-click here. -->
+				<div class="bar-title lq">
 					<ProjectChip
 						bar
 						project={chrome.project}
@@ -284,23 +266,21 @@
 					/>
 				</div>
 			{/if}
-			{#if showGhostToggle}
-				<button
-					class="bar-btn"
-					class:ghost-active={chrome?.ghost}
-					onclick={() => chrome?.toggleGhost()}
-					aria-pressed={chrome?.ghost}
-					aria-label={chrome?.ghost
-						? "Temporary chat — won't be saved"
-						: "Start a temporary chat"}
-				>
-					<Icon icon="mynaui:incognito" width={22} />
+			<div class="bar-group" class:alone={!chrome?.project}>
+				<button class="bar-btn lq" onclick={() => search.show()} aria-label="Search">
+					<AtlasIcon name="search" size={19} bare />
 				</button>
-			{:else}
-				<button class="bar-btn" onclick={newChat} aria-label="New chat">
-					<Icon icon="mynaui:chat-plus" width={22} />
-				</button>
-			{/if}
+				{#if chrome?.showChatMenu}
+					<button class="bar-btn lq" onclick={(e) => chrome?.showChatMenu?.(e)} aria-haspopup="menu" aria-label="Chat options">
+						<Icon icon="mynaui:dots" width={20} />
+					</button>
+				{/if}
+				{#if !chrome?.empty}
+					<button class="bar-btn lq" onclick={newChat} aria-label="New chat">
+						<AtlasIcon name="plus" size={19} bare />
+					</button>
+				{/if}
+			</div>
 		</header>
 
 		{#if reachability.unreachable}
@@ -315,7 +295,7 @@
 			</div>
 		{/if}
 
-		<div class="view" bind:this={viewEl}>
+		<div class="view" class:under-bar={!chrome}>
 			{#if tab}
 				<TabContent {tab} active={true} />
 			{/if}
@@ -376,43 +356,53 @@
 		visibility: hidden;
 	}
 
+	/* Floats over the view: the page, and the painting on an empty chat,
+	   run up under the pills. The view tells its scrollers how much room the
+	   bar takes through --shell-bar-inset. */
 	.topbar {
-		position: relative;
-		flex: none;
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 2;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		height: 48px;
-		padding: 0 6px;
-	}
-
-	/* Centered on the bar, not between the buttons, so it stays put when the
-	   right-hand button changes; the width keeps it clear of both. */
-	.bar-title {
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		transform: translate(-50%, -50%);
-		display: flex;
-		justify-content: center;
-		max-width: calc(100% - 120px);
-	}
-
-	/* The scroll-edge hairline: present only while content is under the bar. */
-	.topbar::after {
-		content: "";
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 0.5px;
-		background: var(--color-border);
-		opacity: 0;
-		transition: opacity 0.2s ease;
+		gap: 0;
+		height: 44px;
+		margin: 8px 12px 0;
 		pointer-events: none;
 	}
-	.topbar.edge::after {
-		opacity: 1;
+	.topbar > :global(*) {
+		pointer-events: auto;
+	}
+
+	/* Beside the ∴, like the desktop's breadcrumb, so it never runs into the
+	   buttons on the right however long the name is. */
+	.bar-title {
+		flex: 0 1 auto;
+		min-width: 0;
+		margin-right: auto;
+		display: flex;
+		align-items: center;
+		height: 40px;
+		margin: 2px;
+		padding: 0 8px;
+		border-radius: var(--radius-lg);
+		overflow: hidden;
+	}
+
+	/* Under a saved chat the page fades out behind the bar, so reply text
+	   does not show through the glass. */
+	.bar-fade {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 2;
+		height: 88px;
+		background: linear-gradient(var(--color-page) 50%, transparent);
+		pointer-events: none;
 	}
 
 	/* Calm and factual: a strip, not a dialog. Warm-muted, never red — see the
@@ -424,7 +414,7 @@
 		justify-content: space-between;
 		gap: 10px;
 		min-height: 36px;
-		margin: 0 10px 6px;
+		margin: 68px 10px 6px;
 		padding: 4px 6px 4px 12px;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-xl);
@@ -458,37 +448,58 @@
 		transition-duration: 0s;
 	}
 
+	/* 40px of button with a 44px reach: the margin is part of the target. */
 	.bar-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 44px;
-		height: 44px;
+		width: 40px;
+		height: 40px;
+		margin: 2px;
 		border: 0;
-		border-radius: var(--radius-xl);
-		background: transparent;
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
-		/* Instant on press, fade on release — the native rhythm. */
-		transition: background-color 0.25s ease-out;
-	}
-	.bar-btn:active {
-		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
-		transition-duration: 0s;
 	}
 
-	/* The temporary-chat switch, lit: the mode is on. */
-	.bar-btn.ghost-active {
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+	.bar-group {
+		flex: none;
+		display: flex;
+	}
+	.bar-group.alone {
+		margin-left: auto;
+	}
+
+	/* The press: a quick shrink under the finger and a spring back. */
+	.bar-btn {
+		transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+	.bar-btn:active {
+		transform: scale(0.92);
+		transition-duration: 0.08s;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.bar-btn,
+		.bar-btn:active {
+			transition: none;
+			transform: none;
+		}
 	}
 
 	.view {
+		--shell-bar-inset: 56px;
 		position: relative;
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
+	}
+
+	/* A view that is not a chat has no idea the bar floats over it, so its
+	   content starts below the bar. A chat pads its own transcript instead, so
+	   the page can scroll under the glass. */
+	.view.under-bar > :global(.tab-content) {
+		top: var(--shell-bar-inset);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

@@ -3,71 +3,69 @@
 	 * The Inbox as a plain list. A row is one line: what it is at the start,
 	 * the title, the thread it sits in beside the title, and when it is for
 	 * at the end. A task of yours has its check, so it can be finished from
-	 * the list. Anything else wears its mark. A heading folds its section.
+	 * the list. Anything else wears its mark. A heading folds its section,
+	 * and the section eases shut, as does a question's panel.
 	 *
-	 * The page's own list (`inbox`) reads in three parts. What your server
-	 * asks or needs comes first, and a question with a yes or no can be
-	 * answered from its row. What your server noticed comes next. Then come
-	 * the things in your threads, nearest first, under the name of each ring.
-	 * Anywhere else the list is only the rings.
+	 * The page's own list (`inbox`) reads in the order `listSections` sets:
+	 * Today, Questions, Insights, This week, Later, then Your server. A
+	 * question is answered beside the list, or under its row in a narrow
+	 * pane, where the place is on a map to answer from. Anywhere else the
+	 * list is only the rings.
 	 */
 	import type { Snippet } from 'svelte';
+	import { listSections, type InboxItem, type ListSection, type Part } from '$lib/inbox/items';
 	import type { ProjectSummary } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import TaskCheck from '$lib/components/tasks/TaskCheck.svelte';
-	import { RINGS, type InboxItem } from '$lib/inbox/items';
-	import type { PlaceAnswer } from '$lib/inbox/questions';
+	import { RINGS } from '$lib/inbox/items';
 	import { toggleTaskDone } from '$lib/tasks/actions';
+	import { motionMs } from '$lib/utils/motion';
+	import { slide, type TransitionConfig } from '$lib/utils/transitions';
 	import InboxMark from './InboxMark.svelte';
 
 	let {
 		items,
-		server = [],
-		serverMore = 0,
+		questions,
+		needs,
 		picked = null,
 		inbox = false,
 		threadOf,
 		onPick,
-		onReply,
-		onServerMore,
 		under,
 	}: {
 		items: InboxItem[];
-		/** What your server asks or needs, for the first section. */
-		server?: InboxItem[];
-		/** How many more of those there are than `server` holds. */
-		serverMore?: number;
+		/** What your server asks you, for the section after Today. */
+		questions?: Part;
+		/** What your server needs from you, for the last section. */
+		needs?: Part;
 		picked?: string | null;
-		/** Lay it out as the page's own list: your server, insights, then the rings. */
+		/** Lay it out as the page's own list, in the order `listSections` sets. */
 		inbox?: boolean;
 		/** The thread a thing sits in, when it sits in one. */
 		threadOf: (it: InboxItem) => ProjectSummary | null;
 		onPick: (key: string) => void;
-		onReply?: (it: InboxItem, answer: PlaceAnswer) => void;
-		onServerMore?: () => void;
 		/** Drawn under a chosen question, where the page has no room beside the list. */
 		under?: Snippet<[InboxItem]>;
 	} = $props();
 
-	const SERVER = 'Your server';
-	const INSIGHTS = 'Insights';
-	const sections = $derived([
-		...(inbox
-			? [
-					{ name: SERVER, rows: server },
-					{ name: INSIGHTS, rows: items.filter((it) => it.kind === 'insight') },
-				]
-			: []),
-		...RINGS.map((name, ring) => ({ name, rows: items.filter((it) => it.ring === ring && !(inbox && it.kind === 'insight')) })),
-	]);
-
-	/** A question is answered from its row when a yes or a no settles it. */
-	const quick = (it: InboxItem) => (it.question && !it.question.typed && it.question.replies.length <= 2 ? it.question.replies : []);
+	/** A short part's rows ease in and out one at a time. */
+	const sections = $derived<ListSection[]>(
+		inbox ? listSections(items, questions, needs) : RINGS.map((name, ring) => ({ name, rows: items.filter((it) => it.ring === ring) })),
+	);
 
 	/** The sections you folded. */
 	let folded = $state<Record<string, boolean>>({});
+
+	/**
+	 * A row easing in or out. Only the short parts do it: an answered
+	 * question leaves and "Show the rest" brings rows in. The day groups
+	 * change by the dozen when the signal control moves, and stay instant.
+	 */
+	const rowEase = (node: Element, on: boolean | undefined): TransitionConfig => (on ? slide(node) : { duration: 0 });
+	/** A question's panel is tall, so it opens at the pace of a pane. */
+	const panelEase = (node: Element): TransitionConfig => slide(node, { duration: motionMs('--motion-layout', 300) });
 </script>
 
 {#each sections as s (s.name)}
@@ -77,54 +75,48 @@
 			<h3 class="group">
 				<button type="button" class="fold" aria-expanded={open} onclick={() => (folded[s.name] = open)}>
 					{s.name}
-					<Icon icon={open ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
+					<Icon icon="mynaui:chevron-down" width="16" />
 				</button>
 			</h3>
 			{#if open}
-				<ul>
-					{#each s.rows as it (it.key)}
-						{@const thread = threadOf(it)}
-						{@const mine = it.kind === 'task' && it.task}
-						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-						<li class="row" class:on={it.key === picked} data-inbox-key={it.key} onclick={() => onPick(it.key)}>
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<span class="mk" onclick={(e) => mine && e.stopPropagation()}>
-								{#if mine}
-									<TaskCheck done={false} label={`Complete ${it.title}`} onclick={() => void toggleTaskDone(mine)} />
-								{:else}
-									<InboxMark kind={it.kind} />
-								{/if}
-							</span>
-							<button type="button" class="title" class:sentence={it.kind === 'insight'} aria-pressed={it.key === picked}>{it.title}</button>
-							{#if thread}
-								<span class="home">
-									<ProjectGlyph project={thread} size={14} tinted />
-									<span class="home-name">{thread.name || 'Untitled thread'}</span>
-								</span>
-							{:else if it.question}
-								<span class="home"><span class="home-name">{it.question.about}</span></span>
-							{/if}
-							{#if it.question}
-								<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-								<span class="replies" onclick={(e) => e.stopPropagation()}>
-									{#each quick(it) as r (r.label)}
-										<TextAction quiet={r.label === 'No'} onclick={() => onReply?.(it, r.answer)}>{r.label}</TextAction>
+				<div class="rows" transition:slide>
+					<ul>
+						{#each s.rows as it (it.key)}
+							{@const thread = threadOf(it)}
+							{@const mine = it.kind === 'task' && it.task}
+							{@const openUnder = !!under && !!it.question && it.key === picked}
+							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+							<li class="row" class:on={it.key === picked} data-inbox-key={it.key} onclick={() => onPick(it.key)} transition:rowEase={s.short}>
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<span class="mk" onclick={(e) => mine && e.stopPropagation()}>
+									{#if mine}
+										<TaskCheck done={false} label={`Complete ${it.title}`} glyph onclick={() => void toggleTaskDone(mine)} />
 									{:else}
-										<TextAction onclick={() => onPick(it.key)}>Answer</TextAction>
-									{/each}
+										<InboxMark kind={it.kind} glyph={it.glyph} />
+									{/if}
 								</span>
-							{:else if !it.attention}
-								<span class="when">{it.meta}</span>
+								<button type="button" class="title" aria-pressed={it.key === picked}>{it.title}</button>
+								{#if thread}
+									<span class="home">
+										<ProjectGlyph project={thread} size={14} tinted />
+										<span class="home-name">{thread.name || 'Untitled thread'}</span>
+									</span>
+								{:else if it.question}
+									<span class="home"><span class="home-name">{it.question.about}</span></span>
+								{/if}
+								{#if !it.question && !it.attention}
+									<span class="when">{it.meta}</span>
+								{/if}
+							</li>
+							{#if openUnder && under}
+								<li class="under" transition:panelEase>{@render under(it)}</li>
 							{/if}
-						</li>
-						{#if under && it.question && it.key === picked}
-							<li class="under">{@render under(it)}</li>
-						{/if}
-					{/each}
-				</ul>
-				{#if s.name === SERVER && serverMore > 0}
-					<p class="more"><TextAction quiet onclick={() => onServerMore?.()}>Show the rest</TextAction></p>
-				{/if}
+						{/each}
+					</ul>
+					{#if s.more}
+						<p class="more"><TextAction quiet onclick={() => s.onMore?.()}>Show the rest</TextAction></p>
+					{/if}
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -132,15 +124,19 @@
 
 <style>
 	section {
-		margin-bottom: 16px;
+		margin-bottom: 24px;
 	}
+	/* A section's heading is the serif the app's other headings use, a step
+	   above the rows under it. */
 	.group {
 		margin: 0 0 4px;
-		font-size: var(--text-small);
+		font-family: var(--font-serif);
+		font-size: var(--text-lead);
 		font-weight: 400;
-		line-height: 16px;
+		line-height: 24px;
 	}
-	/* A section's name folds it. The arrow shows only when it is pointed at or folded. */
+	/* A section's name folds it. The arrow shows only when it is pointed at
+	   or folded, and turns to point at the folded rows. */
 	.fold {
 		display: inline-flex;
 		align-items: center;
@@ -149,16 +145,27 @@
 		border: 0;
 		background: none;
 		font: inherit;
-		color: var(--color-foreground-muted);
+		color: var(--color-foreground);
 		cursor: pointer;
 	}
 	.fold :global(svg) {
 		opacity: 0;
-		transition: opacity var(--motion-hover-out) var(--ease-premium);
+		color: var(--color-foreground-muted);
+		transition:
+			opacity var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-state) var(--ease-premium);
 	}
 	.fold:hover :global(svg),
 	.fold[aria-expanded='false'] :global(svg) {
 		opacity: 1;
+	}
+	.fold[aria-expanded='false'] :global(svg) {
+		transform: rotate(-90deg);
+	}
+	/* The fold clips what it closes, so it is as wide as a row's fill. */
+	.rows {
+		margin: 0 -12px;
+		padding: 0 12px;
 	}
 	ul {
 		margin: 0;
@@ -209,14 +216,6 @@
 		color: var(--color-foreground);
 		cursor: pointer;
 	}
-	/* An insight is a sentence, so it may run to a second line. */
-	.title.sentence {
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
-		white-space: normal;
-	}
 	/* In a narrow column the thread's name gives up its width before the
 	   title does, down to its glyph, which still says which thread it is. */
 	.home {
@@ -240,18 +239,8 @@
 		font-size: var(--text-small);
 		color: var(--color-foreground-muted);
 	}
-	/* A question's answers sit where a task's day does. */
-	.replies {
-		display: flex;
-		flex: none;
-		align-items: center;
-		align-self: center;
-		gap: 12px;
-		margin-left: auto;
-		line-height: 20px;
-	}
 	.under {
-		padding: 4px 0 12px 32px;
+		padding: 8px 0 16px 32px;
 	}
 	.more {
 		margin: 4px 0 0 32px;

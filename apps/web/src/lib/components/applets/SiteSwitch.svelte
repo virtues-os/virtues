@@ -8,7 +8,7 @@
 	import Segmented from '$lib/components/Segmented.svelte';
 	import type { Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { KIND_WORD, kindOf, optionsOf, pageOf } from '$lib/applets/kind';
+	import { KIND_WORD, optionsOf, pageOf } from '$lib/applets/kind';
 
 	let {
 		tabId,
@@ -22,7 +22,7 @@
 
 	// The first side is named for what the thing is: Site, Task or Skill.
 	const options = $derived([
-		{ value: 'site' as const, label: KIND_WORD[kindOf(applet)] },
+		{ value: 'site' as const, label: KIND_WORD[applet.kind] },
 		{ value: 'options' as const, label: 'Options' }
 	]);
 

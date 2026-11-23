@@ -50,6 +50,9 @@ pub struct Note {
     pub kind: &'static str,
     /// The note, in one sentence.
     pub text: String,
+    /// The note in a few words, for a row in a list. The thread and the time
+    /// sit beside it there, so the title leaves them out.
+    pub title: String,
     /// What it is about, as routes (`/thread/…`, `/task/…`); the first is
     /// the one it is listed under.
     pub subjects: Vec<String>,
@@ -452,6 +455,7 @@ async fn clashes(pool: &PgPool, now: DateTime<Utc>, tz: Option<chrono_tz::Tz>) -
                 key: format!("clash:{}:{}", a_id.as_str().min(b_id.as_str()), a_id.as_str().max(b_id.as_str())),
                 kind: "clash",
                 text: format!("{a_title} for {a_name} and {b_title} for {b_name} overlap on {}.", at_label(start, tz)),
+                title: format!("{a_title} overlaps {b_title}"),
                 subjects: vec![format!("/thread/{a_thread}"), format!("/thread/{b_thread}")],
                 about: a_name,
                 when: at_label(start, tz),
@@ -500,6 +504,7 @@ async fn unplanned(pool: &PgPool, now: DateTime<Utc>, today: NaiveDate, zone: &s
             key: format!("unplanned:{id}:{due}"),
             kind: "unplanned",
             text: format!("{title} is due {day}, and no time is set aside for {thread_name} before then."),
+            title: format!("{title} has no time set aside"),
             subjects: vec![format!("/task/{id}"), format!("/thread/{thread_id}")],
             about: title,
             when: format!("By {}", day),
@@ -586,6 +591,7 @@ mod tests {
         assert_eq!(clash.subjects, ["/thread/nb_hall", "/thread/nb_trip"]);
         assert_eq!(clash.action_route, "/day/day_2030-01-12");
         assert!(clash.text.contains("Second coat") && clash.text.contains("Call with the agent"), "{}", clash.text);
+        assert!(!clash.title.contains(" for "), "the title leaves the threads to the row: {}", clash.title);
 
         // Receipts are due tomorrow with nothing set aside for Tax paperwork.
         // Buy tape has the second coat set aside before its day, the ferry is

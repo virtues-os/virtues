@@ -111,7 +111,9 @@ export function recentRows({ pinned = false }: { pinned?: boolean } = {}): Recen
 		});
 	}
 
-	for (const applet of appletsStore.mine) {
+	// Your sites. A skill's page and a repeating task's options are tools,
+	// not places you go back to, and the filter that holds these is Sites.
+	for (const applet of appletsStore.sites) {
 		const ts = visits.lastVisit('applet', applet.id);
 		if (!ts) continue;
 		rows.push({

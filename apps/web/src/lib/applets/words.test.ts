@@ -17,6 +17,8 @@ describe('the word for what the assistant set up', () => {
 		expect(wordForMade({ has_view: true, schedule: '0 0 6 * * *' })).toBe('site');
 		expect(wordForMade({ capabilities: ['has a view'] })).toBe('site');
 		expect(wordForMade({ has_view: false, schedule: '0 0 18 * * 0' })).toBe('task');
+		// A data watch or a webhook starts it too, and setup reports its task row.
+		expect(wordForMade({ has_view: false, task_id: 'task_1' })).toBe('task');
 		expect(wordForMade({ has_view: false, schedule: null })).toBe('skill');
 	});
 });

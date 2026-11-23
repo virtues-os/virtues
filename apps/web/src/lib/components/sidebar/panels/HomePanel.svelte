@@ -262,7 +262,7 @@
 		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
 		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
 		{ id: 'thread', label: 'Threads', plural: 'threads', seeAll: () => openProjects() },
-		{ id: 'applet', label: 'Applets', plural: 'applets', seeAll: () => openApplets() },
+		{ id: 'applet', label: 'Sites', plural: 'sites', seeAll: () => openApplets() },
 	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
 	let recentFilter = $state<RecentFilter>(readRecentFilter());

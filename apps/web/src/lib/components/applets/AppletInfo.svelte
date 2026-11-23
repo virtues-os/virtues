@@ -2,34 +2,36 @@
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import RecentDots from './RecentDots.svelte';
 	import type { Applet } from '$lib/api/client';
-	import type { DayIndex } from '$lib/applets/days';
+	import { lastRunLine } from '$lib/applets/standing';
 
 	/**
-	 * An applet's Info: how its last 7 days went, then Technical details. Its
+	 * An applet's Info: how its last run went, then Technical details. Its
 	 * switch and schedule are in the page's header, Delete in its More menu. Run history
 	 * and Technical details open in place: each is one tap from the page, and
 	 * neither holds enough to need a page of its own.
 	 */
 	let {
 		action = $bindable(),
-		index,
-		daysErr,
 		historyOpen = $bindable(false),
 		technicalOpen = $bindable(false),
 		history,
-		technical
+		technical,
+		label
 	}: {
 		action: Applet;
-		index: DayIndex;
-		daysErr: string | null;
 		historyOpen?: boolean;
 		technicalOpen?: boolean;
 		history: Snippet;
 		technical: Snippet;
+		/** What the run history row says, when the page already said how the last run went. */
+		label?: string;
 	} = $props();
 
+	// How its last run went, in one sentence, as Server tasks says it. The
+	// runs are a list under it: no count of them and no picture of days,
+	// since a row of marked days reads as a streak to someone counting days.
+	const lastRun = $derived(lastRunLine(action));
 </script>
 
 <div class="info">
@@ -42,11 +44,7 @@
 				aria-expanded={historyOpen}
 				onclick={() => (historyOpen = !historyOpen)}
 			>
-				{#if daysErr}
-					<span class="row-label">Your server couldn't read its recent runs</span>
-				{:else}
-					<span class="history-body"><RecentDots {action} {index} /></span>
-				{/if}
+				<span class="row-label">{label ?? lastRun}</span>
 				<Icon icon={historyOpen ? 'mynaui:chevron-up' : 'mynaui:chevron-down'} width="16" />
 			</button>
 			{#if historyOpen}
@@ -118,13 +116,6 @@
 	.opened {
 		padding: 16px;
 		border-top: 1px solid var(--color-border);
-	}
-
-	.history-body {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		padding: 8px 0;
 	}
 
 </style>

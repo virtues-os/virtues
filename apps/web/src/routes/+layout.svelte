@@ -5,8 +5,6 @@
 	import { installErrorReporting, log } from "$lib/log";
 	// Applies Settings' Reduce motion to the root before anything animates.
 	import "$lib/stores/motion.svelte";
-	// Loads the owner's units before anything formats a distance (the timeline).
-	import "$lib/stores/units.svelte";
 	// And Settings' Glass level, before the glass paints.
 	import "$lib/stores/glass.svelte";
 	import CrashScreen from "$lib/components/CrashScreen.svelte";

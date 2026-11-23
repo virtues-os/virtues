@@ -6,7 +6,8 @@
 //! play the sync added lands on the same row when a download later covers
 //! it. A download knows more than the sync does: how long the play actually
 //! ran, skips, shuffle, and podcasts. So an import replaces a row the sync
-//! wrote, and neither applet ever changes a row an import wrote.
+//! wrote, the sync passes over a play an import already wrote, and neither
+//! applet ever changes a row an import wrote.
 
 use std::collections::HashSet;
 
@@ -142,13 +143,25 @@ fn insert_sql(writer: Writer, rows: usize) -> String {
 /// the same play twice; the first copy is kept, as `DO NOTHING` would.
 pub async fn write_plays(pool: &PgPool, plays: &[Play], writer: Writer) -> Result<Vec<DateTime<Utc>>> {
     let mut seen = HashSet::with_capacity(plays.len());
-    let plays: Vec<&Play> = plays.iter().filter(|p| seen.insert(p.source_stream_id.as_str())).collect();
+    let mut plays: Vec<&Play> = plays.iter().filter(|p| seen.insert(p.source_stream_id.as_str())).collect();
     if plays.is_empty() {
         return Ok(Vec::new());
     }
     let mut tx = pool.begin().await?;
-    if writer == Writer::Import {
-        replace_recent_matches(&mut tx, &plays).await?;
+    match writer {
+        Writer::Import => replace_recent_matches(&mut tx, &plays).await?,
+        Writer::Recent => {
+            let covered = imported_matches(&mut tx, &plays).await?;
+            let mut i = 0;
+            plays.retain(|_| {
+                i += 1;
+                !covered.contains(&(i - 1))
+            });
+            if plays.is_empty() {
+                tx.commit().await?;
+                return Ok(Vec::new());
+            }
+        }
     }
     let sql = insert_sql(writer, plays.len());
     let mut q = sqlx::query_scalar::<_, DateTime<Utc>>(&sql);
@@ -210,6 +223,32 @@ async fn replace_recent_matches(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, 
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+/// The positions in `plays` (the sync's) that a URI-less import row already
+/// stands for, by the same match `replace_recent_matches` uses from the other
+/// side. Without this, a download imported before the sync first ran would
+/// list each play the two share twice.
+async fn imported_matches(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, plays: &[&Play]) -> Result<HashSet<usize>> {
+    let minutes: Vec<DateTime<Utc>> = plays.iter().map(|p| p.ended_at).collect();
+    let titles: Vec<Option<String>> = plays.iter().map(|p| p.title.clone()).collect();
+    let artists: Vec<Option<String>> = plays.iter().map(|p| p.artist_name.clone()).collect();
+    let found: Vec<i64> = sqlx::query_scalar(
+        "SELECT u.n - 1 FROM UNNEST($1::timestamptz[], $2::text[], $3::text[]) WITH ORDINALITY AS u(ended_at, title, artist_name, n) \
+         WHERE EXISTS (SELECT 1 FROM data_activity_listening l \
+             WHERE l.source_table = $4 AND l.uri IS NULL \
+               AND date_trunc('minute', l.ended_at) = date_trunc('minute', u.ended_at) \
+               AND l.title IS NOT DISTINCT FROM u.title \
+               AND (l.artist_name IS NOT DISTINCT FROM u.artist_name \
+                    OR left(u.artist_name, length(l.artist_name) + 2) = l.artist_name || ', '))",
+    )
+    .bind(&minutes)
+    .bind(&titles)
+    .bind(&artists)
+    .bind(FROM_IMPORT)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(found.into_iter().map(|n| n as usize).collect())
 }
 
 #[cfg(test)]
@@ -279,5 +318,26 @@ mod tests {
         assert_eq!(rows, vec![(id, FROM_IMPORT.to_string())]);
         let total: i64 = sqlx::query_scalar("SELECT count(*) FROM data_activity_listening").fetch_one(&pool).await.unwrap();
         assert_eq!(total, 2, "the play in another minute stays");
+    }
+
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn the_sync_passes_over_a_play_an_earlier_download_holds(pool: PgPool) {
+        let imported = play("2024-03-05T08:15:00Z", None, "The Example Band", Writer::Import);
+        let id = imported.source_stream_id.clone();
+        assert_eq!(write_plays(&pool, &[imported], Writer::Import).await.unwrap().len(), 1);
+
+        let uri = Some("spotify:track:0000000000000000000001");
+        let same = play("2024-03-05T08:15:30.874Z", uri, "The Example Band, The Sample Choir", Writer::Recent);
+        let later = play("2024-03-05T08:20:10Z", uri, "The Example Band, The Sample Choir", Writer::Recent);
+        assert_eq!(write_plays(&pool, &[same, later], Writer::Recent).await.unwrap().len(), 1);
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT source_stream_id, source_table FROM data_activity_listening \
+             WHERE date_trunc('minute', ended_at) = '2024-03-05T08:15:00Z'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec![(id, FROM_IMPORT.to_string())]);
     }
 }

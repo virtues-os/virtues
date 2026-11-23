@@ -4,10 +4,10 @@ import { homeRoute, optionsRoute, readAddress } from './routes';
 
 describe('a site or server task address', () => {
 	it('says the word for its kind when the kind is known', () => {
-		expect(homeRoute('applet_dot_cloud', 'site')).toBe('/site/dot_cloud');
+		expect(homeRoute('applet_star_map', 'site')).toBe('/site/star_map');
 		expect(homeRoute('applet_meeting_prep', 'skill')).toBe('/skill/meeting_prep');
 		expect(homeRoute('applet_user__tides', 'server_task')).toBe('/server-task/tides');
-		expect(optionsRoute('applet_dot_cloud', null, 'site')).toBe('/site/dot_cloud/options');
+		expect(optionsRoute('applet_star_map', null, 'site')).toBe('/site/star_map/options');
 	});
 
 	it('shows the name without the id prefix, and goes by whose it is when the kind is not known', () => {

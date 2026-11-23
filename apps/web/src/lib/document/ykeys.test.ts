@@ -3,14 +3,14 @@ import { getSchema } from '@tiptap/core';
 import { EditorState } from '@tiptap/pm/state';
 import { ySyncPluginKey, yUndoPluginKey } from '@tiptap/y-tiptap';
 import { Plugin } from '@tiptap/pm/state';
-import { contractExtensions } from './schema';
+import { pageExtensions } from './page-bases';
 import { isChangeOrigin, yUndoState } from './ykeys';
 
 // ykeys.ts names y-tiptap's plugin keys by string so the composer never
 // imports yjs. These go through real transactions, so a y-tiptap upgrade
 // that renames a key fails here.
 describe('ykeys', () => {
-	const schema = getSchema(contractExtensions());
+	const schema = getSchema(pageExtensions());
 
 	it('reads the binding meta y-tiptap sets', () => {
 		const state = EditorState.create({ schema });

@@ -945,7 +945,7 @@ pub(crate) fn write_skill_md(folder: &std::path::Path, text: &str) -> Result<()>
 
 /// Return a shipped applet to exactly what ships.
 pub fn reset_to_shipped(applet_id: &str) -> Result<()> {
-    let dir = dir_for_applet_id(applet_id).ok_or_else(|| Error::NotFound(format!("Applet not found: {applet_id}")))?;
+    let dir = dir_for_applet_id(applet_id).ok_or_else(|| Error::NotFound(format!("nothing set up on this server has the id {applet_id}")))?;
     remove_override(&dir)
 }
 

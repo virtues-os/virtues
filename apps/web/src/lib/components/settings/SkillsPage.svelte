@@ -7,7 +7,10 @@
 	 * assistant picks one up when a request calls for it. This page is where
 	 * they are all listed: the ones you made, which you can change or delete
 	 * from their page, and the ones that came with your server, which you can
-	 * turn off. A row opens the skill's page.
+	 * turn off. A row opens the skill's page. It is the same list as the /
+	 * menu, in the same order: a row says the `/name` that starts it, and one
+	 * turned off is not in the menu. The page also lists the skills only the
+	 * assistant picks up, which `/` does not start.
 	 */
 	import { onMount } from 'svelte';
 	import SettingsPage from './SettingsPage.svelte';
@@ -15,13 +18,24 @@
 	import LoadError from './LoadError.svelte';
 	import type { Applet } from '$lib/api/client';
 	import { appletsStore } from '$lib/stores/applets.svelte';
-	import { isYours, kindOf, pageOf } from '$lib/applets/kind';
+	import { skills as menu } from '$lib/stores/skills.svelte';
+	import { isYours, pageOf } from '$lib/applets/kind';
 
 	let loaded = $state(false);
 
 	async function load() {
-		await appletsStore.load();
+		await Promise.all([appletsStore.load(), menu.load()]);
 		loaded = true;
+	}
+
+	// What `/` types to start each one, from the menu.
+	const slashName = $derived(new Map(menu.items.flatMap((s) => (s.applet_id ? [[s.applet_id, s.name] as const] : []))));
+
+	/** A row's value: off, or the name `/` starts it by. */
+	function valueOf(a: Applet): string | undefined {
+		if (!a.enabled) return 'Off';
+		const slash = slashName.get(a.id);
+		return slash ? `/${slash}` : undefined;
 	}
 
 	onMount(() => {
@@ -29,7 +43,7 @@
 	});
 
 	const skills = $derived(
-		appletsStore.list.filter((a) => !a.archived_at && kindOf(a) === 'skill').sort((a, b) => a.name.localeCompare(b.name))
+		appletsStore.list.filter((a) => !a.archived_at && a.kind === 'skill').sort((a, b) => a.name.localeCompare(b.name))
 	);
 	const yours = $derived(skills.filter(isYours));
 	const shipped = $derived(skills.filter((a) => !isYours(a)));
@@ -43,7 +57,7 @@
 			label={a.name}
 			help={a.description ?? undefined}
 			href={pageOf(a)}
-			value={a.enabled ? undefined : 'Off'}
+			value={valueOf(a)}
 			tabLabel={a.name}
 		/>
 	{/each}

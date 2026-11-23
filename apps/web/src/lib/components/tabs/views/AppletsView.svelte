@@ -20,15 +20,14 @@
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import NewAppletSheet from '$lib/components/applets/NewAppletSheet.svelte';
 	import SiteCard from '$lib/components/applets/SiteCard.svelte';
-	import { homeOf } from '$lib/applets/kind';
+	import { homeOf, isPlainSite } from '$lib/applets/kind';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
 	import { appletGlyph, describeTriggers } from '$lib/applets/palette';
-	import { actionOf, canRun, problemOf, type AppletAction } from '$lib/applets/standing';
-	import { needsYou } from '$lib/applets/days';
+	import { actionOf, canRun, needsYou, problemOf, type AppletAction } from '$lib/applets/standing';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -41,13 +40,14 @@
 		void appletsStore.load();
 	});
 
-	// Yours, the ones that need you first, then the ones that are on. A
-	// built-in applet that needs you marks Settings instead.
+	// Yours, the ones that need you first, then the ones that are on. A site
+	// that only shows something has nothing to turn off, so it counts as on.
+	// A built-in applet that needs you marks Settings instead.
 	const applets = $derived(
 		[...appletsStore.sites].sort(
 			(a, b) =>
 				Number(needsYou(b)) - Number(needsYou(a)) ||
-				Number(!a.enabled) - Number(!b.enabled) ||
+				Number(isOff(a)) - Number(isOff(b)) ||
 				a.name.localeCompare(b.name)
 		)
 	);
@@ -64,9 +64,13 @@
 		return typeof id === 'string' && id ? id : null;
 	}
 
-	/** The row's one date: when it last ran, or that it is off. */
+	/** Turned off, for one that has something to run. */
+	const isOff = (a: Applet) => !a.enabled && !isPlainSite(a);
+
+	/** The row's one date: when it last ran, or that it is off. A site with nothing to run says when it was made. */
 	function when(a: Applet): string {
-		if (!a.enabled) return 'Off';
+		if (isOff(a)) return 'Off';
+		if (isPlainSite(a)) return `Made ${formatRelativeTimestamp(a.created_at)}`;
 		const last = a.last_run?.started_at;
 		return last ? formatRelativeTimestamp(last) : 'Not run yet';
 	}

@@ -528,7 +528,8 @@ pub fn run() {
     .plugin(tauri_plugin_contacts::init())
     .plugin(tauri_plugin_photos::init())
     .plugin(tauri_plugin_finance::init())
-    .plugin(tauri_plugin_audio::init());
+    .plugin(tauri_plugin_audio::init())
+    .plugin(tauri_plugin_haptics::init());
 
   builder
     .invoke_handler(tauri::generate_handler![

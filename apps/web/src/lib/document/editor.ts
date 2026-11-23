@@ -24,7 +24,8 @@ import { yUndoPluginKey, ySyncPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AiIntent } from '$lib/ai/inlineComplete';
-import { contract, contractExtensions, idTypes, newId, type Extras } from './schema';
+import { contract, idTypes, newId, type Extras } from './schema';
+import { pageExtensions } from './page-bases';
 import {
 	BlockEdges,
 	BlockMoves,
@@ -309,7 +310,7 @@ const DragBetweenPages = Extension.create({
 export function createPageEditor(o: PageEditorOptions): Editor {
 	const user = o.user ?? localUser(o.doc.ydoc.clientID);
 	const extensions: AnyExtension[] = [
-		...contractExtensions(o.extras ?? pageNodeViews()),
+		...pageExtensions(o.extras ?? pageNodeViews()),
 		UniqueID.configure({
 			attributeName: contract.id.attr,
 			types: idTypes,

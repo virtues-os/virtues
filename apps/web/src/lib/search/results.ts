@@ -20,8 +20,8 @@
  *   - matches inside your records, last, because they arrive from the box
  *     after the rest and rows appearing above the selection would move it.
  *
- * A leading `#chats`, `#pages`, `#threads`, `#applets`, `#settings` or
- * `#commands` shows that kind only. `#projects` still works.
+ * A leading `#chats`, `#pages`, `#threads`, `#sites`, `#settings` or
+ * `#commands` shows that kind only. `#projects` and `#applets` still work.
  */
 import type { LocalSearchHit } from '$lib/api/client';
 import { matchRank } from '$lib/search/match';
@@ -71,6 +71,7 @@ const SCOPES: Record<string, Scope> = {
 	project: 'thread', projects: 'thread',
 	thread: 'thread', threads: 'thread',
 	applet: 'applet', applets: 'applet',
+	site: 'applet', sites: 'applet',
 	command: 'command', commands: 'command',
 	setting: 'setting', settings: 'setting',
 	action: 'command', actions: 'command',

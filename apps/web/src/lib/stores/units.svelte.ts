@@ -1,22 +1,20 @@
 /**
- * The owner's units (Settings · Profile · Units), loaded from the profile
- * once and kept in step with `utils/units`' module value, so plain functions
- * and pages read the same thing. `set` is what the Units row calls after it
- * saves.
+ * The owner's units (Settings · Profile · Units), kept in step with
+ * `utils/units`' module value, so plain functions and pages read the same
+ * thing. The app's layout load seeds it from the profile it already fetches,
+ * before the shell draws anything that formats a distance; US units stand in
+ * when that load could not read the profile. `set` is what the Units row
+ * calls after it saves.
  */
-import { getProfile } from '$lib/api/client';
+import type { Profile } from '$lib/api/client';
 import { setPreferredUnits, type Units } from '$lib/utils/units';
 
 class UnitsStore {
 	current = $state<Units>('us');
 
-	constructor() {
-		if (typeof window === 'undefined') return;
-		getProfile()
-			.then((p) => this.set(p.units === 'metric' ? 'metric' : 'us'))
-			.catch(() => {
-				// US units stand in until the next load; nothing here saves them.
-			});
+	/** Take the profile the app's layout load fetched, rather than asking again. */
+	seed(profile: Pick<Profile, 'units'>) {
+		this.set(profile.units === 'metric' ? 'metric' : 'us');
 	}
 
 	set(units: Units) {

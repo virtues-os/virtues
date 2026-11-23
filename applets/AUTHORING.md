@@ -154,7 +154,19 @@ description: What this shows you, in one sentence.
 ---
 ```
 
-Inside `view.html`, link `virtues.css` for the box's theme and use `await virtues.query(sql)` for read-only access to your data. See `applets/dot-cloud/view.html` for a working one. A folder an import brings with a multi-file `face/` keeps serving it from there.
+Inside `view.html`, link `virtues.css` for the box's theme and use `await virtues.query(sql)` in `<script type="module">` for read-only access to your data. The water log's view in `applets/AGENTS.md` is a working one. A folder an import brings with a multi-file `face/` keeps serving it from there.
+
+#### A view as the background behind a new chat
+
+A person can choose any site as their background (Settings › Appearance › Background › Your sites). Home then draws its view behind a new chat, edge to edge, and the person can click it wherever the greeting, the message box and the tiles are not in the way. A view meant for that should:
+
+- **Check `virtues.surface`.** It is `'background'` behind a new chat, `''` on the site's own page and `'panel'` on the box's screen. Behind a chat, leave out the title and the sentence that explains the data; the page around it is the chat.
+- **Fill the window.** Size to the viewport, keep no margins or card around the content, and paint the whole background so no white edge shows.
+- **Keep the middle clear.** The greeting sits a little above the center and the message box at it, with the tiles below. Put the busy parts toward the edges and the bottom.
+- **Match the theme.** `virtues.theme` is `'light'` or `'dark'`, and `virtues.css` sets the colors for both. The frame loads again when the person switches, so read the theme once at load.
+- **Hold still when asked.** Stop animating under `@media (prefers-reduced-motion: reduce)`. The app cannot pause a site for you.
+
+Clicks in the view's empty space reach it, so it can respond to them. `virtues.open(route)` works there as on the site's page.
 
 ---
 

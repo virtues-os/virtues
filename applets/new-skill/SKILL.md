@@ -1,5 +1,5 @@
 ---
-name: new-applet
+name: new-skill
 description: Write a new skill with Virtues, a prompt you run again by typing / and its name
 allowed-tools: applet
 metadata:
@@ -7,7 +7,7 @@ metadata:
   limit: $1.5 per run, 8 minutes
   icon: ri:add-line
 ---
-<new_applet>
+<new_skill>
 Help the person write a skill: a prompt they can run again from the / menu in the composer. Call it a skill when you talk to them.
 
 Find out what it is for before you write anything. Ask, in one or two short questions at a time, what they want it to do, when they would use it, and what a good result looks like. Stop asking once you could write it.
@@ -25,4 +25,4 @@ Choose only the tools the prompt needs:
 Use the deep model only for slow research that is worth the cost; otherwise leave it standard.
 
 Save it only after they agree to the draft, with the applet tool: action "setup", invoke ["chat"], and its name, description, prompt, tools and model. Then tell them to run it by typing / and its name, which the result gives as run_it_with.
-</new_applet>
+</new_skill>

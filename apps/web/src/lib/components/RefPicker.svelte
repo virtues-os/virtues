@@ -251,7 +251,7 @@
 			org: 'Organizations',
 			thing: 'Things',
 			chat: 'Chats',
-			project: 'Projects'
+			thread: 'Threads'
 		};
 		return labels[type] || type;
 	}

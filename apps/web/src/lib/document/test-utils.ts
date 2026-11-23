@@ -15,7 +15,8 @@ import { DOMParser as PmDOMParser, DOMSerializer, type Node as PmNode } from '@t
 import { prosemirrorToYXmlFragment } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
-import { contract, contractExtensions, contractSchema, idTypes, newId } from './schema';
+import { contract, idTypes, newId } from './schema';
+import { contractSchema, pageExtensions } from './page-bases';
 import { useConverterModule } from './converter';
 
 const BIN = process.env.DOCUMENT_CONFORMANCE_BIN;
@@ -127,7 +128,7 @@ export function fakeProvider(ydoc: Y.Doc) {
 export function htmlEditor(html: string, extensions: AnyExtension[] = []): Editor {
 	const element = document.createElement('div');
 	document.body.append(element);
-	return new Editor({ element, content: html, extensions: [...contractExtensions(), ...extensions] });
+	return new Editor({ element, content: html, extensions: [...pageExtensions(), ...extensions] });
 }
 
 /** The position just inside the first textblock whose text is `text`, plus `offset`. */

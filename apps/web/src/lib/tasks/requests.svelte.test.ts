@@ -12,6 +12,7 @@ const applet = (over: Partial<Applet> = {}): Applet =>
 	({
 		id: 'applet_user__week_in_review',
 		name: 'Week in review',
+		kind: 'assistant_task',
 		origin: 'ai',
 		schedule: '0 0 18 * * 0',
 		watch: null,

@@ -89,6 +89,7 @@ export const SETTINGS: readonly Setting[] = [
 	{ id: 'employer', title: 'Where you work', section: 'you', kind: 'control', words: ['employer', 'company', 'job'], route: '/virtues/profile' },
 	{ id: 'home', title: 'Location', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'where you live'], route: '/virtues/profile' },
 	{ id: 'units', title: 'Units', section: 'you', kind: 'control', words: ['miles', 'kilometres', 'kilometers', 'km', 'fahrenheit', 'celsius', 'metric', 'imperial', 'pounds', 'temperature', 'distance'], route: '/virtues/profile' },
+	{ id: 'start-with', title: 'What excites you most', section: 'you', kind: 'control', words: ['start with', 'first', 'excites', 'why you are here', 'habit', 'vice', 'virtue', 'patterns', 'story', 'big tech'], route: '/virtues/profile' },
 
 	// The assistant
 	{ id: 'assistant-name', title: "{name}'s name", section: 'assistant', kind: 'control', words: ['assistant', 'rename', 'call it'], route: '/virtues/assistant' },

@@ -298,6 +298,8 @@
 		isCollapsed && railBottom > 0 ? `calc(${railBottom}px - ${glassTop})` : fullHeight,
 	);
 
+	// TODO(2026-11-22): migrate the seam's drag onto PaneDivider, which the
+	// Inbox uses; its click to hide would stay here.
 	let resizing = $state(false);
 	$effect(() => {
 		sidebarState.resizing = resizing;

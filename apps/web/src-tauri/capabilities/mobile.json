@@ -20,6 +20,7 @@
     "contacts:default",
     "photos:default",
     "finance:default",
-    "audio:default"
+    "audio:default",
+    "haptics:allow-impact-feedback"
   ]
 }

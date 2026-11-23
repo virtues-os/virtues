@@ -46,7 +46,7 @@
 		upFor,
 		type Health,
 	} from '$lib/settings/serverStatus';
-	import { needsYou } from '$lib/applets/days';
+	import { needsYou } from '$lib/applets/standing';
 	import { formatTemperature } from '$lib/utils/units';
 	import { units } from '$lib/stores/units.svelte';
 

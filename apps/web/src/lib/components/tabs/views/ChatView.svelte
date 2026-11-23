@@ -1,3 +1,18 @@
+<script lang="ts" module>
+	import type MarkdownView from "$lib/components/Markdown.svelte";
+
+	/**
+	 * The reply renderer (streamdown, and the marked it brings) loads beside
+	 * the chat rather than with the app's first paint. The home page shows no
+	 * reply, and a reopened chat waits a round trip for its transcript, by
+	 * which time this file has arrived from the device's cache. Kept here, so
+	 * a second chat view draws it at once. A failed load from a replaced
+	 * build reloads the page (hooks.client.ts, `vite:preloadError`).
+	 */
+	let markdownView: typeof MarkdownView | null = null;
+	const markdownLoad = import("$lib/components/Markdown.svelte").then((m) => (markdownView = m.default));
+</script>
+
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -9,7 +24,6 @@
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
-	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
@@ -150,6 +164,10 @@
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { REVEAL_MESSAGE, type RevealMessageDetail } from "$lib/components/chat/about/InThisChat.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
+
+	// The reply renderer, once it has loaded (see the module script above).
+	let Markdown = $state.raw(markdownView);
+	if (!markdownView) void markdownLoad.then((view) => (Markdown = view), (error) => console.error("[ChatView] reply renderer failed to load", error));
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -869,12 +887,10 @@
 			projectStore.setDraft(conversationId, seededProject);
 		}
 		(async () => {
-			// Stage 1: Models must load first (other code depends on model list)
-			await getInitializationPromise();
-
-			// Stage 2: Profile fetches + conversation load in parallel (independent)
-			const tabConversationId = extractConversationId(tab.route);
-
+			// The profile's model pin needs no model list, so it is asked for
+			// while the models load rather than after: a round trip saved, and
+			// at launch it shares the request the theme and background make
+			// (the client shares a GET already in flight).
 			let profileDefaultModelId: string | undefined;
 
 			const profilePromise = (async () => {
@@ -890,6 +906,12 @@
 					console.error("Failed to load assistant profile:", error);
 				}
 			})();
+
+			// Models must load before the conversation (other code depends on
+			// the model list).
+			await getInitializationPromise();
+
+			const tabConversationId = extractConversationId(tab.route);
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {
@@ -1444,11 +1466,22 @@
 		const items: ContextMenuItem[] = [];
 		// Offered only while it can still be true: a turn that has been sent
 		// cannot be taken back out of storage.
+		// On the phone, home's background is changed from here; the desktop has
+		// its corner button.
+		if (isEmpty && !isGhost && mobileLayout.isMobile) {
+			items.push({
+				id: "background",
+				label: "Change background",
+				icon: "mynaui:image",
+				action: () => {
+					mobileLayout.backgroundOpen = true;
+				},
+			});
+		}
 		if (isEmpty) {
 			items.push({
 				id: "temporary",
 				label: "Temporary chat",
-				description: "Isn't saved or remembered",
 				icon: "mynaui:incognito",
 				checked: isGhost,
 				dividerAfter: true,
@@ -1479,12 +1512,15 @@
 			checked: chatEssay.on,
 			action: () => chatEssay.toggle(),
 		});
-		items.push({
-			id: "pin",
-			label: pinned ? "Unpin tab" : "Pin tab",
-			icon: pinned ? "mynaui:pin" : "mynaui:pin",
-			action: () => windowShellStore.togglePin(tab.id),
-		});
+		// The phone has no tabs to pin.
+		if (!mobileLayout.isMobile) {
+			items.push({
+				id: "pin",
+				label: pinned ? "Unpin tab" : "Pin tab",
+				icon: pinned ? "mynaui:pin" : "mynaui:pin",
+				action: () => windowShellStore.togglePin(tab.id),
+			});
+		}
 		if (canManageChat) {
 			items.push({
 				id: "delete",
@@ -1983,6 +2019,11 @@
 		});
 	}
 
+	// The phone's quick-add +, on an empty chat until you type. Then it
+	// steps aside, so send stands alone at the bar's right edge and a thumb
+	// reaching for it cannot open the menu instead; attach moves into the bar.
+	const showQuickAdd = $derived(mobileLayout.isMobile && isEmpty && !inRoom && !input.trim());
+
 	// Publish this chat's state to the phone shell, whose top-right button is
 	// modal: ghost toggle while the chat is empty (compose would be a no-op),
 	// compose once a conversation exists. Only the active view speaks; the
@@ -1995,6 +2036,7 @@
 			toggleGhost,
 			project: isGhost ? null : (chatProject ?? null),
 			showProjectMenu: showProjectChipMenu,
+			showChatMenu: showChatMenu ? openChatMenu : undefined,
 		});
 		return () => mobileLayout.setChatChrome(null);
 	});
@@ -2063,18 +2105,6 @@
 						     the chat, on the axis the eye is already reading
 						     along. -->
 						<GettingStartedDoor />
-					{/if}
-					{#if showChatMenu && mobileLayout.isMobile}
-						<button
-							type="button"
-							class="chat-menu-btn"
-							onclick={openChatMenu}
-							aria-haspopup="menu"
-							aria-label="Chat options"
-							title="Chat options"
-						>
-							<Icon icon="mynaui:dots-vertical" width="16" />
-						</button>
 					{/if}
 				</div>
 				<div class="page-container" class:is-empty={isEmpty} class:home={showsHome} class:intro class:essay={chatEssay.on && !inRoom && !inInterview} class:carrying={carryFrom !== null} bind:clientWidth={pageWidth}>
@@ -2236,13 +2266,15 @@
 													<div
 														class="text-foreground assistant-response"
 													>
-														<Markdown
-															content={shown.content}
-															isStreaming={isStreaming || shown.arriving}
-															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
-															citations={citationContext}
-															refVariant={chatEssay.on && !inRoom && !inInterview ? "quiet" : "link"}
-														/>
+														{#if Markdown}
+															<Markdown
+																content={shown.content}
+																isStreaming={isStreaming || shown.arriving}
+																animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
+																citations={citationContext}
+																refVariant={chatEssay.on && !inRoom && !inInterview ? "quiet" : "link"}
+															/>
+														{/if}
 														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && reveal.plateReady)}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The
@@ -2640,7 +2672,7 @@
 						<!-- Loaded once home shows, so the control and its popover
 						     stay out of the chat home's first paint. -->
 						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
-							<BackgroundControl composer={composerEl} />
+							<BackgroundControl />
 						{/await}
 					{/if}
 
@@ -2656,11 +2688,19 @@
 						</div>
 					{/if}
 
+					{#if showQuickAdd}
+						<!-- Phones only, so it loads when first shown, not before every first paint. -->
+						{#await import("$lib/components/mobile/QuickAdd.svelte") then { default: QuickAdd }}
+							<QuickAdd onFiles={(f) => attachments.add(f)} />
+						{/await}
+					{/if}
+
 					<!-- ChatInput -->
 					<div
 						bind:this={composerEl}
 						class="chat-input-wrapper"
 						class:is-empty={isEmpty}
+						class:with-quick-add={showQuickAdd}
 						class:has-messages={!isEmpty}
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
@@ -2725,7 +2765,7 @@
 						{:else}
 						<ChatInput
 							allowEmptySubmit={attachments.count > 0}
-							onAttach={(f) => attachments.add(f)}
+							onAttach={showQuickAdd ? undefined : (f) => attachments.add(f)}
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
@@ -2786,49 +2826,6 @@
 	}
 
 
-
-	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
-	   small and floats over the transcript, so the target grows around it
-	   rather than under it. */
-	@media (max-width: 768px), (pointer: coarse) {
-		/* (The composer's phone padding lives in the docked-composer block at
-		   the end of these styles — it must follow the base rules to win the
-		   cascade.) */
-		.chat-menu-btn {
-			position: relative;
-		}
-		.chat-menu-btn::after {
-			content: "";
-			position: absolute;
-			top: 50%;
-			left: 50%;
-			width: 44px;
-			height: 44px;
-			transform: translate(-50%, -50%);
-		}
-	}
-
-	.chat-menu-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: var(--radius-lg);
-		color: var(--color-foreground-subtle);
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-		cursor: pointer;
-	}
-
-	.chat-menu-btn:hover {
-		color: var(--color-foreground);
-		background: var(--hover-bg);
-	}
 
 	.chat-topbar-right > :global(*) {
 		animation: topbar-pop-in 260ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
@@ -3258,7 +3255,35 @@
 	   it via --keyboard-inset). This block sits after the base rules on
 	   purpose: it ties them on specificity, and cascade order is what lets it
 	   win — an earlier version lived above them and silently lost. */
+	/* The phone shell's bar floats over the view (MobileShell), so the
+	   transcript starts below it. Home's painting fills the bottom part and
+	   fades out at its top, as on the desktop, and the day's headline sits
+	   just above where it begins. */
 	@media (max-width: 768px), (pointer: coarse) {
+		.messages-container {
+			padding-top: calc(1.5rem + var(--shell-bar-inset, 0px));
+		}
+		.home-scene {
+			height: 46%;
+		}
+		.init-hero {
+			bottom: calc(46% + 24px);
+			justify-content: flex-start;
+			padding: 0 24px;
+		}
+	}
+
+	@media (max-width: 768px), (pointer: coarse) {
+		/* 16px from the screen edge, the margin the bar and the quick-add
+		   menu share. While the + shows, the bar leaves room for it (48px
+		   and an 8px gap). */
+		.chat-input-wrapper {
+			padding-left: 16px;
+			padding-right: 16px;
+		}
+		.chat-input-wrapper.with-quick-add {
+			padding-right: 72px;
+		}
 		.chat-input-wrapper,
 		.chat-input-wrapper.is-empty {
 			bottom: 0;

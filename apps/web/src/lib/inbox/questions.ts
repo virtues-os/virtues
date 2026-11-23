@@ -44,13 +44,26 @@ export interface PlaceQuestion {
 	best_day: string | null;
 	hours_a_week: number;
 	nights_a_week: number;
+	/** The last four weeks there, a day each, oldest first, ending today. An older server sends none. */
+	days?: PlaceDay[];
+}
+
+/** One day at a place, in the place's own time. */
+export interface PlaceDay {
+	/** YYYY-MM-DD. */
+	date: string;
+	hours: number;
+	/** The night before this morning was spent there. */
+	slept: boolean;
 }
 
 export type PlaceAnswer =
 	| { kind: 'name'; name: string; category?: string | null }
 	| { kind: 'passing' }
 	| { kind: 'not_this'; name: string }
-	| { kind: 'home' | 'not_home' | 'work' | 'not_work' };
+	| { kind: 'home' | 'not_home' | 'work' | 'not_work' }
+	/** "Not now": your server asks again in a week. */
+	| { kind: 'later' };
 
 /** One answer you can give with a tap. */
 export interface Reply {

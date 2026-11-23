@@ -18,7 +18,6 @@
 	import {
 		getApplet,
 		getAppletLog,
-		getRunsByDay,
 		getAppletPages,
 		getPage,
 		type AppletPage,
@@ -27,18 +26,17 @@
 		markAppletSeen,
 		patchApplet,
 		type Applet,
-		type AppletLogEntry,
-		type RunDay
+		type AppletLogEntry
 	} from '$lib/api/client';
 	import { appletGlyph, describeTriggers, failureReason, relativeTime, runFix, runLine } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
-	import { homeOf, optionsOf, pageOf } from '$lib/applets/kind';
+	import { homeOf, isPlainSite, optionsOf, pageOf } from '$lib/applets/kind';
+	import { isLate, problemOf, sentence } from '$lib/applets/standing';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { attention } from '$lib/stores/attention.svelte';
@@ -58,7 +56,7 @@
 	 *
 	 * Options (`/options`) holds Run history and Technical details, each
 	 * opening in place. `?panel=history` and `?panel=details` open Options with
-	 * that one open, which is where the table's dots and Last run link.
+	 * that one open, which is where links to its run history land.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
@@ -87,8 +85,35 @@
 	// came with the server. Once one of them has loaded, it is the applet.
 	const loaded = $derived(action && (action.id === address?.id || action.id === address?.otherId) ? action : null);
 	const appletId = $derived(loaded?.id ?? address?.id ?? null);
+	// A tab can move to another applet's address without being rebuilt. The
+	// one it showed is dropped at once, so the page says it is loading, or
+	// that it failed, and never draws the earlier applet under the new address.
+	$effect(() => {
+		if (action && !loaded) {
+			// Everything the page held for the earlier applet goes with it, or
+			// the new one would show the earlier one's runs, pages and failure
+			// until its own arrive.
+			action = null;
+			log = [];
+			pages = [];
+			selectedId = null;
+			pageContent = null;
+			draft = '';
+			busy = false;
+			err = null;
+			sharing = false;
+			deleting = false;
+			stopPolling();
+		}
+	});
 	const asked = $derived(address?.open ?? null);
-	const inInfo = $derived(address?.side === 'options');
+	// A server task is one page: when it runs, how its runs went, and its
+	// technical details. A second side would list the same runs again.
+	const onePage = $derived(action?.kind === 'server_task');
+	// A site that only shows something has nothing to run, so no switch and
+	// no Options side in its toolbar. Its More menu still reaches Options.
+	const plain = $derived(action ? isPlainSite(action) : false);
+	const inInfo = $derived(address?.side === 'options' || onePage);
 
 	function showInfo(open: boolean) {
 		if (!loaded) return;
@@ -119,15 +144,12 @@
 	});
 
 	let log = $state<AppletLogEntry[]>([]);
-	let runDays = $state<RunDay[]>([]);
-	let daysErr = $state<string | null>(null);
 	let loading = $state(false);
 	let busy = $state(false);
 	let err = $state<string | null>(null);
 	let sharing = $state(false);
 	let deleting = $state(false);
 
-	const index = $derived(indexRunDays(runDays));
 
 	// The pages its runs wrote, newest first, and the one open.
 	let pages = $state<AppletPage[]>([]);
@@ -201,13 +223,23 @@
 		throw last;
 	}
 
+	// Each load is numbered, and only the newest may change the page: an
+	// earlier one that answers late, or fails late, is for an applet the tab
+	// has moved away from, or is older news.
+	let loadSeq = 0;
 	async function load(ids: string[]) {
+		// The poll after a run can ask for an applet the tab no longer shows.
+		const here = readAddress(tab.route);
+		if (here && !ids.some((i) => i === here.id || i === here.otherId)) return;
+		const seq = ++loadSeq;
+		const current = () => seq === loadSeq;
 		loading = true;
 		err = null;
 		try {
-			// The applet loads on its own. The log and the day counts are
-			// weaker requests: one of them failing must not blank the page.
+			// The applet loads on its own. Its log and its pages are weaker
+			// requests: one of them failing must not blank the page.
 			const a = await firstFound(ids);
+			if (!current()) return;
 			const id = a.id;
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
@@ -216,21 +248,17 @@
 			void markAppletSeen(id)
 				.then(() => attention.refresh())
 				.catch(() => {});
-			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
+			const [l, p] = await Promise.allSettled([getAppletLog(id), getAppletPages(id)]);
+			if (!current()) return;
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];
-			if (d.status === 'fulfilled') {
-				runDays = d.value.filter((r) => r.applet_id === id);
-				daysErr = null;
-			} else {
-				daysErr = d.reason instanceof Error ? d.reason.message : String(d.reason);
-			}
 		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
+			if (current()) err = e instanceof Error ? e.message : String(e);
 		} finally {
-			loading = false;
+			if (current()) loading = false;
 		}
 	}
+
 
 	const chatId = $derived.by(() => {
 		const id = action?.config?.chat_id;
@@ -285,7 +313,10 @@
 			pollsLeft -= 1;
 			const id = action?.id;
 			if (!id) return;
-			log = await getAppletLog(id).catch(() => log);
+			const fresh = await getAppletLog(id).catch(() => log);
+			// The tab moved to another applet while this was asked.
+			if (action?.id !== id) return;
+			log = fresh;
 			if (log.some((e) => e.status === 'running')) {
 				pollSoon();
 			} else {
@@ -374,17 +405,8 @@
 	const failedNow = $derived(lastEntry?.status === 'error' ? lastEntry : null);
 	const failure = $derived(failedNow?.error ? explainRunError(failedNow.error, collectorDenied) : null);
 
-	// Same grace the scheduler and the table use.
-	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-
-	const overdue = $derived(
-		Boolean(
-			action?.next_due_at &&
-				action.enabled &&
-				!action.archived_at &&
-				Date.now() - new Date(action.next_due_at).getTime() > OVERDUE_GRACE_MS
-		)
-	);
+	// A run more than an hour late, by the rule every list uses.
+	const overdue = $derived(action ? isLate(action) : false);
 
 	// What went wrong, said once, where the missing result would be. It has
 	// no final period: the sentence above a site adds one, the row doesn't.
@@ -396,8 +418,8 @@
 				: failedNow.error
 					? failureReason(failedNow.error)
 					: 'The run failed'
-			: overdue && action?.next_due_at
-				? `It was due ${relativeTime(action.next_due_at)} and hasn't run`
+			: overdue && action
+				? (problemOf(action) ?? "Hasn't run yet")
 				: null
 	);
 	const missedWhen = $derived(failedNow?.last_at ?? (overdue ? (action?.next_due_at ?? null) : null));
@@ -470,6 +492,9 @@
 		if (canRunNow) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void runNow() });
 		}
+		if (plain && !inInfo) {
+			items.push({ id: 'options', label: 'Options', icon: 'mynaui:cog', action: () => showInfo(true) });
+		}
 		if (a.has_face) {
 			items.push({
 				id: 'add-to-page',
@@ -514,9 +539,13 @@
 			     can tell it things or change it there. -->
 			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
-		<SiteSwitch tabId={tab.id} applet={action} showing={inInfo ? 'options' : 'site'} />
+		{#if !onePage && !plain}
+			<SiteSwitch tabId={tab.id} applet={action} showing={inInfo ? 'options' : 'site'} />
+		{/if}
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
-		{#if action.archived_at}
+		{#if plain}
+			<!-- Nothing runs, so there is nothing to switch. -->
+		{:else if action.archived_at}
 			<Button variant="secondary" onclick={() => setEnabled(true)} disabled={saving}>
 				Turn back on
 			</Button>
@@ -561,7 +590,7 @@
 		{/if}
 		{#if problem}
 			<p class="needs">
-				<span>{problemText}.</span>
+				<span>{sentence(problemText ?? '')}</span>
 				{#if fix}
 					<Button variant="primary" onclick={openFix}>{fix.label}</Button>
 				{:else if canRunNow}
@@ -569,15 +598,23 @@
 				{/if}
 			</p>
 		{/if}
+		{#if err}
+			<p class="needs"><span class="error-msg">{err}</span></p>
+		{/if}
 		<FaceFrame appletId={action.id} height="100%" />
 	{:else if action}
 		<div style:max-width={width.css} class="measure">
 			{#if inInfo}
 				<div class="narrow">
+					{#if err}
+						<p class="error-msg">{err}</p>
+					{/if}
 					<header class="head sub">
 						<!-- The desktop's toolbar holds the Site / Options switch. A
-						     phone has no toolbar, so it gets a way back here. -->
-						{#if !toolbar.inToolbar && !action.has_face}
+						     phone has no toolbar, and a plain site has no switch, so
+						     each gets a way back here. A server task has one page and
+						     nothing to go back to. -->
+						{#if !onePage && ((!toolbar.inToolbar && !action.has_face) || plain)}
 							<button type="button" class="backlink" onclick={() => showInfo(false)}>
 								<Icon icon="mynaui:arrow-left" width="14" />
 								{action.name}
@@ -585,17 +622,34 @@
 						{:else if !toolbar.inToolbar}
 							<div class="head-actions">{@render headActions()}</div>
 						{/if}
-						<h1 class="title">Options</h1>
+						{#if !onePage}
+							<h1 class="title">Options</h1>
+						{:else if !toolbar.inToolbar}
+							<h1 class="title">{action.name}</h1>
+						{/if}
 						{#if action.description}<p class="status">{action.description}</p>{/if}
 					</header>
+					{#if problem && (fix || canRunNow)}
+						<!-- What went wrong, with the fix beside it. The run history
+						     row below then names its runs instead of saying it again. -->
+						<p class="needs-line">
+							<span>{sentence(problemText ?? '')}</span>
+							{@render fixAction()}
+						</p>
+					{/if}
 					<Card list>
 						<div class="fact"><span>When it runs</span><span class="fact-value">{describeTriggers(action)}</span></div>
 						<div class="fact"><span>Next run</span><span class="fact-value">{nextRunText}</span></div>
 						<div class="fact"><span>Cost</span><span class="fact-value">{costText}</span></div>
 					</Card>
-					<AppletInfo bind:action {index} {daysErr} bind:historyOpen bind:technicalOpen>
+					<AppletInfo
+						bind:action
+						bind:historyOpen
+						bind:technicalOpen
+						label={problem && (fix || canRunNow) ? 'Its last runs' : undefined}
+					>
 						{#snippet history()}
-							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
+							{#if action}<RunHistory {log} {collectorDenied} />{/if}
 						{/snippet}
 						{#snippet technical()}
 							{#if action}
@@ -721,6 +775,10 @@
 				{/if}
 			{/if}
 		</div>
+	{/if}
+	<!-- Outside the branches above: the More menu opens these from a site's
+	     view as well as from its options. -->
+	{#if action}
 		<DeleteAppletModal {action} bind:open={deleting} onDeleted={() => windowShellStore.closeTab(tab.id)} />
 		{#if action.has_face}
 			<ShareSheet open={sharing} producer={{ kind: 'applet', id: action.id }} onClose={() => (sharing = false)} />
@@ -755,6 +813,15 @@
 	.bar {
 		justify-content: center;
 		padding: 8px 16px;
+	}
+	.needs-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin: 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
 	}
 	.needs {
 		display: flex;

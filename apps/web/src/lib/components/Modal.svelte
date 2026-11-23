@@ -2,6 +2,7 @@
 	import { portal } from "$lib/actions/portal";
 	import { fade, floatOut } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
+	import FocusVeil, { cardIn, cardOut } from "$lib/components/FocusVeil.svelte";
 	import type { Snippet } from "svelte";
 
 	interface Props {
@@ -13,6 +14,8 @@
 		bare?: boolean;
 		/** The dialog's name for a screen reader, when there is no `title`. */
 		label?: string;
+		/** Open as ⌘K's search does: the window blurs behind it and the card comes sharp out of a blur. */
+		veil?: boolean;
 		children: Snippet;
 		footer?: Snippet;
 	}
@@ -24,6 +27,7 @@
 		width = "md",
 		bare = false,
 		label,
+		veil = false,
 		children,
 		footer,
 	}: Props = $props();
@@ -75,28 +79,38 @@
 	}[width]);
 </script>
 
-{#if open}
+{#snippet card()}
+	{#if title && !bare}
+		<div class="modal-header">
+			<h2 class="modal-title">{title}</h2>
+			<button class="close-btn" onclick={onClose} aria-label="Close">
+				<Icon icon="mynaui:x" width="18" />
+			</button>
+		</div>
+	{/if}
+
+	<div class="modal-body">
+		{@render children()}
+	</div>
+
+	{#if footer && !bare}
+		<div class="modal-footer">
+			{@render footer()}
+		</div>
+	{/if}
+{/snippet}
+
+{#if veil}
+	<FocusVeil {open} onBackdrop={onClose} portal>
+		<div class="modal veiled {widthClass}" class:bare role="dialog" aria-modal="true" aria-label={title ?? label} tabindex="-1" use:holdFocus in:cardIn|global out:cardOut|global>
+			{@render card()}
+		</div>
+	</FocusVeil>
+{:else if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal out:fade>
 		<div class="modal {widthClass}" class:bare role="dialog" aria-modal="true" aria-label={title ?? label} tabindex="-1" use:holdFocus out:floatOut>
-			{#if title && !bare}
-				<div class="modal-header">
-					<h2 class="modal-title">{title}</h2>
-					<button class="close-btn" onclick={onClose} aria-label="Close">
-						<Icon icon="mynaui:x" width="18" />
-					</button>
-				</div>
-			{/if}
-
-			<div class="modal-body">
-				{@render children()}
-			</div>
-
-			{#if footer && !bare}
-				<div class="modal-footer">
-					{@render footer()}
-				</div>
-			{/if}
+			{@render card()}
 		</div>
 	</div>
 {/if}
@@ -144,6 +158,14 @@
 		display: flex;
 		flex-direction: column;
 		max-height: 100%;
+	}
+
+	/* Over a veil, the card's own transitions move it, as search's card does. */
+	.modal.veiled {
+		position: relative;
+		max-height: min(720px, 100%);
+		transform-origin: 50% 20%;
+		animation: none;
 	}
 
 	.modal-header,

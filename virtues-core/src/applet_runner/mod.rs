@@ -626,10 +626,15 @@ async fn execute_prepared_inner(
                         }
                         // A task of the assistant's that repeats shows its newest
                         // result on its row in the task list.
-                        if let Err(e) = crate::api::repeating_tasks::file_result(&deps.db, &action, &run_id, &summary).await {
+                        if let Err(e) = crate::api::repeating_tasks::file_result(&deps.db, &action.id, &run_id, &summary, &trigger).await {
                             tracing::error!(applet_id, error = %e, "could not file the run's result on its task");
                         }
                         maybe_archive_on_until(&deps.db, &action).await;
+                        // A one-time task that just finished has no more runs
+                        // to wait for, so its row closes.
+                        if let Err(e) = crate::api::repeating_tasks::settle(&deps.db, &action.id).await {
+                            tracing::error!(applet_id, error = %e, "could not settle the applet's task row");
+                        }
                         return AppletRunResult {
                             run_id: Some(run_id),
                             status: AppletRunStatus::Success,

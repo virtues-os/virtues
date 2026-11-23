@@ -188,10 +188,13 @@ async fn system_prompt(pool: &PgPool, task: &Task) -> String {
          Current date/time: {datetime}\n\n\
          <request id=\"{id}\">\n{title}{due}\n</request>\n\n\
          Use your tools to do the work. Your final reply is the result {user_name} reads on their task \
-         list, so write it to them: complete, self-contained, and in plain prose. This run marks the \
-         request ready with your reply, so do not change its status yourself. If you wrote a page for it, \
-         call update_task with only result_url. If you cannot finish without something from them, say \
-         exactly what you need. {user_name} accepts the result.",
+         list, so write it to them in plain prose. Start with the answer or what you did, in a sentence \
+         or two, then give only the detail they need to act on it: a few short paragraphs at most. If \
+         the request is something only {user_name} can do, such as an errand in person, say so in one \
+         sentence and stop. This run marks the request ready with your reply, so do not change its \
+         status yourself. If you wrote a page for it, call update_task with only result_url, and keep \
+         the detail on the page. If you cannot finish without something from them, say exactly what \
+         you need. {user_name} accepts the result.",
         id = task.id,
         title = task.title,
     )

@@ -49,12 +49,15 @@ export interface ChatChrome {
 	project?: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'accent_color' | 'archived_at'> | null;
 	/** The project's menu, anchored to whatever was tapped. */
 	showProjectMenu?: (e: MouseEvent) => void;
+	/** The chat's own menu (pin, rename, delete), for a saved chat. */
+	showChatMenu?: (e: MouseEvent) => void;
 }
 
 const shellMobile = detectShellFlag();
 let viewportMobile = $state(detectViewport());
 let drawerOpen = $state(false);
 let chatChrome = $state<ChatChrome | null>(null);
+let backgroundOpen = $state(false);
 
 if (typeof window !== "undefined" && !shellMobile) {
 	window.addEventListener("resize", () => {
@@ -93,5 +96,12 @@ export const mobileLayout = {
 	},
 	setChatChrome(chrome: ChatChrome | null) {
 		chatChrome = chrome;
+	},
+	/** The background popover, which on the phone opens from the chat's ⋯ menu. */
+	get backgroundOpen(): boolean {
+		return backgroundOpen;
+	},
+	set backgroundOpen(next: boolean) {
+		backgroundOpen = next;
 	},
 };

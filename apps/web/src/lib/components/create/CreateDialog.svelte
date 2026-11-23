@@ -2,7 +2,8 @@
 	/**
 	 * The frame New task and New thread share, so both open the same way:
 	 * where it will go, a large title, a description that grows as you
-	 * write, a row of property chips, then "Create more" and one button.
+	 * write, a row of property chips, then one button. It opens over a
+	 * veil, as ⌘K's search does.
 	 *
 	 * Return in the title moves to the description; ⌘Return creates from
 	 * anywhere. Escape closes an open picker first, then the dialog. Closing
@@ -11,7 +12,6 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import Switch from '$lib/components/settings/Switch.svelte';
 	import { Button, IconButton } from '$lib';
 	import { isAppleKeyboard } from '$lib/utils/platform';
 
@@ -26,7 +26,6 @@
 		body = $bindable(''),
 		bodyPlaceholder,
 		chips,
-		more = $bindable(false),
 		canCreate,
 		saving = false,
 		createLabel,
@@ -45,7 +44,6 @@
 		body?: string;
 		bodyPlaceholder: string;
 		chips: Snippet;
-		more?: boolean;
 		canCreate: boolean;
 		saving?: boolean;
 		createLabel: string;
@@ -60,11 +58,6 @@
 		if (open) requestAnimationFrame(() => titleEl?.focus());
 	});
 
-	/** Put the cursor back in the title, for the next one after "Create more". */
-	export function focusTitle() {
-		titleEl?.focus();
-	}
-
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
@@ -73,7 +66,7 @@
 	}
 </script>
 
-<Modal {open} {onClose} {label} width="xl" bare>
+<Modal {open} {onClose} {label} width="xl" bare veil>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="frame" onkeydown={onKeydown}>
 		<div class="top">
@@ -109,10 +102,6 @@
 		<div class="chips">{@render chips()}</div>
 
 		<div class="foot">
-			<label class="more">
-				<Switch checked={more} label="Create more" onchange={(v) => (more = v)} />
-				<span>Create more</span>
-			</label>
 			<span class="keys">{createKeys}</span>
 			<Button loading={saving} disabled={!canCreate} onclick={onCreate}>{createLabel}</Button>
 		</div>
@@ -193,16 +182,8 @@
 		gap: 16px;
 		margin-top: 24px;
 	}
-	.more {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		margin-right: auto;
-		font-size: var(--text-small);
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
 	.keys {
+		margin-left: auto;
 		font-size: var(--text-caption);
 		color: var(--color-foreground-subtle);
 	}

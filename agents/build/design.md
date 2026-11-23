@@ -651,7 +651,9 @@ On the phone and under reduced transparency the veil has no blur.
 own things keep their names in `AtlasIcon`'s table (`atlas:wiki`,
 `atlas:pages`), and each name draws a Myna icon. `scripts/myna-icons.mjs`
 bundles only the icons the source names, so write a name out in full: a name
-built at runtime is not bundled. Older Remix and Phosphor names are mapped in
+built at runtime is not bundled. The icons named by code the first paint
+loads come with it; the rest load just after it, and one drawn sooner holds
+its space, empty, until it arrives (`Icon.svelte`). Older Remix and Phosphor names are mapped in
 `lib/legacyIcons.ts`. Brand marks come from Simple Icons. The icons a person
 picks for a page, chat, pin or thread come from Lucide (`lib/lucide.ts`,
 `IconPicker`).

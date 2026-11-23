@@ -191,8 +191,9 @@ async fn preflight(client: &Virtues) {
     }
 
     // An applet that is a task of the assistant's has one row in the task
-    // list. Open the row of any that lacks one: made before the rows
-    // existed, or put in place by hand.
+    // list. Open the row of any that lacks one, and close the row of any
+    // that is no longer such a task: made before the rows existed, or
+    // changed by hand.
     if let Err(e) = crate::api::repeating_tasks::ensure_all(pool).await {
         tracing::warn!("Failed to open the task rows of repeating tasks: {}", e);
     }
@@ -1582,8 +1583,8 @@ mod cors_tests {
     #[test]
     fn the_sandboxed_face_reaches_its_own_routes() {
         for p in [
-            "/face/applet_dot_cloud/",
-            "/face/applet_dot_cloud/virtues.js",
+            "/face/applet_user__water_log/",
+            "/face/applet_user__water_log/virtues.js",
             "/api/face/query",
         ] {
             assert!(face_origin_allowed("null", p, None, &[]), "must allow null on {p}");
@@ -1596,7 +1597,7 @@ mod cors_tests {
     fn null_is_refused_everywhere_else() {
         for p in [
             "/api/status",
-            "/api/applets/applet_dot_cloud/face-token",
+            "/api/applets/applet_user__water_log/face-token",
             "/display",
             "/api/faces/x",
             "/faces/x",

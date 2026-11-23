@@ -115,7 +115,7 @@ shared.
 ## What you can build
 
 **Site** - a page the assistant makes with you from your own data: a chart, a
-tracker, a weekly review. Ask for one in chat. It opens as a tab, and the
+tracker, a reading list. Ask for one in chat. It opens as a tab, and the
 Sites door keeps every one you have made. A site can keep records of its own
 and can refresh on a schedule. Its Options say when it runs, what it may
 spend and how its last runs went. A site is private until you share it.

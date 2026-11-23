@@ -731,6 +731,16 @@ mod tests {
         assert_eq!(answer.about, vec!["style"]);
     }
 
+    /// The Settings agent's prompt carries every listed value and recent
+    /// change; `api::profile::StartWith` says why this one stays out.
+    #[test]
+    fn what_excites_them_is_not_shown_to_the_settings_agent() {
+        assert!(field("start_with").is_none());
+        assert!(!PROFILE_FIELDS.iter().any(|&(f, _)| f == "start_with"));
+        let prompt = draft_prompt(&json!({"start_with": "habit"}), &[]);
+        assert!(!prompt.contains("start_with") && !prompt.contains("habit"), "{prompt}");
+    }
+
     #[test]
     fn the_switch_fields_name_every_switch() {
         let capabilities: Vec<String> =

@@ -9,7 +9,8 @@ import {
 	plainReason,
 	limitsOf,
 	relativeTime,
-	runFix
+	runFix,
+	runLine
 } from './palette';
 
 describe('describeSchedule', () => {
@@ -148,6 +149,17 @@ describe('failureReason', () => {
 	it('keeps a sentence the server wrote for a person, without its period', () => {
 		expect(failureReason('Add OPENAI_API_KEY in Settings, under Keys.\n  at run')).toBe('Add OPENAI_API_KEY in Settings, under Keys');
 		expect(failureReason('action subprocess timed out after 310s')).toBe('It took too long and was stopped');
+	});
+});
+
+describe('runLine', () => {
+	const entry = (over: Record<string, unknown>) => ({ status: 'success', summary: null, error: null, occurrences: 1, ...over }) as never;
+
+	it('says why a run failed in a sentence and counts nothing', () => {
+		expect(runLine(entry({ status: 'error', error: 'action subprocess timed out after 310s' }))).toBe('It took too long and was stopped');
+		expect(runLine(entry({ status: 'error' }))).toBe('It failed');
+		expect(runLine(entry({ summary: 'Nothing new.', occurrences: 12 }))).toBe('Nothing new. (more than once)');
+		expect(runLine(entry({ summary: 'Six glasses.', occurrences: 12 }))).not.toMatch(/\d+ times/);
 	});
 });
 

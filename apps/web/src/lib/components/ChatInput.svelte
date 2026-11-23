@@ -11,6 +11,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
+	import { markStartup } from "$lib/perf/startup";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { COMPOSER_OVERLAY_ATTR } from "$lib/components/chat/state/composerReserve";
@@ -28,7 +29,7 @@
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
-		placeholder = "Ask anything, or type @ to add context",
+		placeholder: placeholderProp,
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
@@ -236,6 +237,11 @@
 		editor?.setDisabled(next);
 	});
 
+	// A phone's one-row pill has room for the short form only.
+	const placeholder = $derived(
+		placeholderProp ?? (mobileLayout.isMobile ? "Ask anything" : "Ask anything, or type @ to add context"),
+	);
+
 	// The placeholder can change after the editor exists: the chat's mode
 	// decides it.
 	$effect(() => {
@@ -249,10 +255,17 @@
 	$effect(() => {
 		if (inputIsEmpty) wrapped = false;
 	});
-	const oneRow = $derived(inline && !wrapped);
+	// A phone always starts on one row.
+	const phone = $derived(mobileLayout.isMobile);
+	const oneRow = $derived((inline || phone) && !wrapped);
+	// How tall one line of the field is, measured while it is empty. The
+	// font decides it, so a fixed number misreads a serif's taller line as
+	// wrapped text.
+	let lineHeight = 0;
 	// The field is as tall as its content.
 	function setHeight(contentPx: number) {
-		if (contentPx > MIN_HEIGHT + 4) wrapped = true;
+		if (inputIsEmpty) lineHeight = contentPx;
+		if (contentPx > Math.max(MIN_HEIGHT, lineHeight) + 4) wrapped = true;
 		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
 	}
 
@@ -411,6 +424,7 @@
 		docText = value;
 		inputIsEmpty = !value.trim();
 		editorReady = true;
+		markStartup("composer-ready");
 		void canDictate().then((yes) => (showMic = yes));
 	});
 
@@ -426,6 +440,9 @@
 		aria-label="Chat input"
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
+		class:phone
+		class:glass={phone && !inline}
+		class:lq={phone && !inline}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -474,7 +491,7 @@
 			</div>
 		</div>
 
-		<div class="composer-card bg-surface" class:one-row={oneRow}>
+		<div class="composer-card" class:bg-surface={!phone} class:one-row={oneRow}>
 			{#if onAttach}
 				<input
 					bind:this={fileInputEl}
@@ -587,6 +604,7 @@
 					onclick={trailingAction}
 					disabled={trailingMode === "send" && !canSubmit && !canQueue}
 					class="pill-btn action-btn"
+					class:idle={phone && trailingMode === "send" && !canSubmit && !canQueue && !isBusy}
 					aria-label={trailingLabel}
 				>
 					<span class="icon-swap">
@@ -671,6 +689,40 @@
 	.one-row .offline-note { grid-area: 1 / 3; margin-right: 0.25rem; }
 	.one-row .mic-button { grid-area: 1 / 4; }
 	.one-row .action-btn { grid-area: 1 / 5; }
+
+	/* On a phone the bar is a control, so what you type is in the interface
+	   font, like every other control; the serif is for the assistant's
+	   replies. */
+	.chat-input-wrapper.phone {
+		--prose-family: var(--font-sans);
+		--prose-size: 1rem;
+	}
+
+	/* On a phone the composer is one row with 12px corners, and takes the
+	   card's larger corners once the text wraps. */
+	.chat-input-wrapper.phone:has(.one-row) {
+		--shell-radius: var(--radius-xl);
+	}
+	/* On the phone's empty chat the bar sits over the painting in the app's
+	   glass (.lq in app.css), the same as the + beside it, so it follows the
+	   Glass setting. The wrapper's own fill would win over .lq, so the glass
+	   is restated here. */
+	.chat-input-wrapper.phone.glass {
+		border-color: transparent;
+		background: var(--lq-sheen), var(--lq-fill);
+		/* design-ok: glass is lifted off the painting */
+		box-shadow: var(--lq-rim), var(--lq-lift);
+	}
+	/* On the phone, send appears once there is something to send. */
+	.phone .action-btn.idle {
+		display: none;
+	}
+	/* 48px in all with its border: the height of the + beside it. */
+	.phone .composer-card.one-row {
+		min-height: 46px;
+		padding-top: 0;
+		padding-bottom: 0;
+	}
 
 	.tray-open .composer-card {
 		border-top-color: var(--color-border);

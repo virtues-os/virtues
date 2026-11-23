@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const request = vi.fn();
+const deadline = vi.fn((ms: number) => AbortSignal.timeout(ms));
 vi.mock('$lib/api/client', () => {
 	class ApiError extends Error {
 		constructor(readonly status: number) {
 			super(`HTTP ${status}`);
 		}
 	}
-	return { ApiError, request: (...args: unknown[]) => request(...args) };
+	return {
+		ApiError,
+		request: (...args: unknown[]) => request(...args),
+		deadline: (ms: number) => deadline(ms),
+	};
 });
 
 import { ApiError } from '$lib/api/client';
@@ -15,7 +20,10 @@ import { tokenForgotten } from './viewToken';
 
 const refuse = (status: number) => new (ApiError as unknown as new (status: number) => Error)(status);
 
-afterEach(() => request.mockReset());
+afterEach(() => {
+	request.mockReset();
+	deadline.mockClear();
+});
 
 describe('tokenForgotten', () => {
 	it('is true only when the server refuses the token itself', async () => {
@@ -35,9 +43,16 @@ describe('tokenForgotten', () => {
 		expect(await tokenForgotten('t1')).toBe(false);
 	});
 
-	it('asks with an empty query on the view route', async () => {
+	it('asks with an empty query on the view route, with a time limit', async () => {
 		request.mockRejectedValueOnce(refuse(400));
 		await tokenForgotten('t1');
 		expect(request).toHaveBeenCalledWith('/face/query', expect.objectContaining({ method: 'POST', query: { vt: 't1' }, body: '{"sql":""}' }));
+		expect(deadline).toHaveBeenCalledWith(10_000);
+		expect(request.mock.calls[0][1].signal).toBe(deadline.mock.results[0].value);
+	});
+
+	it('is false when the check is cut off for taking too long', async () => {
+		request.mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'));
+		expect(await tokenForgotten('t1')).toBe(false);
 	});
 });

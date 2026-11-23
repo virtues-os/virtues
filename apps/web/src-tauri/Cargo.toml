@@ -103,6 +103,9 @@ tauri-plugin-contacts = { path = "../plugins/contacts" }
 tauri-plugin-photos = { path = "../plugins/photos" }
 tauri-plugin-finance = { path = "../plugins/finance" }
 tauri-plugin-audio = { path = "../plugins/audio" }
+# The light tap when a sheet or menu opens and a row is picked
+# (src/lib/utils/haptics.ts).
+tauri-plugin-haptics = "2"
 
 # macOS-only: the owner's browser as the assistant's hands (browser_host.rs).
 # wry already links these; this crate names the pieces it calls itself — the

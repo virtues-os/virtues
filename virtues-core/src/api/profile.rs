@@ -43,6 +43,9 @@ pub struct UpdateProfileRequest {
     /// Days to keep audio recordings (30, 90, 365), or `null` for forever.
     #[serde(default, deserialize_with = "crate::api::assistant_profile::double_option")]
     pub keep_recordings_days: Option<Option<i32>>,
+    /// What excites them most: one of `StartWith`'s ids, or `null` to clear it.
+    #[serde(default, deserialize_with = "crate::api::assistant_profile::double_option")]
+    pub start_with: Option<Option<String>>,
     /// Getting-started sections dismissed from Home. The full array each time —
     /// the client owns the merge, the box just remembers it.
     pub getting_started_dismissed: Option<Vec<String>>,
@@ -111,6 +114,44 @@ impl Units {
     }
 }
 
+/// What excites the owner most about Virtues. They pick one in
+/// Setup's Names step and can change or clear it in Settings · Profile.
+///
+/// It is not in the assistant's prompt. It is one answer from Setup, and a
+/// sentence in every prompt would steer replies long after it stopped being
+/// true, and send the most sensitive answer ("breaking a vice") with every
+/// request. For the same reason it is not in `settings_draft::FIELDS` or
+/// `settings_changes::PROFILE_FIELDS`: the Settings search agent sends the
+/// Lite model every listed value and the last four weeks of changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartWith {
+    Days,
+    Patterns,
+    Memory,
+    Habit,
+    Ownership,
+}
+
+impl StartWith {
+    pub const ALL: [Self; 5] = [Self::Days, Self::Patterns, Self::Memory, Self::Habit, Self::Ownership];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+
+    /// The id stored in `app_user_profile.start_with` and sent to the
+    /// account service.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Days => "days",
+            Self::Patterns => "patterns",
+            Self::Memory => "memory",
+            Self::Habit => "habit",
+            Self::Ownership => "ownership",
+        }
+    }
+}
+
 /// The owner's units. A value the column's check would refuse reads as US.
 pub async fn get_units(db: &PgPool) -> Result<Units> {
     let profile = get_profile(db).await?;
@@ -165,6 +206,14 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
             return Err(Error::InvalidInput("Recordings are kept forever, or for 30, 90 or 365 days.".into()));
         }
         push("keep_recordings_days", &mut set_clauses, &mut next);
+    }
+    if let Some(ref start) = request.start_with {
+        if start.as_deref().is_some_and(|s| StartWith::parse(s).is_none()) {
+            return Err(Error::InvalidInput(
+                "What to start with is one of: days, patterns, memory, habit, ownership.".into(),
+            ));
+        }
+        push("start_with", &mut set_clauses, &mut next);
     }
     if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
     if let Some(ref doors) = request.sidebar_doors {
@@ -239,6 +288,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if let Some(v) = request.keep_recordings_days {
         query_builder = query_builder.bind(v);
     }
+    if let Some(ref v) = request.start_with {
+        query_builder = query_builder.bind(v.as_deref());
+    }
     if let Some(ref v) = request.getting_started_dismissed {
         query_builder = query_builder.bind(v);
     }
@@ -250,6 +302,13 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to update user profile: {}", e)))?;
+
+    // The account service keeps a copy of this one answer while the server
+    // is linked to an account. Every save goes through here (Settings, a
+    // drafted change, an undo), so this is the one place that passes it on.
+    if request.start_with.is_some() {
+        tokio::spawn(crate::virtues_api::start_with::send_if_linked(db.clone()));
+    }
 
     // Return updated profile
     get_profile(db).await
@@ -398,5 +457,46 @@ mod tests {
             .await
             .expect("circumstances render");
         assert!(block.contains("They are: home is Lisbon."), "{block}");
+    }
+
+    #[sqlx::test]
+    async fn what_excites_them_is_kept_cleared_and_kept_out_of_the_prompt(pool: PgPool) {
+        assert_eq!(get_profile(&pool).await.unwrap().start_with, None, "nothing said yet");
+        let circumstances = || async {
+            crate::api::circumstances::build_circumstances(&pool, None, chrono::Utc::now())
+                .await
+                .expect("circumstances render")
+        };
+        let set = |v: Option<&str>| UpdateProfileRequest {
+            start_with: Some(v.map(str::to_string)),
+            ..Default::default()
+        };
+        let updated = update_profile(&pool, set(Some("patterns"))).await.expect("choose patterns");
+        assert_eq!(updated.start_with.as_deref(), Some("patterns"));
+        assert!(!circumstances().await.contains("patterns"), "the answer stays out of the prompt");
+
+        // An answer outside the five is refused and the stored one stays.
+        let refused = update_profile(&pool, set(Some("streaks"))).await;
+        assert!(matches!(refused, Err(Error::InvalidInput(_))), "{refused:?}");
+        assert_eq!(get_profile(&pool).await.unwrap().start_with.as_deref(), Some("patterns"));
+
+        // `null` clears it.
+        let cleared = update_profile(&pool, set(None)).await.expect("clear it");
+        assert_eq!(cleared.start_with, None);
+
+        // An update that leaves the field out does not touch it.
+        update_profile(&pool, set(Some("days"))).await.expect("choose days");
+        let other = UpdateProfileRequest { home_city: Some("Lisbon".into()), ..Default::default() };
+        assert_eq!(update_profile(&pool, other).await.unwrap().start_with.as_deref(), Some("days"));
+    }
+
+    #[test]
+    fn every_start_with_id_is_one_the_column_accepts() {
+        // The migration's CHECK lists the same five ids.
+        let ids: Vec<&str> = StartWith::ALL.iter().map(|v| v.as_str()).collect();
+        assert_eq!(ids, ["days", "patterns", "memory", "habit", "ownership"]);
+        for v in StartWith::ALL {
+            assert_eq!(StartWith::parse(v.as_str()), Some(v));
+        }
     }
 }

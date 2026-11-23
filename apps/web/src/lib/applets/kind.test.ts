@@ -1,31 +1,15 @@
-// What an applet is to the person who meets it. The same table as the
-// server's `a_kind_follows_from_the_parts_in_order`. Every name is invented.
+// Where an applet opens and where it is listed, from the kind the server
+// gives it. Every name is invented.
 import { describe, expect, it } from 'vitest';
-import { homeOf, inSitesDoor, kindOf, optionsOf, pageOf } from './kind';
+import { homeOf, inSitesDoor, isPlainSite, optionsOf, pageOf } from './kind';
 
 const parts = (over: Record<string, unknown> = {}) =>
-	({ schedule: null, watch: null, triggers: ['manual', 'message'], command: null, has_face: false, ...over }) as Parameters<typeof kindOf>[0];
+	({ kind: 'skill', schedule: null, watch: null, triggers: ['manual', 'message'], command: null, agent: null, ...over }) as Parameters<typeof isPlainSite>[0];
 
 describe('the kind of an applet', () => {
-	it('takes the server\'s word when it gives one', () => {
-		expect(kindOf(parts({ kind: 'site' }))).toBe('site');
-		expect(kindOf(parts({ kind: 'skill', has_face: true }))).toBe('skill');
-	});
-
-	it('follows from the parts, in order, for a server that does not say', () => {
-		expect(kindOf(parts())).toBe('skill');
-		expect(kindOf(parts({ schedule: '0 0 7 * * *' }))).toBe('assistant_task');
-		expect(kindOf(parts({ watch: { table: 'data_health_workout' } }))).toBe('assistant_task');
-		expect(kindOf(parts({ triggers: ['webhook'] }))).toBe('assistant_task');
-		expect(kindOf(parts({ schedule: '  ' }))).toBe('skill');
-		expect(kindOf(parts({ command: ['embedding_index'] }))).toBe('server_task');
-		expect(kindOf(parts({ command: ['embedding_index'], schedule: '0 */15 * * * *' }))).toBe('server_task');
-		expect(kindOf(parts({ has_face: true, command: ['x'], schedule: '0 0 6 * * *' }))).toBe('site');
-	});
-
 	it('opens each kind at an address that says the word', () => {
 		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_user__water_log' })).toBe('/site/water_log');
-		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_dot_cloud' })).toBe('/site/dot_cloud');
+		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_star_map' })).toBe('/site/star_map');
 		expect(homeOf({ ...parts({ kind: 'skill' }), id: 'applet_meeting_prep' })).toBe('/skill/meeting_prep');
 		expect(homeOf({ ...parts({ kind: 'server_task' }), id: 'applet_embedding_index' })).toBe('/server-task/embedding_index');
 		expect(optionsOf({ ...parts({ kind: 'skill' }), id: 'applet_user__packing_list' }, 'history')).toBe(
@@ -54,5 +38,14 @@ describe('the kind of an applet', () => {
 		expect(optionsOf({ ...review, task_id: 'task_1' })).toBe('/site/week_in_review/options');
 		// A site that refreshes keeps its own page even with a row.
 		expect(homeOf({ ...parts({ kind: 'site' }), id: 'applet_user__water_log', task_id: 'task_2' })).toBe('/site/water_log');
+	});
+
+	it('calls a site plain only when it has nothing to run', () => {
+		expect(isPlainSite(parts({ kind: 'site' }))).toBe(true);
+		expect(isPlainSite(parts({ kind: 'site', schedule: '0 0 6 * * *' }))).toBe(false);
+		expect(isPlainSite(parts({ kind: 'site', agent: 'Add a glass.' }))).toBe(false);
+		expect(isPlainSite(parts({ kind: 'site', command: ['refresh'] }))).toBe(false);
+		expect(isPlainSite(parts({ kind: 'site', triggers: ['webhook'] }))).toBe(false);
+		expect(isPlainSite(parts({ kind: 'skill' }))).toBe(false);
 	});
 });

@@ -12,6 +12,7 @@
 	import type { Applet } from '$lib/api/client';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { problemOf } from '$lib/applets/standing';
+	import { isPlainSite } from '$lib/applets/kind';
 	import { whenInWords } from '$lib/utils/dateUtils';
 
 	let { site }: { site: Applet } = $props();
@@ -39,7 +40,7 @@
 	const trouble = $derived(problemOf(site));
 	const line = $derived.by(() => {
 		if (trouble) return `Needs you - ${trouble}`;
-		if (!site.enabled) return 'Off';
+		if (!site.enabled && !isPlainSite(site)) return 'Off';
 		const ran = site.last_run?.status === 'success' ? site.last_run.started_at : null;
 		return ran ? `Refreshed ${whenInWords(ran)}` : `Made ${whenInWords(site.created_at)}`;
 	});

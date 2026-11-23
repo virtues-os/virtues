@@ -4,6 +4,8 @@ import { boxBelowFloor } from '$lib/boxApi';
 import type { SetupState } from '$lib/api/client';
 import { setupStateStore } from '$lib/stores/setupState.svelte';
 import { sidebarDoors } from '$lib/stores/sidebarDoors.svelte';
+import { units } from '$lib/stores/units.svelte';
+import { markStartup } from '$lib/perf/startup';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
 const OFFLINE_DATA = {
@@ -14,7 +16,17 @@ const OFFLINE_DATA = {
 	onboardingStatus: 'active'
 };
 
-export const load: LayoutLoad = async ({ fetch, url }) => {
+/** The shell's data, timed for the startup report (lib/perf/startup.ts). */
+export const load: LayoutLoad = async (event) => {
+	markStartup('load-start');
+	try {
+		return await loadShell(event);
+	} finally {
+		markStartup('load-end');
+	}
+};
+
+const loadShell: LayoutLoad = async ({ fetch, url }) => {
 	// Check authentication via Rust auth API
 	try {
 		// PARALLEL, with the session. Setup state, the version floor and the
@@ -162,6 +174,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		if (profileResponse?.ok) {
 			const profile = await profileResponse.json();
 			sidebarDoors.seed(profile);
+			units.seed(profile);
 
 			// (Onboarding redirects live above, off /api/setup/state. This fetch
 			// only feeds preferences.)

@@ -17,6 +17,7 @@ mod preorder;
 mod relay;
 mod servers;
 mod settings;
+mod start_with;
 mod webhooks;
 
 /// Credit/pricing amounts (renewal + top-up bands).
@@ -136,6 +137,7 @@ pub fn router() -> Router<AppState> {
         .merge(billing_portal::router())
         .merge(entitlement::router())
         .merge(settings::router())
+        .merge(start_with::router())
         .merge(webhooks::router())
         .merge(diag::router())
 }

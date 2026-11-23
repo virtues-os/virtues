@@ -55,7 +55,7 @@
 	onfocus={() => onHover?.(item.key)}
 	onblur={() => onHover?.(null)}
 >
-	<InboxMark kind={item.kind} />
+	<InboxMark kind={item.kind} radar />
 </button>
 
 <style>

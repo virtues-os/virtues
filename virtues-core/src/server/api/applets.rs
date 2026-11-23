@@ -80,7 +80,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/applets/:id/log", get(applet_log_handler))
         .route("/api/applets/:id/pages", get(applet_pages_handler))
         .route("/api/runs", get(list_runs_handler))
-        .route("/api/runs/by-day", get(runs_by_day_handler))
         // Credentials API
         .route("/api/credentials", get(list_credentials_handler))
         .route(
@@ -344,7 +343,12 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
-                    let task_id: Option<String> = r.try_get("task_id").unwrap_or(None);
+                    // A row that cannot be read is logged. Without that, a
+                    // task of the assistant's would show as one with no row.
+                    let task_id: Option<String> = r.try_get("task_id").unwrap_or_else(|e| {
+                        tracing::error!(applet_id = %id, error = %e, "could not read the applet's task row id");
+                        None
+                    });
                     // The SQL COALESCEs to 0, so a real "spent nothing" arrives
                     // as 0 and NULL can only mean the decode failed. Those must
                     // not collapse into each other: this is a money figure, and
@@ -545,7 +549,9 @@ async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow
 /// keys it names and its last run). The GET and the PATCH both answer with
 /// this, so a page that takes the PATCH reply as the applet loses nothing.
 async fn applet_detail(pool: &sqlx::PgPool, action: &crate::scheduler::applets::Applet) -> Result<serde_json::Value, Error> {
-    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await.ok().flatten();
+    // A failed read is an error here. Answering with no last run would say
+    // the applet never ran.
+    let last_run = crate::scheduler::applets::last_run(pool, &action.id).await?;
     let secrets = declared_secrets_status(pool, &action.id)
         .await
         .map_err(|e| Error::Other(format!("{e:#}")))?;
@@ -629,8 +635,12 @@ pub async fn patch_applet_handler(
     let pool = state.db.pool();
     let applet = crate::scheduler::applets::update_applet(pool, &applet_id, &patch).await?;
     // A change can make it a task of the assistant's (a schedule added to a
-    // prompt you made), which gives it its row in the task list.
-    crate::api::repeating_tasks::ensure(pool, &applet, None).await?;
+    // prompt you made), which gives it its row in the task list. The change
+    // is saved by now, so a row that fails to open is logged and the reply
+    // still says what was saved; the next start of the server opens it.
+    if let Err(e) = crate::api::repeating_tasks::ensure(pool, &applet, None).await {
+        tracing::error!(applet_id = %applet.id, error = %e, "could not open or close the applet's task row");
+    }
     // The row as it serializes, with the detail's fields over it. The app
     // replaces the applet it holds with this reply, so a reply without
     // `has_face` or `kind` would turn a site's page into a list of runs.
@@ -730,27 +740,6 @@ pub async fn list_runs_handler(
     )
     .await?;
     Ok(Json(runs))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RunsByDayQuery {
-    pub days: Option<i32>,
-}
-
-/// GET /api/runs/by-day?days=30 - each applet's run count per local day, split
-/// by outcome. Feeds the Applets page's "Last 7 days" column and run history.
-pub async fn runs_by_day_handler(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<RunsByDayQuery>,
-) -> Result<Json<Vec<crate::scheduler::applets::RunDay>>, Error> {
-    let days = q.days.unwrap_or(30).clamp(1, 90);
-    // Schedules fire on the box's own clock, so days are counted on it too.
-    // A box that can't read its timezone counts in UTC rather than failing the
-    // whole page; the days then match the UTC dates the runs carry.
-    let tz = crate::timezone::system_timezone().unwrap_or_else(|| "UTC".to_string());
-    Ok(Json(
-        crate::scheduler::applets::runs_by_day(state.db.pool(), &tz, days).await?,
-    ))
 }
 
 // ============================================================================
