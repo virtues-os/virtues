@@ -1482,7 +1482,6 @@
 			items.push({
 				id: "temporary",
 				label: "Temporary chat",
-				description: "Isn't saved or remembered",
 				icon: "mynaui:incognito",
 				checked: isGhost,
 				dividerAfter: true,
@@ -3266,7 +3265,13 @@
 	}
 
 	@media (max-width: 768px), (pointer: coarse) {
-		/* Room for the quick-add button: its 48px and an 8px gap. */
+		/* 16px from the screen edge, the margin the bar and the quick-add
+		   menu share. The empty chat leaves room for the + (48px and an 8px
+		   gap). */
+		.chat-input-wrapper {
+			padding-left: 16px;
+			padding-right: 16px;
+		}
 		.chat-input-wrapper.is-empty {
 			padding-right: 72px;
 		}

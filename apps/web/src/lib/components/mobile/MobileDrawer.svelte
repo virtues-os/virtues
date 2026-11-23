@@ -163,15 +163,15 @@
 			Virtues
 		</span>
 		<button class="square lq" onclick={openSearch} aria-label="Search">
-			<AtlasIcon name="search" size={17} bare />
+			<AtlasIcon name="search" size={19} bare />
 		</button>
 		<button class="square lq" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
-			<AtlasIcon name="settings" size={17} bare />
+			<AtlasIcon name="settings" size={19} bare />
 		</button>
 		<!-- Back to the chat, parked off the right edge. The swipe closes the
 		     drawer too; this is the one you can see. -->
 		<button class="square lq" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
-			<Icon icon="mynaui:x" width={17} />
+			<Icon icon="mynaui:x" width={19} />
 		</button>
 	</header>
 
@@ -328,15 +328,15 @@
 		font-size: 1.25rem;
 	}
 
-	/* 36px of button with a 44px reach: the margin is part of the target. */
+	/* 40px of button with a 44px reach: the margin is part of the target. */
 	.square {
 		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		margin: 4px;
+		width: 40px;
+		height: 40px;
+		margin: 2px;
 		border: 0;
 		border-radius: var(--radius-lg);
 		color: var(--color-foreground);

@@ -245,7 +245,7 @@
 		<header class="topbar">
 			<!-- The ∴ opens the drawer, the way the mark opens the desktop's rail. -->
 			<button class="bar-btn lq" onclick={() => mobileLayout.openDrawer()} aria-label="Threads and chats">
-				<svg viewBox="0 0 12 10.5" width="15" height="13" fill="currentColor" aria-hidden="true">
+				<svg viewBox="0 0 12 10.5" width="16" height="14" fill="currentColor" aria-hidden="true">
 					<circle cx="6" cy="2.4" r="1.5" />
 					<circle cx="2.6" cy="8.1" r="1.5" />
 					<circle cx="9.4" cy="8.1" r="1.5" />
@@ -265,16 +265,16 @@
 			{/if}
 			<div class="bar-group" class:alone={!chrome?.project}>
 				<button class="bar-btn lq" onclick={() => search.show()} aria-label="Search">
-					<AtlasIcon name="search" size={17} bare />
+					<AtlasIcon name="search" size={19} bare />
 				</button>
 				{#if chrome?.showChatMenu}
 					<button class="bar-btn lq" onclick={(e) => chrome?.showChatMenu?.(e)} aria-haspopup="menu" aria-label="Chat options">
-						<Icon icon="mynaui:dots" width={18} />
+						<Icon icon="mynaui:dots" width={20} />
 					</button>
 				{/if}
 				{#if !chrome?.empty}
 					<button class="bar-btn lq" onclick={newChat} aria-label="New chat">
-						<AtlasIcon name="plus" size={17} bare />
+						<AtlasIcon name="plus" size={19} bare />
 					</button>
 				{/if}
 			</div>
@@ -382,8 +382,8 @@
 		margin-right: auto;
 		display: flex;
 		align-items: center;
-		height: 36px;
-		margin: 4px;
+		height: 40px;
+		margin: 2px;
 		padding: 0 8px;
 		border-radius: var(--radius-lg);
 		overflow: hidden;
@@ -445,14 +445,14 @@
 		transition-duration: 0s;
 	}
 
-	/* 36px of button with a 44px reach: the margin is part of the target. */
+	/* 40px of button with a 44px reach: the margin is part of the target. */
 	.bar-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		margin: 4px;
+		width: 40px;
+		height: 40px;
+		margin: 2px;
 		border: 0;
 		border-radius: var(--radius-lg);
 		color: var(--color-foreground);
