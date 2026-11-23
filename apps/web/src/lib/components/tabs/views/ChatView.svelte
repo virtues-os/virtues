@@ -1466,6 +1466,18 @@
 		const items: ContextMenuItem[] = [];
 		// Offered only while it can still be true: a turn that has been sent
 		// cannot be taken back out of storage.
+		// On the phone, home's background is changed from here; the desktop has
+		// its corner button.
+		if (isEmpty && !isGhost && mobileLayout.isMobile) {
+			items.push({
+				id: "background",
+				label: "Change background",
+				icon: "mynaui:image",
+				action: () => {
+					mobileLayout.backgroundOpen = true;
+				},
+			});
+		}
 		if (isEmpty) {
 			items.push({
 				id: "temporary",
@@ -2653,7 +2665,7 @@
 						<!-- Loaded once home shows, so the control and its popover
 						     stay out of the chat home's first paint. -->
 						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
-							<BackgroundControl composer={composerEl} />
+							<BackgroundControl />
 						{/await}
 					{/if}
 
@@ -3235,21 +3247,28 @@
 	   it via --keyboard-inset). This block sits after the base rules on
 	   purpose: it ties them on specificity, and cascade order is what lets it
 	   win — an earlier version lived above them and silently lost. */
-	/* The phone shell's glass bar floats over the view (MobileShell), so the
-	   transcript starts below it and the painting runs up behind it. */
+	/* The phone shell's bar floats over the view (MobileShell), so the
+	   transcript starts below it. Home's painting fills the bottom part and
+	   fades out at its top, as on the desktop, and the day's headline sits
+	   just above where it begins. */
 	@media (max-width: 768px), (pointer: coarse) {
 		.messages-container {
 			padding-top: calc(1.5rem + var(--shell-bar-inset, 0px));
 		}
 		.home-scene {
-			top: 0;
-			height: 100%;
+			height: 46%;
+		}
+		.init-hero {
+			bottom: calc(46% + 24px);
+			justify-content: flex-start;
+			padding: 0 24px;
 		}
 	}
 
 	@media (max-width: 768px), (pointer: coarse) {
+		/* Room for the quick-add button: its 48px and an 8px gap. */
 		.chat-input-wrapper.is-empty {
-			padding-right: 68px;
+			padding-right: 72px;
 		}
 		.chat-input-wrapper,
 		.chat-input-wrapper.is-empty {

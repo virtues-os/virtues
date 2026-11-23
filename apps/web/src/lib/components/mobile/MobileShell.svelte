@@ -292,7 +292,7 @@
 			</div>
 		{/if}
 
-		<div class="view">
+		<div class="view" class:under-bar={!chrome}>
 			{#if tab}
 				<TabContent {tab} active={true} />
 			{/if}
@@ -365,9 +365,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 8px;
-		height: 40px;
-		margin: 12px 12px 0;
+		gap: 0;
+		height: 44px;
+		margin: 8px 12px 0;
 		pointer-events: none;
 	}
 	.topbar > :global(*) {
@@ -382,9 +382,10 @@
 		margin-right: auto;
 		display: flex;
 		align-items: center;
-		height: 40px;
+		height: 36px;
+		margin: 4px;
 		padding: 0 8px;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 	}
 
@@ -444,14 +445,16 @@
 		transition-duration: 0s;
 	}
 
+	/* 36px of button with a 44px reach: the margin is part of the target. */
 	.bar-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 40px;
-		height: 40px;
+		width: 36px;
+		height: 36px;
+		margin: 4px;
 		border: 0;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
@@ -460,7 +463,6 @@
 	.bar-group {
 		flex: none;
 		display: flex;
-		gap: 8px;
 	}
 	.bar-group.alone {
 		margin-left: auto;
@@ -488,6 +490,13 @@
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
+	}
+
+	/* A view that is not a chat has no idea the bar floats over it, so its
+	   content starts below the bar. A chat pads its own transcript instead, so
+	   the page can scroll under the glass. */
+	.view.under-bar > :global(.tab-content) {
+		top: var(--shell-bar-inset);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

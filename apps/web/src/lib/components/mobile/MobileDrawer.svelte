@@ -2,17 +2,18 @@
 	/**
 	 * The phone's drawer: the app's navigation, as a full-screen room.
 	 *
-	 * Threads are the main container, so the drawer is built around them. Your
-	 * threads come first, each one a row that folds open to its latest chats;
-	 * the thread you are in opens by itself. Chats outside any thread follow.
-	 * The places you visit less (Inbox, Pages, Sites, Wiki and the other doors
-	 * the owner arranged on the desktop) are tiles at the bottom, with search
-	 * and new chat under them, so everything you tap often is in thumb reach.
-	 * The top holds only the title, Settings and the way back to the chat.
+	 * It reads as a menu on the plain page. The mark and Virtues sit small at
+	 * the top with search, Settings and the way back. Under them, the doors
+	 * the owner arranged on the desktop are tiles with ink icons, so color is
+	 * left for threads. Threads come next, the six used most recently, each
+	 * folding open to its latest chats along a tree line; the thread you are
+	 * in opens by itself. Chats outside any thread follow. New chat is the one
+	 * solid button, at the bottom where the thumb is.
 	 *
 	 * Position, the slide and the gesture all belong to MobileShell; this
 	 * component only renders content (the shell moves it for parallax).
 	 */
+
 
 	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -153,70 +154,97 @@
 
 <nav class="drawer" aria-label="Navigation">
 	<header class="mast">
-		<h1 class="mast-title">Threads</h1>
-		<button class="round lq" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
-			<AtlasIcon name="settings" bare />
+		<span class="mark-word">
+			<svg viewBox="0 0 12 10.5" width="13" height="11" fill="currentColor" aria-hidden="true">
+				<circle cx="6" cy="2.4" r="1.5" />
+				<circle cx="2.6" cy="8.1" r="1.5" />
+				<circle cx="9.4" cy="8.1" r="1.5" />
+			</svg>
+			Virtues
+		</span>
+		<button class="square lq" onclick={openSearch} aria-label="Search">
+			<AtlasIcon name="search" size={17} bare />
 		</button>
-		<!-- Back to the chat, which is parked off the right edge. The swipe
-		     closes the drawer too; this is the one you can see. -->
-		<button class="round lq" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
-			<Icon icon="mynaui:chevrons-right" width={20} />
+		<button class="square lq" onclick={() => go("/virtues/devices/this", "Settings")} aria-label="Settings">
+			<AtlasIcon name="settings" size={17} bare />
+		</button>
+		<!-- Back to the chat, parked off the right edge. The swipe closes the
+		     drawer too; this is the one you can see. -->
+		<button class="square lq" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
+			<Icon icon="mynaui:x" width={17} />
 		</button>
 	</header>
 
-	<div class="body">
-		<div class="card">
-			{#if pinsStore.pins.length > 0}
-				<div class="section-label">Pinned</div>
-				{#each pinsStore.pins as pin (pin.id)}
-					{@const look = pinIdentity(pin)}
-					<button
-						class="row"
-						class:active={activeRoute === pin.url}
-						aria-current={activeRoute === pin.url ? "page" : undefined}
-						onclick={() => openPin(pin, look.title)}
-					>
-						<span class="mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
-							{#if look.icon && isEmoji(look.icon)}
-								{look.icon}
-							{:else if look.icon?.startsWith("atlas:")}
-								<AtlasIcon name={look.icon.slice("atlas:".length)} size={16} bare />
-							{:else if look.icon}
-								<Icon icon={look.icon} width={16} />
-							{:else}
-								<AtlasIcon name={kindGlyph(pin.url)} size={16} bare />
-							{/if}
-						</span>
-						<span class="text">{look.title}</span>
-					</button>
-				{/each}
-				<div class="rule"></div>
-			{/if}
+	{#if tileDoors.length > 0}
+		<div class="tiles" style:--tile-count={Math.min(tileDoors.length, 5)}>
+			{#each tileDoors as door (door.id)}
+				<button class="tile" onclick={doorActions[door.id].open}>
+					<span class="tile-face"><AtlasIcon name={door.glyph} size={20} bare /></span>
+					<span class="tile-label">{door.label}</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
 
-			{#each threads as t (t.id)}
-				{@const open = isOpen(t.id)}
-				{@const route = `/thread/${t.id}`}
-				<div class="thread-row">
-					<button
-						class="row thread"
-						class:active={activeRoute === route}
-						aria-current={activeRoute === route ? "page" : undefined}
-						onclick={() => go(route, t.name)}
-					>
-						<span class="mark"><ProjectGlyph project={t} size={16} /></span>
-						<span class="text">{t.name}</span>
-					</button>
-					<button
-						class="fold"
-						class:open
-						onclick={() => toggle(t.id)}
-						aria-expanded={open}
-						aria-label={open ? `Hide chats in ${t.name}` : `Show chats in ${t.name}`}
-					>
-						<Icon icon="mynaui:chevron-right" width={16} />
-					</button>
-				</div>
-				{#if open}
+	<div class="body">
+		{#if pinsStore.pins.length > 0}
+			<div class="section"><span>Pinned</span></div>
+			{#each pinsStore.pins as pin (pin.id)}
+				{@const look = pinIdentity(pin)}
+				<button
+					class="row"
+					class:active={activeRoute === pin.url}
+					aria-current={activeRoute === pin.url ? "page" : undefined}
+					onclick={() => openPin(pin, look.title)}
+				>
+					<span class="mark" aria-hidden="true" style={accentCss(look.color) ? `color: ${accentCss(look.color)}` : undefined}>
+						{#if look.icon && isEmoji(look.icon)}
+							{look.icon}
+						{:else if look.icon?.startsWith("atlas:")}
+							<AtlasIcon name={look.icon.slice("atlas:".length)} size={16} bare />
+						{:else if look.icon}
+							<Icon icon={look.icon} width={16} />
+						{:else}
+							<AtlasIcon name={kindGlyph(pin.url)} size={16} bare />
+						{/if}
+					</span>
+					<span class="text">{look.title}</span>
+				</button>
+			{/each}
+		{/if}
+
+		<div class="section">
+			<span>Threads</span>
+			<button class="more" onclick={() => go("/threads", "Threads")}>
+				All threads<Icon icon="mynaui:chevron-right" width={12} />
+			</button>
+		</div>
+		{#each threads as t (t.id)}
+			{@const open = isOpen(t.id)}
+			{@const route = `/thread/${t.id}`}
+			<div class="thread-row">
+				<button
+					class="row thread"
+					class:active={activeRoute === route}
+					aria-current={activeRoute === route ? "page" : undefined}
+					onclick={() => go(route, t.name)}
+				>
+					<span class="mark"><ProjectGlyph project={t} size={16} /></span>
+					<span class="text">{t.name}</span>
+				</button>
+				<button
+					class="fold"
+					class:open
+					onclick={() => toggle(t.id)}
+					aria-expanded={open}
+					aria-label={open ? `Hide chats in ${t.name}` : `Show chats in ${t.name}`}
+				>
+					<Icon icon="mynaui:chevron-right" width={15} />
+				</button>
+			</div>
+			{#if open}
+				<!-- Its chats hang off the thread along a tree line. -->
+				<div class="branch">
 					{#each chatsIn(t.id) as s (s.conversation_id)}
 						{@const chatRoute = `/chat/${s.conversation_id}`}
 						<button
@@ -233,60 +261,44 @@
 							{/if}
 						</button>
 					{:else}
-						<div class="nested-empty">No chats in this thread yet.</div>
+						<div class="empty">No chats in this thread yet.</div>
 					{/each}
-				{/if}
-			{/each}
-			<button class="row quiet" onclick={() => go("/threads", "Threads")}>All threads</button>
+				</div>
+			{/if}
+		{/each}
 
-			<div class="rule"></div>
-			<div class="section-label">Other chats</div>
-			{#each otherChats as s (s.conversation_id)}
-				{@const route = `/chat/${s.conversation_id}`}
-				<button
-					class="row"
-					class:active={activeRoute === route}
-					aria-current={activeRoute === route ? "page" : undefined}
-					onclick={() => go(route, s.title || "Chat")}
-				>
-					<span class="text">{s.title || untitled("chat")}</span>
-					{#if chatActivity.running(s.conversation_id)}
-						<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
-					{:else if chatActivity.unread(s.conversation_id)}
-						<span class="row-unread" role="img" aria-label="New reply"></span>
-					{:else}
-						<span class="when">{when(s.last_message_at || s.first_message_at)}</span>
-					{/if}
-				</button>
-			{:else}
-				<div class="nested-empty">Chats you start outside a thread collect here.</div>
-			{/each}
-			<button class="row quiet" onclick={() => go("/chat-history", "All Chats")}>All chats</button>
+		<div class="section">
+			<span>Other chats</span>
+			<button class="more" onclick={() => go("/chat-history", "All Chats")}>
+				All chats<Icon icon="mynaui:chevron-right" width={12} />
+			</button>
 		</div>
+		{#each otherChats as s (s.conversation_id)}
+			{@const route = `/chat/${s.conversation_id}`}
+			<button
+				class="row"
+				class:active={activeRoute === route}
+				aria-current={activeRoute === route ? "page" : undefined}
+				onclick={() => go(route, s.title || "Chat")}
+			>
+				<span class="text">{s.title || untitled("chat")}</span>
+				{#if chatActivity.running(s.conversation_id)}
+					<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
+				{:else if chatActivity.unread(s.conversation_id)}
+					<span class="row-unread" role="img" aria-label="New reply"></span>
+				{:else}
+					<span class="when">{when(s.last_message_at || s.first_message_at)}</span>
+				{/if}
+			</button>
+		{:else}
+			<div class="empty">Chats you start outside a thread collect here.</div>
+		{/each}
 	</div>
 
-	<!-- The thumb's end of the screen: the other doors as tiles, then search
-	     and new chat. -->
 	<footer class="dock">
-		{#if tileDoors.length > 0}
-			<div class="tiles" style:--tile-count={Math.min(tileDoors.length, 5)}>
-				{#each tileDoors as door (door.id)}
-					<button class="tile lq" onclick={doorActions[door.id].open}>
-						<AtlasIcon name={door.glyph} bare />
-						<span>{door.label}</span>
-					</button>
-				{/each}
-			</div>
-		{/if}
-		<div class="dock-row">
-			<button class="search lq" onclick={openSearch}>
-				<AtlasIcon name="search" bare />
-				<span>Search</span>
-			</button>
-			<button class="compose" onclick={newChat} aria-label="New chat">
-				<Icon icon="mynaui:plus" width={20} />
-			</button>
-		</div>
+		<button class="compose" onclick={newChat}>
+			<Icon icon="mynaui:plus" width={18} />New chat
+		</button>
 	</footer>
 </nav>
 
@@ -303,29 +315,67 @@
 		flex: none;
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		padding: 8px 12px 12px 24px;
+		height: 44px;
+		margin: 8px 12px 0;
 	}
-	.mast-title {
+	.mark-word {
 		flex: 1;
-		margin: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding-left: 4px;
 		font-family: var(--font-serif);
-		font-size: 1.875rem;
-		font-weight: 400;
+		font-size: 1.25rem;
 	}
 
-	.round {
+	/* 36px of button with a 44px reach: the margin is part of the target. */
+	.square {
 		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 44px;
-		height: 44px;
+		width: 36px;
+		height: 36px;
+		margin: 4px;
 		border: 0;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
+	}
+
+	.tiles {
+		flex: none;
+		display: grid;
+		grid-template-columns: repeat(var(--tile-count), minmax(0, 1fr));
+		gap: 4px;
+		padding: 12px 12px 4px;
+	}
+	.tile {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		border: 0;
+		background: transparent;
+		color: var(--color-foreground);
+		font: inherit;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.tile-face {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 48px;
+		height: 48px;
+		border-radius: var(--radius-xl);
+		background: var(--color-surface);
+		box-shadow: 0 0 0 0.5px var(--color-border);
+	}
+	.tile-label {
+		font-size: 0.6875rem;
+		color: var(--color-foreground-muted);
 	}
 
 	.body {
@@ -335,36 +385,36 @@
 		padding: 0 12px 12px;
 	}
 
-	/* The list sits on a white card, the same page card the chat uses. */
-	.card {
+	.section {
 		display: flex;
-		flex-direction: column;
-		padding: 8px;
-		border-radius: var(--radius-xl);
-		background: var(--color-surface);
-		box-shadow: 0 0 0 0.5px var(--color-border);
-	}
-
-	.section-label {
-		padding: 8px 12px 4px;
-		font-size: 0.8125rem;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 8px 4px;
+		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 	}
-
-	.rule {
-		height: 1px;
-		margin: 8px 12px;
-		background: var(--color-border);
+	.more {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		min-height: 32px;
+		border: 0;
+		background: transparent;
+		color: var(--color-foreground);
+		font: inherit;
+		font-size: 0.75rem;
+		cursor: pointer;
 	}
 
 	.row {
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		width: 100%;
 		min-height: 44px;
-		padding: 0 12px;
+		padding: 0 8px;
 		border: 0;
-		border-radius: var(--radius-xl);
+		border-radius: var(--radius-lg);
 		background: transparent;
 		color: var(--color-foreground);
 		font: inherit;
@@ -374,20 +424,7 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 	.row.active {
-		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
-	}
-	.row.nested {
-		margin-left: 28px;
-		font-size: 0.9375rem;
-		color: var(--color-foreground-muted);
-	}
-	.row.nested.active {
-		color: var(--color-foreground);
-	}
-	.row.quiet {
-		min-height: 40px;
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 
 	.thread-row {
@@ -407,15 +444,29 @@
 		width: 44px;
 		height: 44px;
 		border: 0;
-		border-radius: var(--radius-full);
 		background: transparent;
-		color: var(--color-foreground-muted);
+		color: var(--color-foreground-subtle);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
-		transition: transform var(--motion-enter) var(--ease-premium);
+		transition: transform 0.2s ease-out;
 	}
 	.fold.open {
 		transform: rotate(90deg);
+	}
+
+	/* The tree line starts under the thread's icon. */
+	.branch {
+		margin: 0 0 4px 16px;
+		padding-left: 12px;
+		border-left: 1px solid var(--color-border);
+	}
+	.row.nested {
+		min-height: 40px;
+		font-size: 0.9375rem;
+		color: var(--color-foreground-muted);
+	}
+	.row.nested.active {
+		color: var(--color-foreground);
 	}
 
 	.mark {
@@ -425,7 +476,6 @@
 		justify-content: center;
 		width: 16px;
 	}
-
 	.text {
 		flex: 1;
 		min-width: 0;
@@ -433,19 +483,16 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-
 	.when {
 		flex: none;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 	}
-
-	.nested-empty {
-		padding: 8px 12px 8px 40px;
+	.empty {
+		padding: 8px;
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
-
 	.row-unread {
 		flex: none;
 		width: 8px;
@@ -458,84 +505,44 @@
 		color: var(--color-foreground-muted);
 	}
 
+	/* The list fades out above the one solid button. */
 	.dock {
 		flex: none;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 0 12px calc(12px + env(safe-area-inset-bottom));
-	}
-
-	.tiles {
-		display: grid;
-		grid-template-columns: repeat(var(--tile-count), minmax(0, 1fr));
-		gap: 8px;
-	}
-	.tile {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 4px;
-		height: 64px;
-		border: 0;
-		border-radius: var(--radius-xl);
-		color: var(--color-foreground);
-		font: inherit;
-		font-size: 0.75rem;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	.dock-row {
-		display: flex;
-		gap: 8px;
-	}
-	.search {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		height: 52px;
-		padding: 0 16px;
-		border: 0;
-		border-radius: var(--radius-full);
-		color: var(--color-foreground-muted);
-		font: inherit;
-		font-size: 1rem;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
+		padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+		background: linear-gradient(transparent, var(--color-page) 24px);
+		margin-top: -24px;
+		position: relative;
 	}
 	.compose {
-		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 52px;
-		height: 52px;
+		gap: 8px;
+		width: 100%;
+		height: 48px;
 		border: 0;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-xl);
 		background: var(--color-foreground);
 		color: var(--color-surface);
+		font: inherit;
+		font-size: 1rem;
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 	}
 
 	/* The press: a quick shrink under the finger and a spring back. */
 	.row,
-	.round,
+	.square,
 	.tile,
-	.search,
 	.compose {
 		transition:
 			transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
 			background-color 0.2s ease-out;
 	}
-	.round:active,
+	.square:active,
 	.tile:active,
-	.search:active,
 	.compose:active {
-		transform: scale(0.92);
+		transform: scale(0.94);
 		transition-duration: 0.08s;
 	}
 	.row:active {
@@ -545,17 +552,15 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.row,
-		.round,
+		.square,
 		.tile,
-		.search,
 		.compose,
 		.fold {
 			transition: none;
 		}
 		.row:active,
-		.round:active,
+		.square:active,
 		.tile:active,
-		.search:active,
 		.compose:active {
 			transform: none;
 		}

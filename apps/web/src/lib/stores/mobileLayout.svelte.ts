@@ -57,6 +57,7 @@ const shellMobile = detectShellFlag();
 let viewportMobile = $state(detectViewport());
 let drawerOpen = $state(false);
 let chatChrome = $state<ChatChrome | null>(null);
+let backgroundOpen = $state(false);
 
 if (typeof window !== "undefined" && !shellMobile) {
 	window.addEventListener("resize", () => {
@@ -95,5 +96,12 @@ export const mobileLayout = {
 	},
 	setChatChrome(chrome: ChatChrome | null) {
 		chatChrome = chrome;
+	},
+	/** The background popover, which on the phone opens from the chat's ⋯ menu. */
+	get backgroundOpen(): boolean {
+		return backgroundOpen;
+	},
+	set backgroundOpen(next: boolean) {
+		backgroundOpen = next;
 	},
 };

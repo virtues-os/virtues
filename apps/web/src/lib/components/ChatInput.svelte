@@ -441,6 +441,7 @@
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
 		class:phone
+		class:glass={phone && !inline}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -602,6 +603,7 @@
 					onclick={trailingAction}
 					disabled={trailingMode === "send" && !canSubmit && !canQueue}
 					class="pill-btn action-btn"
+					class:idle={phone && trailingMode === "send" && !canSubmit && !canQueue && !isBusy}
 					aria-label={trailingLabel}
 				>
 					<span class="icon-swap">
@@ -687,13 +689,28 @@
 	.one-row .mic-button { grid-area: 1 / 4; }
 	.one-row .action-btn { grid-area: 1 / 5; }
 
-	/* On a phone the composer is the desktop's card, a pill on one row. It
-	   takes the card's corners once the text wraps. */
+	/* On a phone the composer is one row with 12px corners, and takes the
+	   card's larger corners once the text wraps. */
 	.chat-input-wrapper.phone:has(.one-row) {
-		--shell-radius: var(--radius-full);
+		--shell-radius: var(--radius-xl);
 	}
+	/* On the phone's empty chat the bar is glass, like the buttons over the
+	   painting, so it follows the Glass setting. */
+	.chat-input-wrapper.phone.glass {
+		border-color: transparent;
+		background: var(--lq-sheen), var(--lq-fill);
+		/* design-ok: glass is lifted off the painting */
+		box-shadow: var(--lq-rim), var(--lq-lift);
+	}
+	/* On the phone, send appears once there is something to send. */
+	.phone .action-btn.idle {
+		display: none;
+	}
+	/* 48px in all with its border: the height of the + beside it. */
 	.phone .composer-card.one-row {
-		min-height: 52px;
+		min-height: 46px;
+		padding-top: 0;
+		padding-bottom: 0;
 	}
 
 	.tray-open .composer-card {

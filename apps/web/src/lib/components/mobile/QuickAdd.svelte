@@ -2,12 +2,10 @@
 	QuickAdd.svelte
 
 	The + on the phone's empty chat. It opens a glass menu above the button
-	with three kinds of thing, kept apart by shape: places to go are rows in
-	a list, actions are pills. Go to holds Inbox and your pins (else your
-	latest threads). Add to this chat attaches a photo or a file to the chat
-	you are starting. New makes a task, a thread or a page. A search field
-	sits over the chat bar while the menu is open, since your thumb is
-	already there.
+	with three kinds of thing, kept apart by shape: places to go are rows at
+	the top (Inbox, your pins, then your threads), actions are chips. New
+	makes a task, a thread or a page. Add to chat, lowest and nearest the
+	chat bar, attaches a photo or a file to the chat you are starting.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -18,7 +16,6 @@
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { pinIdentity } from "$lib/refs/identity.svelte";
-	import { search } from "$lib/stores/search.svelte";
 	import { newPage, newTask } from "$lib/utils/newActions";
 	import { newProject } from "$lib/utils/projectActions";
 	import { kindGlyph } from "$lib/utils/iconHelpers";
@@ -31,7 +28,7 @@
 	let libraryEl: HTMLInputElement | null = $state(null);
 	let fileEl: HTMLInputElement | null = $state(null);
 
-	const GO_CAP = 3;
+	const GO_CAP = 5;
 
 	type Place = { key: string; title: string; note: string; run: () => void; thread?: (typeof projectStore.projects)[number]; glyph?: string };
 
@@ -98,7 +95,6 @@
 	<button class="scrim" aria-label="Close" onclick={() => (open = false)}></button>
 
 	<div class="menu lq" role="menu" aria-label="Quick add">
-		<div class="label">Go to</div>
 		{#each places as p (p.key)}
 			<button class="place" role="menuitem" onclick={p.run}>
 				<span class="glyph">
@@ -114,48 +110,45 @@
 		{/each}
 
 		<div class="rule"></div>
-		<div class="label">Add to this chat</div>
-		<div class="pills">
-			<button class="pill" role="menuitem" onclick={() => pick(cameraEl)}>
-				<Icon icon="mynaui:camera" width={17} />Camera
-			</button>
-			<button class="pill" role="menuitem" onclick={() => pick(libraryEl)}>
-				<Icon icon="mynaui:image" width={17} />Library
-			</button>
-			<button class="pill" role="menuitem" onclick={() => pick(fileEl)}>
-				<Icon icon="mynaui:paperclip" width={17} />File
-			</button>
-		</div>
-
 		<div class="label">New</div>
-		<div class="pills">
-			<button class="pill" role="menuitem" onclick={() => act(newTask)}>
+		<div class="chips">
+			<button class="chip" role="menuitem" onclick={() => act(newTask)}>
 				<AtlasIcon name="tasks" size={17} bare />Task
 			</button>
-			<button class="pill" role="menuitem" onclick={() => act(() => newProject(go))}>
+			<button class="chip" role="menuitem" onclick={() => act(() => newProject(go))}>
 				<AtlasIcon name="projects" size={17} bare />Thread
 			</button>
-			<button class="pill" role="menuitem" onclick={() => act(() => void newPage(go))}>
+			<button class="chip" role="menuitem" onclick={() => act(() => void newPage(go))}>
 				<AtlasIcon name="pages" size={17} bare />Page
 			</button>
 		</div>
-	</div>
 
-	<button class="search" onclick={() => act(() => search.show())}>
-		<AtlasIcon name="search" size={17} bare />
-		<span>Search or go to</span>
-	</button>
+		<div class="label">Add to chat</div>
+		<div class="chips">
+			<button class="chip" role="menuitem" onclick={() => pick(cameraEl)}>
+				<Icon icon="mynaui:camera" width={17} />Camera
+			</button>
+			<button class="chip" role="menuitem" onclick={() => pick(libraryEl)}>
+				<Icon icon="mynaui:image" width={17} />Library
+			</button>
+			<button class="chip" role="menuitem" onclick={() => pick(fileEl)}>
+				<Icon icon="mynaui:paperclip" width={17} />File
+			</button>
+		</div>
+	</div>
 {/if}
 
 <button
 	class="fab"
+	class:lq={!open}
 	class:open
 	onclick={() => (open = !open)}
 	aria-expanded={open}
 	aria-haspopup="menu"
 	aria-label={open ? "Close" : "Add a task, thread, page or attachment"}
 >
-	<Icon icon="mynaui:plus" width={20} />
+	<!-- Open, it points down: put it away. -->
+	<Icon icon={open ? "mynaui:chevron-down" : "mynaui:plus"} width={20} />
 </button>
 
 <style>
@@ -169,11 +162,11 @@
 	}
 
 	.fab,
-	.menu,
-	.search {
+	.menu {
 		z-index: 31;
 	}
 
+	/* The same height and corners as the chat bar beside it. */
 	.fab {
 		position: absolute;
 		right: 16px;
@@ -181,35 +174,32 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 52px;
-		height: 52px;
+		width: 48px;
+		height: 48px;
 		border: 0;
-		border-radius: var(--radius-full);
-		background: var(--color-foreground);
-		color: var(--color-surface);
+		border-radius: var(--radius-xl);
+		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 		transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
 	}
 	.fab.open {
-		transform: rotate(45deg);
+		background: var(--color-foreground);
+		color: var(--color-surface);
 	}
 	.fab:active {
 		transform: scale(0.92);
 		transition-duration: 0.08s;
-	}
-	.fab.open:active {
-		transform: rotate(45deg) scale(0.92);
 	}
 
 	.menu {
 		position: absolute;
 		left: 16px;
 		right: 16px;
-		bottom: calc(80px + max(env(safe-area-inset-bottom) - var(--keyboard-inset, 0px), 0px));
+		bottom: calc(72px + max(env(safe-area-inset-bottom) - var(--keyboard-inset, 0px), 0px));
 		display: flex;
 		flex-direction: column;
-		padding: 12px;
+		padding: 8px;
 		border-radius: var(--radius-xl);
 		transform-origin: 100% 100%;
 		animation: grow 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -217,22 +207,22 @@
 	@keyframes grow {
 		from {
 			opacity: 0;
-			transform: scale(0.9) translateY(8px);
+			transform: scale(0.94) translateY(8px);
 		}
 	}
 
 	.label {
-		padding: 4px 4px 8px;
+		padding: 12px 8px 8px;
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 	}
-	.pills + .label {
-		padding-top: 12px;
+	.rule + .label {
+		padding-top: 4px;
 	}
 
 	.rule {
 		height: 1px;
-		margin: 8px 4px;
+		margin: 4px 8px;
 		background: var(--color-border);
 	}
 
@@ -243,7 +233,7 @@
 		min-height: 44px;
 		padding: 0 8px;
 		border: 0;
-		border-radius: var(--radius-xl);
+		border-radius: var(--radius-lg);
 		background: transparent;
 		color: var(--color-foreground);
 		font: inherit;
@@ -271,20 +261,21 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.pills {
+	.chips {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 8px;
 	}
-	.pill {
+	.chip {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
 		height: 44px;
 		border: 0;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--color-surface) 60%, transparent);
+		box-shadow: 0 0 0 0.5px var(--color-border);
 		color: var(--color-foreground);
 		font: inherit;
 		font-size: 0.9375rem;
@@ -293,35 +284,14 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 
-	.search {
-		position: absolute;
-		left: 16px;
-		right: 76px;
-		bottom: calc(16px + max(env(safe-area-inset-bottom) - var(--keyboard-inset, 0px), 0px));
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		height: 52px;
-		padding: 0 16px;
-		border: 1px solid var(--color-border-strong);
-		border-radius: var(--radius-full);
-		background: var(--color-surface);
-		color: var(--color-foreground-muted);
-		font: inherit;
-		font-size: 1rem;
-		cursor: pointer;
-	}
-
 	.place,
-	.pill,
-	.search {
+	.chip {
 		transition:
 			transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
 			background-color 0.2s ease-out;
 	}
 	.place:active,
-	.pill:active,
-	.search:active {
+	.chip:active {
 		transform: scale(0.97);
 		background-color: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 		transition-duration: 0.08s;
@@ -333,19 +303,13 @@
 		}
 		.fab,
 		.place,
-		.pill,
-		.search {
+		.chip {
 			transition: none;
 		}
 		.fab:active,
 		.place:active,
-		.pill:active,
-		.search:active {
+		.chip:active {
 			transform: none;
-		}
-		.fab.open,
-		.fab.open:active {
-			transform: rotate(45deg);
 		}
 	}
 </style>
