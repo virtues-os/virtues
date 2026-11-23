@@ -88,6 +88,11 @@
     {:else}
         {#if heading}
             {@render heading()}
+        {:else if title && showHeading && padding === "none"}
+            <!-- An edge-to-edge page still gives its title the phone's gutter. -->
+            <div class="bare-heading">
+                <PageHeading title={headingTitle} {description} actions={headingActions} />
+            </div>
         {:else if title && showHeading}
             <PageHeading title={headingTitle} {description} actions={headingActions} />
         {/if}
@@ -99,6 +104,13 @@
     .page-column {
         margin-inline: auto;
         transition: max-width var(--motion-hover-out, 0.2s) var(--ease-premium, ease-out);
+    }
+
+    /* The default padding's top room on the phone, with the 24px gutter an
+       edge-to-edge page's own rows use. */
+    .bare-heading {
+        flex: none;
+        padding: 40px 24px 0;
     }
 
     @media (prefers-reduced-motion: reduce) {
