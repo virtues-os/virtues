@@ -442,6 +442,7 @@
 		class:focused={isFocused}
 		class:phone
 		class:glass={phone && !inline}
+		class:lq={phone && !inline}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -694,16 +695,15 @@
 	.chat-input-wrapper.phone:has(.one-row) {
 		--shell-radius: var(--radius-xl);
 	}
-	/* On the phone's empty chat the bar sits over the painting. It stays
-	   mostly opaque, frosted only at the edges of what shows through, so
-	   what you type always reads; the buttons carry the real glass. */
+	/* On the phone's empty chat the bar sits over the painting in the app's
+	   glass (.lq in app.css), the same as the + beside it, so it follows the
+	   Glass setting. The wrapper's own fill would win over .lq, so the glass
+	   is restated here. */
 	.chat-input-wrapper.phone.glass {
-		border-color: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-		background: color-mix(in srgb, var(--color-surface) 88%, transparent);
-		-webkit-backdrop-filter: blur(20px) saturate(1.2);
-		backdrop-filter: blur(20px) saturate(1.2);
-		/* design-ok: the bar is lifted off the painting */
-		box-shadow: var(--lq-lift);
+		border-color: transparent;
+		background: var(--lq-sheen), var(--lq-fill);
+		/* design-ok: glass is lifted off the painting */
+		box-shadow: var(--lq-rim), var(--lq-lift);
 	}
 	/* On the phone, send appears once there is something to send. */
 	.phone .action-btn.idle {
