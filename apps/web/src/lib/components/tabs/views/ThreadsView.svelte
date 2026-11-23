@@ -13,6 +13,7 @@
 	import type { Tab } from '$lib/tabs/types';
 	import type { ProjectSummary } from '$lib/api/client';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import PageHeading from '$lib/components/PageHeading.svelte';
 	import { Button, Page } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
@@ -139,11 +140,20 @@
 
 <svelte:window onkeydown={onKey} />
 
-<Page title="Threads">
-	<div class="head">
-		<p class="lede">Each thread gathers the chats, pages, events and emails about one part of your life.</p>
-		<Button variant="secondary" icon="mynaui:plus" onclick={() => newProject()} tip="New thread" tipKey="c">New thread</Button>
-	</div>
+{#snippet newThread()}
+	<Button variant="secondary" icon="mynaui:plus" onclick={() => newProject()} tip="New thread" tipKey="c">New thread</Button>
+{/snippet}
+{#snippet heading()}
+	<!-- The page keeps its own title on the desktop too: the list reads as a
+	     page of its own, not a toolbar view. -->
+	<PageHeading
+		title="Threads"
+		description="Each thread gathers the chats, pages, events and emails about one part of your life."
+		actions={newThread}
+	/>
+{/snippet}
+
+<Page title="Threads" maxWidth="reading" {heading}>
 
 	<div class="filters" role="tablist" aria-label="Show">
 		{#each FILTERS as f (f.id)}
@@ -243,19 +253,6 @@
 </Page>
 
 <style>
-	.head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-	}
-	.lede {
-		margin: 0;
-		max-width: 620px;
-		font-size: var(--text-label);
-		line-height: 20px;
-		color: var(--color-foreground-muted);
-	}
 	.filters {
 		display: flex;
 		gap: 4px;
