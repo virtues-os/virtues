@@ -514,7 +514,7 @@ In the owner's words where he said them.
 | 2026-11-22 | The dot cloud is removed, so no site comes with the server. | He picked "Remove the dot cloud" over listing it in Sites. |
 | 2026-11-22 | A one-time request names its model and not where it runs. | He picked "Model only": "Runs on Standard." |
 | 2026-11-22 | "Agent" stays for an outside AI tool connected to a Mac, with the tool's own name where it is known. | "I like 'agent' and or the agents name too" |
-| 2026-11-22 | The code and the database stop saying applet. The plan is [applet-removal-plan.md](applet-removal-plan.md). | "I think we should rename for sites & tasks as such and rm applets" |
+| 2026-11-22 | He asked for the code and the database to stop saying applet, and after an audit decided on one row per folder with no table per word. Whether the code's word changes is open in [applet-removal-plan.md](applet-removal-plan.md). | "I think we should rename for sites & tasks as such and rm applets", then "Yes, one row" |
 
 Three decisions of 2026-11-20 are replaced by these: "Jobs" as the name for
 the server's work, "everything you set up is a site", and "something with no
@@ -578,4 +578,4 @@ view is a site".
   item is slice D here.
 - One-time reminders stay with [reminders-plan.md](reminders-plan.md).
 - Hosting a site on the open web is [publishing-plan.md](publishing-plan.md).
-- Renaming code, routes, tool names, tables or stored ids. That is [applet-removal-plan.md](applet-removal-plan.md).
+- Renaming code, routes, tool names, tables or stored ids. That question is open in [applet-removal-plan.md](applet-removal-plan.md).
