@@ -3,11 +3,13 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { deleteApplet, getAppletData, type Applet, type AppletData } from '$lib/api/client';
-	import { KIND_WORD, kindOf } from '$lib/applets/kind';
+	import { KIND_WORD, startsItself } from '$lib/applets/kind';
+	import { skills } from '$lib/stores/skills.svelte';
 
 	/**
 	 * Deleting an applet, from its page's More menu. Rare and the one thing
-	 * here that can't be undone, so it asks, and offers to keep the data.
+	 * here that can't be undone, so it asks, says what goes with it, and
+	 * offers to keep the data.
 	 */
 	let {
 		action,
@@ -31,7 +33,13 @@
 		dropData = false;
 		deleteData = null;
 		err = null;
-		void getAppletData(action.id).then((d) => (deleteData = d));
+		// A failed read leaves out the offer to delete its data, and the
+		// data is kept, which is the default anyway.
+		void getAppletData(action.id)
+			.then((d) => (deleteData = d))
+			.catch((e) => console.error('Reading what data it keeps failed:', e));
+		// Whether `/` starts it, for the sentence below.
+		void skills.load();
 	});
 
 	async function doDelete() {
@@ -50,12 +58,25 @@
 	}
 
 	// The dialog deletes a site, a skill or a task, and says which.
-	const word = $derived(KIND_WORD[kindOf(action)].toLowerCase());
+	const word = $derived(KIND_WORD[action.kind].toLowerCase());
+
+	// What goes with it besides itself: the name `/` starts it by, and the
+	// refresh of a site that keeps itself current.
+	const alsoGoes = $derived.by(() => {
+		const parts: string[] = [];
+		const slash = skills.items.find((s) => s.applet_id === action.id)?.name;
+		if (slash) parts.push(`/${slash} leaves the / menu`);
+		if (action.kind === 'site' && startsItself(action)) parts.push('its refresh stops');
+		if (parts.length === 0) return null;
+		const said = parts.join(' and ');
+		return `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
+	});
 </script>
 
 <Modal {open} onClose={() => (open = false)} title="Delete {word}" width="sm">
 	<div class="del">
 		<p>Delete <strong>{action.name}</strong>? This removes the {word} and can't be undone.</p>
+		{#if alsoGoes}<p>{alsoGoes}</p>{/if}
 		{#if deleteData && deleteData.tables.length > 0}
 			<label class="drop-opt">
 				<input type="checkbox" bind:checked={dropData} />
@@ -63,8 +84,7 @@
 					Also permanently delete its data
 					<span class="dim"
 						>({deleteData.tables.length}
-						{deleteData.tables.length === 1 ? 'table' : 'tables'} in
-						<code>{deleteData.schema}</code>)</span
+						{deleteData.tables.length === 1 ? 'table' : 'tables'} of its own)</span
 					>
 				</span>
 			</label>

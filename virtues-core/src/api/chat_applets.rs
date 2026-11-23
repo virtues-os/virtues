@@ -44,6 +44,9 @@ pub struct MenuEntry {
     pub icon: Option<String>,
     /// `shipped` or `authored`.
     pub source: &'static str,
+    /// The applet's id, so the Skills page can say which skills `/name`
+    /// starts and under what name.
+    pub applet_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,21 +73,35 @@ pub const DEEP_RESEARCH_APPLET: &str = "deep-research";
 /// work needed as a mode.
 const MAX_STEPS: u32 = 60;
 
-/// Every applet `/name` starts, shipped first, each group by name.
-pub fn menu() -> Menu {
+/// Every applet `/name` starts, in the order the Skills page lists them:
+/// yours first, then the ones that came with the server, each group by name.
+/// One in `off` (turned off on its page) is left out, as the Skills page
+/// shows it as off.
+pub fn menu(off: &std::collections::HashSet<String>) -> Menu {
     let entry = |a: crate::applet_templates::ChatApplet| MenuEntry {
         source: if a.shipped { "shipped" } else { "authored" },
         name: a.name,
         description: a.description,
         icon: a.icon,
+        applet_id: a.applet_id,
     };
-    let (create, rest): (Vec<_>, Vec<_>) = crate::applet_templates::chat_applets()
+    let (create, mut rest): (Vec<_>, Vec<_>) = crate::applet_templates::chat_applets()
         .into_iter()
         .partition(|a| a.shipped && a.name == CREATE_APPLET);
+    rest.retain(|a| !off.contains(&a.applet_id));
+    rest.sort_by(|a, b| (a.shipped, &a.name).cmp(&(b.shipped, &b.name)));
     Menu {
         skills: rest.into_iter().map(entry).collect(),
         create: create.into_iter().next().map(entry),
     }
+}
+
+/// The applets turned off, which the menu leaves out.
+pub async fn off_applets(pool: &sqlx::PgPool) -> crate::error::Result<std::collections::HashSet<String>> {
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM app_applets WHERE NOT enabled OR archived_at IS NOT NULL")
+        .fetch_all(pool)
+        .await?;
+    Ok(ids.into_iter().collect())
 }
 
 /// The turn `/name` runs, or none.
@@ -261,7 +278,7 @@ mod tests {
     /// that writes applets below them.
     #[test]
     fn the_menu_lists_chat_applets_and_pins_new_skill() {
-        let menu = menu();
+        let menu = menu(&Default::default());
         let names: Vec<&str> = menu.skills.iter().map(|s| s.name.as_str()).collect();
         for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review"] {
             assert!(names.contains(&name), "{name} missing from {names:?}");
@@ -270,6 +287,18 @@ mod tests {
         assert!(!names.contains(&CREATE_APPLET));
         let create = turn_named(CREATE_APPLET).expect("new-skill resolves");
         assert_eq!(create.tools, ["applet"]);
+    }
+
+    /// A skill turned off is not offered, and the create row stays.
+    #[test]
+    fn the_menu_leaves_out_a_skill_that_is_off() {
+        let all = menu(&Default::default());
+        let review = all.skills.iter().find(|s| s.name == "weekly-review").expect("weekly-review is offered");
+        let off = std::collections::HashSet::from([review.applet_id.clone()]);
+        let menu = menu(&off);
+        assert!(!menu.skills.iter().any(|s| s.name == "weekly-review"));
+        assert_eq!(menu.skills.len(), all.skills.len() - 1);
+        assert!(menu.create.is_some());
     }
 
     /// A skill `save_skill` wrote reads in the old format, with renamed tools

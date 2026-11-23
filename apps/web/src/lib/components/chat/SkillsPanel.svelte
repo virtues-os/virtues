@@ -1,17 +1,20 @@
 <!--
 	SkillsPanel.svelte
 
-	The `/` menu in the chat composer's tray: the applets `/name` starts. As
-	with the `@` menu, the field keeps the focus and what is typed after the
-	`/` filters the list, so Up, Down, Enter and Escape are caught here before
-	the editor sees them. The skill that writes skills (`new-skill`) is
-	pinned below the list as its create row, and the arrows reach it last.
+	The `/` menu in the chat composer's tray: the skills `/name` starts, in
+	the order the Skills page lists them, without the ones turned off there.
+	As with the `@` menu, the field keeps the focus and what is typed after
+	the `/` filters the list, so Up, Down, Enter and Escape are caught here
+	before the editor sees them. Below the list sit New skill (the skill that
+	writes skills, `new-skill`) and Manage skills (the Skills page), and the
+	arrows reach them last.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import type { SkillSummary } from "$lib/api/client";
 	import { skills } from "$lib/stores/skills.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { inComposition } from "$lib/utils/ime";
 
 	let {
@@ -42,8 +45,24 @@
 		);
 		return [...starts, ...rest];
 	});
-	// The rows the arrows walk: the matches, then the create row.
-	const rows = $derived(skills.create ? [...matches, skills.create] : matches);
+	// The rows the arrows walk: the matches, then New skill, then Manage skills.
+	const MANAGE = "manage" as const;
+	type Row = SkillSummary | typeof MANAGE;
+	const rows = $derived<Row[]>([...matches, ...(skills.create ? [skills.create] : []), MANAGE]);
+	const manageAt = $derived(rows.length - 1);
+
+	function choose(row: Row) {
+		if (row !== MANAGE) {
+			onSelect(row);
+			return;
+		}
+		onClose();
+		// In a tab of its own beside the chat, or in Settings if it is open,
+		// so the chat keeps its place and whatever is typed in it.
+		const route = "/virtues/assistant/skills";
+		if (windowShellStore.findTab((t) => t.type === "virtues")) windowShellStore.openTabFromRoute(route, { focusExisting: true });
+		else windowShellStore.openTabFromRoute(route, { forceNew: true, adjacent: true });
+	}
 
 	$effect(() => {
 		void query;
@@ -73,7 +92,7 @@
 		if (e.key === "ArrowDown") move(1);
 		else if (e.key === "ArrowUp") move(-1);
 		else if (e.key === "Escape") onClose();
-		else if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && rows[selected]) onSelect(rows[selected]);
+		else if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && rows[selected]) choose(rows[selected]);
 		else handled = false;
 		if (handled) {
 			e.preventDefault();
@@ -129,20 +148,32 @@
 			</p>
 		{/each}
 	</div>
-	{#if skills.create}
-		{@const i = matches.length}
+	<div class="skill-foot">
+		{#if skills.create}
+			{@const i = matches.length}
+			<button
+				type="button"
+				id="{uid}-row-{i}"
+				class="skill-row create"
+				class:selected={i === selected}
+				onmousemove={() => (selected = i)}
+				onclick={() => skills.create && onSelect(skills.create)}
+			>
+				<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
+				<span class="skill-name">New skill</span>
+			</button>
+		{/if}
 		<button
 			type="button"
-			id="{uid}-row-{i}"
-			class="skill-row create"
-			class:selected={i === selected}
-			onmousemove={() => (selected = i)}
-			onclick={() => skills.create && onSelect(skills.create)}
+			id="{uid}-row-{manageAt}"
+			class="skill-row create manage"
+			class:selected={manageAt === selected}
+			onmousemove={() => (selected = manageAt)}
+			onclick={() => choose(MANAGE)}
 		>
-			<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
-			<span class="skill-name">New skill</span>
+			<span class="skill-name">Manage skills</span>
 		</button>
-	{/if}
+	</div>
 </div>
 
 <style>
@@ -217,6 +248,19 @@
 
 	.create .skill-name {
 		color: var(--color-foreground-muted);
+	}
+
+	/* New skill and Manage skills share the row under the list. */
+	.skill-foot {
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
+	}
+	.skill-foot .create {
+		flex: 1;
+	}
+	.skill-foot .manage {
+		flex: 0 0 auto;
 	}
 
 	.skills-empty {

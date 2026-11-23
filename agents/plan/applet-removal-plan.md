@@ -1,6 +1,6 @@
 # One row per folder: what "applet" stays as, and what follows
 
-Status: decided on 2026-11-22. Nothing here is built.
+Status: decided on 2026-11-22. What follows from it is partly built; see below.
 
 People see three words: task, skill and site
 ([task-skill-site-plan.md](task-skill-site-plan.md)). On 2026-11-22 the owner
@@ -59,22 +59,38 @@ is asked for and is not a stored column.
 
 ## What follows
 
-Small pieces, none of them a rename.
+None of these is a rename. Items 1 and 3 were built on `wave` on 2026-11-22,
+with tests, and seen in a scratch app.
 
-1. **Delete the web's copy of the rule.** `kindOf` and `startsItself` in
-   `apps/web/src/lib/applets/kind.ts` repeat the server's rule for a server
-   from before `kind`. The server ships the web bundle, so the app never
-   meets one. The app reads `kind` and nothing else.
+1. **The web's copy of the rule is gone.** `kindOf` in
+   `apps/web/src/lib/applets/kind.ts` repeated the server's rule for a
+   server from before `kind`, which the app never meets, since the server
+   ships it. `Applet.kind` is required and the app reads it. `startsItself`
+   stays: server tasks are grouped by it, and it says whether a site has a
+   refresh.
 2. **Merge and run what is waiting.** Pull request 15 carries the last of
    the task, skill and site work. It has not run on a real server.
-3. **The simplifications the audit's experience review found**, each its own
-   small change:
-   - a server task opens on the task page any other task has;
-   - a site with no refresh and no prompt has no Options side, and no
-     switch, since the switch does nothing to its view;
-   - the Skills page and the `/` menu are one list;
-   - the delete dialog says what goes with the site: its prompt leaves the
-     `/` menu and its refresh stops.
+3. **Four simplifications** from the audit's experience review:
+   - **A server task is one page.** Its page had a side for the task, which
+     listed its runs, and an Options side, which listed them again. It is
+     now one page: what it does, what needs you with the fix beside it, when
+     it runs, its runs and its technical details. The review asked for a
+     server task to open on the same page as any other task. That page is a
+     row in `app_tasks`, and the owner's decision keeps the server's work
+     out of that table, so the server task has a page of its own built the
+     same way.
+   - **A site with nothing to run has no switch and no Options toggle**
+     (`isPlainSite`: no refresh, no prompt, no program). Its switch did
+     nothing to its view. Options is in its More menu, with a way back to
+     the site. The Sites door no longer calls one "Off" or "Not run yet".
+   - **The Skills page and the `/` menu are one list.** The menu lists yours
+     first, as the page does, and leaves out a skill turned off on the page.
+     Each row on the page says the `/name` that starts it. The menu has
+     Manage skills beside New skill, which opens the page in a tab beside
+     the chat.
+   - **The delete dialog says what goes with the thing**: "/packing-list
+     leaves the / menu", "its refresh stops". It no longer prints the
+     schema name of its tables, which showed the word "applet".
 
 ## Open questions
 

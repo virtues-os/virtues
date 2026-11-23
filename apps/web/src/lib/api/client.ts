@@ -408,10 +408,8 @@ export interface Applet {
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
-	/** What it is to the person who meets it. Absent from a server older
-	 *  than the field; read it through `kindOf` (lib/applets/kind.ts), which
-	 *  applies the same rule to the parts. */
-	kind?: AppletKind;
+	/** What it is to the person who meets it, as the server decides it. */
+	kind: AppletKind;
 	/** The row in the task list that stands for it, when it is a task of the
 	 *  assistant's that repeats. The Tasks page shows it, and Sites does not. */
 	task_id?: string | null;
@@ -773,10 +771,8 @@ export interface AppletData {
 	tables: string[];
 }
 
-export async function getAppletData(id: string): Promise<AppletData> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
-	if (!res.ok) return { schema: null, tables: [] };
-	return (await res.json()) as AppletData;
+export function getAppletData(id: string): Promise<AppletData> {
+	return apiGet<AppletData>(`/applets/${encodeURIComponent(id)}/data`);
 }
 
 export interface TriggerActionResponse {
@@ -2685,6 +2681,8 @@ export interface SkillSummary {
 	description: string;
 	icon?: string | null;
 	source: "shipped" | "authored";
+	/** The applet behind it. A server from before the field leaves it out. */
+	applet_id?: string;
 }
 
 export interface SkillList {

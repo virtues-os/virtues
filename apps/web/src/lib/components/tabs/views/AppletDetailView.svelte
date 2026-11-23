@@ -33,7 +33,7 @@
 	import SiteSwitch from '$lib/components/applets/SiteSwitch.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import { readAddress } from '$lib/applets/routes';
-	import { homeOf, optionsOf, pageOf } from '$lib/applets/kind';
+	import { homeOf, isPlainSite, optionsOf, pageOf } from '$lib/applets/kind';
 	import { isLate, problemOf, sentence } from '$lib/applets/standing';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -107,7 +107,13 @@
 		}
 	});
 	const asked = $derived(address?.open ?? null);
-	const inInfo = $derived(address?.side === 'options');
+	// A server task is one page: when it runs, how its runs went, and its
+	// technical details. A second side would list the same runs again.
+	const onePage = $derived(action?.kind === 'server_task');
+	// A site that only shows something has nothing to run, so no switch and
+	// no Options side in its toolbar. Its More menu still reaches Options.
+	const plain = $derived(action ? isPlainSite(action) : false);
+	const inInfo = $derived(address?.side === 'options' || onePage);
 
 	function showInfo(open: boolean) {
 		if (!loaded) return;
@@ -486,6 +492,9 @@
 		if (canRunNow) {
 			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void runNow() });
 		}
+		if (plain && !inInfo) {
+			items.push({ id: 'options', label: 'Options', icon: 'mynaui:cog', action: () => showInfo(true) });
+		}
 		if (a.has_face) {
 			items.push({
 				id: 'add-to-page',
@@ -530,9 +539,13 @@
 			     can tell it things or change it there. -->
 			<Button variant="ghost" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 		{/if}
-		<SiteSwitch tabId={tab.id} applet={action} showing={inInfo ? 'options' : 'site'} />
+		{#if !onePage && !plain}
+			<SiteSwitch tabId={tab.id} applet={action} showing={inInfo ? 'options' : 'site'} />
+		{/if}
 		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
-		{#if action.archived_at}
+		{#if plain}
+			<!-- Nothing runs, so there is nothing to switch. -->
+		{:else if action.archived_at}
 			<Button variant="secondary" onclick={() => setEnabled(true)} disabled={saving}>
 				Turn back on
 			</Button>
@@ -598,8 +611,10 @@
 					{/if}
 					<header class="head sub">
 						<!-- The desktop's toolbar holds the Site / Options switch. A
-						     phone has no toolbar, so it gets a way back here. -->
-						{#if !toolbar.inToolbar && !action.has_face}
+						     phone has no toolbar, and a plain site has no switch, so
+						     each gets a way back here. A server task has one page and
+						     nothing to go back to. -->
+						{#if !onePage && ((!toolbar.inToolbar && !action.has_face) || plain)}
 							<button type="button" class="backlink" onclick={() => showInfo(false)}>
 								<Icon icon="mynaui:arrow-left" width="14" />
 								{action.name}
@@ -607,15 +622,32 @@
 						{:else if !toolbar.inToolbar}
 							<div class="head-actions">{@render headActions()}</div>
 						{/if}
-						<h1 class="title">Options</h1>
+						{#if !onePage}
+							<h1 class="title">Options</h1>
+						{:else if !toolbar.inToolbar}
+							<h1 class="title">{action.name}</h1>
+						{/if}
 						{#if action.description}<p class="status">{action.description}</p>{/if}
 					</header>
+					{#if problem && (fix || canRunNow)}
+						<!-- What went wrong, with the fix beside it. The run history
+						     row below then names its runs instead of saying it again. -->
+						<p class="needs-line">
+							<span>{sentence(problemText ?? '')}</span>
+							{@render fixAction()}
+						</p>
+					{/if}
 					<Card list>
 						<div class="fact"><span>When it runs</span><span class="fact-value">{describeTriggers(action)}</span></div>
 						<div class="fact"><span>Next run</span><span class="fact-value">{nextRunText}</span></div>
 						<div class="fact"><span>Cost</span><span class="fact-value">{costText}</span></div>
 					</Card>
-					<AppletInfo bind:action bind:historyOpen bind:technicalOpen>
+					<AppletInfo
+						bind:action
+						bind:historyOpen
+						bind:technicalOpen
+						label={problem && (fix || canRunNow) ? 'Its last runs' : undefined}
+					>
 						{#snippet history()}
 							{#if action}<RunHistory {log} {collectorDenied} />{/if}
 						{/snippet}
@@ -781,6 +813,15 @@
 	.bar {
 		justify-content: center;
 		padding: 8px 16px;
+	}
+	.needs-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin: 0;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
 	}
 	.needs {
 		display: flex;

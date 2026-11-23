@@ -16,13 +16,16 @@
 		historyOpen = $bindable(false),
 		technicalOpen = $bindable(false),
 		history,
-		technical
+		technical,
+		label
 	}: {
 		action: Applet;
 		historyOpen?: boolean;
 		technicalOpen?: boolean;
 		history: Snippet;
 		technical: Snippet;
+		/** What the run history row says, when the page already said how the last run went. */
+		label?: string;
 	} = $props();
 
 	// How its last run went, in one sentence, as Server tasks says it. The
@@ -41,7 +44,7 @@
 				aria-expanded={historyOpen}
 				onclick={() => (historyOpen = !historyOpen)}
 			>
-				<span class="row-label">{lastRun}</span>
+				<span class="row-label">{label ?? lastRun}</span>
 				<Icon icon={historyOpen ? 'mynaui:chevron-up' : 'mynaui:chevron-down'} width="16" />
 			</button>
 			{#if historyOpen}
