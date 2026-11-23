@@ -36,7 +36,6 @@
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
-	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
 	import ProjectChip from "$lib/components/ProjectChip.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
@@ -224,7 +223,11 @@
 		style:transform="translateX({drawerShift}px)"
 		inert={!open && !dragging}
 	>
-		<MobileDrawer />
+		<!-- Loaded right after the first paint: it is off screen until it
+		     opens, so the first screen does not wait for it. -->
+		{#await import("$lib/components/mobile/MobileDrawer.svelte") then { default: MobileDrawer }}
+			<MobileDrawer />
+		{/await}
 	</div>
 
 	<!-- One view. Not one of many with the rest hidden — one. -->
