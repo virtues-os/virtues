@@ -9,7 +9,7 @@
  */
 import type { Applet } from '$lib/api/client';
 import { whenInWords } from '$lib/utils/dateUtils';
-import { inSitesDoor, isYours, kindOf, startsItself } from './kind';
+import { inSitesDoor, isYours, startsItself } from './kind';
 import { describeTriggers, failureReason, runFix } from './palette';
 
 /** How far past its due time a run can be before the applet needs you. */
@@ -153,8 +153,7 @@ export interface ServerTaskGroups {
  * turn one off. They never show in your own task list.
  */
 function isServerTask(a: Applet): boolean {
-	const kind = kindOf(a);
-	return kind === 'server_task' || (kind === 'assistant_task' && !isYours(a) && !a.task_id);
+	return a.kind === 'server_task' || (a.kind === 'assistant_task' && !isYours(a) && !a.task_id);
 }
 
 /** The server's tasks that still run. */

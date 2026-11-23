@@ -12,6 +12,7 @@ const applet = (over: Partial<Applet> = {}): Applet =>
 	({
 		id: 'applet_a',
 		name: 'Morning examen',
+		kind: 'assistant_task',
 		origin: 'user',
 		schedule: '0 7 * * *',
 		watch: null,
@@ -138,7 +139,7 @@ describe('appletLine', () => {
 
 describe('groupServerTasks', () => {
 	it('lists the server\'s tasks by account, and leaves skills and what you set up to their own pages', () => {
-		const program = { command: ['run'] };
+		const program = { command: ['run'], kind: 'server_task' as const };
 		const groups = groupServerTasks(
 			[
 				applet({ id: 'a', name: 'Rent reminder' }),
@@ -147,7 +148,7 @@ describe('groupServerTasks', () => {
 				applet({ id: 'd', name: 'Mail sync', origin: 'source', credential_id: 'cred_1', schedule: '0 */15 * * * *', ...program }),
 				applet({ id: 'e', name: 'Calendar sync', origin: 'source', credential_id: 'cred_1', ...program, ...failedRun('timed out') }),
 				applet({ id: 'f', name: 'Phone', origin: 'source', device_id: 'dev_1', schedule: null, triggers: ['webhook'], ...program }),
-				applet({ id: 'g', name: 'Trip planner', origin: 'system', schedule: null }),
+				applet({ id: 'g', name: 'Trip planner', kind: 'skill', origin: 'system', schedule: null }),
 				applet({ id: 'h', name: 'Trip reminder', archived_at: at('2026-10-01T09:00:00') }),
 				applet({ id: 'i', name: 'Chat import', origin: 'system', schedule: null, ...program }),
 				applet({ id: 'j', name: 'Morning examen', origin: 'system' }),
