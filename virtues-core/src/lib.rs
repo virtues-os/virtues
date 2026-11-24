@@ -35,6 +35,7 @@ pub mod maintenance;
 pub mod middleware;
 pub mod bookmark_enrichment;
 pub mod bookmark_media;
+pub mod bookmark_facts;
 pub mod browse;
 pub mod browser;
 pub mod box_env;

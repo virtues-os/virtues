@@ -58,14 +58,56 @@ pub struct BookmarkListItem {
     pub bookmark_type: Option<String>,
     pub author: Option<String>,
     pub tags: Option<serde_json::Value>,
-    pub thumbnail_url: Option<String>,
+    /// The bookmark's picture, always a Drive copy: see [`picture_url_sql`].
+    pub picture_url: Option<String>,
+    /// How it arrived: see [`DOOR_SQL`].
+    pub door: String,
+    /// What the card shows beyond the row's columns: see [`details_sql`].
+    pub details: serde_json::Value,
+    /// The source's own time: when a post was written, when a page was
+    /// bookmarked in a browser. `occurred_at` on the row.
     pub timestamp: crate::types::Timestamp,
+    /// When it was saved, as well as anyone can tell: see [`SAVED_AT_SQL`].
+    /// The room groups and orders by this.
+    pub saved_at: crate::types::Timestamp,
     /// `medium` off the extraction record — "article", "reference",
-    /// "repository". The one machine-derived field worth a facet, because it
-    /// answers "what kind of thing is this" better than the source does.
+    /// "repository".
     pub medium: Option<String>,
-    /// What the box knows about this row so far: see [`state_sql`].
-    pub state: String,
+}
+
+/// When a bookmark was saved.
+///
+/// X and Instagram give no save time: `occurred_at` is when the post was
+/// written, so a post from 2019 saved yesterday would group under 2019. Safari
+/// stores no date at all and its rows carry the epoch sentinel. For those, the
+/// best available save time is when this server first saw the row
+/// (`created_at`). Every other door stamps the save itself.
+pub const SAVED_AT_SQL: &str = "CASE \
+     WHEN data_content_bookmark.source_platform IN ('x', 'instagram') \
+       OR data_content_bookmark.occurred_at <= 'epoch'::timestamptz \
+     THEN data_content_bookmark.created_at \
+     ELSE data_content_bookmark.occurred_at END";
+
+/// The picture to show for a bookmark: a Drive file route, or NULL.
+///
+/// Only Drive copies are served. A platform's own image link expires within
+/// hours, and loading it from the platform tells it what the person opened, so
+/// a `thumbnail_url` that is still remote shows nothing until
+/// `bookmark_media::keep_remote_pictures` has copied it. An asset-backed row
+/// shows its asset when that file is an image; a remote picture copied later
+/// is named in `metadata.picture_id`.
+fn picture_url_sql() -> String {
+    use crate::bookmark_enrichment::{image_asset_sql, ASSET_FILE_ID_SQL};
+    format!(
+        "CASE \
+         WHEN {image} THEN '/api/drive/files/' || {asset} || '/download?disposition=inline' \
+         WHEN data_content_bookmark.metadata->>'picture_id' IS NOT NULL \
+           THEN '/api/drive/files/' || (data_content_bookmark.metadata->>'picture_id') \
+                || '/download?disposition=inline' \
+         END",
+        image = image_asset_sql(),
+        asset = ASSET_FILE_ID_SQL,
+    )
 }
 
 /// How much the box knows about a bookmark, as one field.
@@ -107,57 +149,139 @@ pub struct ListBookmarksQuery {
     /// `asc` sorts oldest-first; anything else is newest-first.
     #[serde(default)]
     pub dir: Option<String>,
+    /// One of the [`DOOR_SQL`] values: how the saves arrived.
     #[serde(default)]
-    pub platform: Option<String>,
-    #[serde(default)]
-    pub bookmark_type: Option<String>,
-    #[serde(default)]
-    pub medium: Option<String>,
-    /// One of the [`state_sql`] values.
-    #[serde(default)]
-    pub state: Option<String>,
+    pub door: Option<String>,
 }
 
 fn default_limit() -> i64 {
     50
 }
 
-/// Blank filter values arrive as `""` from a cleared control; treat them as
-/// absent rather than as "match the empty string", which matches nothing and
-/// looks like a broken filter.
-fn blank_to_none(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+/// A Drive file id, as an expression, turned into the route the web loads.
+fn drive_route(id_sql: &str) -> String {
+    format!(
+        "CASE WHEN ({id_sql}) IS NOT NULL \
+         THEN '/api/drive/files/' || ({id_sql}) || '/download?disposition=inline' END"
+    )
 }
+
+/// The facts a card shows beyond the row's own columns, as one object, with
+/// absent facts left out so the card never holds an empty slot.
+///
+/// - `author_name`, `author_picture_url`: a post's author (X sync).
+/// - `site_name`, `icon_url`: the name and icon a page gives itself.
+/// - `duration_secs`, `reading_minutes`: how long a video runs, how long a
+///   page takes to read.
+/// - `links`, `media_short_url`: a post's short links and where they lead, and
+///   the short link X appends for the post's own picture.
+/// - `link_preview`: the page a post links to (`url`, `title`, `site_name`,
+///   `picture_url`).
+///
+/// Every picture is a Drive route; the remote addresses in `metadata` are
+/// never returned.
+fn details_sql() -> String {
+    let m = "data_content_bookmark.metadata";
+    format!(
+        "jsonb_strip_nulls(jsonb_build_object( \
+           'author_name', {m}->'author_name', \
+           'author_picture_url', {author_pic}, \
+           'site_name', {m}->'site_name', \
+           'icon_url', {icon}, \
+           'duration_secs', {m}->'duration_secs', \
+           'reading_minutes', {m}->'reading_minutes', \
+           'links', {m}->'links', \
+           'media_short_url', {m}->'media_short_url', \
+           'link_preview', CASE WHEN jsonb_typeof({m}->'link_preview') = 'object' THEN \
+             jsonb_strip_nulls(jsonb_build_object( \
+               'url', {m}->'link_preview'->'url', \
+               'title', {m}->'link_preview'->'title', \
+               'site_name', {m}->'link_preview'->'site_name', \
+               'picture_url', {preview_pic})) END))",
+        author_pic = drive_route(&format!("{m}->>'author_picture_id'")),
+        icon = drive_route(&format!("{m}->>'icon_id'")),
+        preview_pic = drive_route(&format!("{m}->'link_preview'->>'picture_id'")),
+    )
+}
+
+/// Link a bookmark's mentions to Wiki pages with exactly the same name.
+///
+/// Exact, case-insensitive matching only: a page is linked when exactly one
+/// is named what the extraction record names. Otherwise the mention stays
+/// plain text, including when two pages share the name, since either could be
+/// wrong. A person's page is linked only for a name of two or more words, so a
+/// saved post about a public figure called "Claude" does not link to someone
+/// in your life who shares the first name.
+///
+/// Names are returned once each, in the record's order, whatever their case.
+pub async fn link_mentions(db: &PgPool, names: &[String]) -> Result<Vec<Mention>> {
+    let mut seen = std::collections::HashSet::new();
+    let names: Vec<String> = names
+        .iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty() && seen.insert(n.to_lowercase()))
+        .collect();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lowered: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    let pages: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT lower(name), 'person', id FROM wiki_people
+          WHERE lower(name) = ANY($1) AND name ~ '\\S\\s+\\S'
+         UNION ALL
+         SELECT lower(name), 'place', id FROM wiki_places WHERE lower(name) = ANY($1)
+         UNION ALL
+         SELECT lower(name), 'org', id FROM wiki_orgs WHERE lower(name) = ANY($1)
+         UNION ALL
+         SELECT lower(title), 'thing', id FROM wiki_things WHERE lower(title) = ANY($1)",
+    )
+    .bind(&lowered)
+    .fetch_all(db)
+    .await?;
+
+    Ok(names
+        .iter()
+        .zip(&lowered)
+        .map(|(name, low)| {
+            let mut hits = pages.iter().filter(|(n, _, _)| n == low);
+            let route = match (hits.next(), hits.next()) {
+                (Some((_, kind, id)), None) => Some(format!("/{kind}/{id}")),
+                _ => None,
+            };
+            Mention { name: name.clone(), route }
+        })
+        .collect())
+}
+
+/// How a bookmark arrived, as the room's filters name it: `instagram`, `x`,
+/// `github`, `iphone`, `hand` or `browser`.
+///
+/// This is the door, not the platform. A post shared from Instagram on the
+/// phone has `source_platform = 'instagram'` and arrived through the iPhone's
+/// share sheet; the room files it under iPhone. Browser covers every browser
+/// the Mac collector reads (Safari, Chrome, Arc, Dia and the rest), which is
+/// every row the other doors do not claim.
+pub const DOOR_SQL: &str = "CASE \
+     WHEN data_content_bookmark.source_table = 'ios_share' THEN 'iphone' \
+     WHEN data_content_bookmark.source_platform = 'instagram' THEN 'instagram' \
+     WHEN data_content_bookmark.source_platform = 'x' THEN 'x' \
+     WHEN data_content_bookmark.source_platform = 'github' THEN 'github' \
+     WHEN data_content_bookmark.source_platform = 'web' THEN 'hand' \
+     ELSE 'browser' END";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BookmarkPage {
     pub items: Vec<BookmarkListItem>,
     pub total: i64,
-    /// Shelf-wide counts, unaffected by the current filters — the status line
-    /// answers "what is the box still working on", which a filtered view must
-    /// not misreport.
-    pub counts: ShelfCounts,
 }
 
-#[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]
-pub struct ShelfCounts {
-    pub enriched: i64,
-    /// Fetchable pages the sweep will get to.
-    pub queued: i64,
-    /// Assets no pass reads yet — video, audio, a file that left Drive. Counted
-    /// apart from `queued` so a number that cannot move is never shown as a
-    /// backlog that should be draining.
-    pub held: i64,
-}
-
-/// One page of bookmarks, newest first.
+/// One page of bookmarks, most recently saved first.
 ///
 /// Tombstoned rows (`deleted_at_source`) are hidden: the user removed the
 /// bookmark at its source, so it should leave the shelf — but the row stays in
 /// the table, because a note they wrote on it is theirs and a re-add should
 /// restore rather than duplicate.
 pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<BookmarkPage> {
-    let state_sql = state_sql();
     let limit = q.limit.clamp(1, 200);
     let offset = q.offset.max(0);
     // `%` and `_` in a user's search string are LIKE wildcards, not text —
@@ -174,72 +298,62 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
     // Every filter is `($n IS NULL OR …)` so one prepared shape serves all
     // combinations — no dynamic SQL assembly, and nothing user-supplied ever
     // reaches the statement text.
+    // Search covers everything that describes a save, including the
+    // extraction record's text (`extraction_text`: its description, subjects,
+    // entities and the phrases it expects a person to type), so a save is
+    // found by what the image pass saw as well as by what the source said.
     let where_sql = format!(
         "WHERE deleted_at_source IS NULL
            AND ($1::text IS NULL
                 OR title ILIKE $1 ESCAPE '\\'
                 OR url ILIKE $1 ESCAPE '\\'
                 OR description ILIKE $1 ESCAPE '\\'
-                OR note ILIKE $1 ESCAPE '\\')
-           AND ($2::text IS NULL OR source_platform = $2)
-           AND ($3::text IS NULL OR bookmark_type = $3)
-           AND ($4::text IS NULL OR extraction->>'medium' = $4)
-           AND ($5::text IS NULL OR ({state_sql}) = $5)"
+                OR note ILIKE $1 ESCAPE '\\'
+                OR author ILIKE $1 ESCAPE '\\'
+                OR tags::text ILIKE $1 ESCAPE '\\'
+                OR extraction_text ILIKE $1 ESCAPE '\\')
+           AND ($2::text IS NULL OR ({DOOR_SQL}) = $2)"
     );
 
-    let platform = blank_to_none(&q.platform);
-    let bookmark_type = blank_to_none(&q.bookmark_type);
-    let medium = blank_to_none(&q.medium);
-    let state = blank_to_none(&q.state);
+    // A cleared control sends `door=`; that means no filter, not "match the
+    // empty string", which matches nothing and looks like a broken filter.
+    let door = q.door.as_deref().map(str::trim).filter(|d| !d.is_empty());
 
     let total: (i64,) = sqlx::query_as(&format!(
         "SELECT COUNT(*) FROM data_content_bookmark {where_sql}"
     ))
     .bind(&pattern)
-    .bind(platform)
-    .bind(bookmark_type)
-    .bind(medium)
-    .bind(state)
+    .bind(door)
     .fetch_one(db)
     .await?;
 
+    // Ties on `saved_at` are common: a first sync gives hundreds of posts the
+    // same `created_at`. The source's own time breaks them, which keeps a
+    // synced batch in the order the posts were written.
+    let dir = if ascending { "ASC" } else { "DESC" };
     let items = sqlx::query_as::<_, BookmarkListItem>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, occurred_at AS timestamp,
-                extraction->>'medium' AS medium,
-                ({state_sql}) AS state
+                author, tags, ({picture}) AS picture_url, ({DOOR_SQL}) AS door,
+                ({details}) AS details,
+                occurred_at AS timestamp, ({SAVED_AT_SQL}) AS saved_at,
+                extraction->>'medium' AS medium
            FROM data_content_bookmark
            {where_sql}
-          ORDER BY occurred_at {}, id
-          LIMIT $6 OFFSET $7",
-        if ascending { "ASC" } else { "DESC" }
+          ORDER BY saved_at {dir}, occurred_at {dir}, id
+          LIMIT $3 OFFSET $4",
+        picture = picture_url_sql(),
+        details = details_sql(),
     ))
     .bind(&pattern)
-    .bind(platform)
-    .bind(bookmark_type)
-    .bind(medium)
-    .bind(state)
+    .bind(door)
     .bind(limit)
     .bind(offset)
     .fetch_all(db)
     .await?;
 
-    // Deliberately unfiltered: this is the shelf's state, not the view's.
-    let counts: ShelfCounts = sqlx::query_as(&format!(
-        "SELECT
-           COUNT(*) FILTER (WHERE ({state_sql}) = 'enriched') AS enriched,
-           COUNT(*) FILTER (WHERE ({state_sql}) = 'queued')   AS queued,
-           COUNT(*) FILTER (WHERE ({state_sql}) = 'held')     AS held
-         FROM data_content_bookmark
-         WHERE deleted_at_source IS NULL"
-    ))
-    .fetch_one(db)
-    .await?;
-
     Ok(BookmarkPage {
         items,
         total: total.0,
-        counts,
     })
 }
 
@@ -251,18 +365,31 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 /// `deleted_at_source` field is in the payload so the view can say so.
 pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
     let state_sql = state_sql();
-    sqlx::query_as::<_, BookmarkDetail>(&format!(
+    let mut detail = sqlx::query_as::<_, BookmarkDetail>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, occurred_at AS timestamp, deleted_at_source,
-                enrichment_model, extraction,
+                author, tags, ({picture}) AS picture_url, ({DOOR_SQL}) AS door,
+                ({details}) AS details,
+                occurred_at AS timestamp, ({SAVED_AT_SQL}) AS saved_at, deleted_at_source,
+                enrichment_model, enriched_at, extraction,
                 extraction->>'medium' AS medium,
                 ({state_sql}) AS state
-           FROM data_content_bookmark WHERE id = $1"
+           FROM data_content_bookmark WHERE id = $1",
+        picture = picture_url_sql(),
+        details = details_sql(),
     ))
     .bind(id)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| Error::NotFound(format!("no bookmark {id}")))
+    .ok_or_else(|| Error::NotFound(format!("no bookmark {id}")))?;
+    let names: Vec<String> = detail
+        .extraction
+        .as_ref()
+        .and_then(|e| e.get("entities"))
+        .and_then(|e| e.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+        .unwrap_or_default();
+    detail.mentions = link_mentions(db, &names).await?;
+    Ok(detail)
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -276,15 +403,31 @@ pub struct BookmarkDetail {
     pub bookmark_type: Option<String>,
     pub author: Option<String>,
     pub tags: Option<serde_json::Value>,
-    pub thumbnail_url: Option<String>,
+    pub picture_url: Option<String>,
+    pub door: String,
+    pub details: serde_json::Value,
     pub timestamp: crate::types::Timestamp,
+    pub saved_at: crate::types::Timestamp,
     pub deleted_at_source: Option<crate::types::Timestamp>,
     pub enrichment_model: Option<String>,
+    pub enriched_at: Option<crate::types::Timestamp>,
     /// The whole record, so the view can render its aspects as aspects rather
     /// than as a JSON blob.
     pub extraction: Option<serde_json::Value>,
     pub medium: Option<String>,
     pub state: String,
+    /// The extraction record's entities, each linked to its Wiki page when
+    /// one has exactly that name: see [`link_mentions`].
+    #[sqlx(skip)]
+    pub mentions: Vec<Mention>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Mention {
+    pub name: String,
+    /// The Wiki page (`/person/…`, `/place/…`, `/org/…`, `/thing/…`), or
+    /// none when no page has this exact name.
+    pub route: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -470,57 +613,60 @@ mod tests {
                 limit: 200,
                 search: Some(prefix.clone()),
                 dir: None,
-                platform: None,
-                bookmark_type: None,
-                medium: None,
-                state: None,
+                door: None,
             },
         )
         .await
         .expect("list");
 
-        let state_of = |name: &str| {
-            page.items
-                .iter()
-                .find(|i| i.title.as_deref() == Some(format!("{prefix}{name}").as_str()))
-                .unwrap_or_else(|| panic!("{name} missing from page"))
-                .state
-                .clone()
-        };
-        assert_eq!(state_of("enriched"), "enriched");
-        assert_eq!(state_of("queued"), "queued");
+        assert_eq!(page.total, 4, "the tombstone-free rows are listed");
         // Both asset shapes must read as held: the viewer-route url and the
         // source-url-plus-asset_id case.
-        assert_eq!(state_of("held"), "held");
-        assert_eq!(state_of("held-with-source"), "held");
+        for (name, state) in [
+            ("enriched", "enriched"),
+            ("queued", "queued"),
+            ("held", "held"),
+            ("held-with-source", "held"),
+        ] {
+            let d = get_bookmark(&pool, &format!("{prefix}{name}")).await.expect("detail");
+            assert_eq!(d.state, state, "{name}");
+        }
         assert_eq!(
             page.items.iter().filter(|i| i.medium.is_some()).count(),
             4,
             "medium did not come through the extraction record"
         );
 
-        // A state facet narrows, and the counts do NOT — they describe the
-        // shelf, so a filtered view cannot misreport what the box is doing.
-        let held_only = list_bookmarks(
+        // A door narrows to the rows that arrived through it: every browser is
+        // one door.
+        sqlx::query("UPDATE data_content_bookmark SET source_platform = 'safari' WHERE id = $1")
+            .bind(format!("{prefix}enriched"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE data_content_bookmark SET source_platform = 'arc' WHERE id = $1")
+            .bind(format!("{prefix}queued"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE data_content_bookmark SET source_platform = 'x' WHERE starts_with(id, $1) AND source_platform IS NULL")
+            .bind(&prefix)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let browsers = list_bookmarks(
             &pool,
             ListBookmarksQuery {
                 offset: 0,
                 limit: 200,
                 search: Some(prefix.clone()),
                 dir: None,
-                platform: None,
-                bookmark_type: None,
-                medium: None,
-                state: Some("held".to_string()),
+                door: Some("browser".to_string()),
             },
         )
         .await
-        .expect("list held");
-        assert_eq!(held_only.total, 2, "state facet did not narrow");
-        assert_eq!(
-            held_only.counts.held, page.counts.held,
-            "counts changed under a filter"
-        );
+        .expect("list browsers");
+        assert_eq!(browsers.total, 2, "the browser door did not take Safari and Arc");
 
         // The detail read decodes the same row, timestamp included.
         let detail = get_bookmark(&pool, &format!("{prefix}enriched"))
@@ -591,28 +737,24 @@ mod tests {
                 limit: 50,
                 search: Some("room:".into()),
                 dir: None,
-                platform: None,
-                bookmark_type: None,
-                medium: None,
-                state: None,
+                door: None,
             },
         )
         .await
         .expect("list");
-        let state_of = |id: &str| {
-            page.items
-                .iter()
-                .find(|i| i.id == id)
-                .unwrap_or_else(|| panic!("{id} missing"))
-                .state
-                .clone()
-        };
-        assert_eq!(state_of("room:img"), "queued", "an image the pass will read is not held");
-        assert_eq!(state_of("room:vid"), "held", "no pass reads video yet");
-        assert_eq!((page.counts.queued, page.counts.held), (1, 1));
+        assert_eq!(get_bookmark(&pool, "room:img").await.unwrap().state, "queued", "an image the pass will read is not held");
+        assert_eq!(get_bookmark(&pool, "room:vid").await.unwrap().state, "held", "no pass reads video yet");
+        assert_eq!(
+            page.items.iter().find(|i| i.id == "room:img").unwrap().picture_url.as_deref(),
+            Some("/api/drive/files/file_room_img/download?disposition=inline"),
+            "an image asset is the picture"
+        );
+        assert_eq!(
+            page.items.iter().find(|i| i.id == "room:vid").unwrap().picture_url,
+            None,
+            "a video asset is not a picture"
+        );
 
-        // The detail read uses the same rule.
-        assert_eq!(get_bookmark(&pool, "room:img").await.unwrap().state, "queued");
     }
 
     /// The detail endpoints on a migrated database — same reason as above:
@@ -678,5 +820,112 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    /// The room groups by save time and shows only Drive pictures.
+    ///
+    /// A post's `occurred_at` is when it was written, so grouping by it put a
+    /// years-old post saved today under its year. And a remote `thumbnail_url`
+    /// is a platform's image link: serving it tells the platform what the
+    /// person opened.
+    #[sqlx::test]
+    async fn posts_group_by_save_time_and_remote_pictures_are_not_served(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, description, source_platform, occurred_at, created_at,
+                source_stream_id, source_table, source_provider, thumbnail_url, metadata)
+             VALUES
+               ('t:post', 'https://x.com/nick/status/1', 'tst-saved-at old post', 'x',
+                '2019-03-01T12:00:00Z', '2026-11-20T12:00:00Z', 't:post', 'test', 'test',
+                'https://images.example.com/a.jpg', '{}'::jsonb),
+               ('t:page', 'https://example.com/b', 'tst-saved-at page', 'chrome',
+                '2026-11-18T12:00:00Z', '2026-11-22T12:00:00Z', 't:page', 'test', 'test',
+                'https://images.example.com/b.jpg', '{\"picture_id\": \"file_kept\"}'::jsonb)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let page = list_bookmarks(
+            &pool,
+            ListBookmarksQuery {
+                offset: 0,
+                limit: 10,
+                search: Some("tst-saved-at".into()),
+                dir: None,
+                door: None,
+            },
+        )
+        .await
+        .expect("list");
+        let ids: Vec<&str> = page.items.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["t:post", "t:page"], "ordered by save time, not by when the post was written");
+
+        let post = &page.items[0];
+        assert_eq!(post.saved_at.to_rfc3339(), "2026-11-20T12:00:00Z", "a post's save time is when the server saw it");
+        assert_eq!(post.timestamp.to_rfc3339(), "2019-03-01T12:00:00Z", "the post keeps its own time");
+        assert_eq!(post.picture_url, None, "a remote picture link is never served");
+
+        let browser = &page.items[1];
+        assert_eq!(browser.saved_at.to_rfc3339(), "2026-11-18T12:00:00Z", "a browser's own date is the save time");
+        assert_eq!(
+            browser.picture_url.as_deref(),
+            Some("/api/drive/files/file_kept/download?disposition=inline"),
+            "a kept copy is served"
+        );
+    }
+
+    /// A card's details come back as Drive routes with absent facts left
+    /// out, and mentions link only to a Wiki page of exactly that name.
+    #[sqlx::test]
+    async fn details_and_mentions(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, description, source_platform, occurred_at, source_stream_id,
+                source_table, source_provider, enrichment_status, extraction, metadata)
+             VALUES ('t:det', 'https://x.com/nick/status/9', 'see https://t.co/a', 'x', now(),
+                     't:det', 'test', 'test', 'done',
+                     '{\"entities\": [\"David Okafor\", \"Nick\", \"Lisbon\", \"david okafor\", \"Porto\"]}'::jsonb,
+                     '{\"author_name\": \"Nick\", \"author_picture_url\": \"https://images.example.com/n.jpg\",
+                       \"author_picture_id\": \"file_av\", \"links\": [{\"short\": \"https://t.co/a\",
+                       \"expanded\": \"https://example.com/e\", \"display\": \"example.com/e\"}],
+                       \"link_preview\": {\"url\": \"https://example.com/e\", \"title\": \"An essay\",
+                       \"image_url\": \"https://images.example.com/e.jpg\"}}'::jsonb)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (table, id, name) in [
+            ("wiki_people", "p_do", "David Okafor"),
+            ("wiki_people", "p_n", "Nick"),
+            ("wiki_places", "pl_1", "Porto"),
+            ("wiki_orgs", "o_1", "Porto"),
+        ] {
+            sqlx::query(&format!("INSERT INTO {table} (id, name) VALUES ($1, $2)"))
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let d = get_bookmark(&pool, "t:det").await.expect("detail");
+        assert_eq!(d.details["author_name"], "Nick");
+        assert_eq!(d.details["author_picture_url"], "/api/drive/files/file_av/download?disposition=inline");
+        assert_eq!(d.details["link_preview"]["title"], "An essay");
+        assert!(d.details["link_preview"].get("picture_url").is_none(), "an uncopied picture is left out");
+        assert!(d.details.get("site_name").is_none(), "an absent fact is left out");
+        assert!(!d.details.to_string().contains("images.example.com"), "no remote address is returned");
+
+        assert_eq!(
+            d.mentions,
+            vec![
+                Mention { name: "David Okafor".into(), route: Some("/person/p_do".into()) },
+                Mention { name: "Nick".into(), route: None },
+                Mention { name: "Lisbon".into(), route: None },
+                Mention { name: "Porto".into(), route: None },
+            ],
+            "a one-word name does not link to a person, a repeat is dropped, and a name two pages share links to neither"
+        );
     }
 }
