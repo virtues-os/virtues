@@ -20,7 +20,6 @@
 	import { recentRows } from "$lib/sidebar/recents.svelte";
 	import { formatDate } from "$lib/utils/dateUtils";
 	import { contentGlyph, previewOf, projectOfRow, rowNoun, type SearchRow } from "$lib/search/results";
-	import { rowOf, shapeOf } from "$lib/bookmarks/shape";
 	import { settingPlace } from "$lib/settings";
 
 	interface Props {
@@ -156,10 +155,9 @@
 			}
 			case "bookmark": {
 				const b = r.bookmark;
-				const line = rowOf(b);
 				const tags = (b.tags ?? []).map((t) => `#${t}`).join(" ");
 				// A post's text is already its title; a page shows its own summary.
-				return { kind: "plain", title: line.title, meta: [line.meta, tags].filter(Boolean).join("  "), text: shapeOf(b).summary };
+				return { kind: "plain", title: b.line.title, meta: [b.line.meta, tags].filter(Boolean).join("  "), text: b.summary };
 			}
 			case "content": {
 				const hit = r.hit;

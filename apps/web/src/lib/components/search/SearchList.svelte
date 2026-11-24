@@ -18,8 +18,6 @@
 	import { loadRecentSources } from "$lib/sidebar/recents.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import { entities } from "$lib/search/entities.svelte";
-	import { getBookmarksPage } from "$lib/bookmarks/api";
-	import { crumbOf, rowOf } from "$lib/bookmarks/shape";
 	import { handOff } from "$lib/search/handoff";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
@@ -32,6 +30,7 @@
 	import {
 		BOOKMARK_ROWS,
 		SCOPED_BOOKMARK_ROWS,
+		searchBookmarks,
 		commandsFromMenu,
 		contentGlyph,
 		contentTarget,
@@ -197,8 +196,8 @@
 		const seq = ++bookmarkSeq;
 		const timer = setTimeout(async () => {
 			try {
-				const page = await getBookmarksPage({ offset: 0, limit: scoped ? SCOPED_BOOKMARK_ROWS : BOOKMARK_ROWS, search: text || undefined });
-				if (seq === bookmarkSeq) bookmarkHits = page.items;
+				const named = await searchBookmarks(text, scoped ? SCOPED_BOOKMARK_ROWS : BOOKMARK_ROWS);
+				if (seq === bookmarkSeq) bookmarkHits = named;
 			} catch {
 				// absent-ok: search still lists everything else; Bookmarks has its own search.
 				if (seq === bookmarkSeq) bookmarkHits = [];
@@ -257,7 +256,7 @@
 				return handOff(() => windowShellStore.openTabFromRoute(target.route, { label: target.label }));
 			}
 			case "bookmark":
-				return handOff(() => windowShellStore.openTabFromRoute(rowRoute(row)!, { label: crumbOf(row.bookmark), focusExisting: true }));
+				return handOff(() => windowShellStore.openTabFromRoute(rowRoute(row)!, { label: row.bookmark.crumb, focusExisting: true }));
 			case "setting":
 				// Two settings work right here; the rest open on their page.
 				if (row.setting.id === "theme") return enterThemeMode();
@@ -348,7 +347,7 @@
 			<span class="row-label">{item.entity.name}</span>
 		{:else if item.kind === "bookmark"}
 			{@const tags = item.bookmark.tags ?? []}
-			{@const line = rowOf(item.bookmark)}
+			{@const line = item.bookmark.line}
 			<Icon icon="atlas:bookmarks" width="16" class="row-icon" />
 			<span class="row-label">{line.title}<span class="muted">&ensp;{line.meta}{#if tags.length}&ensp;{tags.slice(0, 3).map((t) => `#${t}`).join(" ")}{/if}</span></span>
 		{:else}

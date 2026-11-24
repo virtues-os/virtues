@@ -40,9 +40,33 @@ import { matchEntities, type EntityRow } from '$lib/search/entities.svelte';
 import { SETTINGS, titleOf, type Setting } from '$lib/settings';
 import type { BookmarkApi } from '$lib/bookmarks/api';
 
-/** A bookmark as search lists it: the whole row, so it is named by the
- *  same rule as its card (`bookmarks/shape.ts`). */
-export type BookmarkHit = BookmarkApi;
+/**
+ * A bookmark as search lists it, already named by the same rule as its card
+ * (`bookmarks/shape.ts`). The palette names hits when they arrive rather than
+ * as it draws, so the rule loads with the first results instead of with the
+ * app: the palette is part of the code every launch loads before first paint.
+ */
+export type BookmarkHit = BookmarkApi & {
+	/** The row's two lines: the title and where it is from. */
+	line: { title: string; meta: string };
+	/** The tab's name when it opens. */
+	crumb: string;
+	/** A page's own summary, for the preview. Posts have none. */
+	summary: string | null;
+};
+
+/**
+ * Ask the box for bookmarks matching `text`, named by the card rule. The API
+ * client and the rule load on the first search, not with the app.
+ */
+export async function searchBookmarks(text: string, limit: number): Promise<BookmarkHit[]> {
+	const [{ getBookmarksPage }, { crumbOf, rowOf, shapeOf }] = await Promise.all([
+		import('$lib/bookmarks/api'),
+		import('$lib/bookmarks/shape'),
+	]);
+	const page = await getBookmarksPage({ offset: 0, limit, search: text || undefined });
+	return page.items.map((b) => ({ ...b, line: rowOf(b), crumb: crumbOf(b), summary: shapeOf(b).summary }));
+}
 
 export interface Command {
 	id: string;

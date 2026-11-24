@@ -1,9 +1,8 @@
 // Settings in search: the #settings scope lists them, and the page each lives
 // on is named the way Settings names it.
 import { describe, expect, it } from 'vitest';
-import type { BookmarkApi } from '$lib/bookmarks/api';
 import { SETTINGS, findSetting, settingPlace } from '$lib/settings';
-import { parseQuery, rowNoun, searchGroups } from './results';
+import { parseQuery, rowNoun, searchGroups, type BookmarkHit } from './results';
 
 const scoped = (query: string) => searchGroups({ query, here: null, commands: [], content: [], assistantName: 'Iris' });
 
@@ -48,7 +47,7 @@ describe('settingPlace', () => {
 });
 
 describe('bookmarks', () => {
-	const bookmark: BookmarkApi = {
+	const bookmark: BookmarkHit = {
 		id: 'bm_1',
 		url: 'https://www.example.com/sourdough',
 		title: 'Sourdough starter guide',
@@ -64,6 +63,9 @@ describe('bookmarks', () => {
 		timestamp: '2026-11-20T12:00:00Z',
 		saved_at: '2026-11-20T12:00:00Z',
 		medium: null,
+		line: { title: 'Sourdough starter guide', meta: 'example.com' },
+		crumb: 'Sourdough starter guide',
+		summary: null,
 	};
 	const groups = (query: string) =>
 		searchGroups({ query, here: null, commands: [], content: [], bookmarks: [bookmark], assistantName: 'Iris' });
