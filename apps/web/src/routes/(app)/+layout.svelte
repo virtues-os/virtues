@@ -50,8 +50,8 @@
 		bundleUpdateReady,
 		shellIdentity,
 		canDictate,
-		startDictation,
 	} from "$lib/tauri/bridge";
+	import { beginDictation, endDictation, dictationListening } from "$lib/tauri/dictation";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { prefetchConverter } from "$lib/document/converter";
@@ -297,8 +297,9 @@
 		);
 
 		// ⌘D starts the Mac's dictation in the focused field, or in the chat
-		// field when nothing is focused. It binds only in a shell that can
-		// dictate, so a browser keeps ⌘D for its own bookmark key.
+		// field when nothing is focused, and a second ⌘D stops it. It binds
+		// only in a shell that can dictate, so a browser keeps ⌘D for its own
+		// bookmark key.
 		void canDictate().then((yes) => {
 			if (!yes) return;
 			shortcuts.register({
@@ -307,6 +308,10 @@
 				label: "Dictate",
 				group: "Chat",
 				run: () => {
+					if (dictationListening()) {
+						endDictation();
+						return;
+					}
 					const active = document.activeElement as HTMLElement | null;
 					const typing =
 						active?.isContentEditable ||
@@ -317,7 +322,7 @@
 							.querySelector<HTMLElement>('#chat-input [contenteditable="true"]')
 							?.focus();
 					}
-					void startDictation();
+					beginDictation();
 				},
 			});
 		});
