@@ -23,6 +23,7 @@
 		type DriveUsage,
 	} from '$lib/api/client';
 	import { getBookmarksPage, type BookmarkApi } from '$lib/bookmarks/api';
+	import { arrivedBy, crumbOf, shapeOf } from '$lib/bookmarks/shape';
 	import { backendUrl } from '$lib/config/backend';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { whenLabel } from '$lib/wiki/front';
@@ -54,13 +55,16 @@
 	let usage = $state<DriveUsage | null>(null);
 
 	function bookmarkRow(b: BookmarkApi): Kept {
+		// The bookmark's own headline and picture, by the rule its card uses:
+		// never a bare domain over a post whose text is stored.
+		const s = shapeOf(b);
 		return {
 			key: `bookmark:${b.id}`,
-			name: b.title || host(b.url),
-			where: `Bookmark · ${host(b.url)}`,
-			at: b.timestamp,
+			name: s.headline ?? crumbOf(b),
+			where: `Bookmark · ${arrivedBy(b)}`,
+			at: b.saved_at,
 			route: `/bookmark/${b.id}`,
-			picture: b.thumbnail_url,
+			picture: s.picture,
 			glyph: 'bookmarks',
 		};
 	}

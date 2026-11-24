@@ -404,6 +404,8 @@ async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
         ModelSlot::Lite,
     )
     .await?;
+    let facts = crate::bookmark_facts::page_facts(&page, record.medium.as_deref());
+    crate::bookmark_facts::write_page_facts(db, &item.id, &facts).await?;
 
     Ok(Outcome::Enriched)
 }

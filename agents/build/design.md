@@ -755,8 +755,8 @@ gap is open work.
 | `Input`, `Textarea` | Text fields with label, help and validation. | 34px, 44px on touch; 14px text, 16px on touch. 12 and 3 files, beside about 100 raw fields. | Kept; the raw fields move onto them. |
 | `Switch`, `Select` | A toggle and a choice among named options. | `Select` (`lib/components`) is 34px on the field edge and opens a menu of `MenuItem` rows on `lib/floating`, with keyboard, typeahead and groups; `variant="bare"` sits in a sentence or an underlined form. No native `<select>` is left: it draws the operating system's menu, which ignores the theme. `Switch` lives under `settings/`. | Promote `Switch` to `lib/components`. |
 | Checkbox | A box you tick. | None: `TaskCheck` and `TaskCard` each build `role=checkbox`, beside about 10 native ones. | Add one. |
-| Segmented control | Two to five exclusive choices in a row. | Five separate builds (ContextViewPanel, DayPage, DisplaySettingsPopover, IconPicker, ThreadsView). | Add one. |
-| Chip | A small label or filter. | `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, and `.chip` in 13 files. | One Chip. |
+| `Segmented` | Two to five exclusive choices in a row. | `lib/components/Segmented.svelte`, a radio group, used by Appearance, Data, You, the site switch and Bookmarks. Five older builds remain (ContextViewPanel, DayPage, DisplaySettingsPopover, IconPicker, ThreadsView). | Move the five onto it. |
+| `Chip` | A small label or filter. | `lib/components/Chip.svelte`: a filter button (`selected` is the selected wash), a link in the accent, or a label on the fill. Used by Bookmarks. Beside it still: `Badge`, `LinkChip`, `ProjectChip`, `DataGridFilterChip`, `ref-badge.css`, and `.chip` in 13 files. | Move those onto `Chip`. |
 | `MenuItem`, context menu | A row in a menu. | `MenuItem` in 11 files; the context menu positions itself (`contextMenu/fit.ts`). | One menu on `lib/floating`. |
 | `Popover` | Anything anchored to a control. | `lib/floating` in about 24 files; about 15 overlays hand-build their own. | Everything anchored uses it. |
 | `Modal` | A dialog. `DialogHost` draws confirm and prompt on it. | 16 files; SearchModal, MediaLightbox and MobileDrawer build their own. Its close is a hand-made 28px button, and it draws its own shadow and uses raw `--surface` and `--border`. | Close on `IconButton`, `--shadow-float`, `--color-` tokens. |
@@ -795,6 +795,9 @@ gap is open work.
 ```
 
 ```specimen Badge
+```
+
+```specimen Chip
 ```
 
 ```specimen StateBlock

@@ -47,8 +47,6 @@ export function crumbMenuItems(
 
 	if (menu.kind === 'mode') return modeItems(menu.mode, menu.group, current, open);
 
-	if (menu.kind === 'threads') return threadViewItems(here, open);
-
 	if (menu.kind === 'thread') {
 		const members = recentRows({ pinned: true }).filter(
 			(r) =>
@@ -80,35 +78,6 @@ export function crumbMenuItems(
 	if (crumb.route) footer.push({ id: 'all', label: `All ${list.noun}`, icon: GLYPH[list.kind], action: () => open(crumb.route!) });
 	footer.push({ id: 'search', label: `Search ${list.noun}…`, icon: 'atlas:search', action: () => search.show(`#${list.noun} `) });
 	return withFooter(rows, footer);
-}
-
-/**
- * The Threads door's views, the one you are on checked, each with its G
- * shortcut. The door keeps the view in its route (`?view=`), so on the door
- * a view changes that tab's route the way the door's own G keys do;
- * anywhere else under it, the view opens.
- */
-function threadViewItems(here: string, open: (route: string) => void): ContextMenuItem[] {
-	const [path, query = ''] = here.split('?');
-	const on = path === '/threads' ? (new URLSearchParams(query).get('view') ?? 'overview') : null;
-	const views: { id: string; label: string; key: string }[] = [
-		{ id: 'overview', label: 'Overview', key: 'G O' },
-		{ id: 'tasks', label: 'Tasks', key: 'G T' },
-		{ id: 'threads', label: 'All threads', key: 'G A' },
-		{ id: 'insights', label: 'Insights', key: 'G I' },
-	];
-	return views.map((v) => ({
-		id: `view-${v.id}`,
-		label: v.label,
-		shortcut: v.key,
-		checked: on === v.id,
-		action: () => {
-			const route = v.id === 'overview' ? '/threads' : `/threads?view=${v.id}`;
-			const door = on ? windowShellStore.findTab((t) => t.route === here) : null;
-			if (door) windowShellStore.updateTab(door.tab.id, { route });
-			else open(route);
-		},
-	}));
 }
 
 function withFooter(rows: ContextMenuItem[], footer: ContextMenuItem[]): ContextMenuItem[] {

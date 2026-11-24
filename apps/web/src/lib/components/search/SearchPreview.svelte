@@ -65,6 +65,8 @@
 				return `content:${r.hit.ontology}:${r.hit.record_id}`;
 			case "setting":
 				return `setting:${r.setting.id}`;
+			case "bookmark":
+				return `bookmark:${r.bookmark.id}`;
 		}
 	}
 
@@ -150,6 +152,12 @@
 				}
 				if (rec.kind === "thread") return threadPreview(rec.project.id, rec.title);
 				return { kind: "plain", title: rec.title, meta: null, text: rec.applet.description };
+			}
+			case "bookmark": {
+				const b = r.bookmark;
+				const tags = (b.tags ?? []).map((t) => `#${t}`).join(" ");
+				// A post's text is already its title; a page shows its own summary.
+				return { kind: "plain", title: b.line.title, meta: [b.line.meta, tags].filter(Boolean).join("  "), text: b.summary };
 			}
 			case "content": {
 				const hit = r.hit;
@@ -285,6 +293,8 @@
 				return { chat: "atlas:chats", page: "atlas:pages", thread: "atlas:projects", applet: "atlas:applets" }[row.record.kind];
 			case "content":
 				return contentGlyph(row.hit);
+			case "bookmark":
+				return "atlas:bookmarks";
 			default:
 				return null;
 		}

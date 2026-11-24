@@ -24,14 +24,13 @@ export interface Crumb {
 }
 
 export type CrumbMenu =
-	| { kind: 'threads' }
 	| { kind: 'thread'; id: string }
 	| { kind: 'pages' }
 	| { kind: 'applets' }
 	/** A sidebar mode's rows: all of them by heading, or one heading's. */
 	| { kind: 'mode'; mode: 'settings' | 'wiki' | 'storage'; group?: string };
 
-export const threadsCrumb = (): Crumb => ({ label: 'Threads', route: '/threads', menu: { kind: 'threads' } });
+export const threadsCrumb = (): Crumb => ({ label: 'Threads', route: '/threads' });
 
 export const threadCrumb = (id: string, name: string): Crumb => ({
 	label: name,
@@ -91,9 +90,8 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		if (!door.prefixes.some((p) => under(path, p))) continue;
 		const crumbs: Crumb[] = [door.root];
 		if (path !== door.root.route && title && title !== door.root.label) crumbs.push({ label: title });
-		// On the door itself the segment is the page, except where its menu
-		// lists the door's own views (Threads): that menu stays.
-		else crumbs[0] = door.root.menu?.kind === 'threads' ? door.root : { label: door.root.label };
+		// On the door itself the segment is the page.
+		else crumbs[0] = { label: door.root.label };
 		return { glyph: door.glyph, crumbs };
 	}
 

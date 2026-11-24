@@ -25,7 +25,7 @@ export function kindGlyph(url: string): string {
 	if (/^\/(sites?|skill|server-task|job|applets?)(\/|$)/.test(url)) return 'applets';
 	// A task, linked by `?task=`. A pin made before Tasks joined the
 	// Threads door still says /tasks, and opens the door's Tasks view.
-	if (url.startsWith('/tasks') || url.startsWith('/threads?view=tasks')) return 'tasks';
+	if (url.startsWith('/tasks')) return 'tasks';
 	if (url.startsWith('/threads')) return 'projects';
 	if (url.startsWith('/wiki')) return 'wiki';
 	if (url.startsWith('/day/')) return 'day';

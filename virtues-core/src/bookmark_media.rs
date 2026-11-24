@@ -51,6 +51,137 @@ pub async fn store_saved_image(pool: &PgPool, url: &str) -> Result<StoredImage> 
     store_image_bytes(pool, &img.bytes, &img.mime).await
 }
 
+/// Days before a picture that could not be fetched is tried again.
+pub const RETRY_AFTER_DAYS: i32 = 7;
+
+/// The SQL condition "this failure mark, at path `$n`, is absent or older
+/// than [`RETRY_AFTER_DAYS`]". A mark is the RFC 3339 time it was written; a
+/// mark of any other shape counts as old, so it is retried rather than kept.
+pub fn failure_expired_sql(param: &str) -> String {
+    format!(
+        "(metadata #> {param}::text[] IS NULL \
+          OR jsonb_typeof(metadata #> {param}::text[]) <> 'string' \
+          OR (metadata #>> {param}::text[])::timestamptz < now() - make_interval(days => {RETRY_AFTER_DAYS}))"
+    )
+}
+
+/// What one pass of [`keep_remote_pictures`] did.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KeptPictures {
+    pub kept: usize,
+    pub failed: usize,
+}
+
+/// One kind of remote picture a bookmark can carry, and where its Drive copy
+/// is named.
+struct PictureKind {
+    /// What the picture is, for the log.
+    what: &'static str,
+    /// The remote address, as a SQL expression over the row.
+    source: &'static str,
+    /// The metadata path the copy's Drive id is written to, and the path a
+    /// failure is marked at. Both are `text[]` paths for `jsonb_set`.
+    kept_at: &'static str,
+    failed_at: &'static str,
+}
+
+const PICTURE_KINDS: &[PictureKind] = &[
+    // The bookmark's own picture: an X post's image, a page's preview image.
+    // Asset-backed rows already have theirs in Drive.
+    PictureKind {
+        what: "picture",
+        source: "CASE WHEN metadata->>'asset_id' IS NULL THEN thumbnail_url END",
+        kept_at: "{picture_id}",
+        failed_at: "{picture_failed}",
+    },
+    PictureKind {
+        what: "author picture",
+        source: "metadata->>'author_picture_url'",
+        kept_at: "{author_picture_id}",
+        failed_at: "{author_picture_failed}",
+    },
+    PictureKind {
+        what: "site icon",
+        source: "metadata->>'icon_url'",
+        kept_at: "{icon_id}",
+        failed_at: "{icon_failed}",
+    },
+    PictureKind {
+        what: "link preview picture",
+        source: "metadata->'link_preview'->>'image_url'",
+        kept_at: "{link_preview,picture_id}",
+        failed_at: "{link_preview,picture_failed}",
+    },
+];
+
+/// Copy bookmarks' remote pictures into Drive, up to `limit` of each kind per
+/// call.
+///
+/// A remote picture is a link to someone else's server: an X post's image, a
+/// page's preview image, an author's profile picture, a site's icon, the
+/// picture of a page a post links to. The room shows only Drive copies (see
+/// `api::bookmarks`), because loading the link would tell that server what the
+/// person opened, and some links expire. Each copy's Drive id is written into
+/// `metadata`, which the shared upsert's metadata merge keeps across
+/// re-syncs.
+///
+/// A link that cannot be fetched is marked with the time it failed, and tried
+/// again after [`RETRY_AFTER_DAYS`]: a dead link costs one fetch a week, and a
+/// box that was offline for a run does not lose those pictures for good. Until
+/// then the bookmark shows no such picture, as it would have with a dead link.
+pub async fn keep_remote_pictures(pool: &PgPool, limit: i64) -> Result<KeptPictures> {
+    let mut out = KeptPictures::default();
+    for kind in PICTURE_KINDS {
+        let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+            "SELECT id, src FROM (
+               SELECT id, created_at, ({source}) AS src FROM data_content_bookmark
+                WHERE deleted_at_source IS NULL
+                  AND metadata #> $2::text[] IS NULL
+                  AND {retry}
+             ) r
+             WHERE starts_with(src, 'https://')
+             ORDER BY created_at DESC
+             LIMIT $1",
+            source = kind.source,
+            retry = failure_expired_sql("$3"),
+        ))
+        .bind(limit)
+        .bind(kind.kept_at)
+        .bind(kind.failed_at)
+        .fetch_all(pool)
+        .await?;
+
+        for (id, url) in rows {
+            let (path, value) = match store_saved_image(pool, &url).await {
+                Ok(img) => {
+                    out.kept += 1;
+                    (kind.kept_at, serde_json::json!(img.file_id))
+                }
+                Err(e) => {
+                    out.failed += 1;
+                    tracing::warn!(bookmark = %id, error = %e, "could not keep a bookmark's {}", kind.what);
+                    (kind.failed_at, serde_json::json!(chrono::Utc::now().to_rfc3339()))
+                }
+            };
+            // `jsonb_set` does not create a missing parent, so a nested path
+            // (`link_preview.picture_id`) needs its parent object to exist,
+            // which it does: the source address came from it.
+            sqlx::query(
+                "UPDATE data_content_bookmark
+                    SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), $2::text[], $3, true),
+                        updated_at = now()
+                  WHERE id = $1",
+            )
+            .bind(&id)
+            .bind(path)
+            .bind(value)
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(out)
+}
+
 /// Store image bytes that already arrived — the phone's share sheet sends the
 /// picture itself — under the same rules as a fetched one: an `image/*` type,
 /// not empty, within the cap, content-addressed in the same folder.
@@ -95,6 +226,12 @@ pub async fn store_image_bytes_at(
     let mime = sniff_image_mime(bytes)
         .map(str::to_string)
         .unwrap_or_else(|| declared_mime.trim().to_ascii_lowercase());
+    // An SVG is a document that can carry script. Served from the box's own
+    // origin, opening its address directly would run that script there, so
+    // no SVG is kept.
+    if mime.starts_with("image/svg") {
+        return Err(Error::InvalidInput("SVG images are not kept".into()));
+    }
     if !mime.starts_with("image/") {
         return Err(Error::InvalidInput(format!(
             "expected an image, got {}",
@@ -150,6 +287,9 @@ pub fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"GIF8") {
         return Some("image/gif");
     }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return Some("image/x-icon");
+    }
     if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return Some("image/webp");
     }
@@ -174,6 +314,7 @@ fn extension_for(mime: &str) -> &'static str {
         "image/gif" => "gif",
         "image/heic" => "heic",
         "image/avif" => "avif",
+        "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
         _ => "img",
     }
 }
@@ -181,6 +322,62 @@ fn extension_for(mime: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A picture that cannot be fetched is tried once and marked, and rows
+    /// whose picture is already in Drive are left alone. The fetcher refuses
+    /// loopback addresses, which makes the failure path testable offline.
+    #[sqlx::test]
+    async fn an_unfetchable_picture_is_marked_once(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, occurred_at, source_stream_id, source_table, source_provider,
+                thumbnail_url, metadata)
+             VALUES
+               ('kp:remote', 'https://example.com/a', now(), 'kp:remote', 'test', 'test',
+                'https://127.0.0.1/a.jpg', '{}'::jsonb),
+               ('kp:asset', 'https://example.com/b', now(), 'kp:asset', 'test', 'test',
+                'https://127.0.0.1/b.jpg', '{\"asset_id\": \"file_b\"}'::jsonb),
+               ('kp:preview', 'https://example.com/c', now(), 'kp:preview', 'test', 'test',
+                NULL, '{\"link_preview\": {\"url\": \"https://example.com/d\", \"image_url\": \"https://127.0.0.1/d.jpg\"}}'::jsonb)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let first = keep_remote_pictures(&pool, 10).await.expect("pass runs");
+        assert_eq!((first.kept, first.failed), (0, 2), "the remote picture and the preview picture are tried");
+
+        let preview_marked: Option<String> = sqlx::query_scalar(
+            "SELECT metadata #>> '{link_preview,picture_failed}' FROM data_content_bookmark WHERE id = 'kp:preview'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(preview_marked.is_some(), "a nested picture is marked in place");
+
+        let marked: bool = sqlx::query_scalar(
+            "SELECT (metadata->>'picture_failed')::timestamptz > now() - interval '1 minute' FROM data_content_bookmark WHERE id = 'kp:remote'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(marked, "the failure is marked with its time");
+
+        let second = keep_remote_pictures(&pool, 10).await.expect("pass runs");
+        assert_eq!((second.kept, second.failed), (0, 0), "a fresh failure is not retried");
+
+        // A week later it is.
+        sqlx::query(
+            "UPDATE data_content_bookmark
+                SET metadata = jsonb_set(metadata, '{picture_failed}', to_jsonb((now() - interval '8 days')::text))
+              WHERE id = 'kp:remote'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let later = keep_remote_pictures(&pool, 10).await.expect("pass runs");
+        assert_eq!((later.kept, later.failed), (0, 1), "an old failure is tried again");
+    }
 
     /// A 1x1 PNG — the smallest real image, so the store is exercised end to end.
     const PNG_1X1: &[u8] = &[

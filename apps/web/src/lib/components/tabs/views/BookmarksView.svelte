@@ -1,88 +1,169 @@
 <!--
 	BookmarksView.svelte
 
-	The Bookmarks room — everything you kept from the web, from every door:
-	browser bookmarks synced off the Mac, GitHub stars, and URLs saved by hand.
+	The Bookmarks room: everything you saved, from every door.
 
-	Server-paginated for the same reason the entity records feed is: a browser
-	bookmark import is thousands of rows on day one, and the grid should hold a
-	page, not a library.
+	People come here to find one thing they remember, to recognize things by
+	sight while scrolling, and to open the original. So search is the widest
+	control, every card shows the saved thing itself (lib/bookmarks/shape.ts),
+	and saves are grouped by when you saved them: people remember a save by
+	when, and the groups do the work pages of 25 used to.
 
-	Three views. Table and Cards come from the grid; the Wall is this room's
-	own — tiles pack at their natural heights and each takes the form its
-	content calls for, so a saved image is recognizable without reading.
+	Wall and List show the same saves in the same groups. The List is for
+	scanning, one line per save with no pictures. The Wall places each
+	card in the shortest column, left to right, so date order holds across a
+	row. More load as you scroll.
 
-	The tile form encodes what the box knows, which is why there is no separate
-	"enrichment status" badge: a thing we have looked at is a picture or a
-	paragraph, and a thing we have not is a spine. Three spines among the
-	pictures reads as "still working" without a word of status copy.
-
-	Filtering by colour still waits on the image pass — palette hexes are the
-	one facet nothing writes yet, and a facet over an empty column is
-	furniture.
+	The filters are the doors a save came through, with no counts on them:
+	design.md bans counts, because someone in recovery sees every page.
 -->
 
 <script lang="ts">
-	import { Button, Page } from '$lib';
+	import { Button, Page, EmptyState, LoadingState } from '$lib';
+	import Chip from '$lib/components/Chip.svelte';
+	import SearchField from '$lib/components/SearchField.svelte';
+	import Segmented from '$lib/components/Segmented.svelte';
+	import BookmarkCard from '$lib/components/bookmarks/BookmarkCard.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import UniversalDataGrid, {
-		type Column,
-	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { GridQuery, GridPage } from '$lib/components/datagrid/types';
-	import type { FilterDef } from '$lib/components/datagrid/types';
+	import { getAssistantProfile, updateUiPreferences } from '$lib/api/client';
 	import {
 		getBookmarksPage,
 		saveBookmark,
 		type BookmarkApi,
-		type ShelfCounts,
+		type BookmarkDoor,
 	} from '$lib/bookmarks/api';
+	import {
+		DOOR_FILTERS,
+		estimateHeight,
+		footerOf,
+		groupBySave,
+		intoColumns,
+		shapeOf,
+	} from '$lib/bookmarks/shape';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
+
+	const PAGE_SIZE = 40;
+	const GAP = 16;
+
+	type View = 'wall' | 'list';
+	const VIEWS: readonly { value: View; label: string }[] = [
+		{ value: 'wall', label: 'Wall' },
+		{ value: 'list', label: 'List' },
+	];
+
+	let view = $state<View>('wall');
+	let door = $state<BookmarkDoor | null>(null);
+	let search = $state('');
+	let query = $state('');
+
+	let items = $state<BookmarkApi[]>([]);
+	let total = $state(0);
+	let loading = $state(true);
+	let loadingMore = $state(false);
+	let error = $state<string | null>(null);
+	const hasMore = $derived(items.length < total);
 
 	let url = $state('');
 	let saving = $state(false);
 	let saveError = $state<string | null>(null);
-	// Bumped after a save so the grid refetches — a new bookmark should appear
-	// without a reload.
-	let revision = $state(0);
 
-	const serverExtra = $derived({ revision });
+	let width = $state(0);
+	const columns = $derived(width >= 960 ? 3 : width >= 600 ? 2 : 1);
+	const columnWidth = $derived(width ? (width - GAP * (columns - 1)) / columns : 320);
+	const groups = $derived(groupBySave(items));
 
-	// Shelf-wide, not page-wide: the status line answers what the box is still
-	// working on, so it must not change when a filter narrows the view.
-	let counts = $state<ShelfCounts | null>(null);
+	// Wall or List is remembered per person, on the profile.
+	$effect(() => {
+		getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>()
+			.then((p) => {
+				const saved = p?.ui_preferences?.bookmarks_view;
+				if (saved === 'wall' || saved === 'list') view = saved;
+			})
+			// Unreadable: the Wall, which is the default anyway.
+			.catch(() => {});
+	});
 
-	async function fetchPage(q: GridQuery): Promise<GridPage<BookmarkApi>> {
-		const one = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
-		const page = await getBookmarksPage({
-			offset: q.offset,
-			limit: q.limit,
-			search: q.search || undefined,
-			dir: q.sort?.key === 'timestamp' && q.sort.dir === 'asc' ? 'asc' : 'desc',
-			platform: one(q.filters.platform),
-			bookmark_type: one(q.filters.bookmark_type),
-			medium: one(q.filters.medium),
-			state: one(q.filters.state),
-		});
-		counts = page.counts;
-		return { items: page.items, total: page.total };
+	function pickView(next: View) {
+		view = next;
+		updateUiPreferences({ bookmarks_view: next }).catch(() => {});
+	}
+
+	// Typing settles for a moment before the server is asked.
+	$effect(() => {
+		const next = search.trim();
+		const t = setTimeout(() => (query = next), 250);
+		return () => clearTimeout(t);
+	});
+
+	// A new search or filter starts the list again. A response that arrives
+	// after a newer request was sent is dropped.
+	let generation = 0;
+	$effect(() => {
+		void query;
+		void door;
+		load(true);
+	});
+
+	async function load(reset: boolean) {
+		const mine = reset ? ++generation : generation;
+		if (reset) {
+			loading = true;
+			error = null;
+		} else {
+			loadingMore = true;
+		}
+		try {
+			const page = await getBookmarksPage({
+				offset: reset ? 0 : items.length,
+				limit: PAGE_SIZE,
+				search: query || undefined,
+				door: door ?? undefined,
+			});
+			if (mine !== generation) return;
+			// Offsets shift when a save arrives mid-scroll, so a page can repeat
+			// a row already shown. Each row appears once.
+			const have = new Set(reset ? [] : items.map((b) => b.id));
+			const fresh = page.items.filter((b) => !have.has(b.id));
+			items = reset ? page.items : [...items, ...fresh];
+			total = page.total;
+		} catch (e) {
+			if (mine !== generation) return;
+			error = e instanceof Error ? e.message : "Your server couldn't list your bookmarks. Try again.";
+		} finally {
+			if (mine === generation) {
+				loading = false;
+				loadingMore = false;
+			}
+		}
+	}
+
+	// Load the next page when the end of the list comes into view.
+	function moreOnScroll(node: HTMLElement) {
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting) && hasMore && !loading && !loadingMore && !error) {
+					load(false);
+				}
+			},
+			{ rootMargin: '600px 0px' }
+		);
+		io.observe(node);
+		return { destroy: () => io.disconnect() };
 	}
 
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
 		const candidate = url.trim();
 		if (!candidate || saving) return;
-
 		saving = true;
 		saveError = null;
 		try {
-			// Accept a bare host the way a browser bar does; the box requires a
-			// scheme, and making the user type one is a papercut on the one
-			// interaction this room is built around.
+			// Accept a bare host the way a browser bar does.
 			const withScheme = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
 			await saveBookmark({ url: withScheme });
 			url = '';
-			revision += 1;
+			load(true);
 		} catch (err) {
 			saveError = err instanceof Error ? err.message : "Your server couldn't save that link. Try again.";
 		} finally {
@@ -90,204 +171,19 @@
 		}
 	}
 
-	function hostOf(raw: string): string {
-		try {
-			return new URL(raw).hostname.replace(/^www\./, '');
-		} catch {
-			return raw;
-		}
-	}
+	const routeOf = (b: BookmarkApi) => `/bookmark/${b.id}`;
 
-	function formatWhen(iso: string): string {
-		const d = new Date(iso);
-		// Epoch-0 is the sentinel for "the source stored no date" (Safari
-		// bookmarks carry none). Saying "Jan 1, 1970" would be a fabrication.
-		if (d.getTime() <= 0) return '—';
-		return d.toLocaleDateString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-		});
-	}
-
-	const columns: Column<BookmarkApi>[] = [
-		{
-			key: 'title',
-			label: 'Title',
-			icon: 'mynaui:bookmark',
-			// Enrichment fills titles later; until then a saved URL has none,
-			// and its host is the most honest stand-in.
-			getValue: (item) => item.title || hostOf(item.url),
-			sortable: false,
-		},
-		{
-			key: 'url',
-			label: 'Link',
-			icon: 'mynaui:link',
-			width: '14rem',
-			getValue: (item) => hostOf(item.url),
-			sortable: false,
-		},
-		{
-			key: 'source_platform',
-			label: 'Source',
-			icon: 'mynaui:inbox-down',
-			width: '8rem',
-			hideOnMobile: true,
-			getValue: (item) => item.source_platform ?? '—',
-			sortable: false,
-		},
-		{
-			key: 'tags',
-			label: 'Tags',
-			icon: 'mynaui:tag',
-			width: '12rem',
-			hideOnMobile: true,
-			getValue: (item) => (item.tags?.length ? item.tags.join(', ') : '—'),
-			sortable: false,
-		},
-		{
-			key: 'note',
-			label: 'Note',
-			icon: 'mynaui:pen',
-			width: '12rem',
-			hideOnMobile: true,
-			getValue: (item) => item.note ?? '—',
-			sortable: false,
-		},
-		{
-			key: 'timestamp',
-			label: 'Saved',
-			icon: 'mynaui:clock-circle',
-			width: '7.5rem',
-			getValue: (item) => formatWhen(item.timestamp),
-		},
-	];
-
-	/**
-	 * Which form a tile takes. Order is the argument: the user's own words
-	 * outrank anything the box wrote about the page, and a picture outranks
-	 * both because it is the fastest thing to recognize.
-	 *
-	 * `spine` is the residue — a save we have not read yet. It is the thinnest
-	 * tile on the wall on purpose: little is known, so little is shown, and
-	 * the shelf tells you its own state by texture instead of by badge.
-	 */
-	type TileForm = 'picture' | 'quote' | 'text' | 'spine';
-
-	function tileForm(item: BookmarkApi): TileForm {
-		if (item.thumbnail_url) return 'picture';
-		if (item.note?.trim()) return 'quote';
-		if (item.state === 'enriched' && (item.description || item.title)) return 'text';
-		return 'spine';
-	}
-
-	/**
-	 * Where a save came from, in the fewest honest words.
-	 *
-	 * An asset-backed bookmark's `url` is the in-app viewer route, so its host
-	 * is `/drive/file_…` — true, and useless to read. Provenance for those
-	 * lives in `source_platform` by design (agents/record/bookmarks.md), so that
-	 * is what gets shown.
-	 */
-	function originLabel(item: BookmarkApi): string {
-		if (item.url.startsWith('/drive/')) return item.source_platform ?? 'Saved image';
-		return hostOf(item.url);
-	}
-
-	/**
-	 * The title, or nothing.
-	 *
-	 * A screenshot has no title until something reads it, and falling back to
-	 * the URL would print a storage path at people. Better to show no title
-	 * than to show plumbing.
-	 */
-	function displayTitle(item: BookmarkApi): string | null {
-		if (item.title?.trim()) return item.title;
-		if (item.url.startsWith('/drive/')) return null;
-		return hostOf(item.url);
-	}
-
-	/** Only said when it changes what you are looking at. */
-	function stateNote(item: BookmarkApi): string | null {
-		if (item.state === 'held') return "can't be read yet";
-		if (item.state === 'queued') return 'not read yet';
-		if (item.state === 'failed') return "couldn't be read";
-		return null;
-	}
-
-	// Hardcoded rather than derived: a server page cannot honestly enumerate
-	// the values across the whole shelf, and these are the doors that exist.
-	const platformFilter: FilterDef<BookmarkApi> = {
-		id: 'platform',
-		label: 'Source',
-		kind: 'enum',
-		options: [
-			{ value: 'safari', label: 'Safari' },
-			{ value: 'chrome', label: 'Chrome' },
-			{ value: 'arc', label: 'Arc' },
-			{ value: 'github', label: 'GitHub' },
-			{ value: 'instagram', label: 'Instagram' },
-			{ value: 'web', label: 'Saved by hand' },
-		],
-	};
-
-	const mediumFilter: FilterDef<BookmarkApi> = {
-		id: 'medium',
-		label: 'Kind',
-		kind: 'enum',
-		options: [
-			{ value: 'article', label: 'Article' },
-			{ value: 'reference', label: 'Reference' },
-			{ value: 'documentation', label: 'Documentation' },
-			{ value: 'repository', label: 'Repository' },
-			{ value: 'product', label: 'Product' },
-			{ value: 'video', label: 'Video' },
-		],
-	};
-
-	const stateFilter: FilterDef<BookmarkApi> = {
-		id: 'state',
-		label: 'Read',
-		kind: 'enum',
-		options: [
-			{ value: 'enriched', label: 'Read' },
-			{ value: 'queued', label: 'Not read yet' },
-			{ value: 'held', label: "Can't read yet" },
-		],
-	};
-
-	const typeFilter: FilterDef<BookmarkApi> = {
-		id: 'bookmark_type',
-		label: 'Type',
-		kind: 'enum',
-		options: [
-			{ value: 'bookmark', label: 'Bookmark' },
-			{ value: 'reading_list', label: 'Reading list' },
-			{ value: 'star', label: 'Star' },
-			{ value: 'save', label: 'Saved link' },
-			{ value: 'screenshot', label: 'Screenshot' },
-		],
-	};
-
-	const filters = [platformFilter, mediumFilter, typeFilter, stateFilter];
-
-	/**
-	 * A bookmark is a thing in the library, so clicking one opens it here
-	 * rather than throwing the person out to the web. The original is one
-	 * click further on, which is the right order: your note and what we made
-	 * of the save first, the save itself second.
-	 */
-	const detailRoute = (item: BookmarkApi) => `/bookmark/${item.id}`;
-
-	function open(item: BookmarkApi) {
-		windowShellStore.openTabFromRoute(detailRoute(item));
+	/** A plain click opens the bookmark in a tab here; a modified click is the browser's. */
+	function open(b: BookmarkApi, e: MouseEvent) {
+		if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+		e.preventDefault();
+		windowShellStore.openTabFromRoute(routeOf(b));
 	}
 </script>
 
 <Page
 	title="Bookmarks"
-	description="Everything you kept from the web - browser bookmarks, starred repositories, and links you saved by hand."
+	description="Everything you saved, from every app you connected."
 	maxWidth="full"
 >
 	{#snippet actions()}
@@ -297,16 +193,10 @@
 				type="text"
 				bind:value={url}
 				placeholder="Save a link…"
-				aria-label="URL to save"
+				aria-label="Link to save"
 				disabled={saving}
 			/>
-			<Button
-				variant="secondary"
-				type="submit"
-				icon="mynaui:plus"
-				loading={saving}
-				disabled={!url.trim()}>Save</Button
-			>
+			<Button variant="secondary" type="submit" loading={saving} disabled={!url.trim()}>Save</Button>
 		</form>
 	{/snippet}
 
@@ -314,222 +204,200 @@
 		<p class="save-error" role="alert">{saveError}</p>
 	{/if}
 
-	<UniversalDataGrid
-		items={[]}
-		{columns}
-		{filters}
-		entityType="bookmarks"
-		server={fetchPage}
-		{serverExtra}
-		defaultViewMode="wall"
-		pageSize={25}
-		onItemClick={open}
-		rowHref={detailRoute}
-		emptyIcon="mynaui:bookmark"
-		emptyMessage="Nothing saved yet - paste a link above, or connect a browser."
-		loadingMessage="Reading the shelf..."
-		searchPlaceholder="Search bookmarks..."
-	>
-		{#snippet wallTile(item)}
-			{@const form = tileForm(item)}
-			{@const note = stateNote(item)}
-			{@const title = displayTitle(item)}
-			<article class="tile" class:spine={form === 'spine'}>
-				{#if form === 'picture'}
-					<!-- A dead og:image should cost nothing: hide the element and let
-					     the tile read as the text one it would otherwise have been,
-					     rather than leaving a broken-image glyph on the wall. -->
-					<img
-						class="tile-image"
-						src={item.thumbnail_url}
-						alt=""
-						loading="lazy"
-						onerror={(e) => ((e.currentTarget as HTMLImageElement).hidden = true)}
-					/>
-					{#if title}<h3 class="tile-title">{title}</h3>{/if}
-				{:else if form === 'quote'}
-					<!-- Her words, given the weight they earn. -->
-					<blockquote class="tile-note">{item.note}</blockquote>
-					{#if title}<h3 class="tile-title">{title}</h3>{/if}
-				{:else if form === 'text'}
-					{#if title}<h3 class="tile-title tile-title-lead">{title}</h3>{/if}
-					{#if item.description}
-						<p class="tile-desc">{item.description}</p>
+	<div class="controls">
+		<div class="search">
+			<SearchField bind:value={search} placeholder="Search by what you remember" />
+		</div>
+		<Segmented label="View" value={view} options={VIEWS} onchange={pickView} />
+	</div>
+	<div class="doors" role="group" aria-label="Where it came from">
+		{#each DOOR_FILTERS as f (f.label)}
+			<Chip selected={door === f.door} onclick={() => (door = f.door)}>{f.label}</Chip>
+		{/each}
+	</div>
+
+	<div class="shelf" bind:clientWidth={width}>
+		{#if loading}
+			<LoadingState message="Opening your bookmarks…" />
+		{:else if error}
+			<EmptyState icon="mynaui:danger-circle" message={error}>
+				{#snippet actions()}<Button variant="secondary" onclick={() => load(true)}>Try again</Button>{/snippet}
+			</EmptyState>
+		{:else if items.length === 0}
+			<EmptyState
+				icon="mynaui:bookmark"
+				message={query
+					? `Nothing you saved matches "${query}". Try a word from the page, the post or your note.`
+					: door
+						? 'Nothing has come through this door yet.'
+						: 'Nothing saved yet. Paste a link above, or connect a browser in Sources.'}
+			/>
+		{:else}
+			{#each groups as group, gi (group.label + gi)}
+				<section class="group">
+					<h2 class="group-title">{group.label}</h2>
+					{#if view === 'wall'}
+						<div class="wall" style:--columns={columns}>
+							{#each intoColumns(group.items, columns, (b) => estimateHeight(b, columnWidth)) as column, ci (ci)}
+								<div class="column">
+									{#each column as b (b.id)}
+										<BookmarkCard bookmark={b} href={routeOf(b)} onopen={(e) => open(b, e)} />
+									{/each}
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<ul class="list">
+							{#each group.items as b (b.id)}
+								{@const s = shapeOf(b)}
+								<li>
+									<a class="row" href={routeOf(b)} onclick={(e) => open(b, e)}>
+										<span class="row-main">
+											<span class="row-title" class:serif={s.kind !== 'address'}>{s.headline ?? 'Saved picture'}</span>
+											<span class="row-meta">{s.handle ?? s.site ?? ''}</span>
+										</span>
+										<span class="row-foot">{footerOf(b)}</span>
+									</a>
+								</li>
+							{/each}
+						</ul>
 					{/if}
-				{:else if title}
-					<h3 class="tile-title">{title}</h3>
-				{/if}
-
-				<footer class="tile-foot">
-					<span class="tile-host">{originLabel(item)}</span>
-					{#if item.medium}<span class="tile-kind">{item.medium}</span>{/if}
-					{#if note}<span class="tile-state">{note}</span>{/if}
-				</footer>
-			</article>
-		{/snippet}
-	</UniversalDataGrid>
-
-	{#if counts && (counts.queued > 0 || counts.held > 0)}
-		<!-- Two numbers, not one: only the first is a backlog that drains. -->
-		<p class="shelf-status">
-			{#if counts.queued > 0}
-				<span>{counts.queued} still to read</span>
+				</section>
+			{/each}
+			{#if hasMore}
+				<div class="more" use:moreOnScroll>
+					{#if loadingMore}<LoadingState />{/if}
+				</div>
 			{/if}
-			{#if counts.held > 0}
-				<span>{counts.held} your server can't read yet</span>
-			{/if}
-		</p>
-	{/if}
+		{/if}
+	</div>
 </Page>
 
 <style>
-	@reference "../../../../app.css";
-
 	.save-row {
 		display: flex;
-		gap: 0.5rem;
+		gap: 8px;
 	}
 
 	.save-input {
-		flex: 1;
-		min-width: 0;
-		padding: 0.4rem 0.7rem;
+		width: 200px;
+		height: var(--control-h);
+		box-sizing: border-box;
+		padding: 0 12px;
 		font: inherit;
-		font-size: 0.8125rem;
+		font-size: var(--text-label);
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border-field);
+		border-radius: var(--radius-lg);
 	}
 
 	.save-input::placeholder {
 		color: var(--color-foreground-subtle);
 	}
 
-	.save-input:focus {
-		border-color: var(--color-foreground-muted);
-	}
-
 	.save-error {
-		margin: 0 0 0.75rem;
-		font-size: 0.75rem;
+		margin: 0 0 12px;
+		font-size: var(--text-small);
 		color: var(--color-error);
 	}
 
-	/* ── Wall tiles ───────────────────────────────────────────────────────
-	   One hairline, one surface, no shadows. The variation between tiles
-	   should come from their content, so the frame stays identical. */
-	.tile {
+	.controls {
 		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.875rem;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: var(--radius-md);
-		transition:
-			border-color 0.16s ease,
-			transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+		align-items: center;
+		gap: 16px;
 	}
 
-	.tile:hover {
-		border-color: var(--color-foreground-muted);
-		transform: translateY(-2px);
+	.search {
+		flex: 1;
+		max-width: 640px;
 	}
 
-	/* The spine: a save we have not read. Thin, quiet, and marked down the
-	   left edge like a book turned outward on a shelf. */
-	.tile.spine {
-		gap: 0.35rem;
-		padding: 0.5rem 0.75rem;
-		background: transparent;
-		border-color: transparent;
-		border-left: 2px solid var(--color-border);
-		border-radius: 0;
+	.controls > :global(:last-child) {
+		margin-left: auto;
 	}
 
-	.tile.spine:hover {
-		border-left-color: var(--color-foreground-muted);
-	}
-
-	/* Capped, and cropped rather than letterboxed. A square logo at full column
-	   width takes over the wall and starves everything below it of attention —
-	   the tile is a way to recognize a save, not a place to display artwork. */
-	.tile-image {
-		display: block;
-		width: 100%;
-		max-height: 15rem;
-		object-fit: cover;
-		border-radius: var(--radius-sm);
-		background: var(--color-surface);
-	}
-
-	.tile-title {
-		margin: 0;
-		font-family: var(--font-serif);
-		font-size: 0.9375rem;
-		font-weight: 400;
-		line-height: 1.3;
-		color: var(--color-foreground);
-	}
-
-	.tile-title-lead {
-		font-size: 1.0625rem;
-	}
-
-	.tile.spine .tile-title {
-		font-family: var(--font-sans);
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.tile-note {
-		margin: 0;
-		font-family: var(--font-serif);
-		font-size: 1.0625rem;
-		line-height: 1.4;
-		color: var(--color-foreground);
-	}
-
-	.tile-desc {
-		margin: 0;
-		font-size: 0.8125rem;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.tile-foot {
+	.doors {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
+		gap: 8px;
+		margin-top: 16px;
 	}
 
-	.tile-kind::before,
-	.tile-state::before {
-		content: '·';
-		margin-right: 0.5rem;
+	.shelf {
+		margin-top: 8px;
 	}
 
-	.tile-state {
-		font-style: italic;
+	.group-title {
+		margin: 32px 0 16px;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: var(--text-heading);
+		color: var(--color-foreground);
 	}
 
-	.shelf-status {
+	.wall {
+		display: grid;
+		grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+		gap: 16px;
+		align-items: start;
+	}
+
+	.column {
 		display: flex;
-		gap: 1rem;
-		margin: 0.75rem 0 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
+		flex-direction: column;
+		gap: 16px;
+		min-width: 0;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.tile {
-			transition: border-color 0.16s ease;
-		}
-		.tile:hover {
-			transform: none;
-		}
+	.list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 52px;
+		padding: 4px 8px;
+		border-radius: var(--radius-md);
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+
+	.row:hover {
+		background: var(--hover-bg);
+	}
+
+	.row-main {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.row-title {
+		font-size: var(--text-label);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.row-title.serif {
+		font-family: var(--font-serif-ui);
+		font-size: var(--text-body);
+	}
+
+	.row-meta,
+	.row-foot {
+		font-size: var(--text-small);
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+
+	.more {
+		min-height: 48px;
 	}
 </style>

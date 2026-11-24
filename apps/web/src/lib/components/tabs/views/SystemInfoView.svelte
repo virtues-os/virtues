@@ -11,7 +11,8 @@
 	 * developers, at the foot: Terminal, and Query and Streams in Sources.
 	 *
 	 * Nothing outside the troubleshooting fold changes while you read: the
-	 * samples and the rows refresh once a minute. The fold holds the operator
+	 * samples and the rows refresh once a minute, except Updates, which loads
+	 * once when the view opens. The fold holds the operator
 	 * detail, and only while it is open does the page poll telemetry every
 	 * 3 seconds, with the process table (the heaviest sample) included.
 	 */
@@ -141,16 +142,27 @@
 		}
 	}
 
+	// Updates stays out of the once-a-minute refresh. Asking the server asks
+	// GitHub, which allows 60 requests an hour from your network, and the
+	// answer only changes when a release ships. It loads when the view opens.
+	async function loadUpdate() {
+		try {
+			update = await getUpdateStatus();
+		} catch {
+			// absent-ok: the Updates row says it couldn't check.
+			update = null;
+		}
+	}
+
 	async function loadRows() {
-		const [b, u, s, a] = await Promise.allSettled([getBackupStatus(), getUpdateStatus(), getSearchStatus(), listApplets()]);
+		const [b, s, a] = await Promise.allSettled([getBackupStatus(), getSearchStatus(), listApplets()]);
 		backup = b.status === 'fulfilled' ? b.value : null;
-		update = u.status === 'fulfilled' ? u.value : null;
 		search = s.status === 'fulfilled' ? s.value : null;
 		appletsNeedingYou = a.status === 'fulfilled' ? a.value.filter((applet) => needsYou(applet)).map((applet) => applet.name) : null;
 	}
 
 	onMount(() => {
-		void Promise.all([loadHealth(), loadTelemetry(), loadHistory(), loadRows()]).then(() => (loaded = true));
+		void Promise.all([loadHealth(), loadTelemetry(), loadHistory(), loadRows(), loadUpdate()]).then(() => (loaded = true));
 	});
 
 	// Once a minute while this tab is on screen: the samples and the rows.

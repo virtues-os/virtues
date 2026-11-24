@@ -29,7 +29,31 @@ pub struct Article {
     pub title: Option<String>,
     pub description: Option<String>,
     pub image_url: Option<String>,
+    /// The name the site gives itself (`og:site_name`): "YouTube", "Half
+    /// Step". Shown above a page's title in place of its domain.
+    pub site_name: Option<String>,
+    /// A video's length in seconds, where the page states it
+    /// (`og:video:duration`, or schema.org's `duration` as `PT18M42S`).
+    pub duration_secs: Option<u32>,
+    /// The site's icon, as the page names it (`<link rel="icon">`). May be
+    /// relative: the caller resolves it against the page's address.
+    pub icon_url: Option<String>,
     pub text: String,
+}
+
+/// The `<meta>` and `<link>` values gathered while the document is read.
+#[derive(Default)]
+struct Head {
+    og_title: Option<String>,
+    og_desc: Option<String>,
+    meta_desc: Option<String>,
+    image: Option<String>,
+    site_name: Option<String>,
+    duration: Option<String>,
+    icon: Option<String>,
+    /// The apple-touch-icon, kept apart because it is larger than a
+    /// favicon and preferred when both exist.
+    touch_icon: Option<String>,
 }
 
 /// Elements whose content is never body text — machinery, or page furniture
@@ -139,10 +163,7 @@ pub fn parse(html: &str) -> Article {
 
     let mut out = String::new();
     let mut title_tag: Option<String> = None;
-    let mut og_title: Option<String> = None;
-    let mut og_desc: Option<String> = None;
-    let mut meta_desc: Option<String> = None;
-    let mut image: Option<String> = None;
+    let mut head = Head::default();
 
     // Element depth, and the depth at which the current skipped subtree opened.
     // A counter keyed on tag names cannot express "skip this <div> and
@@ -162,7 +183,9 @@ pub fn parse(html: &str) -> Article {
                 // Start; treat it as childless so it cannot move the depth.
                 if VOID.contains(&name.as_slice()) {
                     if name.as_slice() == b"meta" {
-                        read_meta(&e, &mut og_title, &mut og_desc, &mut meta_desc, &mut image);
+                        read_meta(&e, &mut head);
+                    } else if name.as_slice() == b"link" {
+                        read_link(&e, &mut head);
                     } else if BLOCK.contains(&name.as_slice()) {
                         out.push_str("\n\n");
                     }
@@ -202,9 +225,8 @@ pub fn parse(html: &str) -> Article {
             Ok(Event::Empty(e)) => {
                 let name = e.name().local_name().as_ref().to_ascii_lowercase();
                 match name.as_slice() {
-                    b"meta" => {
-                        read_meta(&e, &mut og_title, &mut og_desc, &mut meta_desc, &mut image)
-                    }
+                    b"meta" => read_meta(&e, &mut head),
+                    b"link" => read_link(&e, &mut head),
                     n if BLOCK.contains(&n) => out.push_str("\n\n"),
                     _ => {}
                 }
@@ -265,12 +287,16 @@ pub fn parse(html: &str) -> Article {
     Article {
         // og:title is usually the cleaner headline — <title> carries the site
         // name and separators ("Story — Publication").
-        title: og_title.or(title_tag).map(|s| collapse(&s)).filter(|s| !s.is_empty()),
-        description: og_desc
-            .or(meta_desc)
+        title: head.og_title.or(title_tag).map(|s| collapse(&s)).filter(|s| !s.is_empty()),
+        description: head
+            .og_desc
+            .or(head.meta_desc)
             .map(|s| collapse(&s))
             .filter(|s| !s.is_empty()),
-        image_url: image.filter(|s| !s.trim().is_empty()),
+        image_url: head.image.filter(|s| !s.trim().is_empty()),
+        site_name: head.site_name.map(|s| collapse(&s)).filter(|s| !s.is_empty()),
+        duration_secs: head.duration.as_deref().and_then(parse_duration),
+        icon_url: head.touch_icon.or(head.icon).filter(|s| !s.trim().is_empty()),
         text: tidy(&out),
     }
 }
@@ -300,17 +326,13 @@ fn is_furniture(e: &BytesStart) -> bool {
 }
 
 /// Pull the metadata tags worth having off a `<meta>` element.
-fn read_meta(
-    e: &BytesStart,
-    og_title: &mut Option<String>,
-    og_desc: &mut Option<String>,
-    meta_desc: &mut Option<String>,
-    image: &mut Option<String>,
-) {
+fn read_meta(e: &BytesStart, head: &mut Head) {
     // The key is `property` for OpenGraph and `name` for classic meta tags;
-    // plenty of sites use the wrong one, so accept either.
+    // plenty of sites use the wrong one, so accept either. schema.org
+    // microdata uses `itemprop`.
     let key = attr(e, b"property")
         .or_else(|| attr(e, b"name"))
+        .or_else(|| attr(e, b"itemprop"))
         .unwrap_or_default()
         .to_ascii_lowercase();
     let Some(content) = attr(e, b"content") else {
@@ -321,12 +343,53 @@ fn read_meta(
     }
 
     match key.as_str() {
-        "og:title" => set_once(og_title, content),
-        "og:description" => set_once(og_desc, content),
-        "description" => set_once(meta_desc, content),
-        "og:image" | "og:image:url" | "twitter:image" => set_once(image, content),
+        "og:title" => set_once(&mut head.og_title, content),
+        "og:description" => set_once(&mut head.og_desc, content),
+        "description" => set_once(&mut head.meta_desc, content),
+        "og:image" | "og:image:url" | "twitter:image" => set_once(&mut head.image, content),
+        "og:site_name" | "application-name" => set_once(&mut head.site_name, content),
+        "og:video:duration" | "video:duration" | "duration" => set_once(&mut head.duration, content),
         _ => {}
     }
+}
+
+/// Pull the site's icon off a `<link>` element.
+fn read_link(e: &BytesStart, head: &mut Head) {
+    let rel = attr(e, b"rel").unwrap_or_default().to_ascii_lowercase();
+    let Some(href) = attr(e, b"href").filter(|h| !h.trim().is_empty()) else {
+        return;
+    };
+    let rels: Vec<&str> = rel.split_whitespace().collect();
+    if rels.contains(&"apple-touch-icon") {
+        set_once(&mut head.touch_icon, href);
+    } else if rels.contains(&"icon") {
+        set_once(&mut head.icon, href);
+    }
+}
+
+/// A duration as seconds: a plain number (`1122`) or ISO 8601 (`PT18M42S`).
+fn parse_duration(raw: &str) -> Option<u32> {
+    let raw = raw.trim();
+    if let Ok(n) = raw.parse::<u32>() {
+        return (n > 0).then_some(n);
+    }
+    let rest = raw.strip_prefix("PT").or_else(|| raw.strip_prefix("pt"))?;
+    let (mut total, mut number) = (0u32, String::new());
+    for c in rest.chars() {
+        if c.is_ascii_digit() {
+            number.push(c);
+            continue;
+        }
+        let n: u32 = number.parse().ok()?;
+        number.clear();
+        total += match c.to_ascii_uppercase() {
+            'H' => n * 3600,
+            'M' => n * 60,
+            'S' => n,
+            _ => return None,
+        };
+    }
+    (number.is_empty() && total > 0).then_some(total)
 }
 
 /// First writer wins — a page that repeats `og:image` means the first one.
@@ -379,6 +442,33 @@ fn tidy(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reads_site_name_duration_and_icon() {
+        let a = parse(
+            r#"<html><head>
+              <meta property="og:site_name" content="Northwood Shop">
+              <meta itemprop="duration" content="PT18M42S">
+              <link rel="icon" href="/favicon.ico">
+              <link rel="apple-touch-icon" href="/touch.png">
+              <title>Dovetails</title>
+            </head><body><p>Body.</p></body></html>"#,
+        );
+        assert_eq!(a.site_name.as_deref(), Some("Northwood Shop"));
+        assert_eq!(a.duration_secs, Some(18 * 60 + 42));
+        assert_eq!(a.icon_url.as_deref(), Some("/touch.png"), "the larger icon wins");
+    }
+
+    #[test]
+    fn a_duration_is_seconds_or_iso_8601() {
+        assert_eq!(parse_duration("1122"), Some(1122));
+        assert_eq!(parse_duration("PT1H2M3S"), Some(3723));
+        assert_eq!(parse_duration("PT5M"), Some(300));
+        assert_eq!(parse_duration("P1D"), None);
+        assert_eq!(parse_duration("soon"), None);
+        assert_eq!(parse_duration("0"), None);
+    }
+
     use super::*;
 
     #[test]

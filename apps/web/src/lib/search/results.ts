@@ -15,13 +15,15 @@
  *   - a query that starts a command's name ("new", "go") gets Commands;
  *   - chats, pages, threads and applets whose names match;
  *   - people and places whose names match;
+ *   - bookmarks whose title, site or tags match, from the box;
  *   - settings whose names match (lib/settings), a few;
  *   - Commands and Ask, if they did not come first;
  *   - matches inside your records, last, because they arrive from the box
  *     after the rest and rows appearing above the selection would move it.
  *
- * A leading `#chats`, `#pages`, `#threads`, `#sites`, `#settings` or
- * `#commands` shows that kind only. `#projects` and `#applets` still work.
+ * A leading `#chats`, `#pages`, `#threads`, `#sites`, `#bookmarks`,
+ * `#settings` or `#commands` shows that kind only. `#projects`, `#applets`
+ * and `#tags` still work.
  */
 import type { LocalSearchHit } from '$lib/api/client';
 import { matchRank } from '$lib/search/match';
@@ -36,6 +38,35 @@ import { isUntitled } from '$lib/refs/identity.svelte';
 import { namedDays, type NamedDay } from '$lib/search/dates';
 import { matchEntities, type EntityRow } from '$lib/search/entities.svelte';
 import { SETTINGS, titleOf, type Setting } from '$lib/settings';
+import type { BookmarkApi } from '$lib/bookmarks/api';
+
+/**
+ * A bookmark as search lists it, already named by the same rule as its card
+ * (`bookmarks/shape.ts`). The palette names hits when they arrive rather than
+ * as it draws, so the rule loads with the first results instead of with the
+ * app: the palette is part of the code every launch loads before first paint.
+ */
+export type BookmarkHit = BookmarkApi & {
+	/** The row's two lines: the title and where it is from. */
+	line: { title: string; meta: string };
+	/** The tab's name when it opens. */
+	crumb: string;
+	/** A page's own summary, for the preview. Posts have none. */
+	summary: string | null;
+};
+
+/**
+ * Ask the box for bookmarks matching `text`, named by the card rule. The API
+ * client and the rule load on the first search, not with the app.
+ */
+export async function searchBookmarks(text: string, limit: number): Promise<BookmarkHit[]> {
+	const [{ getBookmarksPage }, { crumbOf, rowOf, shapeOf }] = await Promise.all([
+		import('$lib/bookmarks/api'),
+		import('$lib/bookmarks/shape'),
+	]);
+	const page = await getBookmarksPage({ offset: 0, limit, search: text || undefined });
+	return page.items.map((b) => ({ ...b, line: rowOf(b), crumb: crumbOf(b), summary: shapeOf(b).summary }));
+}
 
 export interface Command {
 	id: string;
@@ -55,6 +86,7 @@ export type SearchRow =
 	| { kind: 'day'; day: NamedDay }
 	| { kind: 'entity'; entity: EntityRow }
 	| { kind: 'setting'; setting: Setting }
+	| { kind: 'bookmark'; bookmark: BookmarkHit }
 	| { kind: 'content'; hit: LocalSearchHit };
 
 export interface SearchGroup {
@@ -63,7 +95,7 @@ export interface SearchGroup {
 	rows: SearchRow[];
 }
 
-export type Scope = RecentKind | 'command' | 'setting';
+export type Scope = RecentKind | 'command' | 'setting' | 'bookmark';
 
 const SCOPES: Record<string, Scope> = {
 	chat: 'chat', chats: 'chat',
@@ -74,6 +106,8 @@ const SCOPES: Record<string, Scope> = {
 	site: 'applet', sites: 'applet',
 	command: 'command', commands: 'command',
 	setting: 'setting', settings: 'setting',
+	bookmark: 'bookmark', bookmarks: 'bookmark',
+	tag: 'bookmark', tags: 'bookmark',
 	action: 'command', actions: 'command',
 };
 
@@ -85,6 +119,9 @@ const SCOPED_ROWS = 25;
 const COMMAND_ROWS = 4;
 const ENTITY_ROWS = 3;
 const SETTING_ROWS = 3;
+/** Bookmarks the box is asked for: a few unscoped, more under `#bookmarks`. */
+export const BOOKMARK_ROWS = 3;
+export const SCOPED_BOOKMARK_ROWS = SCOPED_ROWS;
 
 /** The `#scope` a query starts with, and the text left to match. An unknown
  *  `#foo` is searched as written. */
@@ -201,6 +238,8 @@ export function searchGroups(input: {
 	here: string | null;
 	commands: Command[];
 	content: LocalSearchHit[];
+	/** Bookmarks the box matched on title, address, notes or tags. */
+	bookmarks?: BookmarkHit[];
 	/** Fills `{name}` in settings' titles; "your assistant" when unknown. */
 	assistantName?: string | null;
 }): SearchGroup[] {
@@ -211,6 +250,11 @@ export function searchGroups(input: {
 		// Every setting: the list is short enough to read whole.
 		const rows = text ? settingsMatching(text, name, 1, SETTINGS.length) : [...SETTINGS];
 		return [{ label: 'Settings', rows: rows.map((setting) => ({ kind: 'setting', setting })) }];
+	}
+
+	if (scope === 'bookmark') {
+		const rows = (input.bookmarks ?? []).slice(0, SCOPED_ROWS);
+		return [{ label: 'Bookmarks', rows: rows.map((bookmark) => ({ kind: 'bookmark', bookmark })) }];
 	}
 
 	if (scope === 'command') {
@@ -247,14 +291,17 @@ export function searchGroups(input: {
 	const people = matchEntities(text, ENTITY_ROWS);
 	if (people.length) groups.push({ label: null, rows: people.map((entity) => ({ kind: 'entity', entity })) });
 
+	const bookmarks = (input.bookmarks ?? []).slice(0, BOOKMARK_ROWS);
+	if (bookmarks.length) groups.push({ label: 'Bookmarks', rows: bookmarks.map((bookmark) => ({ kind: 'bookmark', bookmark })) });
+
 	const settings = settingsMatching(text, name, 2, SETTING_ROWS);
 	if (settings.length) groups.push({ label: 'Settings', rows: settings.map((setting) => ({ kind: 'setting', setting })) });
 
 	if (!commands.leading && commandGroup.rows.length) groups.push(commandGroup);
 	if (!question) groups.push(ask);
 
-	// A chat or page already listed by name is not listed again for its text.
-	const listed = new Set(records.map((r) => r.url));
+	// A chat, page or bookmark already listed by name is not listed again for its text.
+	const listed = new Set([...records.map((r) => r.url), ...bookmarks.map((b) => `/bookmark/${b.id}`)]);
 	// A hit with neither a title nor matched text gives nothing to choose by.
 	const content = input.content.filter(
 		(hit) => (!isUntitled(hit.title) || previewOf(hit)) && !listed.has(contentTarget(hit).route),
@@ -298,6 +345,8 @@ export function rowNoun(row: SearchRow): string | null {
 			return contentNoun(row.hit);
 		case 'setting':
 			return 'Setting';
+		case 'bookmark':
+			return 'Bookmark';
 		default:
 			return null;
 	}
@@ -314,6 +363,8 @@ export function rowRoute(row: SearchRow): string | null {
 			return row.entity.url;
 		case 'content':
 			return contentTarget(row.hit).route;
+		case 'bookmark':
+			return `/bookmark/${row.bookmark.id}`;
 		default:
 			return null;
 	}
