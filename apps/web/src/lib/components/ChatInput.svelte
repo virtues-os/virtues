@@ -592,7 +592,7 @@
 						{disabled}
 						class="pill-btn mic-button"
 						aria-label="Dictate"
-						title="Dictate"
+						title="Dictate (⌘D)"
 					>
 						<Icon icon="mynaui:microphone" width="17" />
 					</button>

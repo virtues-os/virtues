@@ -45,7 +45,13 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader, setShellAppVersion } from "$lib/build";
-	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
+	import {
+		otaCheckNow,
+		bundleUpdateReady,
+		shellIdentity,
+		canDictate,
+		startDictation,
+	} from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { prefetchConverter } from "$lib/document/converter";
@@ -289,6 +295,32 @@
 				run: () => windowShellStore.cycleTab(-1),
 			},
 		);
+
+		// ⌘D starts the Mac's dictation in the focused field, or in the chat
+		// field when nothing is focused. It binds only in a shell that can
+		// dictate, so a browser keeps ⌘D for its own bookmark key.
+		void canDictate().then((yes) => {
+			if (!yes) return;
+			shortcuts.register({
+				id: "dictation.start",
+				keys: "mod+d",
+				label: "Dictate",
+				group: "Chat",
+				run: () => {
+					const active = document.activeElement as HTMLElement | null;
+					const typing =
+						active?.isContentEditable ||
+						active?.tagName === "TEXTAREA" ||
+						active?.tagName === "INPUT";
+					if (!typing) {
+						document
+							.querySelector<HTMLElement>('#chat-input [contenteditable="true"]')
+							?.focus();
+					}
+					void startDictation();
+				},
+			});
+		});
 
 		// Hold-⌘ reveals the per-tab ⌘N badges.
 		modifierHint.start();
