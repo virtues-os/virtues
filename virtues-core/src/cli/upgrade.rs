@@ -1454,6 +1454,15 @@ fn build_client(force_ipv4: bool) -> Result<reqwest::Client, crate::Error> {
 /// GET a URL, falling back to IPv4 if the default attempt can't connect/times
 /// out (the IPv6-black-hole symptom). Returns the response after `error_for_status`.
 pub(super) async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
+    send_get_unchecked(url)
+        .await?
+        .error_for_status()
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))
+}
+
+/// [`send_get`] without `error_for_status`, for a caller that reads the
+/// headers of an error response.
+async fn send_get_unchecked(url: &str) -> Result<reqwest::Response, crate::Error> {
     let resp = match build_client(false)?.get(url).send().await {
         Ok(r) => r,
         Err(e) if e.is_connect() || e.is_timeout() => {
@@ -1466,8 +1475,126 @@ pub(super) async fn send_get(url: &str) -> Result<reqwest::Response, crate::Erro
         }
         Err(e) => return Err(crate::Error::Other(format!("GET {url}: {e}"))),
     };
-    resp.error_for_status()
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))
+    Ok(resp)
+}
+
+/// How long the server answers a GitHub API question from memory.
+///
+/// GitHub allows 60 unauthenticated API requests an hour per IP address, and a
+/// box shares its address with every other device in the house. Each update
+/// status costs two requests, and the System info view asks for one every
+/// minute while it is open, so without this one open view used up the limit
+/// and the box stopped seeing new releases. A release appearing up to this
+/// late on the Updates screen costs nothing: the nightly pass runs hours
+/// apart.
+///
+/// The cache lives in the process. `virtues upgrade` and the nightly pass run
+/// in their own processes and start empty, so they always ask GitHub.
+const GITHUB_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
+/// Bounds on the pause after GitHub refuses for the rate limit. The floor
+/// stops a reset time that is already past, or a skewed clock, from turning
+/// into a retry on every request. The ceiling stops a bad header from
+/// silencing checks for days.
+const GITHUB_PAUSE_MIN: Duration = Duration::from_secs(60);
+const GITHUB_PAUSE_MAX: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Default)]
+struct GithubCache {
+    /// Successful answers by URL, with when they were fetched.
+    bodies: std::collections::HashMap<String, (std::time::Instant, serde_json::Value)>,
+    /// Set when GitHub refused for the rate limit: no request goes out before
+    /// this instant, and callers get the stored message instead.
+    paused_until: Option<(std::time::Instant, String)>,
+}
+
+static GITHUB_CACHE: std::sync::LazyLock<std::sync::Mutex<GithubCache>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn github_cache() -> std::sync::MutexGuard<'static, GithubCache> {
+    // A panic while holding this lock leaves only cached JSON behind, which is
+    // still valid, so a poisoned lock is safe to keep using.
+    GITHUB_CACHE.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// How long to stop asking GitHub, if this response is a rate-limit refusal.
+///
+/// GitHub refuses with 403 or 429. The primary limit says so with
+/// `x-ratelimit-remaining: 0` and gives the reset as epoch seconds in
+/// `x-ratelimit-reset`. A secondary limit sends `retry-after` in seconds. A
+/// 403 with neither header is some other refusal and is not paused on.
+fn github_pause(
+    status: u16,
+    remaining: Option<&str>,
+    reset_epoch: Option<&str>,
+    retry_after: Option<&str>,
+    now_epoch: u64,
+) -> Option<Duration> {
+    if status != 403 && status != 429 {
+        return None;
+    }
+    let secs = if let Some(s) = retry_after.and_then(|v| v.trim().parse::<u64>().ok()) {
+        s
+    } else if remaining.map(str::trim) == Some("0") {
+        let reset = reset_epoch.and_then(|v| v.trim().parse::<u64>().ok())?;
+        reset.saturating_sub(now_epoch)
+    } else {
+        return None;
+    };
+    Some(Duration::from_secs(secs).clamp(GITHUB_PAUSE_MIN, GITHUB_PAUSE_MAX))
+}
+
+/// GET a GitHub API URL as JSON, through [`GITHUB_CACHE`].
+async fn github_json(url: &str) -> Result<serde_json::Value, crate::Error> {
+    {
+        let cache = github_cache();
+        if let Some((at, body)) = cache.bodies.get(url) {
+            if at.elapsed() < GITHUB_CACHE_TTL {
+                return Ok(body.clone());
+            }
+        }
+        if let Some((until, message)) = &cache.paused_until {
+            if std::time::Instant::now() < *until {
+                return Err(crate::Error::Other(message.clone()));
+            }
+        }
+    }
+
+    let resp = send_get_unchecked(url).await?;
+    let header = |name: &str| resp.headers().get(name).and_then(|v| v.to_str().ok());
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Some(pause) = github_pause(
+        resp.status().as_u16(),
+        header("x-ratelimit-remaining"),
+        header("x-ratelimit-reset"),
+        header("retry-after"),
+        now_epoch,
+    ) {
+        let resume = chrono::Utc::now()
+            + chrono::Duration::from_std(pause).unwrap_or_else(|_| chrono::Duration::hours(1));
+        let message = format!(
+            "GitHub's limit on update checks from your network is used up. \
+             Your server will check again after {} UTC.",
+            resume.format("%H:%M")
+        );
+        tracing::warn!("{url}: GitHub rate limit; pausing release checks for {}s", pause.as_secs());
+        github_cache().paused_until = Some((std::time::Instant::now() + pause, message.clone()));
+        return Err(crate::Error::Other(message));
+    }
+
+    let body: serde_json::Value = resp
+        .error_for_status()
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
+        .json()
+        .await
+        .map_err(|e| crate::Error::Other(format!("parse github json from {url}: {e}")))?;
+    let mut cache = github_cache();
+    cache.paused_until = None;
+    cache.bodies.insert(url.to_string(), (std::time::Instant::now(), body.clone()));
+    Ok(body)
 }
 
 /// One release list carries every product: the box (`vX.Y.Z`,
@@ -1488,12 +1615,9 @@ fn is_box_tag(tag: &str) -> bool {
 
 async fn list_releases() -> Result<Vec<serde_json::Value>, crate::Error> {
     let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases?per_page=30");
-    let body: serde_json::Value = send_get(&url)
+    let body = github_json(&url)
         .await
-        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?
-        .json()
-        .await
-        .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
+        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?;
     body.as_array()
         .cloned()
         .ok_or_else(|| crate::Error::Other("github releases: expected an array".to_string()))
@@ -1571,11 +1695,7 @@ pub(crate) async fn fetch_tag_sha(tag: &str) -> Result<String, crate::Error> {
     };
 
     let url = format!("https://api.github.com/repos/{RELEASE_REPO}/git/ref/tags/{tag}");
-    let body: serde_json::Value = send_get(&url)
-        .await?
-        .json()
-        .await
-        .map_err(|e| crate::Error::Other(format!("parse git ref json: {e}")))?;
+    let body = github_json(&url).await?;
     let (sha, kind) = deref(&body)
         .ok_or_else(|| crate::Error::Other(format!("git ref {tag}: no object sha")))?;
     if kind != "tag" {
@@ -1583,11 +1703,7 @@ pub(crate) async fn fetch_tag_sha(tag: &str) -> Result<String, crate::Error> {
     }
 
     let url = format!("https://api.github.com/repos/{RELEASE_REPO}/git/tags/{sha}");
-    let body: serde_json::Value = send_get(&url)
-        .await?
-        .json()
-        .await
-        .map_err(|e| crate::Error::Other(format!("parse git tag json: {e}")))?;
+    let body = github_json(&url).await?;
     deref(&body)
         .map(|(sha, _)| sha)
         .ok_or_else(|| crate::Error::Other(format!("annotated tag {tag}: no target sha")))
@@ -1961,6 +2077,37 @@ const SLOT_HEADROOM: u64 = UNPACK_INFLATION;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_pause_reads_the_primary_rate_limit() {
+        let now = 1_000_000;
+        // Limit spent, reset in ten minutes.
+        assert_eq!(
+            github_pause(403, Some("0"), Some("1000600"), None, now),
+            Some(Duration::from_secs(600))
+        );
+        // A reset already past still waits the floor, never zero.
+        assert_eq!(github_pause(403, Some("0"), Some("999000"), None, now), Some(GITHUB_PAUSE_MIN));
+        // A reset days away is capped.
+        assert_eq!(github_pause(403, Some("0"), Some("9000000"), None, now), Some(GITHUB_PAUSE_MAX));
+    }
+
+    #[test]
+    fn github_pause_reads_retry_after() {
+        assert_eq!(
+            github_pause(429, None, None, Some("120"), 0),
+            Some(Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn github_pause_ignores_other_refusals() {
+        // A 403 with requests left is a permissions refusal, not the limit.
+        assert_eq!(github_pause(403, Some("12"), Some("1000600"), None, 1_000_000), None);
+        assert_eq!(github_pause(403, None, None, None, 0), None);
+        assert_eq!(github_pause(404, Some("0"), Some("1000600"), None, 1_000_000), None);
+        assert_eq!(github_pause(200, Some("0"), Some("1000600"), None, 1_000_000), None);
+    }
 
     #[test]
     fn only_skips_the_already_current_short_circuit() {
