@@ -36,7 +36,8 @@ the work once a shelf has hundreds of saves.
 - **One layout rule for every card.** The headline is the first of: title,
   post text, picture, address. A picture above a title is a cover. A
   picture under post text is an attachment. Synced posts whose picture is
-  the content (Instagram) show author, picture, then caption. A picture that
+  the content (Instagram) show author, picture, then caption; the owner
+  confirmed this on 2026-11-24 ("confirm instagram picture first"). A picture that
   fails to load is hidden and the card lays out as if it had none. A domain
   is never a headline.
 - **The room.** One sentence under the page bar, a search field as the
@@ -134,10 +135,11 @@ Left:
 - **Instagram authors** show the handle only: `instagram_saves_sync` keeps
   the username and not the full name or picture.
 - Favicons that are SVG are skipped; most sites also offer a PNG.
-- **Search** (`search/results.ts`, `SearchList.svelte`, `SearchPreview.svelte`)
-  still names a bookmark by `title || host`, so an Instagram post reads
-  "instagram.com" there. It should use `bookmarks/shape.ts`. Other sessions
-  had those files open on 2026-11-24.
+- **Search.** Bookmarks in the search palette are another session's
+  uncommitted work in `search/results.ts`, `SearchList.svelte` and
+  `SearchPreview.svelte`. Its rows now use `bookmarks/shape.ts` (`rowOf`), so
+  a post reads by its text, a page by its title and site, and never by a
+  domain. Committing it means committing that session's feature with it.
 - **`agents/build/privacy-boundary.md`** has no row for what bookmark
   enrichment sends or fetches: the image pass sends pictures to the Omni
   slot, and the box fetches saved pages, the pages posts link to, author
@@ -150,8 +152,6 @@ Left:
 
 - **Duplicates.** A post saved in the browser and the same post from X sync
   have different addresses and show twice. Merging them is a data decision.
-- **Instagram picture order.** Picture-first for Instagram was proposed on
-  the board and not confirmed by the owner.
 - **Video and audio enrichment** (section 4) would fill the duration and
   thumbnail facts for saved videos.
 

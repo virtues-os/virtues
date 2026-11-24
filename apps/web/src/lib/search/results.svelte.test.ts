@@ -1,6 +1,7 @@
 // Settings in search: the #settings scope lists them, and the page each lives
 // on is named the way Settings names it.
 import { describe, expect, it } from 'vitest';
+import type { BookmarkApi } from '$lib/bookmarks/api';
 import { SETTINGS, findSetting, settingPlace } from '$lib/settings';
 import { parseQuery, rowNoun, searchGroups } from './results';
 
@@ -43,5 +44,45 @@ describe('settingPlace', () => {
 		expect(settingPlace(findSetting('byo-ai')!, 'Iris')).toBe('Models and spending');
 		expect(settingPlace(findSetting('ai-cost')!, 'Iris')).toBe('Models and spending');
 		expect(settingPlace(findSetting('start-over')!, 'Iris')).toBe('Devices');
+	});
+});
+
+describe('bookmarks', () => {
+	const bookmark: BookmarkApi = {
+		id: 'bm_1',
+		url: 'https://www.example.com/sourdough',
+		title: 'Sourdough starter guide',
+		tags: ['baking', 'bread'],
+		description: null,
+		note: null,
+		source_platform: 'safari',
+		bookmark_type: 'bookmark',
+		author: null,
+		picture_url: null,
+		door: 'browser',
+		details: {},
+		timestamp: '2026-11-20T12:00:00Z',
+		saved_at: '2026-11-20T12:00:00Z',
+		medium: null,
+	};
+	const groups = (query: string) =>
+		searchGroups({ query, here: null, commands: [], content: [], bookmarks: [bookmark], assistantName: 'Iris' });
+
+	it('is a scope, by #bookmarks or #tags', () => {
+		expect(parseQuery('#bookmarks bread').scope).toBe('bookmark');
+		expect(parseQuery('#tags baking').scope).toBe('bookmark');
+	});
+
+	it('lists what the box matched under Bookmarks, as a Bookmark', () => {
+		const group = groups('baking').find((g) => g.label === 'Bookmarks');
+		expect(group?.rows).toEqual([{ kind: 'bookmark', bookmark }]);
+		expect(rowNoun(group!.rows[0])).toBe('Bookmark');
+		expect(groups('#tags baking')).toEqual([{ label: 'Bookmarks', rows: [{ kind: 'bookmark', bookmark }] }]);
+	});
+
+	it('does not list a bookmark again for its text', () => {
+		const hit = { ontology: 'content_bookmark', record_id: 'bm_1', title: 'Sourdough starter guide', preview: 'feed it daily' };
+		const all = searchGroups({ query: 'sourdough', here: null, commands: [], content: [hit as never], bookmarks: [bookmark], assistantName: 'Iris' });
+		expect(all.some((g) => g.label === 'In your records')).toBe(false);
 	});
 });

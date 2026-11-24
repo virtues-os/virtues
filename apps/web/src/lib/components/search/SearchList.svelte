@@ -18,6 +18,8 @@
 	import { loadRecentSources } from "$lib/sidebar/recents.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import { entities } from "$lib/search/entities.svelte";
+	import { getBookmarksPage } from "$lib/bookmarks/api";
+	import { crumbOf, rowOf } from "$lib/bookmarks/shape";
 	import { handOff } from "$lib/search/handoff";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
@@ -28,6 +30,8 @@
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { openSettingInTab } from "$lib/settings/focus";
 	import {
+		BOOKMARK_ROWS,
+		SCOPED_BOOKMARK_ROWS,
 		commandsFromMenu,
 		contentGlyph,
 		contentTarget,
@@ -36,6 +40,7 @@
 		rowNoun,
 		rowRoute,
 		searchGroups,
+		type BookmarkHit,
 		type Command,
 		type SearchRow,
 	} from "$lib/search/results";
@@ -176,10 +181,36 @@
 		};
 	});
 
+	// Bookmarks match on the box, by title, address, description, note and
+	// tags. Under `#bookmarks` (or `#tags`) they are the whole list, newest
+	// first while the field is empty.
+	let bookmarkHits = $state<BookmarkHit[]>([]);
+	let bookmarkSeq = 0;
+
+	$effect(() => {
+		const { scope, text } = parsed;
+		const scoped = scope === "bookmark";
+		if (mode === "theme" || (scope && !scoped) || (!scoped && text.length < 2)) {
+			bookmarkHits = [];
+			return;
+		}
+		const seq = ++bookmarkSeq;
+		const timer = setTimeout(async () => {
+			try {
+				const page = await getBookmarksPage({ offset: 0, limit: scoped ? SCOPED_BOOKMARK_ROWS : BOOKMARK_ROWS, search: text || undefined });
+				if (seq === bookmarkSeq) bookmarkHits = page.items;
+			} catch {
+				// absent-ok: search still lists everything else; Bookmarks has its own search.
+				if (seq === bookmarkSeq) bookmarkHits = [];
+			}
+		}, 180);
+		return () => clearTimeout(timer);
+	});
+
 	// The assistant's name, for settings' titles ("What Ari can do").
 	let assistantName = $state<string | null>(null);
 
-	const groups = $derived(searchGroups({ query, here, commands, content: contentHits, assistantName }));
+	const groups = $derived(searchGroups({ query, here, commands, content: contentHits, bookmarks: bookmarkHits, assistantName }));
 	/** Every row in drawing order, which is what the keys move through. */
 	const rows = $derived(groups.flatMap((g) => g.rows));
 	/** Each group's first row's index in `rows`. */
@@ -225,6 +256,8 @@
 				const target = contentTarget(row.hit);
 				return handOff(() => windowShellStore.openTabFromRoute(target.route, { label: target.label }));
 			}
+			case "bookmark":
+				return handOff(() => windowShellStore.openTabFromRoute(rowRoute(row)!, { label: crumbOf(row.bookmark), focusExisting: true }));
 			case "setting":
 				// Two settings work right here; the rest open on their page.
 				if (row.setting.id === "theme") return enterThemeMode();
@@ -313,6 +346,11 @@
 		{:else if item.kind === "entity"}
 			<Icon icon={item.entity.kind === "person" ? "mynaui:user" : "mynaui:map-pin"} width="16" class="row-icon" />
 			<span class="row-label">{item.entity.name}</span>
+		{:else if item.kind === "bookmark"}
+			{@const tags = item.bookmark.tags ?? []}
+			{@const line = rowOf(item.bookmark)}
+			<Icon icon="atlas:bookmarks" width="16" class="row-icon" />
+			<span class="row-label">{line.title}<span class="muted">&ensp;{line.meta}{#if tags.length}&ensp;{tags.slice(0, 3).map((t) => `#${t}`).join(" ")}{/if}</span></span>
 		{:else}
 			<Icon icon={contentGlyph(item.hit)} width="16" class="row-icon" />
 			<span class="row-text">

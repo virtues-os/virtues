@@ -339,6 +339,29 @@ export function openLabel(b: BookmarkApi): string | null {
 	return site ? `Open in ${site}` : `Open ${addressOf(b.url).split('/')[0]}`;
 }
 
+/**
+ * A bookmark as one line in a list elsewhere (the search palette): a title
+ * by the same rule as its card, and a second line saying where it is from.
+ * A post's title is its text, a picture's is "Saved screenshot", and a domain
+ * is the second line at most, never the title.
+ */
+export function rowOf(b: BookmarkApi): { title: string; meta: string } {
+	const s = shapeOf(b);
+	switch (s.kind) {
+		case 'post':
+			return {
+				title: s.headline ?? crumbOf(b),
+				meta: [platformName(b.source_platform), s.authorName ?? s.handle].filter(Boolean).join(' · '),
+			};
+		case 'page':
+			return { title: s.headline!, meta: s.site ?? arrivedBy(b) };
+		case 'picture':
+			return { title: crumbOf(b), meta: arrivedBy(b) };
+		default:
+			return { title: s.headline!, meta: s.site ?? arrivedBy(b) };
+	}
+}
+
 /** Monday 00:00 of the week holding `d`, local time. */
 function weekStart(d: Date): Date {
 	const s = new Date(d.getFullYear(), d.getMonth(), d.getDate());

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BookmarkApi } from './api';
-import { crumbOf, dayLabel, footerOf, groupBySave, groupOf, intoColumns, openLabel, shapeOf } from './shape';
+import { crumbOf, dayLabel, footerOf, groupBySave, groupOf, intoColumns, openLabel, rowOf, shapeOf } from './shape';
 
 function bookmark(over: Partial<BookmarkApi>): BookmarkApi {
 	return {
@@ -134,6 +134,22 @@ describe('labels', () => {
 		expect(openLabel(bookmark({ url: 'http://localhost:5173/x' }))).toBe('Open localhost:5173');
 		expect(openLabel(bookmark({ url: '/drive/file_x' }))).toBeNull();
 		expect(openLabel(bookmark({ url: 'javascript:alert(1)' })), 'a bookmarklet is never opened').toBeNull();
+	});
+});
+
+describe('rowOf', () => {
+	it('names a search row by the card rule, never by a domain', () => {
+		expect(
+			rowOf(bookmark({ url: 'https://instagram.com/p/x', source_platform: 'instagram', door: 'instagram', author: 'cookwell', description: 'Lentil stew' }))
+		).toEqual({ title: 'Lentil stew', meta: 'Instagram · @cookwell' });
+		expect(rowOf(bookmark({ title: 'Why cheap robot arms wobble', details: { site_name: 'Half Step' } }))).toEqual({
+			title: 'Why cheap robot arms wobble',
+			meta: 'Half Step',
+		});
+		expect(rowOf(bookmark({ url: '/drive/file_x', door: 'iphone', bookmark_type: 'screenshot', picture_url: '/p' }))).toEqual({
+			title: 'Saved screenshot',
+			meta: 'iPhone',
+		});
 	});
 });
 
