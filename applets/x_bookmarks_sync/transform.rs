@@ -107,11 +107,13 @@ fn parse_tweet_entry(entry: &Value) -> Option<XBookmark> {
         .and_then(|s| chrono::DateTime::parse_from_str(s, "%a %b %d %H:%M:%S %z %Y").ok())
         .map(|dt| dt.with_timezone(&chrono::Utc))?;
 
-    let screen_name = result
+    let user = result
         .get("core")
         .and_then(|c| c.get("user_results"))
-        .and_then(|u| u.get("result"))
-        .and_then(user_screen_name);
+        .and_then(|u| u.get("result"));
+    let screen_name = user.and_then(user_screen_name);
+    let author_name = user.and_then(user_name);
+    let author_picture_url = user.and_then(user_picture_url);
 
     // The canonical permalink. Falls back to the id-only form X itself accepts
     // when the author handle is missing, so `url` is never empty (the room, the
@@ -127,15 +129,21 @@ fn parse_tweet_entry(entry: &Value) -> Option<XBookmark> {
         .filter(|t| !t.is_empty())
         .map(String::from);
 
-    let thumbnail_url = legacy
+    let first_media = legacy
         .get("extended_entities")
         .or_else(|| legacy.get("entities"))
         .and_then(|e| e.get("media"))
         .and_then(Value::as_array)
-        .and_then(|m| m.first())
+        .and_then(|m| m.first());
+    let thumbnail_url = first_media
         .and_then(|m| m.get("media_url_https"))
         .and_then(Value::as_str)
         .map(String::from);
+    // X appends a short link to the post's own picture at the end of the
+    // text. The picture is shown, so the room removes this link from the text.
+    let media_short_url = first_media
+        .and_then(|m| m.get("url"))
+        .and_then(Value::as_str);
 
     let row = BookmarkRow {
         url,
@@ -163,6 +171,10 @@ fn parse_tweet_entry(entry: &Value) -> Option<XBookmark> {
             "retweet_count": legacy.get("retweet_count"),
             "reply_count": legacy.get("reply_count"),
             "bookmark_count": legacy.get("bookmark_count"),
+            "author_name": author_name,
+            "author_picture_url": author_picture_url,
+            "links": post_links(legacy),
+            "media_short_url": media_short_url,
         }),
     };
 
@@ -182,6 +194,52 @@ fn user_screen_name(user: &Value) -> Option<String> {
                 .and_then(Value::as_str)
         })
         .map(String::from)
+}
+
+/// The author's display name ("David Okafor"), from `legacy.name`
+/// historically or `core.name` in newer payloads.
+fn user_name(user: &Value) -> Option<String> {
+    user.get("legacy")
+        .and_then(|l| l.get("name"))
+        .or_else(|| user.get("core").and_then(|c| c.get("name")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+}
+
+/// The author's profile picture. X serves a 48px `_normal` image by default;
+/// the 200px cut of the same picture is asked for instead, so it stays sharp
+/// on a bookmark's page.
+fn user_picture_url(user: &Value) -> Option<String> {
+    user.get("legacy")
+        .and_then(|l| l.get("profile_image_url_https"))
+        .or_else(|| user.get("avatar").and_then(|a| a.get("image_url")))
+        .and_then(Value::as_str)
+        .filter(|u| u.starts_with("https://"))
+        .map(|u| u.replace("_normal.", "_200x200."))
+}
+
+/// The links in a post's text: the short `t.co` link X writes into the text,
+/// where it leads, and the readable form X shows. The room shows where a link
+/// leads and never the short form.
+fn post_links(legacy: &Value) -> Value {
+    let links: Vec<Value> = legacy
+        .get("entities")
+        .and_then(|e| e.get("urls"))
+        .and_then(Value::as_array)
+        .map(|urls| {
+            urls.iter()
+                .filter_map(|u| {
+                    let short = u.get("url").and_then(Value::as_str)?;
+                    let expanded = u.get("expanded_url").and_then(Value::as_str)?;
+                    let display = u.get("display_url").and_then(Value::as_str).unwrap_or(expanded);
+                    Some(json!({ "short": short, "expanded": expanded, "display": display }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Value::Array(links)
 }
 
 /// Upsert a run's parsed bookmarks. Idempotent on `x:bookmark:{id}`.
@@ -211,13 +269,28 @@ mod tests {
                         "content": { "itemContent": { "tweet_results": { "result": {
                             "__typename": "Tweet",
                             "core": { "user_results": { "result": {
-                                "legacy": { "screen_name": "davidokafor" }
+                                "legacy": {
+                                    "screen_name": "davidokafor",
+                                    "name": "David Okafor",
+                                    "profile_image_url_https": "https://images.example.com/p/abc_normal.jpg"
+                                }
                             }}},
                             "legacy": {
                                 "id_str": "1111",
-                                "full_text": "a thing worth keeping",
+                                "full_text": "a thing worth keeping https://t.co/aaa https://t.co/pic",
                                 "created_at": "Wed Oct 10 20:19:24 +0000 2018",
-                                "lang": "en"
+                                "lang": "en",
+                                "entities": {
+                                    "urls": [{
+                                        "url": "https://t.co/aaa",
+                                        "expanded_url": "https://example.com/essay",
+                                        "display_url": "example.com/essay"
+                                    }],
+                                    "media": [{
+                                        "url": "https://t.co/pic",
+                                        "media_url_https": "https://images.example.com/m/1.jpg"
+                                    }]
+                                }
                             }
                         }}}}
                     },
@@ -227,7 +300,8 @@ mod tests {
                             "__typename": "TweetWithVisibilityResults",
                             "tweet": {
                                 "core": { "user_results": { "result": {
-                                    "core": { "screen_name": "nick" }
+                                    "core": { "screen_name": "nick", "name": "Nick" },
+                                    "avatar": { "image_url": "https://images.example.com/p/nick_normal.png" }
                                 }}},
                                 "legacy": {
                                     "id_str": "2222",
@@ -252,15 +326,33 @@ mod tests {
         let first = &page.rows[0];
         assert_eq!(first.tweet_id, "1111");
         assert_eq!(first.row.url, "https://x.com/davidokafor/status/1111");
-        assert_eq!(first.row.description.as_deref(), Some("a thing worth keeping"));
+        assert_eq!(
+            first.row.description.as_deref(),
+            Some("a thing worth keeping https://t.co/aaa https://t.co/pic"),
+            "the text is kept as X wrote it; the room swaps the links"
+        );
         assert_eq!(first.row.source_stream_id, "x:bookmark:1111");
         assert_eq!(first.row.bookmark_type.as_deref(), Some("bookmark"));
+        assert_eq!(first.row.metadata["author_name"], "David Okafor");
+        assert_eq!(
+            first.row.metadata["author_picture_url"],
+            "https://images.example.com/p/abc_200x200.jpg",
+            "the larger cut of the profile picture"
+        );
+        assert_eq!(
+            first.row.metadata["links"],
+            json!([{ "short": "https://t.co/aaa", "expanded": "https://example.com/essay", "display": "example.com/essay" }])
+        );
+        assert_eq!(first.row.metadata["media_short_url"], "https://t.co/pic");
 
         // The visibility-wrapped tweet is unwrapped, and the newer author
         // location (core.screen_name) is read.
         let second = &page.rows[1];
         assert_eq!(second.tweet_id, "2222");
         assert_eq!(second.row.url, "https://x.com/nick/status/2222");
+        assert_eq!(second.row.metadata["author_name"], "Nick", "newer payloads keep the name in core");
+        assert_eq!(second.row.metadata["author_picture_url"], "https://images.example.com/p/nick_200x200.png");
+        assert_eq!(second.row.metadata["links"], json!([]));
     }
 
     #[test]

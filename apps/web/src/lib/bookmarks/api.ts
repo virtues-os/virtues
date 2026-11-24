@@ -37,12 +37,18 @@ export interface BookmarkApi {
 	bookmark_type: string | null;
 	author: string | null;
 	tags: string[] | null;
-	thumbnail_url: string | null;
+	/** The picture, always a copy on your server, or null. */
+	picture_url: string | null;
+	/** How it arrived. */
+	door: BookmarkDoor;
+	/** What the card shows beyond the row's columns. Absent facts are left out. */
+	details: BookmarkDetails;
+	/** The source's own time: when a post was written, or a page bookmarked. */
 	timestamp: string;
+	/** When it was saved, as well as your server can tell. The room groups by this. */
+	saved_at: string;
 	/** From the extraction record — "article", "reference", "repository". */
 	medium: string | null;
-	/** How much the box knows about this one yet. */
-	state: BookmarkState;
 }
 
 /**
@@ -59,17 +65,34 @@ export type BookmarkState =
 	| "failed"
 	| "skipped";
 
-export interface ShelfCounts {
-	enriched: number;
-	queued: number;
-	held: number;
+/** A post's link: the short form in its text, where it leads, and how X shows it. */
+export interface PostLink {
+	short: string;
+	expanded: string;
+	display: string;
 }
+
+/** Every picture here is a copy on your server. */
+export interface BookmarkDetails {
+	author_name?: string;
+	author_picture_url?: string;
+	site_name?: string;
+	icon_url?: string;
+	duration_secs?: number;
+	reading_minutes?: number;
+	links?: PostLink[];
+	/** The short link X appends for the post's own picture. */
+	media_short_url?: string;
+	/** The page a post links to. */
+	link_preview?: { url?: string; title?: string; site_name?: string; picture_url?: string };
+}
+
+/** The door a save came through, as the room's filters name it. */
+export type BookmarkDoor = "instagram" | "x" | "github" | "iphone" | "hand" | "browser";
 
 export interface BookmarkPageApi {
 	items: BookmarkApi[];
 	total: number;
-	/** Shelf-wide, deliberately unaffected by the current filters. */
-	counts: ShelfCounts;
 }
 
 export async function getBookmarksPage(
@@ -78,10 +101,7 @@ export async function getBookmarksPage(
 		limit: number;
 		search?: string;
 		dir?: "asc" | "desc";
-		platform?: string;
-		bookmark_type?: string;
-		medium?: string;
-		state?: string;
+		door?: BookmarkDoor;
 	},
 	fetchFn: FetchFn = fetch
 ): Promise<BookmarkPageApi> {
@@ -90,10 +110,7 @@ export async function getBookmarksPage(
 	params.set("limit", String(opts.limit));
 	if (opts.search) params.set("search", opts.search);
 	if (opts.dir) params.set("dir", opts.dir);
-	if (opts.platform) params.set("platform", opts.platform);
-	if (opts.bookmark_type) params.set("bookmark_type", opts.bookmark_type);
-	if (opts.medium) params.set("medium", opts.medium);
-	if (opts.state) params.set("state", opts.state);
+	if (opts.door) params.set("door", opts.door);
 
 	const res = await fetchFn(`/api/bookmarks?${params}`, { cache: "no-store" });
 	if (!res.ok) {
@@ -113,10 +130,15 @@ export interface ExtractionRecord {
 }
 
 export interface BookmarkDetailApi extends BookmarkApi {
+	/** How much the box knows about this one yet. */
+	state: BookmarkState;
 	/** Set when the source no longer has it. The row and its note survive. */
 	deleted_at_source: string | null;
 	enrichment_model: string | null;
+	enriched_at: string | null;
 	extraction: ExtractionRecord | null;
+	/** The record's entities, each with its Wiki page when one has exactly that name. */
+	mentions: { name: string; route: string | null }[];
 }
 
 export async function getBookmark(

@@ -1,27 +1,29 @@
 <!--
 	BookmarkDetailView.svelte
 
-	One saved thing, and what the box has made of it.
+	One saved thing, and everything about it.
 
-	The generic record view (/record/…) can render this row, and did until now,
-	but it reads as a database row: `Enrichment Attempts: 0` sits beside the
-	description, and `likely_queries` — the field most worth reading — arrives
-	as pretty-printed JSON. This view exists to put the two things a person came
-	for first: the artifact, and their own note.
+	Two columns: the saved thing on the left, laid out by the same rule as its
+	card (lib/bookmarks/shape.ts), and a side column on the right that moves
+	below it when the pane is narrow. The side column runs: your note, the one
+	way out to the original, mentions, what the source filed it under, then
+	how your server indexed it, folded. The index is your server's notes for
+	search, so it stays one click away.
 
-	The ordering is the argument. Their words, then the thing, then what we made
-	of it, then plumbing. Machine text never sits above user text.
+	A post looks like a post: its author, the text with its line breaks, then
+	its picture, then when it was posted.
 -->
 
 <script lang="ts">
-	import { Button, Page } from '$lib';
+	import { Button, Page, Textarea } from '$lib';
+	import Chip from '$lib/components/Chip.svelte';
+	import LinkPreviewCard from '$lib/components/bookmarks/LinkPreviewCard.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { openWebLink } from '$lib/utils/webLinks';
 	import type { Tab } from '$lib/tabs/types';
-	import {
-		getBookmark,
-		updateBookmarkNote,
-		type BookmarkDetailApi,
-	} from '$lib/bookmarks/api';
+	import { getBookmark, updateBookmarkNote, type BookmarkDetailApi } from '$lib/bookmarks/api';
+	import { arrivedBy, crumbOf, dayLabel, openLabel, shapeOf } from '$lib/bookmarks/shape';
 
 	let { tab }: { tab: Tab } = $props();
 
@@ -31,17 +33,19 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	// The note editor is deliberately uncontrolled once loaded: rebinding it to
-	// the server value on every save would fight anyone still typing.
+	let editing = $state(false);
 	let draft = $state('');
 	let savingNote = $state(false);
 	let noteError = $state<string | null>(null);
-	let savedAt = $state<number | null>(null);
+	let indexOpen = $state(false);
+	let failed = $state<Record<string, boolean>>({});
+	const shown = (key: string, src: string | null | undefined) => (src && !failed[key] ? src : null);
+	const hide = (key: string) => () => (failed = { ...failed, [key]: true });
 
 	$effect(() => {
 		const bookmarkId = id;
 		if (!bookmarkId) {
-			error = 'Malformed bookmark link.';
+			error = "That link doesn't name a bookmark. Go back to Bookmarks to find it.";
 			loading = false;
 			return;
 		}
@@ -50,22 +54,32 @@
 		getBookmark(bookmarkId)
 			.then((b) => {
 				bookmark = b;
-				draft = b.note ?? '';
+				// The tab and the crumb name the bookmark by its headline.
+				windowShellStore.updateTab(tab.id, { label: crumbOf(b) });
 			})
 			.catch((e) => (error = e instanceof Error ? e.message : String(e)))
 			.finally(() => (loading = false));
 	});
 
-	const dirty = $derived((bookmark?.note ?? '') !== draft.trim());
+	const shape = $derived(bookmark ? shapeOf(bookmark) : null);
+	const picture = $derived(shown('picture', shape?.picture));
+	const tags = $derived<string[]>(Array.isArray(bookmark?.tags) ? (bookmark.tags as string[]) : []);
+	const open = $derived(bookmark ? openLabel(bookmark) : null);
 
+	function startEditing() {
+		draft = bookmark?.note ?? '';
+		noteError = null;
+		editing = true;
+	}
+
+	/** Saving it blank deletes the note. */
 	async function saveNote() {
-		if (!bookmark || savingNote || !dirty) return;
+		if (!bookmark || savingNote) return;
 		savingNote = true;
 		noteError = null;
 		try {
 			bookmark = await updateBookmarkNote(bookmark.id, draft.trim() || null);
-			draft = bookmark.note ?? '';
-			savedAt = Date.now();
+			editing = false;
 		} catch (e) {
 			noteError = e instanceof Error ? e.message : "Your server couldn't save that note. Try again.";
 		} finally {
@@ -73,62 +87,36 @@
 		}
 	}
 
-	function hostOf(raw: string): string {
-		try {
-			return new URL(raw).hostname.replace(/^www\./, '');
-		} catch {
-			return raw;
-		}
+	/** A plain click opens an in-app page in a tab; a modified click is the browser's. */
+	function openRoute(e: MouseEvent, route: string) {
+		if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+		e.preventDefault();
+		windowShellStore.openTabFromRoute(route);
 	}
 
-	/** Internal asset routes have no host worth reading — see the url contract. */
-	const origin = $derived(
-		!bookmark
-			? ''
-			: bookmark.url.startsWith('/drive/')
-				? (bookmark.source_platform ?? 'Saved image')
-				: hostOf(bookmark.url)
-	);
+	/** Where a click on a web link goes: the Browser pane in the app, a new tab in a browser. */
+	function openOriginal() {
+		if (bookmark) void openWebLink(bookmark.url);
+	}
 
-	const isInternal = $derived(bookmark?.url.startsWith('/drive/') ?? false);
-
-	const heading = $derived(
-		bookmark?.title?.trim() || (isInternal ? 'Saved image' : origin) || 'Bookmark'
-	);
-
-	const tags = $derived<string[]>(
-		Array.isArray(bookmark?.tags) ? (bookmark.tags as string[]) : []
-	);
-
-	/** Said only when it changes what you are looking at. */
-	const stateNote = $derived.by(() => {
-		switch (bookmark?.state) {
-			case 'held':
-				return "Not read yet. Your server can't read this file - it reads pages and images so far.";
-			case 'queued':
-				return 'Not read yet. The next sweep will pick it up.';
-			case 'failed':
-				return "Your server couldn't read this page, so below is only what the source gave.";
-			case 'skipped':
-				return 'Deliberately not read - your server doesn\'t fetch this kind of address.';
-			default:
-				return null;
-		}
-	});
-
-	function when(iso: string | null): string {
-		if (!iso) return '—';
+	function longDate(iso: string | null): string {
+		if (!iso) return '';
 		const d = new Date(iso);
-		if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return '—';
-		return d.toLocaleDateString('en-US', {
-			month: 'long',
-			day: 'numeric',
-			year: 'numeric',
-		});
+		if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return '';
+		return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 	}
+
+	/** "today", "yesterday" or "Nov 21", to sit mid-sentence. */
+	function savedDay(iso: string): string {
+		const d = dayLabel(iso);
+		return d === 'Today' || d === 'Yesterday' ? d.toLowerCase() : d;
+	}
+
+	/** The model's name as a person reads it: no provider prefix. */
+	const modelName = (m: string | null) => m?.split('/').pop() ?? null;
 </script>
 
-<Page title={heading} description={origin} maxWidth="reading">
+<Page title={bookmark ? crumbOf(bookmark) : 'Bookmark'} maxWidth="medium">
 	{#if loading}
 		<p class="state">Opening…</p>
 	{:else if error}
@@ -136,306 +124,376 @@
 			<Icon icon="mynaui:danger-circle" width="16" />
 			{error}
 		</p>
-	{:else if bookmark}
-		{#if bookmark.deleted_at_source}
-			<p class="banner">
-				Removed from {origin} on {when(bookmark.deleted_at_source)}. It is kept
-				here because your note is yours.
-			</p>
-		{/if}
+	{:else if bookmark && shape}
+		<div class="layout">
+			<article class="thing">
+				{#snippet pictureBlock()}
+					{#if picture}
+						<div class="frame">
+							<img class="picture" src={picture} alt="" onerror={hide('picture')} />
+							{#if shape?.duration}<span class="duration">{shape.duration}</span>{/if}
+						</div>
+					{/if}
+				{/snippet}
 
-		<!-- THE NOTE COMES FIRST. It is the only text on this page a person
-		     wrote, and the only field they can change. -->
-		<section class="note-block">
-			<label class="note-label" for="note">Your note</label>
-			<textarea
-				id="note"
-				class="note-input"
-				bind:value={draft}
-				rows="3"
-				placeholder="Why you kept this - a reason, a todo, the bit worth coming back to."
-				disabled={savingNote}
-				onblur={saveNote}
-			></textarea>
-			<div class="note-foot">
-				{#if noteError}
-					<span class="note-error" role="alert">{noteError}</span>
-				{:else if savingNote}
-					<span>Saving…</span>
-				{:else if dirty}
-					<span>Unsaved</span>
-				{:else if savedAt}
-					<span>Saved</span>
+				{#if shape.kind === 'post'}
+					{#if shape.handle || shape.authorName}
+						<div class="author">
+							{#if shown('avatar', shape.authorPicture)}
+								<img class="avatar" src={shape.authorPicture} alt="" onerror={hide('avatar')} />
+							{/if}
+							<span class="author-words">
+								{#if shape.authorName}<span class="author-name">{shape.authorName}</span>{/if}
+								{#if shape.handle}<span class="byline">{shape.handle}</span>{/if}
+							</span>
+						</div>
+					{/if}
+					{#if shape.pictureFirst}{@render pictureBlock()}{/if}
+					{#if shape.headline}<p class="text">{shape.headline}</p>{/if}
+					{#if !shape.pictureFirst}{@render pictureBlock()}{/if}
+					{#if shape.preview}<LinkPreviewCard preview={shape.preview} href={shape.preview.url} />{/if}
+					<p class="when">Posted {longDate(bookmark.timestamp)}</p>
+				{:else if shape.kind === 'page'}
+					{@render pictureBlock()}
+					{#if shape.site}
+						<p class="byline site">
+							{#if shown('icon', shape.icon)}<img class="icon" src={shape.icon} alt="" onerror={hide('icon')} />{/if}
+							{shape.site}
+						</p>
+					{/if}
+					<h1 class="title">{shape.headline}</h1>
+					{#if shape.summary}<p class="summary">{shape.summary}</p>{/if}
+					{#if shape.facts.length}<p class="when">{shape.facts.join(' · ')}</p>{/if}
+				{:else if shape.kind === 'picture'}
+					{@render pictureBlock()}
+				{:else}
+					{#if shape.site}<p class="byline">{shape.site}</p>{/if}
+					<p class="address">{shape.headline}</p>
 				{/if}
-				{#if dirty && !savingNote}
-					<Button variant="secondary" onclick={saveNote}
-						>Save note</Button
-					>
+
+				{#if bookmark.deleted_at_source}
+					<p class="removed">
+						{arrivedBy(bookmark)} no longer has this, since {longDate(bookmark.deleted_at_source)}. It stays
+						here with your note.
+					</p>
 				{/if}
-			</div>
-		</section>
+			</article>
 
-		{#if bookmark.thumbnail_url}
-			<!-- Same guard as the Wall's tiles: og:image links rot, and a dead one
-			     should cost nothing rather than leave a broken glyph and a gap
-			     where the artifact was meant to be. -->
-			<img
-				class="hero"
-				src={bookmark.thumbnail_url}
-				alt=""
-				onerror={(e) => ((e.currentTarget as HTMLImageElement).hidden = true)}
-			/>
-		{/if}
+			<aside class="side">
+				<section>
+					<h2 class="label">Your note</h2>
+					{#if editing}
+						<Textarea bind:value={draft} placeholder="What's this for?" disabled={savingNote} />
+						{#if noteError}<p class="note-error" role="alert">{noteError}</p>{/if}
+						<div class="note-actions">
+							<Button variant="secondary" onclick={saveNote} loading={savingNote}>Save note</Button>
+							<Button variant="ghost" onclick={() => (editing = false)} disabled={savingNote}>Cancel</Button>
+						</div>
+					{:else if bookmark.note}
+						<p class="note">{bookmark.note}</p>
+						<button type="button" class="quiet" onclick={startEditing}>Edit note</button>
+					{:else}
+						<Button variant="secondary" onclick={startEditing}>Add a note</Button>
+					{/if}
+				</section>
 
-		{#if !isInternal}
-			<a class="original" href={bookmark.url} target="_blank" rel="noopener noreferrer">
-				<Icon icon="mynaui:external-link" width="14" />
-				<span>Open on {origin}</span>
-			</a>
-		{/if}
+				<section class="out">
+					{#if open}
+						<Button onclick={openOriginal}>
+							{open}
+							<Icon icon="mynaui:arrow-up-right" width="14" />
+						</Button>
+					{/if}
+					<p class="saved">Saved {savedDay(bookmark.saved_at)} from {arrivedBy(bookmark)}</p>
+				</section>
 
-		{#if stateNote}
-			<p class="unread">{stateNote}</p>
-		{/if}
-
-		{#if bookmark.description}
-			<p class="lede">{bookmark.description}</p>
-		{/if}
-
-		{#if tags.length}
-			<section class="block">
-				<h2>Filed under</h2>
-				<ul class="chips">
-					{#each tags as t (t)}<li class="chip user">{t}</li>{/each}
-				</ul>
-			</section>
-		{/if}
-
-		{#if bookmark.extraction}
-			{@const ex = bookmark.extraction}
-			<!-- Everything below this line was written by a model, and is
-			     separated from the user's words above it on purpose. -->
-			<section class="block machine">
-				<h2>What your server made of it</h2>
-
-				{#if ex.subject?.length}
-					<div class="row">
-						<span class="key">About</span>
-						<ul class="chips">
-							{#each ex.subject as s (s)}<li class="chip">{s}</li>{/each}
-						</ul>
-					</div>
+				{#if bookmark.mentions?.length}
+					<section>
+						<h2 class="label">Mentions</h2>
+						<div class="chips">
+							{#each bookmark.mentions as m, i (i)}
+								{#if m.route}
+									<Chip href={m.route} onclick={(e) => openRoute(e, m.route!)}>{m.name}</Chip>
+								{:else}
+									<Chip>{m.name}</Chip>
+								{/if}
+							{/each}
+						</div>
+					</section>
 				{/if}
-				{#if ex.entities?.length}
-					<div class="row">
-						<span class="key">Mentions</span>
-						<ul class="chips">
-							{#each ex.entities as e (e)}<li class="chip">{e}</li>{/each}
-						</ul>
-					</div>
-				{/if}
-				{#if ex.style}
-					<div class="row"><span class="key">Style</span><p class="val">{ex.style}</p></div>
-				{/if}
-				{#if ex.likely_queries?.length}
-					<div class="row">
-						<span class="key">Findable by</span>
-						<ul class="queries">
-							{#each ex.likely_queries as q (q)}<li>“{q}”</li>{/each}
-						</ul>
-					</div>
-				{/if}
-			</section>
-		{/if}
 
-		<footer class="meta">
-			<span>Saved {when(bookmark.timestamp)}</span>
-			{#if bookmark.source_platform}<span>from {bookmark.source_platform}</span>{/if}
-			{#if bookmark.medium}<span>{bookmark.medium}</span>{/if}
-			{#if bookmark.enrichment_model}<span>read by {bookmark.enrichment_model}</span>{/if}
-		</footer>
+				{#if tags.length}
+					<section>
+						<h2 class="label">Filed under</h2>
+						<div class="chips">
+							{#each tags as t, i (i)}<Chip>{t}</Chip>{/each}
+						</div>
+					</section>
+				{/if}
+
+				{#if bookmark.extraction}
+					{@const ex = bookmark.extraction}
+					<section>
+						<button type="button" class="quiet fold" aria-expanded={indexOpen} onclick={() => (indexOpen = !indexOpen)}>
+							How Virtues indexed this
+							<Icon icon={indexOpen ? 'mynaui:chevron-up' : 'mynaui:chevron-down'} width="14" />
+						</button>
+						{#if indexOpen}
+							<dl class="index">
+								{#if ex.subject?.length}
+									<dt>About</dt>
+									<dd>{ex.subject.join(', ')}</dd>
+								{/if}
+								{#if ex.likely_queries?.length}
+									<dt>Search finds it with</dt>
+									<dd>{ex.likely_queries.join(' · ')}</dd>
+								{/if}
+								{#if bookmark.enriched_at || bookmark.enrichment_model}
+									<dt>Read</dt>
+									<dd>
+										{longDate(bookmark.enriched_at)}{#if bookmark.enrichment_model}, by {modelName(bookmark.enrichment_model)}{/if}
+									</dd>
+								{/if}
+							</dl>
+						{/if}
+					</section>
+				{/if}
+			</aside>
+		</div>
 	{/if}
 </Page>
 
 <style>
-	@reference "../../../../app.css";
-
 	.state {
-		font-size: 0.875rem;
+		font-size: var(--text-label);
 		color: var(--color-foreground-muted);
 	}
+
 	.state.error {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
-		color: var(--color-error, #dc2626);
+		gap: 8px;
+		color: var(--color-error);
 	}
 
-	.banner {
-		margin: 0 0 1.5rem;
-		padding: 0.6rem 0.8rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: var(--color-surface-elevated);
-		border-left: 2px solid var(--color-border-strong, var(--color-border));
-		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	.layout {
+		container-type: inline-size;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 48px;
+		align-items: flex-start;
 	}
 
-	/* The note: the one editable thing, and the first thing. */
-	.note-block {
-		margin: 0 0 2rem;
+	.thing {
+		flex: 999 1 420px;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
 	}
-	.note-label {
-		display: block;
-		margin-bottom: 0.4rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
+
+	.side {
+		flex: 1 1 260px;
+		max-width: 320px;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
 	}
-	.note-input {
-		width: 100%;
-		padding: 0.7rem 0.8rem;
-		font-family: var(--font-serif);
-		font-size: 1.0625rem;
-		line-height: 1.5;
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: var(--radius-md);
-		resize: vertical;
+
+	.side section {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
 	}
-	.note-input:focus {
-		border-color: var(--color-foreground-muted);
-	}
-	.note-input::placeholder {
-		font-family: var(--font-sans);
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-	}
-	.note-foot {
+
+	.author {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		min-height: 1.5rem;
-		margin-top: 0.4rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-	}
-	.note-error {
-		color: var(--color-error, #dc2626);
+		gap: 12px;
 	}
 
-	.hero {
+	.avatar {
+		flex: none;
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.author-words {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.author-name {
+		font-size: var(--text-label);
+	}
+
+	.site {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.icon {
+		width: 16px;
+		height: 16px;
+		border-radius: var(--radius-sm);
+		object-fit: contain;
+	}
+
+	.frame {
+		position: relative;
+	}
+
+	/* On the picture, so it is light ink on a dark chip in both themes. */
+	.duration {
+		position: absolute;
+		right: 12px;
+		bottom: 12px;
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		background: rgb(0 0 0 / 0.75); /* design-ok: a chip on a photograph, the same in both themes */
+		color: #fff; /* design-ok: ink on the dark chip above */
+		font-size: var(--text-small);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.byline,
+	.when,
+	.saved {
+		margin: 0;
+		font-size: var(--text-small);
+		color: var(--color-foreground-subtle);
+	}
+
+	.picture {
 		display: block;
 		width: 100%;
-		max-height: 26rem;
-		object-fit: cover;
-		border-radius: var(--radius-md);
-		background: var(--color-surface);
+		max-height: 720px;
+		object-fit: contain;
+		border-radius: var(--radius-xl);
+		background: var(--fill-bg);
 	}
 
-	.original {
+	.text {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: var(--text-lead);
+		line-height: 1.5;
+		white-space: pre-line;
+		overflow-wrap: anywhere;
+	}
+
+	.title {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: var(--text-heading);
+		line-height: 1.25;
+	}
+
+	.summary {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: var(--text-body);
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.address {
+		margin: 0;
+		font-size: var(--text-body);
+		overflow-wrap: anywhere;
+	}
+
+	.removed {
+		margin: 0;
+		font-size: var(--text-small);
+		color: var(--color-foreground-muted);
+	}
+
+	.label {
+		margin: 0;
+		font-size: var(--text-caption);
+		font-weight: 400;
+		color: var(--color-foreground-subtle);
+	}
+
+	.note {
+		margin: 0;
+		align-self: stretch;
+		padding: 12px;
+		border-radius: var(--radius-md);
+		background: var(--fill-bg);
+		font-size: var(--text-label);
+		line-height: 1.5;
+		white-space: pre-line;
+	}
+
+	.note-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.note-error {
+		margin: 0;
+		font-size: var(--text-small);
+		color: var(--color-error);
+	}
+
+	.side :global(textarea) {
+		align-self: stretch;
+	}
+
+	.side section.out {
+		align-items: stretch;
+	}
+
+	.quiet {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		margin-top: 1rem;
-		font-size: 0.8125rem;
-		color: var(--color-primary);
-		text-decoration: none;
-	}
-	.original:hover {
-		text-decoration: underline;
-	}
-
-	.unread {
-		margin: 1.25rem 0 0;
-		font-size: 0.8125rem;
-		font-style: italic;
-		color: var(--color-foreground-subtle);
+		gap: 6px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: var(--text-small);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
 	}
 
-	.lede {
-		margin: 1.5rem 0 0;
-		font-family: var(--font-serif);
-		font-size: 1.125rem;
-		line-height: 1.6;
-		color: var(--color-foreground);
-	}
-
-	.block {
-		margin-top: 2rem;
-	}
-	/* Was 11px uppercase letterspaced in the lightest ink — faux small caps in
-	   a serif that has no small-cap cut. Matches `.settings-label` now. */
-	.block h2 {
-		margin: 0 0 0.75rem;
-		font-size: 1rem;
-		font-weight: 400;
-		line-height: 1.3;
-		color: var(--color-foreground);
-	}
-	/* A hairline is the whole separation between their words and ours. */
-	.block.machine {
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--color-border-subtle, var(--color-border));
-	}
-
-	.row {
-		display: grid;
-		grid-template-columns: 7rem 1fr;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-	.key {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		padding-top: 0.15rem;
-	}
-	.val {
-		margin: 0;
-		font-size: 0.875rem;
+	.quiet:hover {
 		color: var(--color-foreground);
 	}
 
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.35rem;
-		margin: 0;
-		padding: 0;
-		list-style: none;
-	}
-	.chip {
-		padding: 0.15rem 0.5rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: var(--radius-sm);
-	}
-	/* The user's own containers read as theirs, not as machine output. */
-	.chip.user {
-		color: var(--color-foreground);
-		border-color: var(--color-border);
+		gap: 8px;
 	}
 
-	.queries {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-		font-family: var(--font-serif);
-		font-size: 0.9375rem;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
+	.index {
+		margin: 4px 0 0;
 	}
 
-	.meta {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1rem;
-		margin-top: 2.5rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border-subtle, var(--color-border));
-		font-size: 0.75rem;
+	.index dt {
+		font-size: var(--text-caption);
 		color: var(--color-foreground-subtle);
+		margin: 0 0 4px;
+	}
+
+	.index dd {
+		margin: 0 0 12px;
+		font-size: var(--text-small);
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	@container (max-width: 760px) {
+		.side {
+			max-width: none;
+		}
 	}
 </style>
