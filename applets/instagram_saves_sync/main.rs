@@ -74,6 +74,12 @@ async fn main() -> Result<()> {
 
     let mut total_written = 0usize;
     let mut images_stored = 0usize;
+    // Each author's picture, kept once per run: a run often holds several
+    // saves from one account, and the Drive copy is content-addressed anyway.
+    // `None` remembers a picture that could not be kept, so it is not retried
+    // for every post.
+    let mut author_pictures: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     let mut new_high: Option<String> = None;
     let mut max_id: Option<String> = None;
     let mut reached_last_seen = false;
@@ -156,7 +162,27 @@ async fn main() -> Result<()> {
                 },
                 None => None,
             };
-            total_written += transform::write_save(&pool, &save, stored.as_ref()).await?;
+            // The author's picture link expires as the post's does, so it is
+            // kept now rather than by a later pass.
+            let author_picture = match (&save.author, &save.author_picture_url) {
+                (Some(author), Some(url)) => {
+                    if !author_pictures.contains_key(author) {
+                        let kept = match virtues::bookmark_media::store_saved_image(&pool, url).await {
+                            Ok(img) => Some(img.file_id),
+                            Err(e) => {
+                                tracing::warn!(author = %author, error = %e,
+                                    "could not keep an author's picture; showing the name alone");
+                                None
+                            }
+                        };
+                        author_pictures.insert(author.clone(), kept);
+                    }
+                    author_pictures.get(author).cloned().flatten()
+                }
+                _ => None,
+            };
+            total_written +=
+                transform::write_save(&pool, &save, stored.as_ref(), author_picture.as_deref()).await?;
         }
 
         if reached_last_seen {

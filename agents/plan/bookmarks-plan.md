@@ -132,8 +132,11 @@ Left:
   room reads their author's name from the page title enrichment kept. To fill
   the rest, clear `newest_id` in the X source's config so the next run walks
   the timeline again (up to X's cap of about 800).
-- **Instagram authors** show the handle only: `instagram_saves_sync` keeps
-  the username and not the full name or picture.
+- **Instagram authors.** `instagram_saves_sync` now keeps the author's full
+  name and copies their profile picture into Drive at sync time, once per
+  author per run, since the link expires within hours. Saves synced before
+  this show the handle only until a full re-sync: clear `newest_id` in the
+  Instagram source's config, as for X.
 - Favicons that are SVG are skipped; most sites also offer a PNG.
 - **Search.** Bookmarks in the search palette are another session's
   uncommitted work in `search/results.ts`, `SearchList.svelte` and

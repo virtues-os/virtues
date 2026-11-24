@@ -142,6 +142,17 @@ describe('rowOf', () => {
 		expect(
 			rowOf(bookmark({ url: 'https://instagram.com/p/x', source_platform: 'instagram', door: 'instagram', author: 'cookwell', description: 'Lentil stew' }))
 		).toEqual({ title: 'Lentil stew', meta: 'Instagram · @cookwell' });
+		const named = shapeOf(
+			bookmark({
+				source_platform: 'instagram',
+				door: 'instagram',
+				author: 'cookwell',
+				description: 'Lentil stew',
+				details: { author_name: 'Cookwell Kitchen', author_picture_url: '/api/drive/files/f_av/download' },
+			})
+		);
+		expect(named.authorName, 'an Instagram author shows by name').toBe('Cookwell Kitchen');
+		expect(named.authorPicture).toContain('/api/drive/files/f_av/download');
 		expect(rowOf(bookmark({ title: 'Why cheap robot arms wobble', details: { site_name: 'Half Step' } }))).toEqual({
 			title: 'Why cheap robot arms wobble',
 			meta: 'Half Step',

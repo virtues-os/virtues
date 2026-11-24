@@ -8,7 +8,9 @@
 //!   - `code` — the shortcode in the permalink `instagram.com/p/{code}/`
 //!   - `media_type` — 1 photo, 2 video, 8 carousel
 //!   - `caption.text` — the words (nullable; many posts have none)
-//!   - `user.username` — the author
+//!   - `user.username` — the author's handle, `user.full_name` their name,
+//!     and `user.profile_pic_url` their picture (signed, and expires like the
+//!     post's own picture)
 //!   - `taken_at` — unix seconds, the POST's time (see below)
 //!   - `image_versions2.candidates[0].url` — the picture, highest first; a
 //!     carousel keeps its images under `carousel_media[].image_versions2`, and a
@@ -45,6 +47,10 @@ pub struct Save {
     pub media_id: String,
     /// The picture to keep, if the post has one.
     pub image_url: Option<String>,
+    /// The author's handle and picture, so the sync can keep each author's
+    /// picture once per run however many of their posts were saved.
+    pub author: Option<String>,
+    pub author_picture_url: Option<String>,
     row: BookmarkRow,
 }
 
@@ -115,10 +121,21 @@ fn parse_item(item: &Value) -> Option<Save> {
         .filter(|t| !t.is_empty())
         .map(String::from);
 
-    let username = media
-        .get("user")
+    let user = media.get("user");
+    let username = user
         .and_then(|u| u.get("username"))
         .and_then(Value::as_str)
+        .map(String::from);
+    let full_name = user
+        .and_then(|u| u.get("full_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(String::from);
+    let author_picture_url = user
+        .and_then(|u| u.get("profile_pic_url"))
+        .and_then(Value::as_str)
+        .filter(|u| u.starts_with("https://"))
         .map(String::from);
 
     let media_type = media.get("media_type").and_then(Value::as_i64);
@@ -164,6 +181,7 @@ fn parse_item(item: &Value) -> Option<Save> {
             "code": code,
             "media_type": media_type,
             "username": username,
+            "author_name": full_name,
             "saved_collection_ids": collections,
         }),
     };
@@ -171,6 +189,8 @@ fn parse_item(item: &Value) -> Option<Save> {
     Some(Save {
         media_id,
         image_url,
+        author: username,
+        author_picture_url,
         row,
     })
 }
@@ -203,10 +223,22 @@ fn first_image_url(media: &Value) -> Option<String> {
 /// the enrichment sweep reads the picture from Drive instead of fetching the
 /// login-walled permalink. Without it (the image could not be kept), the row is
 /// still written — the caption is findable text on its own.
-pub async fn write_save(db: &PgPool, save: &Save, stored: Option<&StoredImage>) -> Result<usize> {
+///
+/// `author_picture` is the Drive copy of the author's profile picture, named
+/// in `metadata.author_picture_id`, which the room shows beside the name. The
+/// remote link is never stored: it expires, as the post's picture does.
+pub async fn write_save(
+    db: &PgPool,
+    save: &Save,
+    stored: Option<&StoredImage>,
+    author_picture: Option<&str>,
+) -> Result<usize> {
     let mut row = save.row.clone();
     if let Some(img) = stored {
         row.metadata["asset_id"] = json!(img.file_id);
+    }
+    if let Some(id) = author_picture {
+        row.metadata["author_picture_id"] = json!(id);
     }
     bookmarks::upsert_bookmarks(db, &[row]).await
 }
@@ -227,7 +259,11 @@ mod tests {
                 { "media": {
                     "pk": 1111, "code": "PHOTO1", "media_type": 1, "taken_at": 1_700_000_000,
                     "caption": { "text": "  the cream house with the green door  " },
-                    "user": { "username": "davidokafor" },
+                    "user": {
+                        "username": "davidokafor",
+                        "full_name": "David Okafor",
+                        "profile_pic_url": "https://cdn.example.com/p/do.jpg"
+                    },
                     "saved_collection_ids": ["1790000000000001"],
                     "image_versions2": { "candidates": [
                         { "url": "https://cdn.example.com/photo-hi.jpg" },
@@ -265,6 +301,10 @@ mod tests {
         assert_eq!(photo.row.url, "https://www.instagram.com/p/PHOTO1/");
         assert_eq!(photo.row.description.as_deref(), Some("the cream house with the green door"));
         assert_eq!(photo.row.author.as_deref(), Some("davidokafor"));
+        assert_eq!(photo.row.metadata["author_name"], "David Okafor");
+        assert_eq!(photo.author_picture_url.as_deref(), Some("https://cdn.example.com/p/do.jpg"));
+        assert!(photo.row.metadata.get("author_picture_url").is_none(),
+            "the expiring picture link is never stored");
         assert_eq!(photo.row.source_stream_id, "ig:saved:1111");
         assert_eq!(photo.image_url.as_deref(), Some("https://cdn.example.com/photo-hi.jpg"),
             "highest-resolution candidate first");
@@ -276,6 +316,8 @@ mod tests {
         assert_eq!(carousel.image_url.as_deref(), Some("https://cdn.example.com/c1.jpg"),
             "a carousel keeps its first image");
         assert!(carousel.row.description.is_none(), "no caption is None, not empty");
+        assert_eq!(carousel.row.metadata["author_name"], Value::Null, "no full name is left out");
+        assert!(carousel.author_picture_url.is_none());
 
         let video = &page.items[2];
         assert_eq!(video.image_url.as_deref(), Some("https://cdn.example.com/cover.jpg"),
