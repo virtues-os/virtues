@@ -14,6 +14,7 @@
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { LANDING } from '$lib/settings';
+import { isIOS, isMacOS } from '$lib/utils/platform';
 
 export interface ModeRow {
 	id: string;
@@ -105,6 +106,8 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
  * group's name.
  */
 function settingsRows(): ModeRow[] {
+	// Named as the landing page names it (`deviceLanding`).
+	const thisDevice = isMacOS && !isIOS ? 'This Mac' : 'This device';
 	const rows: ModeRow[] = [];
 	for (const group of LANDING) {
 		for (const { route } of group.links) {
@@ -123,7 +126,7 @@ function settingsRows(): ModeRow[] {
 		settingsRow('/virtues/search', 'Search', 'Server'),
 		settingsRow('/virtues/server-tasks', 'Server tasks', 'Server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Server'),
-		settingsRow('/virtues/devices/this', 'This device', 'This device'),
+		settingsRow('/virtues/devices/this', thisDevice, thisDevice),
 	);
 	return rows;
 }

@@ -173,7 +173,9 @@
 							<span class="text-foreground-subtle"> · optional</span>
 						{/if}
 					</div>
-					{#if perm.granted === false}
+					{#if perm.granted === true && perm.reads}
+						<div class="text-xs text-foreground-muted mt-0.5">On. {perm.reads}.</div>
+					{:else if perm.granted === false}
 						<div class="text-xs text-foreground-muted mt-0.5">Off, so {perm.costs}.</div>
 						{#if openable && perm.open}
 							<div class="text-xs text-foreground-muted mt-1">
