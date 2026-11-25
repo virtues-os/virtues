@@ -506,8 +506,9 @@ pub(crate) mod tests {
             // person, place and org homes and the app_task_links table.
             // Raised 300 on 2026-11-21 for the photo, listening and purchase
             // tables and the note on meeting transcripts, and 500 more the
-            // same day for the chats, tasks and threads tables.
-            ("sql_query", &["sql_query"], 7_650),
+            // same day for the chats, tasks and threads tables. Raised 50 on
+            // 2026-11-25 for the photo favorites table's new name.
+            ("sql_query", &["sql_query"], 7_700),
             // Mode-only tools, each set just above its 2026-09-29 size. Sudo
             // raised on 2026-10-27 for its clean environment and the
             // recovery-key ask.
@@ -552,7 +553,8 @@ pub(crate) mod tests {
             ("delete-data", 9_950),
             // Just above its size when it shipped on 2026-11-20.
             ("insight-report", 13_450),
-            ("meeting-prep", 9_350),
+            // Rose 50 on 2026-11-25 with sql_query.
+            ("meeting-prep", 9_400),
             ("morning-brief", 9_650),
             ("new-skill", 3_850),
             ("trip-planner", 10_250),
