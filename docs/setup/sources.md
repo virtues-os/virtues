@@ -29,11 +29,16 @@ yet. Your iPhone sends more than any account.
 
 ## What each source brings
 
-- **iPhone:** health, places, audio, calendar, contacts and photos, sent by
-  the Virtues iPhone app. You allow each kind in the app on the phone. For
-  photos, your server keeps when and where each photo and video was taken
-  and what kind it is, and a smaller copy of each favorite in Drive. The
-  originals stay on your phone, and the app never reads your Hidden album.
+- **iPhone:** health, places, audio, calendar, contacts and photo favorites,
+  sent by the Virtues iPhone app. You allow each kind in the app on the
+  phone. For each photo or video you favorite in Photos, your server keeps
+  when and where it was taken and a smaller copy of the picture (one frame,
+  for a video). A model provider describes each picture so you can search
+  for what is in it, under Photo favorites in Storage. iOS asks for your
+  whole library, but the app reads only favorites, never your Hidden album.
+  The originals stay on your phone. Unfavorite, hide or delete a photo and
+  its picture, place and description leave your server; a note you wrote
+  stays.
 - **Mac:** messages, the apps you use and your browsing, collected by the
   Virtues desktop app. What it may read depends on the permissions you grant
   in System Settings on that Mac.

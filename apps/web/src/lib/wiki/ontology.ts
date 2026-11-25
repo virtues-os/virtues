@@ -24,6 +24,7 @@ const ONTOLOGY_NAMES: Record<string, string> = {
 	web_browsing: "Web browsing",
 	document: "Documents",
 	bookmark: "Bookmarks",
+	photo: "Photo favorites",
 };
 
 /** Map a source_type back to its ontology display name. */

@@ -24,6 +24,8 @@ export type TabType =
 	| 'inbox' // Tasks, insights and what your server needs, in the views InboxView names: /inbox
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
+	| 'photos' // Photo favorites from the iPhone: /photos
+	| 'photo' // One photo favorite, and the note on it: /photo/{id}
 	| 'passwords' // Saved logins, in Drive: /passwords
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}

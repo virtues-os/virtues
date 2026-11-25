@@ -1,11 +1,18 @@
 import CoreLocation
 import Foundation
+import Network
 import Photos
 import UIKit
 
-// Shared outbox enqueue (defined in the reach plugin's ffi.rs).
+// The shared outbox and the link to the server (the reach plugin's ffi.rs).
 @_silgen_name("virtues_enqueue")
 private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePointer<CChar>) -> Int32
+@_silgen_name("virtues_outbox_queued")
+private func virtues_outbox_queued(_ stream: UnsafePointer<CChar>) -> Int64
+@_silgen_name("virtues_pairing_key")
+private func virtues_pairing_key(_ buffer: UnsafeMutablePointer<CChar>, _ length: Int) -> Int32
+@_silgen_name("virtues_drain_blocking")
+private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 
 // RFC 3339 in UTC, ending in Z: the formatter's default time zone is GMT.
 private let iso: ISO8601DateFormatter = {
@@ -14,34 +21,33 @@ private let iso: ISO8601DateFormatter = {
   return f
 }()
 
-/// Photo library collector: one record per photo or video → shared outbox → server.
+/// Photo favorites collector: one record per favorite photo or video → shared
+/// outbox → server. Nothing is read or sent for a photo that is not a favorite.
 ///
-/// The first pass sends every photo's metadata, oldest first, and remembers the
-/// creation date it reached so a pass cut short by the app being killed picks
-/// up where it stopped. After that, only changes go: PhotoKit's persistent
-/// change history says which photos were added, edited or deleted since the
-/// last token. A favorite also carries a JPEG about 1024 pixels on its longest
-/// side; other photos carry metadata only.
+/// Each record carries the photo's details and a JPEG at most 2048 pixels on
+/// its longest side. The original stays on the phone.
 ///
-/// id = PhotoKit's `localIdentifier`, so a photo sent again updates its row on
-/// the server, and a favorite sent later brings its picture.
+/// A pass compares the favorites in the library now with the ledger: what this
+/// phone has already sent to this server. A favorite the ledger does not have,
+/// or has at an older edit, is sent. One the ledger has and the library no
+/// longer offers (unfavorited, deleted, hidden, or left out of Limited access)
+/// is sent as removed. The ledger names the pairing it belongs to, so a phone
+/// paired again sends everything again.
 public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
   public static let shared = PhotosCollector()
 
   private static let stream = "photos"
-  private static let firstPassDoneKey = "virtues.photos.firstPassDone"
-  private static let cursorKey = "virtues.photos.firstPassCursor"
-  private static let tokenKey = "virtues.photos.changeToken"
-  /// Whether any part of the first pass ran with Limited access, so only the
-  /// photos the person picked were sent. Set when a part runs, never cleared
-  /// by a later part: a pass paused under Limited and finished under Full
-  /// sent only what was picked before its cursor.
-  private static let firstPassLimitedKey = "virtues.photos.firstPassLimited"
 
   /// The longest side of a favorite's picture, in pixels.
-  private static let pictureMaxPixel: CGFloat = 1024
-  /// How many assets one batch reads before the first pass saves its place.
-  private static let batchSize = 500
+  private static let pictureMaxPixel: CGFloat = 2048
+  /// Records waiting in the outbox before a pass stops to let them leave. A
+  /// picture is several hundred kilobytes, and the photo library keeps every
+  /// one, so there is no reason to hold many copies in the queue.
+  private static let maxWaiting: Int64 = 20
+  /// Favorites sent between two saves of the ledger.
+  private static let saveEvery = 10
+  /// How long one picture may take, including its download from iCloud.
+  private static let pictureTimeout: TimeInterval = 60
 
   /// Every pass runs here, one at a time, so a launch, a "Sync now" and a
   /// library change can never read the library twice at once.
@@ -51,8 +57,14 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
   private var scheduled = false
   private var observing = false
   private var changeDebounce: DispatchWorkItem?
+  private var retry: DispatchWorkItem?
 
-  private let defaults = UserDefaults.standard
+  /// Wi-Fi or another connection that is not metered. A favorite kept only in
+  /// iCloud is downloaded only on one of these.
+  private let pathMonitor = NWPathMonitor()
+  private var onCheapNetwork = false
+  /// The last pass left out a favorite whose picture was not available.
+  private var picturesMissing = false
 
   private override init() {}
 
@@ -63,8 +75,6 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     defer { lock.unlock() }
     return running
   }
-
-  public var firstPassDone: Bool { defaults.bool(forKey: Self.firstPassDoneKey) }
 
   private var accessStatus: PHAuthorizationStatus {
     PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -84,15 +94,14 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
       "authorized": authorized(),
       "limited": limited(),
       "collecting": isCollecting,
-      "firstPassDone": firstPassDone,
     ]
   }
 
   // MARK: Entry points
 
   /// Explicit opt-in: ask for library access, then start. Reading the library
-  /// needs the `.readWrite` level; PhotoKit has no read-only level for the
-  /// library itself, and this is how the "Full Access" choice is offered.
+  /// needs the `.readWrite` level; PhotoKit offers no read-only level and no
+  /// favorites-only one.
   public func enable(_ completion: @escaping (Bool) -> Void) {
     PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
       let ok = status == .authorized || status == .limited
@@ -127,7 +136,18 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     let already = observing
     observing = true
     lock.unlock()
-    if !already { PHPhotoLibrary.shared().register(self) }
+    if already { return }
+    PHPhotoLibrary.shared().register(self)
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      guard let self = self else { return }
+      let cheap = path.status == .satisfied && !path.isExpensive && !path.isConstrained
+      self.lock.lock()
+      let retry = cheap && !self.onCheapNetwork && self.picturesMissing
+      self.onCheapNetwork = cheap
+      self.lock.unlock()
+      if retry { self.schedule() }
+    }
+    pathMonitor.start(queue: DispatchQueue.global(qos: .utility))
   }
 
   /// A library change while the app runs. PhotoKit calls this on a background
@@ -167,10 +187,9 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
   }
 
   private func run() {
-    guard authorized() else { return }
+    guard authorized(), let pairing = pairingKey() else { return }
     // Ask iOS for time to finish if the app is sent to the background
-    // mid-pass. When the time runs out the pass just pauses; the first pass
-    // has saved its place and the change token only moves after a full read.
+    // mid-pass. When the time runs out the pass just pauses.
     var task = UIBackgroundTaskIdentifier.invalid
     task = UIApplication.shared.beginBackgroundTask(withName: "virtues.photos") {
       UIApplication.shared.endBackgroundTask(task)
@@ -179,187 +198,167 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     defer {
       if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
     }
-
-    if !firstPassDone {
-      firstPass()
-    } else if defaults.bool(forKey: Self.firstPassLimitedKey) && !limited() {
-      // The person moved from Limited to Full Access. The photos they had
-      // not picked are not changes in PhotoKit's history, so read the whole
-      // library again; the server skips the rows that have not changed.
-      restartFirstPass()
-    } else {
-      sendChanges()
-    }
+    pass(pairing)
   }
 
-  // MARK: First pass
+  // MARK: The pass
 
-  /// What every fetch shares: photos and videos only, never the Hidden album.
-  private func fetchOptions() -> PHFetchOptions {
+  private func pass(_ pairing: String) {
+    lock.lock()
+    let startedOnCheapNetwork = onCheapNetwork
+    lock.unlock()
+    var ledger = loadLedger(pairing)
+    let favorites = fetchFavorites()
+
+    if !sendRemovals(favorites, &ledger) { return }
+
+    var sent = 0
+    var missing = false
+    for index in 0..<favorites.count {
+      let asset = favorites.object(at: index)
+      let stamp = Self.stamp(asset)
+      if ledger[asset.localIdentifier] == stamp { continue }
+      guard makeRoom() else {
+        // The queue is full and the server did not take any of it. What is
+        // left goes on a later pass: the next launch, library change, sync or
+        // this retry, whichever comes first.
+        saveLedger(ledger, pairing)
+        retryLater()
+        return
+      }
+      var ok = true
+      autoreleasepool {
+        guard let record = record(asset) else {
+          missing = true
+          return
+        }
+        ok = enqueue(record)
+        if ok { ledger[asset.localIdentifier] = stamp }
+      }
+      guard ok else {
+        saveLedger(ledger, pairing)
+        return
+      }
+      sent += 1
+      if sent % Self.saveEvery == 0 { saveLedger(ledger, pairing) }
+    }
+    saveLedger(ledger, pairing)
+    lock.lock()
+    picturesMissing = missing
+    // The network became unmetered during the pass, after some pictures were
+    // already left out.
+    let again = missing && onCheapNetwork && !startedOnCheapNetwork
+    lock.unlock()
+    if again { schedule() }
+  }
+
+  /// Run another pass in a few minutes. A pass that asks again replaces the
+  /// one waiting, so there is never more than one.
+  private func retryLater() {
+    let work = DispatchWorkItem { [weak self] in self?.schedule() }
+    lock.lock()
+    retry?.cancel()
+    retry = work
+    lock.unlock()
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 300, execute: work)
+  }
+
+  /// Favorite photos and videos, newest first, never the Hidden album.
+  private func fetchFavorites() -> PHFetchResult<PHAsset> {
     let opts = PHFetchOptions()
-    // Never read the Hidden album. This is PhotoKit's default, set here so
-    // that no later edit can turn it on by accident.
+    // PhotoKit's default, set here so that no later edit can turn it on by
+    // accident.
     opts.includeHiddenAssets = false
     // The person's own library and photos synced from a computer. Shared
     // albums hold other people's photos, so they stay out.
     opts.includeAssetSourceTypes = [.typeUserLibrary, .typeiTunesSynced]
-    return opts
-  }
-
-  private func firstPass() {
-    let library = PHPhotoLibrary.shared()
-    // Take the change token before reading, and keep the one from the start
-    // of an interrupted pass. Changes made while the pass runs are then read
-    // by the first change pass after it.
-    if loadToken() == nil { saveToken(library.currentChangeToken) }
-    if limited() { defaults.set(true, forKey: Self.firstPassLimitedKey) }
-
-    let opts = fetchOptions()
-    let media = NSPredicate(
-      format: "mediaType == %d OR mediaType == %d",
+    opts.predicate = NSPredicate(
+      format: "isFavorite == YES AND (mediaType == %d OR mediaType == %d)",
       PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-    if let cursor = defaults.object(forKey: Self.cursorKey) as? Double {
-      // `>=` sends again the photos taken in the same second as the last one
-      // sent, so a photo that shares that timestamp is never skipped.
-      let since = NSPredicate(format: "creationDate >= %@", Date(timeIntervalSince1970: cursor) as NSDate)
-      opts.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [media, since])
-    } else {
-      opts.predicate = media
-    }
-    opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-
-    let result = PHAsset.fetchAssets(with: opts)
-    let total = result.count
-    var start = 0
-    while start < total {
-      let end = min(start + Self.batchSize, total)
-      var ok = true
-      var last: Date?
-      autoreleasepool {
-        for asset in result.objects(at: IndexSet(integersIn: start..<end)) {
-          guard send(asset) else {
-            ok = false
-            return
-          }
-          if let created = asset.creationDate { last = created }
-        }
-      }
-      // Save the place up to the last record the outbox took, so a record it
-      // refused is read again next time.
-      if let last = last {
-        defaults.set(last.timeIntervalSince1970, forKey: Self.cursorKey)
-      }
-      guard ok else {
-        NSLog("[Photos] first pass stopped at %ld of %ld; it resumes on the next pass", start, total)
-        return
-      }
-      start = end
-    }
-
-    defaults.set(true, forKey: Self.firstPassDoneKey)
-    defaults.removeObject(forKey: Self.cursorKey)
-    NSLog("[Photos] first pass sent %ld assets", total)
-    // Catch up on anything that changed while the pass ran. A pass that
-    // just finished never starts itself over, so lost history cannot loop.
-    sendChanges(restartIfHistoryLost: false)
+    opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    return PHAsset.fetchAssets(with: opts)
   }
 
-  /// Start the first pass over: the change history could not be read, or
-  /// access widened from Limited to Full.
-  private func restartFirstPass() {
-    defaults.set(false, forKey: Self.firstPassDoneKey)
-    defaults.removeObject(forKey: Self.firstPassLimitedKey)
-    defaults.removeObject(forKey: Self.cursorKey)
-    defaults.removeObject(forKey: Self.tokenKey)
-    firstPass()
+  /// Send each photo the ledger has and the library no longer offers as a
+  /// favorite. False when the outbox refused one.
+  private func sendRemovals(_ favorites: PHFetchResult<PHAsset>, _ ledger: inout [String: String]) -> Bool {
+    if ledger.isEmpty { return true }
+    // An empty library means it could not be read (it is still loading, or
+    // iCloud Photos was just turned off), so it removes nothing.
+    let any = PHFetchOptions()
+    any.fetchLimit = 1
+    if PHAsset.fetchAssets(with: any).count == 0 { return true }
+
+    var now = Set<String>()
+    favorites.enumerateObjects { asset, _, _ in now.insert(asset.localIdentifier) }
+    for id in ledger.keys.filter({ !now.contains($0) }) {
+      guard enqueue(["local_id": id, "deleted": true]) else { return false }
+      ledger[id] = nil
+    }
+    return true
   }
 
-  // MARK: Changes
+  /// Wait for the outbox to have room, sending what is in it. False when it
+  /// is still full afterward.
+  private func makeRoom() -> Bool {
+    if waiting() < Self.maxWaiting { return true }
+    _ = virtues_drain_blocking(25)
+    return waiting() < Self.maxWaiting
+  }
 
-  private func sendChanges(restartIfHistoryLost: Bool = true) {
-    guard let token = loadToken() else {
-      if restartIfHistoryLost { restartFirstPass() }
-      return
-    }
-    let library = PHPhotoLibrary.shared()
+  /// Photo records in the outbox. An error reads as full, so a queue that
+  /// cannot be counted is not added to.
+  private func waiting() -> Int64 {
+    let n = Self.stream.withCString { virtues_outbox_queued($0) }
+    return n < 0 ? Int64.max : n
+  }
 
-    var inserted = Set<String>()
-    var updated = Set<String>()
-    var deleted = Set<String>()
-    var latest: PHPersistentChangeToken?
+  // MARK: The ledger
+
+  private struct Ledger: Codable {
+    var pairing: String
+    /// PhotoKit's local identifier → the edit that was sent.
+    var sent: [String: String]
+  }
+
+  private var ledgerURL: URL? {
+    try? FileManager.default.url(
+      for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+    ).appendingPathComponent("photo-favorites.json")
+  }
+
+  /// What was sent to the server this phone is paired with. Empty for another
+  /// pairing, so a new server gets every favorite.
+  private func loadLedger(_ pairing: String) -> [String: String] {
+    guard let url = ledgerURL, let data = try? Data(contentsOf: url),
+      let ledger = try? JSONDecoder().decode(Ledger.self, from: data), ledger.pairing == pairing
+    else { return [:] }
+    return ledger.sent
+  }
+
+  private func saveLedger(_ sent: [String: String], _ pairing: String) {
+    guard let url = ledgerURL else { return }
     do {
-      for change in try library.fetchPersistentChanges(since: token) {
-        let details = try change.changeDetails(for: .asset)
-        inserted.formUnion(details.insertedLocalIdentifiers)
-        updated.formUnion(details.updatedLocalIdentifiers)
-        deleted.formUnion(details.deletedLocalIdentifiers)
-        latest = change.changeToken
-      }
+      let data = try JSONEncoder().encode(Ledger(pairing: pairing, sent: sent))
+      // Readable after the first unlock: a pass can run while the phone is locked.
+      try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     } catch {
-      handleHistoryError(error, restart: restartIfHistoryLost)
-      return
+      NSLog("[Photos] could not save the ledger: %@", error.localizedDescription)
     }
-    guard let newToken = latest else { return }  // nothing changed
-
-    // Read every changed photo as it is now. One that can no longer be
-    // fetched was deleted, or was moved to the Hidden album, and either way
-    // the server marks it gone.
-    let ids = Array(inserted.union(updated).union(deleted))
-    var found = Set<String>()
-    var start = 0
-    while start < ids.count {
-      let chunk = Array(ids[start..<min(start + Self.batchSize, ids.count)])
-      var ok = true
-      autoreleasepool {
-        let result = PHAsset.fetchAssets(withLocalIdentifiers: chunk, options: fetchOptions())
-        for asset in result.objects(at: IndexSet(integersIn: 0..<result.count)) {
-          guard asset.mediaType == .image || asset.mediaType == .video, !asset.isHidden else { continue }
-          found.insert(asset.localIdentifier)
-          guard send(asset) else {
-            ok = false
-            return
-          }
-        }
-      }
-      // The token moves only after every change is in the outbox, so a
-      // refused record is read again next time.
-      guard ok else { return }
-      start += Self.batchSize
-    }
-
-    // A photo only inserted and already gone never reached the server, so
-    // it gets no deletion either.
-    for id in deleted.union(updated) where !found.contains(id) {
-      guard enqueue(["id": id, "deleted": true]) else { return }
-    }
-    saveToken(newToken)
   }
 
-  private func handleHistoryError(_ error: Error, restart: Bool) {
-    if restart, let e = error as? PHPhotosError,
-      e.code == .persistentChangeTokenExpired || e.code == .persistentChangeDetailsUnavailable
-    {
-      // The history no longer reaches back to the saved token, so read the
-      // whole library again. The server updates rows it already has.
-      NSLog("[Photos] change history unavailable (%ld); sending the library again", e.code.rawValue)
-      restartFirstPass()
-      return
-    }
-    NSLog("[Photos] reading the change history failed: %@", error.localizedDescription)
+  /// Which pairing this is, or nil on a phone that is not paired.
+  private func pairingKey() -> String? {
+    var buffer = [CChar](repeating: 0, count: 256)
+    guard virtues_pairing_key(&buffer, buffer.count) == 0 else { return nil }
+    return String(cString: buffer)
   }
 
-  private func loadToken() -> PHPersistentChangeToken? {
-    guard let data = defaults.data(forKey: Self.tokenKey) else { return nil }
-    return try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: data)
-  }
-
-  private func saveToken(_ token: PHPersistentChangeToken) {
-    do {
-      let data = try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
-      defaults.set(data, forKey: Self.tokenKey)
-    } catch {
-      NSLog("[Photos] could not save the change token: %@", error.localizedDescription)
-    }
+  /// The edit of a photo as this version of the collector sends it. A change
+  /// to the picture's size changes every stamp, so each one is sent again.
+  private static func stamp(_ a: PHAsset) -> String {
+    let edited = a.modificationDate ?? a.creationDate
+    return "\(edited?.timeIntervalSince1970 ?? 0)|\(Int(pictureMaxPixel))"
   }
 
   // MARK: Records
@@ -371,18 +370,20 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     return "photo"
   }
 
-  /// Send one asset. False when the outbox refused it, so the caller stops
-  /// and keeps its place. An asset with no creation date is skipped and
-  /// counts as sent: the server has no use for it.
-  private func send(_ a: PHAsset) -> Bool {
-    guard !a.isHidden, let created = a.creationDate else { return true }
+  /// One favorite's record, or nil when its picture is not available now: it
+  /// is only in iCloud and the phone is offline or on a metered connection.
+  /// Nothing goes in the ledger then, so the next pass tries again.
+  private func record(_ a: PHAsset) -> [String: Any]? {
+    guard let created = a.creationDate, let jpeg = picture(a) else { return nil }
     var rec: [String: Any] = [
-      "id": a.localIdentifier,
+      "local_id": a.localIdentifier,
       "created_at": iso.string(from: created),
       "kind": Self.kind(a),
-      "is_favorite": a.isFavorite,
+      "is_favorite": true,
       "width_px": a.pixelWidth,
       "height_px": a.pixelHeight,
+      "image_data": jpeg.base64EncodedString(),
+      "image_mime": "image/jpeg",
     ]
     // JSONSerialization raises on NaN or infinity, so only finite, valid
     // coordinates go.
@@ -398,21 +399,12 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     if let modified = a.modificationDate {
       rec["modified_at"] = iso.string(from: modified)
     }
-    if a.isFavorite {
-      if let jpeg = picture(a) {
-        rec["image_data"] = jpeg.base64EncodedString()
-        rec["image_mime"] = "image/jpeg"
-      } else {
-        NSLog("[Photos] no picture for a favorite; sending its metadata alone")
-      }
-    }
-    return enqueue(rec)
+    return rec
   }
 
-  /// A favorite's picture as JPEG, at most `pictureMaxPixel` on its longest
-  /// side. A video gives its poster frame. Network access is allowed because
-  /// a favorite may be stored only in iCloud. Synchronous, so it must run off
-  /// the main thread, which every pass does.
+  /// A photo as JPEG, at most `pictureMaxPixel` on its longest side. A video
+  /// gives its poster frame. The result is delivered on the main thread and
+  /// waited for here, so this must run off it, which every pass does.
   private func picture(_ a: PHAsset) -> Data? {
     let w = CGFloat(a.pixelWidth)
     let h = CGFloat(a.pixelHeight)
@@ -421,49 +413,41 @@ public final class PhotosCollector: NSObject, PHPhotoLibraryChangeObserver {
     let factor = min(1, Self.pictureMaxPixel / longest)
     let target = CGSize(width: (w * factor).rounded(), height: (h * factor).rounded())
 
+    lock.lock()
+    let network = onCheapNetwork
+    lock.unlock()
     let opts = PHImageRequestOptions()
     opts.deliveryMode = .highQualityFormat
     opts.resizeMode = .exact
-    opts.isNetworkAccessAllowed = true
-    opts.isSynchronous = true
+    opts.isNetworkAccessAllowed = network
 
-    var jpeg: Data?
-    autoreleasepool {
-      _ = PHImageManager.default().requestImage(
-        for: a, targetSize: target, contentMode: .aspectFit, options: opts
-      ) { image, _ in
-        jpeg = image?.jpegData(compressionQuality: 0.8)
-      }
+    let done = DispatchSemaphore(value: 0)
+    var image: UIImage?
+    let request = PHImageManager.default().requestImage(
+      for: a, targetSize: target, contentMode: .aspectFit, options: opts
+    ) { result, info in
+      // Offline, PhotoKit can hand back a small thumbnail in place of the
+      // picture. That is not the picture.
+      let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+      let onlyInCloud = !network && (info?[PHImageResultIsInCloudKey] as? Bool) == true
+      if !degraded && !onlyInCloud { image = result }
+      done.signal()
     }
-    return jpeg
+    if done.wait(timeout: .now() + Self.pictureTimeout) == .timedOut {
+      PHImageManager.default().cancelImageRequest(request)
+      return nil
+    }
+    return image?.jpegData(compressionQuality: 0.8)
   }
 
   /// The outbox keeps one row per `id` and ignores a second record with the
-  /// same `id` while the first is still waiting. So each version of a photo
-  /// gets its own `id` (the photo's identifier, then its modification date,
-  /// favorite flag or deletion), and the photo's identifier travels as
-  /// `local_id`, which is what the server keys the photo on. A later change
-  /// is then never dropped behind an earlier one still in the queue, and the
-  /// same version sent twice is still one row.
-  private static func versioned(_ rec: [String: Any]) -> [String: Any] {
-    guard let localId = rec["id"] as? String else { return rec }
-    var out = rec
-    let version: String
-    if rec["deleted"] as? Bool == true {
-      version = "deleted"
-    } else {
-      let stamp = (rec["modified_at"] as? String) ?? (rec["created_at"] as? String) ?? ""
-      let favorite = (rec["is_favorite"] as? Bool) == true ? "f" : "n"
-      let picture = rec["image_data"] == nil ? "" : "p"
-      version = "\(stamp)|\(favorite)\(picture)"
-    }
-    out["local_id"] = localId
-    out["id"] = "\(localId)#\(version)"
-    return out
-  }
-
+  /// same `id` while the first waits, so each record gets an `id` of its own:
+  /// a photo favorited, removed and favorited again is three. The photo's
+  /// identifier travels as `local_id`, which the server keys the photo on, and
+  /// the outbox sends photo records in the order they were queued.
   private func enqueue(_ record: [String: Any]) -> Bool {
-    let rec = Self.versioned(record)
+    var rec = record
+    rec["id"] = "\(record["local_id"] as? String ?? "")#\(UUID().uuidString)"
     guard
       let data = try? JSONSerialization.data(withJSONObject: rec),
       let json = String(data: data, encoding: .utf8)

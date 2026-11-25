@@ -63,6 +63,7 @@ pub mod backgrounds;
 pub mod bookmarks;
 pub mod page_convert;
 pub mod page_reads;
+pub mod photos;
 pub mod pages;
 pub mod updates;
 pub mod live_turn;

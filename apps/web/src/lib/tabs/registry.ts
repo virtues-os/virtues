@@ -46,6 +46,8 @@ const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
 const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/PasswordsView.svelte');
+const PhotosView: ViewLoader = () => import('$lib/components/tabs/views/PhotosView.svelte');
+const PhotoDetailView: ViewLoader = () => import('$lib/components/tabs/views/PhotoDetailView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
 const ThreadsView: ViewLoader = () => import('$lib/components/tabs/views/ThreadsView.svelte');
 const ThreadView: ViewLoader = () => import('$lib/components/tabs/views/ThreadView.svelte');
@@ -444,6 +446,38 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Bookmark',
 		component: BookmarkDetailView,
 		detailComponent: BookmarkDetailView,
+	},
+
+	// PHOTO FAVORITES: /photos, and one photo at /photo/{id}.
+	photos: {
+		match: (path) => path === '/photos',
+		parse: () => ({
+			type: 'photos',
+			label: 'Photo favorites',
+			icon: 'mynaui:image',
+			normalizedRoute: '/photos',
+		}),
+		serialize: () => 'photos',
+		deserialize: () => '/photos',
+		icon: 'mynaui:image',
+		defaultLabel: 'Photo favorites',
+		component: PhotosView,
+	},
+	photo: {
+		match: (path) => /^\/photo\/.+$/.test(path),
+		parse: (path) => ({
+			type: 'photo',
+			label: 'Photo',
+			icon: 'mynaui:image',
+			entityId: path.match(/^\/photo\/(.+)$/)?.[1],
+		}),
+		serialize: (id) => (id ? `photo_${id}` : 'photo'),
+		deserialize: (serialized) =>
+			serialized.startsWith('photo_') ? `/photo/${serialized.slice(6)}` : '/photos',
+		icon: 'mynaui:image',
+		defaultLabel: 'Photo',
+		component: PhotoDetailView,
+		detailComponent: PhotoDetailView,
 	},
 
 	// ========================================================================
@@ -1073,6 +1107,8 @@ export function parseRoute(route: string): ParsedRoute {
 		// unreachable — this array is what routing actually walks.
 		'bookmark',
 		'bookmarks',
+		'photo',
+		'photos',
 		'passwords',
 		'day',
 		'year',
