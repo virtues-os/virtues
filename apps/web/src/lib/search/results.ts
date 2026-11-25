@@ -317,6 +317,7 @@ const ROOMS: Record<string, { route: string; noun: string; glyph: string }> = {
 	app_chat: { route: '/chat', noun: 'Chat', glyph: 'atlas:chats' },
 	app_page: { route: '/page', noun: 'Page', glyph: 'atlas:pages' },
 	content_bookmark: { route: '/bookmark', noun: 'Bookmark', glyph: 'atlas:bookmarks' },
+	content_photo: { route: '/photo', noun: 'Photo', glyph: 'atlas:media' },
 };
 
 /** The glyph for a content hit: its view's, else the one for records. */

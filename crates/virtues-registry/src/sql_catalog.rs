@@ -359,9 +359,9 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: None,
     });
     m.insert("data_content_photo", TableMetadata {
-        description: "iPhone photos and videos",
+        description: "Photo favorites from the iPhone",
         category: "content",
-        key_columns: &["occurred_at", "kind", "is_favorite", "latitude", "longitude", "asset_id"],
+        key_columns: &["occurred_at", "kind", "latitude", "longitude", "note", "extraction_text", "asset_id", "deleted_at_source"],
         join_hint: Some("JOIN app_drive_files f ON f.id = data_content_photo.asset_id"),
         note: None,
     });

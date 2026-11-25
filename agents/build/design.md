@@ -718,8 +718,7 @@ Decide which grammar applies before styling anything.
   page. A picture sits inside the column at the measure of the words
   (`chat/getting-started/RoomCover.svelte`).
 - **The tools**: Settings and the list pages. `Card` for surfaces,
-  `UniversalDataGrid` for rows, `SubNav` for tabs, and no furniture of their
-  own.
+  `UniversalDataGrid` for rows, and no furniture of their own.
 
 ### Sequence and progress
 
@@ -741,8 +740,8 @@ remount it to change that phase, or the two chase each other.
 ## Primitives
 
 The parts every page is built from. Each lives in `apps/web/src/lib/` and
-should have a specimen on `/design` (`Popover`, `Page`, `SubNav` and
-`Section` do not yet). When a primitive exists, a page uses it: a hand-made
+should have a specimen on `/design` (`Popover`, `Page` and `Section`
+do not yet). When a primitive exists, a page uses it: a hand-made
 copy is a regression, however small.
 
 "Today" is what the code does now. "Decided" is where it is going, and the
@@ -764,7 +763,6 @@ gap is open work.
 | Tooltip | A name for something whose words are hidden or cut off. | `data-tip` through `TooltipLayer` (29), and the browser's `title=` (185). | `data-tip` only, and only where words are hidden. |
 | `Card` | A framed surface. | 5 files. | Kept. |
 | List row | One row in a list. | `.row` written about 188 times; `SettingRow`, `LinkRow`. `UniversalDataGrid` for list pages (19 files). | One row primitive; the grid stays for list pages. |
-| `SubNav` | In-page tabs, route-driven. | 1 file. | Kept. |
 | Section label | The heading of a group of rows. | `Section` in 4 files; `.eyebrow`, `.group-label`, `.section-title`, `.kicker` in 26. | One label. |
 | `EmptyState`, `LoadingState`, `ErrorState` | What a page shows when there is nothing yet. | Built on `StateBlock`; used in 1, 3 and 3 files, beside 26 hand-made empty states and the spinner icon placed by hand in 31. | Kept, and used. |
 | `Page` | The page frame and its width. | About 20 files. | Kept. |

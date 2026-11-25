@@ -180,7 +180,7 @@
 	{/if}
 {:else}
 	<div class="corner">
-		<Popover bind:open={() => isOpen, setOpen} placement="top-end" offset={10}>
+		<Popover bind:open={() => isOpen, setOpen} placement="top-end" offset={10} glass>
 			{#snippet trigger({ toggle })}
 				<button
 					type="button"

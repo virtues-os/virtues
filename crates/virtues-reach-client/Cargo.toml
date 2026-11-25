@@ -3,7 +3,7 @@ name = "virtues-reach-client"
 version = "0.1.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
-description = "Transport-agnostic reach client: pair a device to a Virtues box and serve it over iroh. Shared by the desktop `virtues-client` sidecar and the mobile (Tauri) in-process reach plugin. Credential storage is injected via the BoxStore trait so each host provides its own keystore."
+description = "Transport-agnostic reach client: pair a device to a Virtues box and serve it over iroh. Used in process by the Tauri app's reach plugin on desktop and mobile. Credential storage is injected via the BoxStore trait so each host provides its own keystore."
 license.workspace = true
 repository = "https://github.com/virtues-os/virtues"
 

@@ -560,7 +560,7 @@ mod tests {
             .unwrap()
     }
 
-    /// A 384-d index (every Dragon runs gte-small) over the migrations' 256-d
+    /// A 384-d index (gte-small, say) over the migrations' 256-d
     /// columns, with a centroid left behind at the old width by the magnet.
     async fn box_at_384(pool: &PgPool) -> Database {
         for stmt in [

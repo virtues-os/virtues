@@ -1,5 +1,6 @@
 //! The box asking about itself: `POST /account/entitlement { api_key }`
-//! → `{ linked: true, subscribed: bool, email: string | null }`.
+//! → `{ linked: true, subscribed: bool, email: string | null,
+//!     renews_at: timestamp | null }`.
 //!
 //! atlas has always known this — `is_entitled` is exact and `key_owner` already
 //! separates "valid key, never paid" from "unknown key". What was missing was a
@@ -96,9 +97,24 @@ async fn entitlement(
         }
     };
 
+    // When Stripe bills next, which is also when the monthly allotment resets.
+    // A label like the email: a failed read is logged and sent as null.
+    let renews_at = match super::account::account_renews_at(&state.pool, &account_id).await {
+        Ok(at) => at,
+        Err(e) => {
+            tracing::warn!("entitlement renewal date lookup failed: {e:#}");
+            None
+        }
+    };
+
     (
         StatusCode::OK,
-        Json(json!({ "linked": true, "subscribed": subscribed, "email": email })),
+        Json(json!({
+            "linked": true,
+            "subscribed": subscribed,
+            "email": email,
+            "renews_at": renews_at,
+        })),
     )
         .into_response()
 }

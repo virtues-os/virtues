@@ -47,16 +47,29 @@ static INGEST_KEY: Mutex<String> = Mutex::new(String::new());
 /// radio from ever idling while offline.
 const BACKOFF_SECS: [i64; 6] = [30, 60, 120, 240, 300, 300];
 
-/// Microphone enqueues are refused past this many bytes of LIVE outbox pages.
+/// Microphone enqueues are refused past this many bytes of queued microphone
+/// payload. Another stream's backlog never counts against it.
 /// ~1 GiB ≈ 3 days of continuous non-silent audio backlog against an
 /// unreachable box. Back-pressure, never eviction: once the producer deletes
 /// its .m4a on a 0 return, the row here is the ONLY copy of that recording, so
 /// rows must never be dropped to make room — instead new enqueues are refused
 /// and the producer keeps its source file (audio retries via its orphan sweep
-/// with a logged 7-day age-out). Only the microphone stream is gated: its rows
-/// are megabytes; every other stream writes bytes-to-KB rows from re-readable
-/// sources and cannot fill a disk at plausible rates.
+/// with a logged 7-day age-out). Only the microphone stream is gated here: the
+/// photos collector keeps its own queue to a few pictures, and every other
+/// stream writes bytes-to-KB rows from re-readable sources.
 const MIC_CAP_BYTES: i64 = 1024 * 1024 * 1024;
+
+/// The longest wait for [`STRICT_ORDER`]'s rows. A batch of pictures is about
+/// 2 MB, and a server that keeps refusing one (its disk is full) would
+/// otherwise be sent it every five minutes, on cellular too.
+const PHOTO_BACKOFF_SECS: i64 = 3600;
+
+/// The stream whose rows never overtake each other. A photo can be favorited,
+/// then removed, and the server applies the records in the order they arrive:
+/// a removal that went ahead of a favorite still in backoff would be undone by
+/// it. So a photo row waits for every photo row queued before it.
+const STRICT_ORDER: &str = "photos";
+
 
 /// Marker error for [`MIC_CAP_BYTES`], so the FFI can surface back-pressure as
 /// its own return code instead of folding it into the generic failure bucket.
@@ -175,17 +188,12 @@ pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Res
 
     let conn = conn()?;
     if stream == "microphone" && payload.len() > 65_536 {
-        // Live bytes = pages minus the freelist: a DELETE-drained queue frees
-        // pages without shrinking the file (no VACUUM runs here), so a raw
-        // file-size check would trip once and never recover. This un-trips as
-        // soon as acks free rows. O(1) pragmas, no table scan.
         // Metadata-only silent rows (~300B) are exempt: they cannot fill a
         // disk, and refusing them makes the producer's orphan sweep re-upload
         // silence as full audio while the timeline loses its coverage rows.
+        // octet_length reads a row's header and never loads its payload.
         let live_bytes: i64 = conn.query_row(
-            "SELECT (pragma_page_count.page_count - pragma_freelist_count.freelist_count)
-                    * pragma_page_size.page_size
-             FROM pragma_page_count, pragma_freelist_count, pragma_page_size",
+            "SELECT COALESCE(SUM(octet_length(payload)), 0) FROM outbox WHERE stream = 'microphone'",
             [],
             |r| r.get(0),
         )?;
@@ -232,36 +240,52 @@ pub fn applet_key_for(stream: &str) -> Result<Option<String>> {
 pub fn claim_batch(stream: &str, max_bytes: usize, max_rows: usize) -> Result<Claimed> {
     let conn = conn()?;
     let now = now();
+    // Everything before the first row of a strict stream that is in flight or
+    // waiting out a backoff; every row of any other stream.
+    let before: i64 = if stream == STRICT_ORDER {
+        conn.query_row(
+            "SELECT COALESCE(MIN(rowid), 9223372036854775807) FROM outbox
+             WHERE stream = ?1 AND (claimed_at IS NOT NULL OR next_attempt_at > ?2)",
+            params![stream, now],
+            |r| r.get(0),
+        )?
+    } else {
+        i64::MAX
+    };
     let mut stmt = conn.prepare(
         "SELECT source_stream_id, payload FROM outbox
-         WHERE stream = ?1 AND claimed_at IS NULL AND next_attempt_at <= ?2
-         ORDER BY created_at LIMIT ?3",
+         WHERE stream = ?1 AND claimed_at IS NULL AND next_attempt_at <= ?2 AND rowid < ?4
+         ORDER BY created_at, rowid LIMIT ?3",
     )?;
-    let candidates = stmt
-        .query_map(params![stream, now, max_rows as i64], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
 
+    // Rows are read one at a time and the read stops at the byte limit, so a
+    // queue of large rows (audio, pictures) never loads more than one batch.
     let mut ids = Vec::new();
     let mut records = Vec::new();
+    let mut unreadable = Vec::new();
     let mut bytes = 0usize;
-    for (id, payload) in candidates {
+    let mut rows = stmt.query(params![stream, now, max_rows as i64, before])?;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(1)?;
         if !ids.is_empty() && bytes + payload.len() > max_bytes {
             break;
         }
+        let id: String = row.get(0)?;
         match serde_json::from_str::<Value>(&payload) {
             Ok(v) => {
                 bytes += payload.len();
                 records.push(v);
                 ids.push(id);
             }
-            // A row that no longer parses can never be sent — drop it so it
-            // doesn't wedge the queue forever.
-            Err(_) => {
-                conn.execute("DELETE FROM outbox WHERE source_stream_id = ?1", params![id])?;
-            }
+            Err(_) => unreadable.push(id),
         }
+    }
+    drop(rows);
+    drop(stmt);
+    // A row that no longer parses can never be sent. Drop it so it doesn't
+    // wedge the queue forever.
+    for id in unreadable {
+        conn.execute("DELETE FROM outbox WHERE source_stream_id = ?1", params![id])?;
     }
 
     if !ids.is_empty() {
@@ -303,6 +327,7 @@ pub fn nack(ids: &[String]) -> Result<()> {
          SET attempts = attempts + 1,
              claimed_at = NULL,
              next_attempt_at = ?1 + CASE
+                WHEN attempts >= 5 AND stream = '{STRICT_ORDER}' THEN {PHOTO_BACKOFF_SECS}
                 WHEN attempts >= 5 THEN {b5}
                 WHEN attempts = 4 THEN {b4}
                 WHEN attempts = 3 THEN {b3}

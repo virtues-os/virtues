@@ -1,11 +1,10 @@
-//! Native photo library collector plugin.
+//! Native photo favorites collector plugin.
 //!
-//! On iOS it sends one record per photo or video into the shared outbox via
-//! `virtues_enqueue` (stream `photos`, id = PhotoKit's local identifier, so a
-//! photo sent again updates its row on the server). The first pass sends every
-//! photo's metadata; after that only changes go, read from PhotoKit's
-//! persistent change history. A favorite also carries a picture about 1024
-//! pixels on its longest side. The Rust side is thin; collection is Swift.
+//! On iOS it sends one record per favorite photo or video into the shared
+//! outbox via `virtues_enqueue` (stream `photos`, `local_id` = PhotoKit's local
+//! identifier, so a photo sent again updates its row on the server), with a
+//! picture at most 2048 pixels on its longest side. A photo that stops being a
+//! favorite is sent as removed. The Rust side is thin; collection is Swift.
 
 use tauri::{
   plugin::{Builder, TauriPlugin},

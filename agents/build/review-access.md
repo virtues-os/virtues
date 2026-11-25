@@ -191,6 +191,10 @@ than assuming it: eleven bad codes in a row must produce a 429.
    through Caddy gets 421, pairing at `/api/pair/consume` included. Beyond
    that, the list passes CORS and opens the page socket: the terminal and the
    owner's browser socket still take the app's own origins alone.
+6c. On the cloud server, `OAUTH_RETURN_HOSTS` in `/etc/virtues/api.env` lists
+   `demo.virtues.com` (comma-separated, exact hostnames, https only). A connect
+   started from a public name that is not listed is refused with "invalid
+   return_url". An env change needs the container recreated.
 7. **Install the demo life.** The demo data and its tooling (the generator, the
    install, placement and reset scripts) are not in this repo: they were taken
    out on 2026-10-19 until a demo is built from pure invention and reviewed. The

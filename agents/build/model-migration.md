@@ -5,7 +5,6 @@ The box talks to local inference over loopback HTTP: embedding on `:18181`
 
 | Profile | Server | Files it loads |
 |---|---|---|
-| **Dragon** (`VIRTUES_INFERENCE=dragon`), installs before the move only | `virtues-qnnd` on the Hexagon NPU, one unit | QAIRT context binaries + tokenizers under `$DATA_DIR/models/qnn/` |
 | **Bundled** (`VIRTUES_INFERENCE=bundled`) | one CPU `llama-server` sidecar, `virtues-embed` (plus `virtues-embed-next` on `:18183` while a model change runs) | GGUFs under `$DATA_DIR/models/` |
 | `make dev` | `llama-server` sidecars the Makefile starts | GGUFs under `.data/models/` |
 
@@ -29,12 +28,6 @@ model while the runtime expects another.
    in `install.rs`.
 3. `Makefile` — `EMBED_GGUF` and its download URL, for `make dev`.
 4. `.github/workflows/models-release.yml` — the default `embed_url`.
-
-**QNN context binaries (Dragon):** frozen. The installer no longer sets up
-`virtues-qnnd`, and Dragons still on it move to the bundled setup (below), so
-nothing fetches these again. `inference_report.rs` names them
-(`QNN_EMBED_BIN` / `QNN_RERANK_BIN`) only to report what an unmoved Dragon
-runs.
 
 **GGUFs:** the bytes live on the `models-1` GitHub release (`models_base`),
 SHA-256 sidecars beside them. Assets are immutable: ship a new model under a
@@ -75,35 +68,6 @@ every chunk has one, it swaps the two tables in one short transaction
 reads embedding settings from there through `box_env::var`), and then, under
 `search_index_meta.rescore_pending`, forgets the old event embeddings and
 rescores every day. Settings → Search shows the progress.
-
-**A Dragon on its NPU moves to the bundled setup** when its owner runs
-`sudo virtues configure-inference --recommended` (or re-runs the installer,
-which ends with that). For now nothing starts it automatically, so the first
-boxes to move are ones someone watches (`start_recommended_change` has a dated
-TODO). The command starts the recommended model as `virtues-embed-next` and
-sets `VIRTUES_INFERENCE=bundled`, while `virtues-qnnd` keeps serving search.
-The settle after the swap retires `virtues-qnnd` and its settings before the
-new model takes `:18181`; with automatic updates off, running the command again
-after the swap does the same. A Dragon's sidecar unit is always written fresh
-with its pacing (two threads on cores 4 to 6, `CPUWeight=20`), never retargeted
-from an older unit. A Dragon on `manual` is left alone like any other, by the
-updates and by an installer re-run.
-
-**Backing out of a Dragon's move before the swap.** While Settings → Search
-still shows the rebuild under way, the NPU is still serving search, and the
-move can be called off without losing it:
-
-```
-sudo systemctl disable --now virtues-embed-next
-sudo rm /etc/systemd/system/virtues-embed-next.service && sudo systemctl daemon-reload
-```
-
-then edit `<data dir>/virtues.env`: delete the `VIRTUES_EMBED_NEXT_*` lines and
-set `VIRTUES_INFERENCE=dragon`. The next indexer run drops the partial index
-(`forget_abandoned_build`). **After the swap there is no way back to the NPU's
-index** short of restoring a backup, or pointing the env back at qnnd
-(`VIRTUES_EMBED_URL=http://127.0.0.1:18181`, no prompts) and running
-`virtues reindex`, which leaves search by meaning empty until it catches up.
 
 **Re-running the installer on an existing bundled box** rewrites
 `virtues-embed` to the new model in place and keeps the box's env values,

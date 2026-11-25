@@ -26,9 +26,7 @@ pub enum Kind {
     Intel,
     /// Arm Mali, Qualcomm Adreno and other GPUs llama.cpp reaches via Vulkan.
     OtherGpu,
-    /// NPUs: Intel, AMD Ryzen AI, Rockchip, Hailo. A Qualcomm Hexagon isn't
-    /// listed: the one board Virtues knew it on, the Dragon, runs search on
-    /// its CPU, and the guide has nothing for it.
+    /// NPUs: Intel, AMD Ryzen AI, Rockchip, Hailo.
     Npu,
 }
 

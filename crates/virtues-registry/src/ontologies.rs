@@ -613,8 +613,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         },
         OntologyDescriptor {
             name: "content_photo",
-            display_name: "Photos",
-            description: "Photos and videos from the iPhone's library: when, where, what kind, and a picture of each favorite",
+            display_name: "Photo favorites",
+            description: "Photos and videos the owner favorited on their iPhone: when, where, a picture, and what it shows",
             domain: "content",
             // No lane. Taking photos is not a rhythm worth plotting beside sleep
             // and movement, and a lane would show a count of them on every day.
@@ -623,8 +623,21 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             source_streams: vec!["stream_ios_photos"],
             timestamp_column: "occurred_at",
             end_timestamp_column: None,
-            // No words to embed: a photo row is a time, a place and a kind.
-            embedding: None,
+            // The owner's note, then what the picture pass saw. A photo not yet
+            // described, with no note, has no words and stays out of the index,
+            // as does one that is no longer a favorite.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.note, '') || '\n\n' || COALESCE(t.extraction_text, '')",
+                content_type: "photo",
+                title_sql: None,
+                preview_sql: "SUBSTR(COALESCE(t.note, t.extraction->>'description', ''), 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.occurred_at",
+                embed_where: Some(
+                    "AND t.deleted_at_source IS NULL AND t.is_favorite \
+                     AND btrim(COALESCE(t.note, '') || COALESCE(t.extraction_text, '')) <> ''",
+                ),
+            }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
             // Not a day source: a day with many photos is not a busier day.

@@ -5,7 +5,7 @@
 //! checkout page. `start` kicks off a link and stashes the secret `device_code`
 //! as a box secret, so a later `poll` (possibly a separate HTTP request from
 //! the web UI) can resume. `poll` returns the status; on `ready` it stores the
-//! device `api_key` — AI works immediately (atlas funds the wallet at link).
+//! device `api_key`, which atlas creates when this poll finds the link approved.
 //!
 //! [RFC 8628]: https://www.rfc-editor.org/rfc/rfc8628
 
@@ -39,7 +39,8 @@ pub struct LinkStart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkStatus {
-    /// Checkout not completed yet — keep polling.
+    /// The owner has not approved the link yet, or atlas is still creating
+    /// the key: keep polling.
     Pending,
     /// Linked: api_key stored.
     Ready,
@@ -81,7 +82,7 @@ where
 
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
     // Who is asking. Atlas puts this on the verification page — "Link Virtues
-    // 4812 · Dragon Q6A" — so the person signing in can check the name
+    // 4812 · Mac mini" — so the person signing in can check the name
     // against the one on the box's own screen. That check is the mitigation
     // for code-phishing (an attacker showing THEIR code to a victim), so the
     // identity must come from the box, not be typed by the person. Every
@@ -179,8 +180,8 @@ async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
 /// its answer lands in the moment between the store and the record.
 static POLL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Poll the in-flight link. On `ready`, store the api_key (atlas already
-/// registered the device + funded the wallet, so AI works immediately).
+/// Poll the in-flight link. On `ready`, store the api_key, which atlas has
+/// already registered with virtues-api.
 /// Clears the in-flight state on any terminal outcome.
 ///
 /// Atlas hands the key over once: the poll that sees `ready` gets it, and
@@ -190,12 +191,34 @@ static POLL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// the way (a dropped response, a failed write), `claimed` finds no record
 /// for this link and returns `Expired`, which every caller shows as "start
 /// the link again".
+///
+/// The poll runs on its own task once it holds [`POLL_LOCK`]. Atlas creates
+/// the key as it answers, so a caller dropped partway (the page closes, a
+/// request times out) would lose a key that has already replaced the one on
+/// this box. A caller still waiting for the lock is not detached, so polls
+/// from a page that has closed do not queue up. A CLI that exits takes its
+/// task with it; atlas keeps the link for the next poll unless the key was
+/// already handed over.
 pub async fn poll(
     db: &PgPool,
     http: &reqwest::Client,
     atlas_url: &str,
 ) -> Result<LinkStatus> {
-    let _serial = POLL_LOCK.lock().await;
+    let serial = POLL_LOCK.lock().await;
+    let (db, http, atlas_url) = (db.clone(), http.clone(), atlas_url.to_string());
+    tokio::spawn(async move {
+        let _serial = serial;
+        poll_once(&db, &http, &atlas_url).await
+    })
+    .await
+    .context("the link poll ended early")?
+}
+
+async fn poll_once(
+    db: &PgPool,
+    http: &reqwest::Client,
+    atlas_url: &str,
+) -> Result<LinkStatus> {
     let Some((device_code, _meta)) = secrets::get(db, Kind::Box, INFLIGHT_KEY).await? else {
         return Ok(LinkStatus::None);
     };
@@ -298,8 +321,8 @@ pub async fn poll(
 #[serde(rename_all = "snake_case")]
 pub enum LoginStart {
     /// Magic link was emailed; the box should keep polling /init/poll
-    /// (the device_link flips to `ready` once the owner opens the link and
-    /// chooses Attach box). Any address gets one: a new address creates its
+    /// (it answers `ready` once the owner opens the link and chooses Attach
+    /// box). Any address gets one: a new address creates its
     /// account when the link is used.
     Sent,
     /// Too many recent attempts from this email — wait an hour.
@@ -313,7 +336,7 @@ pub enum LoginStart {
 ///   1. Read the in-flight device_code (must have called `start` first).
 ///   2. POST {device_code, email} to atlas /init/login.
 ///   3. Atlas resolves the customer + sends a magic link via Resend.
-///   4. Box waits for the user to click; `poll` picks up status='ready'.
+///   4. Box waits for the owner to choose Attach box; `poll` collects the key.
 pub async fn login(
     db: &PgPool,
     http: &reqwest::Client,
@@ -393,6 +416,50 @@ mod tests {
 
     fn http() -> reqwest::Client {
         reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    /// The caller goes away while atlas is answering. Atlas has already made
+    /// the key, so it must still be stored.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_dropped_poll_still_stores_the_key(pool: PgPool) {
+        ensure_test_key();
+        // Atlas answers only once the caller has gone.
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (seen, held) = (entered.clone(), release.clone());
+        let app = axum::Router::new().route(
+            "/init/poll",
+            axum::routing::post(move || {
+                let (seen, held) = (seen.clone(), held.clone());
+                async move {
+                    seen.notify_one();
+                    held.notified().await;
+                    axum::Json(json!({ "status": "ready", "api_key": "key-late" }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let atlas = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        inject_grant(&pool, "code-1").await.unwrap();
+
+        let caller = {
+            let (pool, atlas) = (pool.clone(), atlas.clone());
+            tokio::spawn(async move { poll(&pool, &http(), &atlas).await })
+        };
+        entered.notified().await;
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        release.notify_one();
+        let mut stored = None;
+        for _ in 0..100 {
+            stored = crate::virtues_api::renew::read_api_key(&pool).await.unwrap();
+            if stored.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(stored.as_deref(), Some("key-late"));
     }
 
     #[sqlx::test(migrations = "./migrations")]

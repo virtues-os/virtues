@@ -1,15 +1,14 @@
 ---
 title: How sources work
 description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, meeting notes from Fathom, Fireflies.ai and Granola, GitHub stars, X bookmarks, Instagram saves, past chats, and downloads from Spotify, Amazon, Discord and Slack - and the tools your assistant can use, from the Sources page.
-updated: 2026-11-21
+updated: 2026-11-25
 ---
 
 A source is something your server reads from: a device, an account, or an
 export you bring in once. Your server keeps what each one sends, and your
 assistant answers from it.
 
-1. Open **Sources**, the button in the top right corner of the window, beside
-   Search and Settings.
+1. Open **Settings**, then **Sources** on the **Server** line.
 2. Under **Add a source**, choose **Connect** beside the one you want. A
    device shows **Pair**, and past chats show **Import**.
 3. For an account, the window says what your server will read and what your
@@ -30,11 +29,16 @@ yet. Your iPhone sends more than any account.
 
 ## What each source brings
 
-- **iPhone:** health, places, audio, calendar, contacts and photos, sent by
-  the Virtues iPhone app. You allow each kind in the app on the phone. For
-  photos, your server keeps when and where each photo and video was taken
-  and what kind it is, and a smaller copy of each favorite in Drive. The
-  originals stay on your phone, and the app never reads your Hidden album.
+- **iPhone:** health, places, audio, calendar, contacts and photo favorites,
+  sent by the Virtues iPhone app. You allow each kind in the app on the
+  phone. For each photo or video you favorite in Photos, your server keeps
+  when and where it was taken and a smaller copy of the picture (one frame,
+  for a video). A model provider describes each picture so you can search
+  for what is in it, under Photo favorites in Storage. iOS asks for your
+  whole library, but the app reads only favorites, never your Hidden album.
+  The originals stay on your phone. Unfavorite, hide or delete a photo and
+  its picture, place and description leave your server; a note you wrote
+  stays.
 - **Mac:** messages, the apps you use and your browsing, collected by the
   Virtues desktop app. What it may read depends on the permissions you grant
   in System Settings on that Mac.

@@ -237,6 +237,8 @@ export function kindIcon(k: DeviceKind): string {
  */
 export type PermissionCopy = {
 	label: string;
+	/** What Virtues reads with it on. */
+	reads?: string;
 	costs: string;
 	/** What to do once the pane is open, in System Settings' own words. */
 	fix?: string;
@@ -262,6 +264,7 @@ const DRAG_FIX = `System Settings opens with ${COLLECTOR_LIST_NAME} ready to dra
 export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	full_disk_access: {
 		label: 'Full Disk Access',
+		reads: 'Messages and their attachments',
 		costs: "your Mac can't read Messages or Safari history",
 		fix: FULL_DISK_ACCESS_FIX,
 		dragFix: DRAG_FIX,
@@ -273,6 +276,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	// for both only ever hid the Safari half.
 	safari_library: {
 		label: 'Safari history',
+		reads: 'Safari history and bookmarks',
 		costs: "your Mac can't read Safari history or bookmarks",
 		fix: FULL_DISK_ACCESS_FIX,
 		dragFix: DRAG_FIX,
@@ -281,6 +285,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	},
 	accessibility: {
 		label: 'Accessibility',
+		reads: "The title of the window you're using",
 		costs: 'your Mac records app events without window titles',
 		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
 		dragFix: DRAG_FIX,
@@ -291,12 +296,14 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	// commands, which come with the call-recording settings.
 	system_audio: {
 		label: 'System Audio Recording',
+		reads: 'The other side of your calls',
 		costs: "your Mac records only your side of calls",
 		fix: `Turn on ${COLLECTOR_LIST_NAME} under Screen & System Audio Recording.`,
 		pane: 'Screen & System Audio Recording'
 	},
 	microphone: {
 		label: 'Microphone',
+		reads: 'Your side of your calls',
 		costs: "your Mac records only the other side of calls",
 		fix: `Turn on ${COLLECTOR_LIST_NAME} under Microphone.`,
 		pane: 'Microphone'
@@ -410,7 +417,7 @@ export function macPermissionsFromDevice(device: Pick<Device, 'permissions'> | n
 }
 
 /** One permission as a collector last reported it, for a plain row. */
-export type ReportedPermission = { key: string; label: string; costs: string; granted: boolean | null };
+export type ReportedPermission = { key: string; label: string; reads?: string; costs: string; granted: boolean | null };
 
 /**
  * Every permission a Mac's collector last reported, in the order a person
@@ -422,6 +429,7 @@ export function reportedPermissions(device: Pick<Device, 'permissions'> | null):
 	const rows: ReportedPermission[] = macPermissionsFromDevice(device).map((p) => ({
 		key: p.key,
 		label: p.label,
+		reads: p.reads,
 		costs: p.costs,
 		granted: p.granted,
 	}));
@@ -430,7 +438,7 @@ export function reportedPermissions(device: Pick<Device, 'permissions'> | null):
 	for (const key of ['system_audio', 'microphone'] as const) {
 		const v = reported?.[key];
 		if (typeof v !== 'boolean' && !denied.has(key)) continue;
-		rows.push({ key, label: PERMISSION_COPY[key].label, costs: PERMISSION_COPY[key].costs, granted: denied.has(key) ? false : (v as boolean) });
+		rows.push({ key, label: PERMISSION_COPY[key].label, reads: PERMISSION_COPY[key].reads, costs: PERMISSION_COPY[key].costs, granted: denied.has(key) ? false : (v as boolean) });
 	}
 	return rows;
 }

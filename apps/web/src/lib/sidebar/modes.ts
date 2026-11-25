@@ -14,6 +14,7 @@
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { LANDING } from '$lib/settings';
+import { isIOS, isMacOS } from '$lib/utils/platform';
 
 export interface ModeRow {
 	id: string;
@@ -105,6 +106,8 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
  * group's name.
  */
 function settingsRows(): ModeRow[] {
+	// Named as the landing page names it (`deviceLanding`).
+	const thisDevice = isMacOS && !isIOS ? 'This Mac' : 'This device';
 	const rows: ModeRow[] = [];
 	for (const group of LANDING) {
 		for (const { route } of group.links) {
@@ -123,7 +126,7 @@ function settingsRows(): ModeRow[] {
 		settingsRow('/virtues/search', 'Search', 'Server'),
 		settingsRow('/virtues/server-tasks', 'Server tasks', 'Server'),
 		settingsRow('/virtues/developer/terminal', 'Terminal', 'Server'),
-		settingsRow('/virtues/devices/this', 'This device', 'This device'),
+		settingsRow('/virtues/devices/this', thisDevice, thisDevice),
 	);
 	return rows;
 }
@@ -292,6 +295,16 @@ export const STORAGE_MODE: SidebarMode = {
 			glyph: 'bookmarks',
 			href: '/bookmarks',
 			activeWhen: (route) => route === '/bookmarks' || route.startsWith('/bookmark/'),
+		},
+		// The photos the owner favorited on their iPhone, and nothing else from
+		// the photo library.
+		{
+			id: 'photos',
+			label: 'Photo favorites',
+			icon: 'mynaui:image',
+			glyph: 'media',
+			href: '/photos',
+			activeWhen: (route) => route === '/photos' || route.startsWith('/photo/'),
 		},
 		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media' },
 		// Saved logins. Kept on the box and never read by the assistant

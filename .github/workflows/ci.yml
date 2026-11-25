@@ -358,7 +358,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config
 
       - name: Build (debug — exercises the Linux cfg paths)
-        run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
+        run: cargo build -p virtues -p virtues-installer -p virtues-iroh
 
       - name: Clippy
         run: cargo clippy -p virtues -p virtues-installer

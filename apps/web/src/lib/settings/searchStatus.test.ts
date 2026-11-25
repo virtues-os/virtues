@@ -50,7 +50,6 @@ describe('searchLead', () => {
 describe('runsOn', () => {
 	it('names this server’s processor for the engine Virtues runs', () => {
 		expect(runsOn(status())).toBe('This server’s processor');
-		expect(runsOn(status({ mode: 'dragon' }))).toBe('This server’s NPU');
 	});
 
 	it('names another machine by its host, and says when it is outside your network', () => {

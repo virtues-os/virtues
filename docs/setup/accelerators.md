@@ -92,13 +92,10 @@ Intel's NPU, llama.cpp publishes an OpenVINO build
 
 Mali, Adreno, and other GPUs with a Vulkan driver can try the Vulkan build
 (`ubuntu-vulkan-arm64` or `-x64`). Mobile GPU drivers vary a lot, so step 4's
-check matters most here. On a Radxa Dragon, the Adreno GPU's Vulkan driver
-hangs, so a Dragon runs search on its CPU.
+check matters most here.
 
 ## Other NPUs
 
 Most NPUs need their vendor's runtime instead of llama.cpp. Any server works if it
 offers an OpenAI-style `/v1/embeddings` endpoint on your machine or network:
-run the same model there, then do step 4 with its URL. A Radxa Dragon runs
-search on its CPU. One set up to use its NPU moves search to the CPU with
-`sudo virtues configure-inference --recommended`.
+run the same model there, then do step 4 with its URL.

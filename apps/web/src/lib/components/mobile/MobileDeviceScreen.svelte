@@ -489,9 +489,15 @@
 		error = null;
 		try {
 			photos = await invoke<PhotosStatus>("plugin:photos|enable");
+			// iOS shows its sheet once, so after a refusal only Settings can change it.
+			if (photos && !photos.authorized) {
+				error = "Virtues can't see your photos. Allow it in the Settings app, under Virtues, then Photos.";
+			}
 			setTimeout(load, 1500);
 		} catch (e) {
-			error = String(e);
+			error = String(e).includes("not allowed by ACL")
+				? "Photo favorites needs a newer version of the Virtues app. Update it, then try again."
+				: String(e);
 		} finally {
 			enablingPhotos = false;
 		}
@@ -709,12 +715,12 @@
 		},
 		{
 			key: "photos",
-			title: "Photos",
+			title: "Photo favorites",
 			icon: "mynaui:image",
-			what: "When and where your photos were taken",
+			what: "The photos you favorite, to search and look back on",
 			description:
-				"Your server keeps when and where each photo and video was taken, and a copy of each photo you mark as a favorite.",
-			note: "Your Hidden album is never read.",
+				"When you favorite a photo or video, your phone sends your server a copy, with when and where you took it. A model provider describes each one, so you can search your photos by what's in them.",
+			note: "iOS asks for your whole library. Only favorites are read, and never your Hidden album. Unfavorite a photo to remove its copy.",
 		},
 		{
 			key: "finance",

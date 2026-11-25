@@ -1,7 +1,6 @@
 ---
 paths:
   - "apps/web/src/**"
-  - "apps/desktop/src/**"
   - "docs/**"
   - "virtues-core/prompts/**"
   - "virtues-core/src/agent/**"

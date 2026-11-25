@@ -32,12 +32,13 @@
 //! not read yet; they stay `pending` and unclaimed (see `image_asset_sql`).
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 use crate::fetch;
+use crate::image_reading::{self, parse_record, ExtractionRecord, Loaded};
 use virtues_registry::models::ModelSlot;
 
 /// Bookmarks enriched in one run. Small on purpose: the applet is on a cron, so
@@ -81,63 +82,6 @@ const STALE_CLAIM_SECS: f64 = 900.0;
 /// useful part of a page is at the top, and the tail is usually comments and
 /// related-links.
 const MAX_PROMPT_CHARS: usize = 12_000;
-
-/// The structured record a pass produces. Every field is optional: a model that
-/// cannot tell should say so, and "unknown" must be cheaper than a guess.
-///
-/// **`why` is deliberately absent.** Significance is user-sourced, never
-/// inferred — enforced here by the shape of the type rather than by asking the
-/// prompt nicely.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExtractionRecord {
-    /// Free prose, first in the struct so the model describes before it
-    /// classifies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub medium: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subject: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub entities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<String>,
-    /// What the person would plausibly type to find this again. The single
-    /// highest-leverage field in the record: query-shaped text matches query
-    /// language far better than a literal description does.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub likely_queries: Vec<String>,
-}
-
-impl ExtractionRecord {
-    /// The record as searchable prose.
-    ///
-    /// Labelled per line so a chunk that lands mid-record still reads as
-    /// something, and so the aspects stay legible to a human debugging a bad
-    /// result. This is what step 4 concatenates into the embed text.
-    pub fn to_embed_text(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(d) = self.description.as_deref().filter(|s| !s.trim().is_empty()) {
-            parts.push(d.trim().to_string());
-        }
-        if let Some(m) = self.medium.as_deref().filter(|s| !s.trim().is_empty()) {
-            parts.push(format!("Medium: {}", m.trim()));
-        }
-        if !self.subject.is_empty() {
-            parts.push(format!("Subject: {}", self.subject.join(", ")));
-        }
-        if !self.entities.is_empty() {
-            parts.push(format!("Mentions: {}", self.entities.join(", ")));
-        }
-        if let Some(s) = self.style.as_deref().filter(|s| !s.trim().is_empty()) {
-            parts.push(format!("Style: {}", s.trim()));
-        }
-        if !self.likely_queries.is_empty() {
-            parts.push(self.likely_queries.join(". "));
-        }
-        parts.join("\n")
-    }
-}
 
 /// What one run did. Reported in the applet's run summary.
 #[derive(Debug, Default, Clone, Serialize)]
@@ -277,13 +221,6 @@ pub fn image_asset_sql() -> String {
                     AND f.mime_type LIKE 'image/%')"
     )
 }
-
-/// Largest image the pass sends. This is one background call, not a chat turn
-/// whose context carries the image into every later turn — so it is roomier
-/// than chat's 5MB. Base64 inflates by 4/3, and 10MB raw lands near 13MB
-/// encoded, inside the ~20MB inline-request ceiling vision providers enforce.
-/// Above it the row is skipped with the size stated, never sent to fail.
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
 /// Counts for the run summary: what the sweep will read (pages and images),
 /// and assets no pass reads.
@@ -468,43 +405,19 @@ async fn write_record(
 /// none, and a model's description is not one — so the room keeps saying
 /// "Saved image" rather than a headline the box made up.
 async fn enrich_image(db: &PgPool, item: &Claimed, file_id: &str) -> Result<Outcome> {
-    let storage = crate::storage::Storage::file(
-        crate::storage::lake::lake_root()
-            .to_string_lossy()
-            .into_owned(),
-    )
-    .map_err(|e| Error::Storage(format!("storage unavailable: {e}")))?;
-    let config = crate::api::DriveConfig::new(std::sync::Arc::new(storage));
-
-    let (file, bytes) = match crate::api::drive::download_file(db, &config, file_id).await {
-        Ok(v) => v,
-        // Gone from Drive, or not a file: there is nothing to read, and a retry
-        // cannot bring it back. The claim checked it was there; this is the
-        // race where it left between the claim and the read.
-        Err(Error::NotFound(reason)) | Err(Error::InvalidInput(reason)) => {
-            return Ok(Outcome::Skipped(reason))
-        }
-        // A storage error is transient until proven otherwise — back to the
-        // queue with backoff.
-        Err(e) => return Err(e),
+    let (bytes, mime) = match image_reading::load(db, file_id).await? {
+        Loaded::Image { bytes, mime } => (bytes, mime),
+        Loaded::Unreadable(reason) => return Ok(Outcome::Skipped(reason)),
     };
-
-    let mime = file.mime_type.clone().unwrap_or_default();
-    if !mime.starts_with("image/") {
-        return Ok(Outcome::Skipped(format!(
-            "the saved file is {}, not an image",
-            if mime.is_empty() { "an unknown type" } else { &mime }
-        )));
-    }
-    if bytes.len() > MAX_IMAGE_BYTES {
-        return Ok(Outcome::Skipped(format!(
-            "the image is {:.1}MB, over the {}MB limit for reading it",
-            bytes.len() as f64 / 1_048_576.0,
-            MAX_IMAGE_BYTES / 1_048_576
-        )));
-    }
-
-    let record = read_image(db, &bytes, &mime, &image_context(item)).await?;
+    let record = image_reading::read(
+        db,
+        "bookmark_enrichment",
+        IMAGE_SYSTEM_PROMPT,
+        &image_context(item),
+        &bytes,
+        &mime,
+    )
+    .await?;
     write_record(
         db,
         &item.id,
@@ -516,40 +429,6 @@ async fn enrich_image(db: &PgPool, item: &Claimed, file_id: &str) -> Result<Outc
     )
     .await?;
     Ok(Outcome::Enriched)
-}
-
-/// Show the Omni slot one image and get its record back.
-///
-/// Split from `enrich_image` so the model call has one definition whether the
-/// bytes come from Drive or from a test: the parts are built, sent, and parsed
-/// here and nowhere else.
-async fn read_image(
-    db: &PgPool,
-    bytes: &[u8],
-    mime: &str,
-    context: &str,
-) -> Result<ExtractionRecord> {
-    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    let content = serde_json::json!([
-        { "type": "text", "text": context },
-        { "type": "image_url", "image_url": { "url": format!("data:{mime};base64,{encoded}") } }
-    ]);
-
-    // Same discipline as the page path: description, not invention — thinking
-    // off, temperature zero, spend tagged to this feature.
-    let raw = crate::virtues_api::completion::system_completion_content(
-        db,
-        ModelSlot::Omni,
-        "bookmark_enrichment",
-        IMAGE_SYSTEM_PROMPT,
-        content,
-        crate::virtues_api::request::Thinking::Off,
-        0.0,
-    )
-    .await
-    .map_err(|e| Error::ExternalApi(format!("image enrichment request failed: {e}")))?;
-
-    parse_record(&raw)
 }
 
 /// The text that rides with the image: only what was observed about the save.
@@ -649,26 +528,6 @@ async fn compose_record(db: &PgPool, page: &fetch::FetchedPage) -> Result<Extrac
     parse_record(&content)
 }
 
-/// Parse the model's reply into a record.
-///
-/// Tolerates code fences and leading prose, because "return only JSON" is an
-/// instruction models mostly follow rather than always follow, and a fenced
-/// reply is a formatting slip, not a reason to retry and re-bill.
-fn parse_record(raw: &str) -> Result<ExtractionRecord> {
-    let trimmed = raw.trim();
-    let candidate = match (trimmed.find('{'), trimmed.rfind('}')) {
-        (Some(start), Some(end)) if end > start => &trimmed[start..=end],
-        _ => {
-            return Err(Error::ExternalApi(format!(
-                "enrichment reply was not JSON: {}",
-                trimmed.chars().take(200).collect::<String>()
-            )))
-        }
-    };
-    serde_json::from_str::<ExtractionRecord>(candidate)
-        .map_err(|e| Error::ExternalApi(format!("enrichment reply did not parse: {e}")))
-}
-
 /// When the last enrichment ran — for the Settings/status surfaces.
 pub async fn last_enriched_at(db: &PgPool) -> Result<Option<DateTime<Utc>>> {
     let row: (Option<DateTime<Utc>>,) =
@@ -728,6 +587,7 @@ mod tests {
             entities: vec![],
             style: None,
             likely_queries: vec!["cream house green door".into()],
+            ..Default::default()
         };
         let text = r.to_embed_text();
         assert!(text.contains("A stucco cottage."));

@@ -134,8 +134,8 @@ async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
 
 /// While search moves to another model, a line saying so. It informs rather
 /// than warns, and makes no promise about search meanwhile: on most boxes the
-/// old model keeps serving, but a Dragon whose NPU never worked had no search
-/// by meaning to keep. A new index takes days on a small server. No count or
+/// old model keeps serving, but a box whose old model never answered had no
+/// search by meaning to keep. A new index takes days on a small server. No count or
 /// percentage here; Settings → Search has the numbers for anyone who wants
 /// them.
 fn search_rebuild_items(items: &mut Vec<AttentionItem>, model: Option<String>) {

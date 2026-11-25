@@ -441,8 +441,7 @@ None of this has run on a real box.
 - **4. Every manifest converts to SKILL.md**, with `run: sql` and the skipped
   run. A conversion is journaled and keeps the folder's files and its id.
 - **5. Chat modes are the `admin` and `deep-research` applets.** The owner
-  removed Local from the app; the server's Local mode stays behind a dated
-  TODO.
+  removed Local from the app, and the server's Local mode is gone too.
 - **6. The assistant loads applets** with `use_applet`, which also reads an
   applet's `references/` and `assets/`. The four shipped chat applets are
   `invoke: chat, assistant`.

@@ -1240,8 +1240,7 @@ pub(crate) mod geometry_tests {
         tx.commit().await
     }
 
-    /// A fresh box whose embedder is not 256-wide (every Dragon serves
-    /// gte-small at 384). The migrations create the columns at 256, and
+    /// A fresh box whose embedder is not 256-wide (gte-small, say, at 384). The migrations create the columns at 256, and
     /// bringup cannot size them because nothing has recorded a width yet. The
     /// first embed is the first moment anything knows the width, so it has to
     /// size them there, before writing a vector.

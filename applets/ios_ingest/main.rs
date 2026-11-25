@@ -117,15 +117,16 @@ async fn main() -> Result<()> {
                 format!("bookmarks: {written} written")
             }
         }
-        // The photo library: a row per photo, and a picture for each favorite.
+        // Photo favorites: a row and a picture for each.
         "photos" => {
-            // Pictures FIRST, the bookmark arm's order, so the lake never holds
-            // a second copy of one.
+            // Not archived, unlike every other stream. Unfavoriting a photo
+            // removes its place from this server, and an archived record would
+            // keep it. The phone's library is the raw source, and it can be
+            // read again.
             let recs = records(payload, "photos")?;
             let recs = photos::externalize_pictures(&db, &storage, recs).await?;
-            let recs = archive(&db, &storage, "photos", payload, &recs).await?;
             let w = photos::write_photos(&db, &recs).await?;
-            format!("photos: {} written, {} deleted, {} skipped", w.written, w.deleted, w.skipped)
+            format!("photos: {} written, {} removed, {} skipped", w.written, w.removed, w.skipped)
         }
         "financekit" => {
             let recs = archive(

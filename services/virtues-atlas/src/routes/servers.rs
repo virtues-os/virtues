@@ -4,7 +4,8 @@
 //!
 //! Any server on the account can see the others and remove one. That is how
 //! an owner undoes a box attached by mistake: the link confirm page can be
-//! clicked through, and nothing else revokes a key. A server cannot remove
+//! clicked through, and nothing else revokes a key. Removing one also ends
+//! the account's approved links that no server has collected yet. A server cannot remove
 //! itself here (that is unlinking, done on the box).
 //!
 //! `id` is the hex sha256 of the key, the same form virtues-api's
@@ -143,6 +144,9 @@ async fn remove(State(state): State<AppState>, Json(body): Json<RemoveBody>) -> 
             .bind(&target)
             .execute(&mut *tx)
             .await?;
+        // An approved link no server has collected would hand out a new key
+        // after this; the attach being undone may have come through one.
+        super::link::expire_approved_links(&mut tx, &account_id).await?;
         tx.commit().await
     }
     .await;

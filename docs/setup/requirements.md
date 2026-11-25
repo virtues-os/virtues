@@ -51,8 +51,8 @@ one.
 
 ## Tested hardware
 
-We test on `x86_64` Ubuntu servers and on the `aarch64` Radxa
-Dragon. To measure other hardware, check the storage and search-speed grades
+We test on `x86_64` Ubuntu servers, and release builds for `aarch64`
+Linux too. To measure other hardware, check the storage and search-speed grades
 the installer shows, then run `virtues doctor` once your server is running.
 
 ## Next steps

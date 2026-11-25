@@ -261,14 +261,14 @@ fn redirect_back(return_url: &str, rust_state: &str, key: &str, val: &str) -> ax
     }
 }
 
-/// One of this module's own HTML pages. They run no script and load nothing
-/// but their one inline style block, and the continue page's link carries
+/// One of our own HTML pages, here and in `connections.rs`. They run no script
+/// and load nothing but inline styles, and the continue page's link carries
 /// the exchange token, so the policy also refuses framing, forms and a
 /// changed base URL.
-fn html_page(body: impl Into<String>) -> axum::response::Response {
+pub(super) fn html_page(status: StatusCode, body: impl Into<String>) -> axum::response::Response {
     use axum::http::header;
     (
-        StatusCode::OK,
+        status,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
@@ -364,7 +364,7 @@ fn lan_continue_page(target: &str) -> axum::response::Response {
 </html>"#
     );
 
-    html_page(body)
+    html_page(StatusCode::OK, body)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1508,7 +1508,7 @@ fn plaid_session_lost_page() -> axum::response::Response {
   <p>Nothing was connected. Open Virtues and start the bank connection again.</p>
 </body>
 </html>"#;
-    html_page(body)
+    html_page(StatusCode::OK, body)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1997,8 +1997,8 @@ mod tests {
             "http://172.32.0.1/oauth/callback",
             // 169.254/16 is link-local, not a LAN the box is served on.
             "http://169.254.1.1/oauth/callback",
-            // Our own domain earns nothing: a public name passes only when
-            // `OAUTH_RETURN_HOSTS` lists it.
+            // Our own domain is not accepted on its own: a public name passes
+            // only when `OAUTH_RETURN_HOSTS` lists it.
             "https://app.virtues.com/oauth/callback",
             "https://virtues.com.evil.com/oauth/callback",
             "https://notvirtues.com/oauth/callback",

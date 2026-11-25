@@ -21,7 +21,8 @@
 	let { assistantName }: { assistantName: string } = $props();
 
 	type Bucket = { label: string; calls: number; cost_micros: number; byo_calls: number };
-	let byModel = $state<Bucket[]>([]);
+	/** Null until the month's usage loads. */
+	let byModel = $state<Bucket[] | null>(null);
 
 	onMount(() => {
 		void modelSlots.load();
@@ -29,7 +30,7 @@
 			.then((s) => (byModel = s.by_model ?? []))
 			.catch(() => {
 				// The rows stand without a cost line.
-				byModel = [];
+				byModel = null;
 			});
 	});
 
@@ -46,12 +47,15 @@
 		return id ? modelSlots.nameOf(id) : 'The recommended model';
 	}
 
-	/** "About $0.0030 a call this month", from calls paid through Virtues. */
+	/** "About $0.0030 a call this month", from calls paid through Virtues. A
+	 *  model whose calls all ran on another key has no price to show. */
 	function costLine(slot: SlotConfig): string | null {
 		const id = inUse(slot);
+		if (!byModel || !id) return null;
 		const b = byModel.find((m) => m.label === id);
-		const paid = b ? b.calls - b.byo_calls : 0;
-		if (!b || paid <= 0) return null;
+		if (!b || b.calls === 0) return 'not used this month';
+		const paid = b.calls - b.byo_calls;
+		if (paid <= 0) return null;
 		const each = formatMicrosPrecise(Math.round(b.cost_micros / paid));
 		// "<$0.0001" is already a bound, so it takes no "about".
 		return `${each.startsWith('<') ? each : `about ${each}`} a call this month`;
@@ -64,7 +68,7 @@
 
 <section class="models">
 	<h2 class="settings-label">Models</h2>
-	<p class="sec-hint">Each kind of work runs on its own model. Change one on the model list, where you can compare what each costs.</p>
+	<p class="sec-hint">Each kind of work runs on its own model. To compare models and what each costs, open one.</p>
 	{#if !modelSlots.loaded && modelSlots.error}
 		<LoadError message={modelSlots.error} onretry={() => modelSlots.load(true)} />
 	{:else}

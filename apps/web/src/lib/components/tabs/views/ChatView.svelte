@@ -1217,7 +1217,10 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	/** Home is showing: the day's headline and the tiles, on the painting. */
+	// TODO(2026-11-25): the owner asked to hide the tiles and the notes line on
+	// home for now. Show them again by setting this to true, or delete them.
+	const SHOW_HOME_WIDGETS: boolean = false;
+	/** Home is showing: the day's headline and the composer, on the painting. */
 	const showsHome = $derived(isEmpty && !isGhost && !threeBodyOpen && attachments.count === 0);
 	/**
 	 * The first home after the app opens comes in piece by piece (`.intro`
@@ -2633,9 +2636,8 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && attachments.count === 0}
-						<!-- Home: the day as a headline, the composer, and the tiles
-						     under it with the notes line on their top row, on the
-						     painting. On a
+						<!-- Home: the day as a headline and the composer, on the painting
+						     (the tiles and notes line are hidden, SHOW_HOME_WIDGETS). On a
 						     computer the painting is the window's and the pane draws no
 						     paper while home shows; the phone has no window behind the
 						     page, so home draws it here. It yields to staged
@@ -2662,13 +2664,15 @@
 						<div class="init-hero" out:fade={{ duration: 200 }}>
 							<HomeHero />
 						</div>
-						<div class="home-tiles-wrap" out:fade={{ duration: 200 }}>
-							<HomeTiles currentChatId={conversationId}>
-								{#snippet lead()}
-									<HomeNotes />
-								{/snippet}
-							</HomeTiles>
-						</div>
+						{#if SHOW_HOME_WIDGETS}
+							<div class="home-tiles-wrap" out:fade={{ duration: 200 }}>
+								<HomeTiles currentChatId={conversationId}>
+									{#snippet lead()}
+										<HomeNotes />
+									{/snippet}
+								</HomeTiles>
+							</div>
+						{/if}
 						<!-- Loaded once home shows, so the control and its popover
 						     stay out of the chat home's first paint. -->
 						{#await import("$lib/components/backgrounds/BackgroundControl.svelte") then { default: BackgroundControl }}
@@ -2773,6 +2777,7 @@
 							isStreaming={turnPhase.working}
 							maxWidth="max-w-full"
 							inline={!isEmpty}
+							glass={showsHome}
 							placeholder={isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
@@ -3004,11 +3009,11 @@
 	}
 
 	/* Home is placed from the middle of the pane: the composer centered on
-	   it, the headline above and the notes and tiles below. The tiles make
-	   the part below about 300px against 120px above, so the whole group
-	   rises by this much to sit a little above the middle. */
+	   it and the headline above. The group rises by this much to sit a
+	   little above the middle. With SHOW_HOME_WIDGETS on, the tiles below
+	   need about 104px. */
 	.page-container {
-		--home-lift: 104px;
+		--home-lift: 40px;
 		height: 100%;
 		position: relative;
 	}

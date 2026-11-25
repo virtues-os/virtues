@@ -57,7 +57,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: this machine's CPU (recommended, and a Dragon's without asking) or an embedding server you run");
+        ui::skip("  • Inference: this machine's CPU (recommended) or an embedding server you run");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip("  • Automatic security updates (apt systems)");
@@ -122,19 +122,16 @@ pub async fn run(cli: Config) -> Result<()> {
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
     // After the tarball, provision local inference. Bundled → the portable CPU
-    // llama-server sidecar (paced on a Dragon). Manual → nothing (the user's
+    // llama-server sidecar. Manual → nothing (the user's
     // endpoints were validated above).
     match &inference {
-        InferenceMode::Bundled if install::npu_still_serving() => {
-            ui::skip("This Dragon's search moves from its NPU to the CPU at the end of the install")
-        }
         InferenceMode::Bundled => install::install_inference(&cfg).await?,
         InferenceMode::Manual { .. } => {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }
     }
     // libpdfium — document text extraction. Mode-independent (CPU parse):
-    // every path gets it, Dragon and DIY alike.
+    // every path gets it.
     install::install_pdfium(&cfg).await?;
 
     install::write_install_manifest(&cfg, &inference, &firewall)?;
@@ -163,10 +160,6 @@ pub async fn run(cli: Config) -> Result<()> {
     let mut restart = tokio::process::Command::new("systemctl");
     restart.args(["restart", "virtues"]);
     steps::run_step("Start virtues service on the new binary", restart).await?;
-
-    if matches!(inference, InferenceMode::Bundled) && install::npu_still_serving() {
-        install::move_off_npu(&cfg).await;
-    }
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");

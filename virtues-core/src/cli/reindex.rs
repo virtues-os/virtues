@@ -7,7 +7,7 @@
 //! after a schema change — e.g. the halfvec/BM25 upgrade forces a re-embed
 //! because 256-dim `vector` rows can't become 384-dim `halfvec` in place — and a
 //! manual recovery if the index is ever stale. Works in every inference mode
-//! (Dragon NPU, BYO endpoint, bundled).
+//! (BYO endpoint, bundled).
 //!
 //! Runs BEFORE the normal app path (like `configure-inference`) because that
 //! path's `initialize()` calls `ensure_embedding_dims`, which deliberately
@@ -52,7 +52,7 @@ pub async fn run(yes: bool) -> Result<()> {
 
 /// How long a re-embed of the current index will take, as a line to print, or
 /// `None` for an empty index. Rough: the ingest floor is ~50 windows/s on CPU,
-/// and the NPU is far faster. Only an order-of-magnitude hint.
+/// and a GPU is far faster. Only an order-of-magnitude hint.
 pub(crate) async fn estimate(pool: &PgPool) -> Result<Option<String>> {
     let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM search_embeddings")
         .fetch_one(pool)

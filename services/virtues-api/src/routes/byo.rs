@@ -36,7 +36,7 @@ async fn bounce(Query(q): Query<HashMap<String, String>>) -> Response {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing or unreadable state" }))).into_response();
     };
     if !super::oauth::is_valid_return_url(&return_url) {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "the return address is not a box or a Virtues page" })))
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "This sign-in did not start from your Virtues server. Start it again from Virtues." })))
             .into_response();
     }
     Redirect::to(&onward(&return_url, &box_state, &q)).into_response()
@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_box_or_a_virtues_page_is_a_return_address() {
+    fn only_a_private_address_or_a_listed_server_is_a_return_address() {
         assert!(super::super::oauth::is_valid_return_url("http://192.168.1.20:7117/oauth/callback"));
         assert!(!super::super::oauth::is_valid_return_url("https://attacker.example.com/steal"));
     }

@@ -72,19 +72,21 @@ pub async fn send_login_magic_link(
     }
     let client = reqwest::Client::new();
     let text = format!(
-        "A box showing link code {user_code} asked to join the Virtues account for this \
+        "A box with link code {user_code} asked to join the Virtues account for this \
          address. Open this link to review it and attach the box:\n\n\
          {link}\n\n\
-         Only attach it if you started linking a box just now and it shows that code. \
-         Attaching lets that box use your account, including its AI credit. If you didn't \
-         start this, ignore this email. Nothing changes.\n\n\
+         Only attach it if you started linking a box just now. If the place where you \
+         started shows a link code, check that it matches this one. Attaching lets that box \
+         use your account, including its AI credit and any mail and calendar accounts you \
+         connected through Virtues. If you didn't start this, ignore this email. Nothing \
+         changes.\n\n\
          The link is good for 15 minutes and can only be used once."
     );
     let html = format!(
         r#"<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #14283d; line-height: 1.5; font-size: 15px;">
   <p style="font-size: 18px; margin: 0 0 16px;">A box asked to join your Virtues account</p>
-  <p style="margin: 0 0 16px; color: #57534e;">The box shows link code <span style="font-family: ui-monospace, Menlo, monospace; letter-spacing: 0.08em; color: #14283d;">{user_code}</span>. Open the link to review it and attach the box. Attaching lets that box use your account, including its AI credit.</p>
-  <p style="margin: 0 0 24px; color: #57534e;"><b>Only attach it if you started linking a box just now and it shows that code.</b> If you didn't, ignore this email. Nothing changes.</p>
+  <p style="margin: 0 0 16px; color: #57534e;">The box's link code is <span style="font-family: ui-monospace, Menlo, monospace; letter-spacing: 0.08em; color: #14283d;">{user_code}</span>. Open the link to review it and attach the box. Attaching lets that box use your account, including its AI credit and any mail and calendar accounts you connected through Virtues.</p>
+  <p style="margin: 0 0 24px; color: #57534e;"><b>Only attach it if you started linking a box just now.</b> If the place where you started shows a link code, check that it matches this one. If you didn't start this, ignore this email. Nothing changes.</p>
   <p style="margin: 0 0 24px;">
     <a href="{link}" style="display: inline-block; background: #14283d; color: white; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-weight: 600;">Review the box</a>
   </p>

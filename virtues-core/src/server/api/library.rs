@@ -34,6 +34,10 @@ pub fn routes() -> Router<AppState> {
             "/api/bookmarks/:id/note",
             patch(update_bookmark_note_handler),
         )
+        // Photo favorites, from the iPhone (`api::photos`).
+        .route("/api/photos", get(list_photos_handler))
+        .route("/api/photos/:id", get(get_photo_handler))
+        .route("/api/photos/:id/note", patch(update_photo_note_handler))
         // A message's stored attachment (an iMessage photo the Mac sent),
         // addressed by the message row's id and the attachment's position in
         // `metadata.attachments`.
@@ -218,6 +222,32 @@ pub async fn save_bookmark_handler(
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => error_response(e),
     }
+}
+
+// ============================================================================
+// Photo favorites (data_content_photo)
+// ============================================================================
+
+/// GET /api/photos: one page of photo favorites, most recently taken first.
+pub async fn list_photos_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::photos::ListPhotosQuery>,
+) -> Response {
+    api_response(crate::api::photos::list_photos(state.db.pool(), query).await)
+}
+
+/// GET /api/photos/:id: one photo, for its page.
+pub async fn get_photo_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::photos::get_photo(state.db.pool(), &id).await)
+}
+
+/// PATCH /api/photos/:id/note: write the owner's note.
+pub async fn update_photo_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::bookmarks::UpdateNoteRequest>,
+) -> Response {
+    api_response(crate::api::photos::update_note(state.db.pool(), &id, req).await)
 }
 
 // ============================================================================

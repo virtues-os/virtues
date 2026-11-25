@@ -152,7 +152,7 @@ the run, and a run missed while the box was off shows as a sentence.
 ### 3. The list and the page
 
 Rebuilt to the target above, using the shared list and tab components
-(UniversalDataGrid, route-driven SubNav). Mockups first.
+(UniversalDataGrid, route-driven tabs). Mockups first.
 
 ### 4. Move syncs and upkeep out of Applets
 

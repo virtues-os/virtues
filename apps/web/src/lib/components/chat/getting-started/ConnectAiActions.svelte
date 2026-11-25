@@ -33,6 +33,9 @@
 	let apiKey = $state("");
 	let chatModel = $state("");
 	let checkoutUrl = $state<string | null>(null);
+	/** The code the emailed link names, to match before choosing Attach box.
+	    Empty on a server that predates it. */
+	let linkCode = $state("");
 	/** Why the email field is open: to sign in, or as the first half of
 	    subscribing (a checkout needs an account to belong to). */
 	let intent = $state<"signin" | "subscribe">("signin");
@@ -161,8 +164,9 @@
 		error = null;
 		mode = "sending";
 		try {
-			const d = await setupLoginStart<{ status: string }>(email.trim());
+			const d = await setupLoginStart<{ status: string; user_code?: string }>(email.trim());
 			if (d.status === "sent") {
+				linkCode = d.user_code ?? "";
 				mode = "mailed";
 				poll();
 			} else {
@@ -253,6 +257,9 @@
 						? "A link is on its way to your email. Open it and choose Attach box, then continue to checkout."
 						: "A sign-in link is on its way to your email. Open it and choose Attach box, and this picks up on its own. You can leave this where it is."}
 				</Waiting>
+				{#if linkCode}
+					<p class="help">Your link code is <span class="code">{linkCode}</span>. Check that the email shows the same one.</p>
+				{/if}
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>
@@ -347,6 +354,10 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
+	}
+	.code {
+		color: var(--color-foreground);
+		letter-spacing: 0.06em;
 	}
 	.error {
 		margin: 0.5rem 0 0;

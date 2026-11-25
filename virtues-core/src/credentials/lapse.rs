@@ -9,6 +9,9 @@
 //! (`api::credentials::revoke_credential_because`). A live subscription at any
 //! check clears the date.
 //!
+//! The same daily run asks again for grants the proxy has not released yet
+//! (`credentials::pending_release`).
+//!
 //! The date is kept on the box because virtues-api deletes a lapsed wallet
 //! after a short grace, so it cannot say how long ago a subscription ended.
 //! It lives in the `virtues_api` credential's metadata, the row that holds the
@@ -62,6 +65,9 @@ pub fn spawn(pool: PgPool) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
+            if let Err(e) = super::pending_release::release_all(&pool).await {
+                tracing::warn!("releasing kept grants failed: {e:#}");
+            }
             if let Err(e) = check_once(&pool).await {
                 tracing::warn!("lapse check failed: {e:#}");
             }

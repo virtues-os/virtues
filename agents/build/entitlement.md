@@ -122,11 +122,13 @@ device-authorization flow (RFC 8628 shape, `services/virtues-atlas/src/routes/li
    the magic link Atlas sends (`/init/login-web`, `/init/login/verify`). The
    app's own sign-in does the same through `/init/approve` or `/init/grant`.
    A new address creates the account when the link is opened.
-3. Atlas attaches the link to that account: mints a random **api_key**,
-   stores only its hash, and registers it with virtues-api
-   (`POST /internal/device`, hash plus `account_id`).
-4. Box `POST /init/poll {device_code}` in a loop; on `ready` it receives the
-   raw api_key and stores it in the credential vault under
+3. The confirm page behind the link approves the box's link for that account.
+   No key exists yet. An approved link can be collected for 24 hours.
+4. Box `POST /init/poll {device_code}` while a page or the CLI asks it to. The
+   poll that finds the link approved makes Atlas mint a random **api_key**,
+   register it with virtues-api (`POST /internal/device`, hash plus
+   `account_id`) and store only its hash. The answer (`ready`) carries the raw
+   api_key, which the box stores in the credential vault under
    `source_id = "virtues_api"`.
 
 Subscribing is a second step from the linked box. The box asks
@@ -187,7 +189,10 @@ SHA-256s it and resolves `device_keys` to the account (`BoxKey`).
 - **Free routes** (the OAuth token proxy, including `/{provider}/revoke`, and
   `/v1/usage`) need only the key, so they keep working through a lapse. A box
   calls `revoke` for every proxied source it disconnects; for Plaid it removes
-  the bank from Plaid, ending its fee. Thirty days after a subscription lapses,
+  the bank from Plaid, ending its fee. Only the account a bank is recorded for
+  may remove it, so the box keeps the bank's token sealed until virtues-api
+  confirms the removal and asks again daily
+  (`virtues-core/src/credentials/pending_release.rs`). Thirty days after a subscription lapses,
   the box revokes the connections of every source the catalog marks
   `release_on_lapse` (`virtues-core/src/credentials/lapse.rs`).
 

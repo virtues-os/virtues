@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Settings · Billing: the balance at the top with what it's for and when
-	 * it renews, then the subscription, auto top-up and invoices. What AI has
+	 * Settings · Billing: the balance at the top with how it is reached,
+	 * then the subscription, auto top-up and invoices. What AI has
 	 * cost is a page of its own under Models and spending; the balance links
 	 * to it.
 	 *
@@ -23,8 +23,9 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
-	import { formatMicrosPrecise } from '$lib/utils/currency';
+	import { formatMicrosUSD } from '$lib/utils/currency';
 	import { formatDate } from '$lib/utils/dateUtils';
+	import { balanceRows, type WalletUsage } from '$lib/settings/balance';
 	import {
 		getBillingLinkStatus,
 		startBillingLink,
@@ -282,13 +283,7 @@
 	});
 
 	// ─── Balance ───────────────────────────────────────────────────────────
-	type Usage = {
-		balance_micros: number;
-		month_to_date_micros: number;
-		/** The part of the balance that is top-up credit, kept at renewal.
-		    Absent from older servers. */
-		topup_micros?: number;
-		expires_at: string | null;
+	type Usage = WalletUsage & {
 		error?: string;
 		/** No Virtues account is connected, so there is no balance to read. */
 		unlinked?: boolean;
@@ -322,32 +317,15 @@
 		void loadUsage();
 	});
 
-	const renewsLabel = $derived(
-		usage?.expires_at ? formatDate(usage.expires_at, { month: 'long', day: 'numeric' }) : null,
-	);
-	const monthName = new Date().toLocaleDateString('en-US', { month: 'long' });
-	// A renewal sets the balance to the month's credit; it does not add to
-	// what is left. The month's figure is every charge to the balance, so it
-	// is larger than What AI has cost, which counts AI calls alone at the
-	// provider's price; each says what it counts.
-	const balanceContext = $derived(
-		usage
-			? [
-					renewsLabel ? `Your monthly credit renews ${renewsLabel}.` : '',
-					usage.topup_micros && usage.topup_micros > 0
-						? `${formatMicrosPrecise(usage.topup_micros)} of it is top-up credit, which stays when your monthly credit renews.`
-						: '',
-					`${formatMicrosPrecise(usage.month_to_date_micros)} charged so far in ${monthName}, for AI and web search.`,
-				]
-					.filter(Boolean)
-					.join(' ')
-			: '',
-	);
+	const day = (iso: string) => formatDate(iso, { month: 'long', day: 'numeric' });
+	const rows = $derived(usage?.period_start ? balanceRows(usage, day(usage.period_start)) : []);
+	const monthName = new Date().toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+	// The renewal date is Stripe's, from atlas. The wallet's `expires_at` is
+	// the first of a month, whatever day the plan renews.
 	const planHelp = $derived(
 		[
-			renewsLabel ? `Renews ${renewsLabel}.` : '',
-			'Includes $20 of AI each month, plus bank data, places, maps and remote access. Extra AI is sold at cost.',
-			subscriptionStore.email ? `Billed to ${subscriptionStore.email}.` : '',
+			subscriptionStore.renewsAt ? `Renews ${day(subscriptionStore.renewsAt)}.` : '',
+			'Includes $20 of AI and web search each month, plus bank data, places, maps and remote access. AI beyond that is sold at cost.',
 		]
 			.filter(Boolean)
 			.join(' '),
@@ -360,9 +338,24 @@
 
 {#if usage}
 	<div class="balance" id="setting-balance" data-setting="balance">
-		<p class="figure"><span class="amount">{formatMicrosPrecise(usage.balance_micros)}</span> <span class="unit">left for AI</span></p>
+		<p class="figure"><span class="amount">{formatMicrosUSD(usage.balance_micros)}</span> <span class="unit">balance for AI and web search</span></p>
+		{#if rows.length}
+			<dl class="reached">
+				{#each rows as row (row.label)}
+					<dt>{row.label}</dt>
+					<dd>{formatMicrosUSD(row.micros)}</dd>
+				{/each}
+				<dt class="total">Balance</dt>
+				<dd class="total">{formatMicrosUSD(usage.balance_micros)}</dd>
+			</dl>
+		{/if}
 		<p class="context">
-			{balanceContext}
+			{#if !rows.length}
+				{formatMicrosUSD(usage.month_to_date_micros)} used on AI and web search so far in {monthName}.
+			{/if}
+			{#if isSubscribed}
+				Your plan credit resets to $20 when your plan renews. Top-up credit stays.
+			{/if}
 			<button type="button" class="link" onclick={openCost}>What AI has cost</button>
 		</p>
 	</div>
@@ -387,11 +380,16 @@
 				{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
 			</p>
 		{/if}
+		{#if subscriptionStore.email}
+			<SettingRow id="billed-to" label="Billed to">
+				<span class="plan-name">{subscriptionStore.email}</span>
+			</SettingRow>
+		{/if}
 	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
 		<SettingRow
 			id="subscription"
 			label="Plan"
-			help="None yet. $29 a month. Includes $20 of AI each month, plus bank data, places, maps and remote access. Extra AI is sold at cost."
+			help="None yet. $29 a month. Includes $20 of AI and web search each month, plus bank data, places, maps and remote access. AI beyond that is sold at cost."
 		>
 			{#if subscribeWaiting}
 				<span class="waiting">Waiting for checkout…</span>
@@ -457,8 +455,8 @@
 			id="auto-top-up"
 			label="Auto top-up"
 			help={autoTopup.enabled
-				? 'When your balance runs out, charges $20 to the card on your subscription and adds $19.12 of credit. The difference is the card fee.'
-				: 'Off. AI stops when your balance runs out, until your monthly credit renews.'}
+				? 'When your balance runs out, Virtues charges $20 to your card and adds $19.12 to your balance. The $0.88 difference is the card fee.'
+				: 'Off. AI stops when your balance runs out, until your plan renews.'}
 		>
 			<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />
 		</SettingRow>
@@ -525,7 +523,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The balance: the figure first, then what it is for and when it renews. */
+	/* The balance: the figure first, then how it is reached. */
 	.balance {
 		display: flex;
 		flex-direction: column;
@@ -548,6 +546,24 @@
 	.unit {
 		font-size: var(--text-label);
 		color: var(--color-foreground-muted);
+	}
+	.reached {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 6px 24px;
+		max-width: 420px;
+		margin: 0;
+		font-size: var(--text-label);
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
+	.reached dd {
+		margin: 0;
+		text-align: right;
+	}
+	.reached .total {
+		padding-top: 6px;
+		color: var(--color-foreground);
 	}
 	.context {
 		margin: 0;

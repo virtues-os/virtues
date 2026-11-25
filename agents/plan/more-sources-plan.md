@@ -39,32 +39,31 @@ Checked against [personas](../build/personas.md), primaries first.
 
 ## Photos from the iPhone
 
-The owner asked whether favorites only is right, since all photos might be
-too much, and whether all metadata works. Proposal: **metadata for every
-photo, and a picture for favorites only.**
+Built as **photo favorites**, on 2026-11-25. The owner: "I think too that we
+start with favorites right now for photos and call it photo favorites, and
+then get to the entire corpus of photo library later on once we have more
+understanding of how to work with this."
 
-- **Metadata for every photo** is small. Each photo's when, where, kind
-  (photo, video, screenshot, Live Photo), size and favorite flag is a few
-  hundred bytes, so a library of tens of thousands is tens of megabytes
-  (an estimate, not measured). It answers "where was I", "when did I take
-  photos of the kids", and lets day pages mark the hours you took photos.
-- **A picture for favorites** is a copy about 1024 pixels wide, kept in
-  Drive the way a saved post's image is. A few hundred kilobytes each, so
-  a thousand favorites is a few hundred megabytes (also an estimate). The
-  pictures let day pages show a photo you chose, and a model can describe
-  them.
-- **Originals stay on the phone.** Copying every original would be many
-  gigabytes and duplicate iCloud Photos.
-- **Never read:** the Hidden album, and what iOS keeps behind its lock. A
-  photo you hide never reaches your server.
-- **How:** a new iPhone plugin on PhotoKit, beside `health`, `contacts` and
-  `eventkit` in `apps/web/plugins/`. It needs full photo library access.
-  The first pass sends metadata in batches in the background, and
-  PhotoKit's change history sends only what is new after that. Favoriting a
-  photo later sends its picture; unfavoriting leaves the copy until you
-  delete it.
-- **Record:** a new `data_content_photo`, one row per photo, with the
-  picture as a Drive file on favorites. Needs a migration number when built.
+- **Only favorites leave the phone.** Nothing is sent about any other photo,
+  its place included. iOS offers no favorites-only permission, so it still
+  asks for the whole library.
+- **Postgres holds the details and a pointer; the picture is a file** under
+  `.photos/favorites` on the server's disk. It is a JPEG at most 2048 pixels
+  on its longest side. Originals stay on the phone.
+- **Each picture is described** by the Omni slot, through the code bookmarks
+  use (`image_reading.rs`): what it shows, things in it, colors, setting,
+  readable words, and phrases a person would type to find it. At most 100 a
+  day, newest first (`photo_enrichment.rs`).
+- **Unfavoriting, hiding or deleting on the phone** removes the picture, the
+  place and the description from the server and keeps the owner's note.
+- **On the page:** a wall of pictures at `/photos` with one search, and a page
+  per photo with the note, the date and place and what is in it.
+- **How the phone decides:** each pass compares the favorites in the library
+  with a ledger of what it sent to this server, so a new server, a missed
+  change and a picture that was only in iCloud are all the same case.
+- **Open:** what describing a picture costs (not measured), the whole library,
+  day pages showing a favorite, and one photo arriving twice from an iPhone
+  and an iPad on one iCloud library, whose local identifiers differ.
 
 ## How each source connects
 
@@ -131,17 +130,10 @@ photo, and a picture for favorites only.**
      a competing product. None forbids a person sending their own data to a
      model.
 3. **Photos from the iPhone,** as above.
-   - **Built on wave:** migration 0099 adds `data_content_photo` (ontology
-     `content_photo`, no lane and no day source, so no day shows a count of
-     photos); the `photos` stream in `ios_ingest` keeps each favorite's
-     picture in Drive under `.photos/favorites` and upserts a row per photo;
-     a deletion on the phone sets `deleted_at_source`; unfavoriting keeps
-     the copy. The iPhone plugin `apps/web/plugins/photos` reads PhotoKit
-     with hidden assets excluded, sends metadata on a first pass that
-     resumes where it stopped, then only changes from PhotoKit's persistent
-     change history.
-   - **Not done:** day pages marking the hours you took photos, and a model
-     describing favorites. Neither was asked for in this slice.
+   - **Built on wave:** migrations 0099 and 0111, the `photos` stream in
+     `ios_ingest`, the iPhone plugin `apps/web/plugins/photos`, the
+     `photo-enrichment` job, `/api/photos`, and the two views. Not run on a
+     phone.
 4. **Imports: Spotify, Amazon orders, Discord.** Three one-time imports
    shaped like Past chats: upload the file, a newer export adds only what is
    new. Each needs its record (listening, orders; Discord's messages fit
@@ -196,8 +188,6 @@ after 99bea44ef). Left, none blocking a first real run:
 - **Spotify's two clocks.** A recent play and a download play merge only
   when Spotify's `played_at` and the download's stop time agree to the
   second, which Spotify does not document.
-- **Photos.** Editing a favorite stores its new picture and leaves the old
-  one in Drive with nothing pointing at it.
 - **Imports** check a staged file by its folder's name, not its full path.
 - **Imported sources stay under "Add a source"** in the Sources list,
   because the list sorts by sign-ins and an import has none. Each one's
@@ -272,7 +262,8 @@ Settled:
 4. **Photos: metadata for every photo, a picture for favorites.** The
    owner first asked "lets do favorites on photos from iphone since ALL
    photos might be way too much right? but all photo metadata? thoughts?",
-   and on 2026-11-21 answered the slice as proposed with "Yes, slice 3".
+   and on 2026-11-21 answered the slice as proposed with "Yes, slice 3". On
+   2026-11-25 they narrowed it to favorites, "Yes, build it" (above).
 5. **Spotify recent plays: built, with each person's own Spotify app.**
    The owner first chose "Add recent plays". Spotify's Developer Policy
    (2025-05-15) says not to ingest Spotify Content, which includes user data

@@ -18,12 +18,10 @@ export interface StreamStatus {
 	collecting: boolean;
 }
 
-/** The photos collector's status. */
+/** The photo favorites collector's status. */
 export interface PhotosStatus extends StreamStatus {
 	/** Limited access: the collector sees only the photos picked in the iOS sheet. */
 	limited: boolean;
-	/** Every photo has been sent once; only changes go now. */
-	firstPassDone: boolean;
 }
 
 /** Whether the Health sheet has been shown — the most HealthKit will say.

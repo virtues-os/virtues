@@ -14,6 +14,7 @@ const NAMES: Record<string, string> = {
 	settings_draft: 'Settings',
 	style_preview: 'Style samples',
 	bookmark_enrichment: 'Bookmarks',
+	photo_enrichment: 'Photo favorites',
 	interview: 'Interview',
 	entity_article: 'Wiki articles',
 	other: 'Other',

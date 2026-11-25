@@ -7,9 +7,10 @@
 //! (`oauth.rs` exchange), and a removed bank frees its place
 //! (`routes/plaid.rs` item/remove).
 //!
-//! The table also says whose bank an access token is. Every bank call names
-//! a token, and any subscriber's key reaches the bank routes, so a call is
-//! served only when the token's bank is the caller's own ([`token_owner`]).
+//! The table also says whose bank an access token is. Every bank call names a
+//! token, and any subscriber's key reaches the bank routes, so a call, a
+//! removal included, is served only when the token's bank is the caller's own
+//! ([`token_owner`]).
 //!
 //! Banks linked before this table existed are not in it, and banks recorded
 //! before `token_hash` existed have none. The first call with such a token
@@ -158,11 +159,14 @@ pub async fn claim(pool: &PgPool, account_id: &str, item_id: &str, access_token:
     Ok(true)
 }
 
-/// Forget a removed bank. Removing one that is not recorded is a no-op.
-pub async fn forget(pool: &PgPool, account_id: &str, item_id: &str) -> Result<()> {
-    sqlx::query("DELETE FROM linked_banks WHERE account_id = $1 AND item_hash = $2")
+/// Forget a removed bank of this account. `item_id` is `None` when Plaid no
+/// longer knows the bank and only its token is left. Removing one that is not
+/// recorded is a no-op.
+pub async fn forget(pool: &PgPool, account_id: &str, item_id: Option<&str>, access_token: &str) -> Result<()> {
+    sqlx::query("DELETE FROM linked_banks WHERE account_id = $1 AND (item_hash = $2 OR token_hash = $3)")
         .bind(account_id)
-        .bind(item_hash(item_id))
+        .bind(item_id.map(item_hash))
+        .bind(token_hash(access_token))
         .execute(pool)
         .await?;
     Ok(())
@@ -192,8 +196,8 @@ mod tests {
     async fn forgetting_a_bank_frees_its_place_and_is_harmless_twice(pool: PgPool) {
         assert_eq!(admit(&pool, "acct", "item-a", "tok-item-a", 1).await.unwrap(), Admit::Admitted);
         assert_eq!(admit(&pool, "acct", "item-b", "tok-item-b", 1).await.unwrap(), Admit::AtLimit { max: 1 });
-        forget(&pool, "acct", "item-a").await.unwrap();
-        forget(&pool, "acct", "item-a").await.unwrap();
+        forget(&pool, "acct", Some("item-a"), "tok-item-a").await.unwrap();
+        forget(&pool, "acct", Some("item-a"), "tok-item-a").await.unwrap();
         assert_eq!(admit(&pool, "acct", "item-b", "tok-item-b", 1).await.unwrap(), Admit::Admitted);
     }
 
@@ -204,8 +208,26 @@ mod tests {
         assert_eq!(token_owner(&pool, "other", "tok-a").await.unwrap(), TokenOwner::Another);
         assert_eq!(token_owner(&pool, "acct", "tok-never-seen").await.unwrap(), TokenOwner::Unknown);
         // Removing the bank forgets its token too.
-        forget(&pool, "acct", "item-a").await.unwrap();
+        forget(&pool, "acct", Some("item-a"), "tok-a").await.unwrap();
         assert_eq!(token_owner(&pool, "acct", "tok-a").await.unwrap(), TokenOwner::Unknown);
+    }
+
+    #[sqlx::test]
+    async fn forgetting_frees_only_this_accounts_place(pool: PgPool) {
+        sqlx::query("INSERT INTO linked_banks (account_id, item_hash) VALUES ('acct', $1)")
+            .bind(item_hash("item-a"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        admit(&pool, "acct", "item-b", "tok-b", 10).await.unwrap();
+        admit(&pool, "other", "item-c", "tok-c", 10).await.unwrap();
+        // By item, including a row recorded before tokens.
+        forget(&pool, "acct", Some("item-a"), "tok-a").await.unwrap();
+        // By token alone, when Plaid no longer names the bank.
+        forget(&pool, "acct", None, "tok-b").await.unwrap();
+        forget(&pool, "acct", Some("item-c"), "tok-c").await.unwrap();
+        let left: Vec<Vec<u8>> = sqlx::query_scalar("SELECT item_hash FROM linked_banks").fetch_all(&pool).await.unwrap();
+        assert_eq!(left, [item_hash("item-c")]);
     }
 
     #[sqlx::test]

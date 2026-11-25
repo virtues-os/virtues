@@ -57,7 +57,7 @@
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Virtues reads when and where your photos were taken and keeps a smaller copy of each favorite. It also uses photos you attach in chat.</string>
+	<string>Virtues copies the photos you favorite to your own server, with when and where you took them. It also uses photos you attach in chat.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_http._tcp</string>

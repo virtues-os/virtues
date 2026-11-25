@@ -1004,8 +1004,25 @@ async fn delete_files(pool: &PgPool, table: &Table, ids: &[String]) -> Result<u6
             }
             Ok(files)
         }
+        "data_content_photo" => release_photo_pictures(pool, ids).await,
         _ => Ok(0),
     }
+}
+
+/// Delete the pictures of photos about to be deleted, except one another photo
+/// shows (`api::photos`).
+async fn release_photo_pictures(pool: &PgPool, ids: &[String]) -> Result<u64> {
+    let files: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT asset_id FROM data_content_photo WHERE id = ANY($1) AND asset_id IS NOT NULL",
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await?;
+    if files.is_empty() {
+        return Ok(0);
+    }
+    let config = crate::api::DriveConfig::new(std::sync::Arc::new(crate::storage::lake::storage_from_env()?));
+    crate::api::photos::release_pictures(pool, &config, &files, ids).await
 }
 
 /// `data_audio_session` rows are written from a day's transcripts and carry

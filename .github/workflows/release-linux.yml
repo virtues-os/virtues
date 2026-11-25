@@ -50,12 +50,6 @@ env:
   # (dev sidecars); move all three together. b11507 is the first we run with
   # EmbeddingGemma 2 (architecture added upstream in llama.cpp#30054).
   LLAMA_CPP_TAG: b11507
-  # QAIRT SDK (Community) version used to BUILD virtues-qnnd, the Dragon NPU
-  # daemon (aarch64 only). Public download from Qualcomm's software center; the
-  # daemon is header-only against it (dlopen's the runtime libs on the box). Must
-  # match the QAIRT the .bin context binaries were compiled with.
-  # qnnd's headers. Must match `QNND.version` in crates/virtues-qairt/src/lib.rs.
-  QAIRT_VERSION: 2.42.0.251225
 
 jobs:
   # The draft exists BEFORE any arch uploads into it.
@@ -198,11 +192,6 @@ jobs:
       # box has manifest rows it can never run — resolve_program finds nothing
       # on PATH and every webhook 5xxs. `--bins` builds every [[bin]] in
       # applets/Cargo.toml from one source of truth.
-      #
-      # `virtues-client` stays OUT of this on purpose — it is a preview whose
-      # compile is allowed to fail (`continue-on-error` below), and folding it
-      # in here would make its breakage gate the box and the installer, which
-      # is the exact thing that step's separation exists to prevent.
       - name: Build box, installer + action binaries
         env:
           SQLX_OFFLINE: 'true'
@@ -213,19 +202,9 @@ jobs:
             -p virtues-applets --bins \
             -p virtues-door --bin virtues-door
 
-      # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
-      # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
-      # compile must NOT gate shipping the box (`virtues`) + installer, so this
-      # step is non-fatal and packaging/upload below include it only when it
-      # actually built this run. The build break is tracked separately.
-      - name: Build virtues-client binary (preview, non-fatal)
-        continue-on-error: true
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
-
       # llama-server — the engine behind the virtues-embed sidecar
-      # (one CPU binary per arch — the universal floor for Manual mode and the
-      # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
+      # (one CPU binary per arch — the universal floor for Manual mode).
+      # GGML_NATIVE=OFF keeps the build portable
       # across the arch instead of tuned to the runner's CPU; static libs
       # so the tarball ships one self-contained executable.
       #
@@ -287,41 +266,6 @@ jobs:
       - name: Smoke llama-server (CPU)
         run: /tmp/llama-bin/llama-server --version
 
-      # virtues-qnnd — the Dragon NPU daemon (aarch64 only). It compiles against
-      # the QAIRT SDK *headers* (the daemon dlopen's the runtime libs on the box,
-      # so no libs are needed here). QAIRT Community is a public ~2 GB download,
-      # version-pinned, so cache the extracted SDK keyed on the version.
-      - name: Cache QAIRT SDK
-        if: matrix.arch == 'aarch64'
-        id: qairt
-        uses: actions/cache@v4
-        with:
-          path: /tmp/qairt
-          key: qairt-${{ env.QAIRT_VERSION }}-v1
-
-      - name: Fetch QAIRT SDK (Community)
-        if: matrix.arch == 'aarch64' && steps.qairt.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq unzip
-          mkdir -p /tmp/qairt
-          # Plain GET (NO range — the gateway 403s range requests) + a browser
-          # UA; follows the softwarecenter → apigwx-aws redirect. Verified public
-          # (unauthenticated) 2026-07-07.
-          curl -fSL --retry 3 -A "Mozilla/5.0" -o /tmp/qairt/qairt.zip \
-            "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip"
-          unzip -q /tmp/qairt/qairt.zip -d /tmp/qairt
-          rm -f /tmp/qairt/qairt.zip
-
-      - name: Build virtues-qnnd (Dragon NPU daemon)
-        if: matrix.arch == 'aarch64'
-        run: |
-          # SDK unzips to /tmp/qairt/qairt/<version>/; locate the include root.
-          H=$(find /tmp/qairt -path '*/include/QNN/QnnInterface.h' 2>/dev/null | head -1)
-          test -n "$H" || (echo "QAIRT headers not found under /tmp/qairt" >&2 && exit 1)
-          export QNN_SDK_ROOT="$(cd "$(dirname "$H")/../.." && pwd)"
-          echo "QNN_SDK_ROOT=$QNN_SDK_ROOT"
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-qnnd --bin virtues-qnnd --target ${{ matrix.target }}
-
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -354,11 +298,8 @@ jobs:
           mkdir -p dist staging
           BIN_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues"
           INSTALLER_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-installer"
-          CLIENT_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-client"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
-          # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
-          # (its build step is non-fatal); it's packaged below only if present.
 
           LLAMA_PATH="/tmp/llama-bin/llama-server"
           test -x "$LLAMA_PATH" || (echo "llama-server not built" >&2 && exit 1)
@@ -421,15 +362,6 @@ jobs:
           test -x "$REL/virtues-door" || (echo "virtues-door not built at $REL/virtues-door" >&2 && exit 1)
           cp "$REL/virtues-door" staging/applets-bin/virtues-door
 
-          # virtues-qnnd — Dragon NPU daemon, aarch64 only (built against QAIRT
-          # above). Packaged when present; the installer extracts it if there and
-          # only errors on a Dragon that finds it missing.
-          TAR_EXTRA=""
-          if [ -x "$REL/virtues-qnnd" ]; then
-            cp "$REL/virtues-qnnd" staging/virtues-qnnd
-            TAR_EXTRA="virtues-qnnd"
-          fi
-
           # BUILD.json — the tarball's build identity. `virtues upgrade` reads
           # it for SHA-based no-op detection (the only honest identity for
           # prerelease builds, which all report the bare crate version) and to
@@ -440,7 +372,7 @@ jobs:
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > staging/BUILD.json
 
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web applets applets-bin BUILD.json $TAR_EXTRA
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web applets applets-bin BUILD.json
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the
@@ -454,20 +386,6 @@ jobs:
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
-
-          # Desktop daemon ships as a standalone binary too — but it's a v0.2
-          # PREVIEW and may not have built (non-fatal step above). Package +
-          # advertise it ONLY when the binary exists this run; its absence must
-          # never fail the release. Testers download it directly, `sudo setcap
-          # cap_net_admin+ep` it, and run `virtues-client up`.
-          if [ -x "$CLIENT_PATH" ]; then
-            CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
-            cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
-            (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
-            echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::virtues-client (preview daemon) did not build for ${{ matrix.arch }}; releasing box + installer without it"
-          fi
 
       # `draft: true` on EVERY upload, including this one. The other two steps
       # in this job already said it and this one did not, so whichever leg won
@@ -523,19 +441,6 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.version }}
           files: dist/bootstrap.sh
-          fail_on_unmatched_files: true
-          draft: true
-
-      # Preview daemon — separate, optional upload so a missing client asset
-      # (it may not have built) can't fail the strict core upload above.
-      - name: Upload virtues-client (preview, optional)
-        if: steps.tarball.outputs.client_name != ''
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: ${{ steps.tag.outputs.version }}
-          files: |
-            dist/${{ steps.tarball.outputs.client_name }}
-            dist/${{ steps.tarball.outputs.client_name }}.sha256
           fail_on_unmatched_files: true
           draft: true
 

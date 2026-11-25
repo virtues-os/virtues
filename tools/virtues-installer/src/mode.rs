@@ -4,9 +4,7 @@
 //!
 //!   · **Bundled (the default)** — a portable CPU-only llama-server we
 //!     build+test in CI, running the recommended embedding model, which
-//!     `virtues upgrade` keeps current. A Radxa Dragon, detected from the
-//!     device tree, gets it without a question, paced for a board with no
-//!     fan. A detected GPU or NPU gets a guide.
+//!     `virtues upgrade` keeps current. A detected GPU or NPU gets a guide.
 //!   · **Manual / bring-your-own** — the user runs their own OpenAI-style
 //!     embedding endpoint on whatever their silicon supports; the installer
 //!     asks for the URL, probes it (auto-detecting the embedding dimension),
@@ -29,7 +27,7 @@ use sha2::{Digest, Sha256};
 use crate::ui;
 
 pub enum InferenceMode {
-    /// The default, and what a Radxa Dragon gets without asking: a portable **CPU-only**
+    /// The default: a portable **CPU-only**
     /// llama-server (the one we build + test in CI — no GPU/driver
     /// babysitting) with our models, zero config. Fine for a box's daily
     /// volume; an accelerator, when present, is faster still, and the
@@ -49,18 +47,12 @@ pub enum InferenceMode {
 
 impl InferenceMode {
     /// Decide the mode, in order: env override (scripted installs, CI, no TTY
-    /// needed) → the box's own `manual` setup on a re-run → Dragon board
-    /// detection → interactive prompts.
+    /// needed) → the box's own `manual` setup on a re-run → interactive
+    /// prompts.
     pub fn resolve(box_env: &std::path::Path) -> Result<Self> {
         // 1. Env override — the non-interactive path for image builds and
         //    scripted installs.
         match std::env::var("VIRTUES_INFERENCE").ok().as_deref() {
-            // A Dragon runs search on its CPU now. An older script that asks
-            // for the NPU setup gets that.
-            Some("dragon") => {
-                ui::ok("Inference mode: bundled local CPU engine (a Dragon runs search on its CPU)");
-                return Ok(Self::Bundled);
-            }
             Some("bundled") => {
                 ui::ok("Inference mode: bundled local CPU engine (VIRTUES_INFERENCE=bundled)");
                 return Ok(Self::Bundled);
@@ -84,28 +76,20 @@ impl InferenceMode {
                 return Ok(Self::Manual { embed_url, embed_model });
             }
             Some(other) => bail!(
-                "unrecognized VIRTUES_INFERENCE={other} — expected \"bundled\", \"manual\", or \"dragon\""
+                "unrecognized VIRTUES_INFERENCE={other} — expected \"bundled\" or \"manual\""
             ),
             None => {}
         }
 
         // 2. A re-run on a box whose owner runs their own embedding server
         //    keeps it. Their choice is theirs to undo, with
-        //    `virtues configure-inference`, not the installer's to override by
-        //    detecting the board.
+        //    `virtues configure-inference`, not the installer's to override.
         if let Some(own) = own_server(box_env) {
             ui::ok(&format!("Inference mode: manual, keeping your embedding server at {}", own.0));
             return Ok(Self::Manual { embed_url: own.0, embed_model: own.1 });
         }
 
-        // 3. Board detection: a Dragon runs search on its CPU, paced for a
-        //    board with no fan (`install::dragon_pacing`), no questions asked.
-        if is_dragon() {
-            ui::ok("Dragon detected — search runs on its CPU");
-            return Ok(Self::Bundled);
-        }
-
-        // 4. Interactive flow. cliclack reads /dev/tty directly, so this works
+        // 3. Interactive flow. cliclack reads /dev/tty directly, so this works
         //    under `curl | sh` (stdin = pipe) — but not with no controlling
         //    terminal at all (CI, systemd), where the env override is the only
         //    path.
@@ -217,22 +201,6 @@ pub(crate) fn own_server(box_env: &std::path::Path) -> Option<(String, String)> 
     Some((url, get("VIRTUES_EMBED_MODEL").unwrap_or_else(|| "default".to_string())))
 }
 
-/// Is this a Radxa Dragon? Its device tree carries a "radxa,dragon…" compatible
-/// string (covers the q6a/q8b variants); only the Q6A is paced
-/// (`install::dragon_pacing`).
-fn is_dragon() -> bool {
-    // /proc/device-tree/compatible is a NUL-separated list of byte strings
-    // ("radxa,dragon-q6a\0qcom,…"); lossy UTF-8 is fine for a substring match.
-    for path in ["/proc/device-tree/compatible", "/proc/device-tree/model"] {
-        if let Ok(bytes) = std::fs::read(path) {
-            let text = String::from_utf8_lossy(&bytes).to_lowercase();
-            if text.contains("radxa,dragon") || text.contains("radxa dragon") {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// Can we prompt? cliclack reads /dev/tty (not stdin), so this — not
 /// `isatty(stdin)` — is the right existence check under `curl | sh`.
@@ -514,8 +482,7 @@ pub async fn validate_manual(embed_url: &str, embed_model: &str) -> Result<Valid
     lat_ms.sort_unstable();
     let p50_ms = lat_ms[2];
 
-    // `/health` — reported, never enforced. llama-server and `virtues-qnnd`
-    // answer it and the box uses it as a fast startup signal, but it is not
+    // `/health` — reported, never enforced. llama-server answers it and the box uses it as a fast startup signal, but it is not
     // part of the OpenAI shape and Ollama (recommended first in the guide
     // above, for NVIDIA and x86 CPU) returns 404 while embedding perfectly.
     // The runtime treats a non-2xx as unknown and verifies with a real embed,
@@ -717,7 +684,7 @@ mod own_server_tests {
             own_server(&env),
             Some(("http://192.168.1.20:11434".to_string(), "nomic-embed-text".to_string()))
         );
-        std::fs::write(&env, "VIRTUES_INFERENCE=dragon\nVIRTUES_EMBED_URL=http://127.0.0.1:18181\n").unwrap();
+        std::fs::write(&env, "VIRTUES_INFERENCE=bundled\nVIRTUES_EMBED_URL=http://127.0.0.1:18181\n").unwrap();
         assert_eq!(own_server(&env), None);
         assert_eq!(own_server(&dir.join("missing.env")), None);
         let _ = std::fs::remove_dir_all(&dir);

@@ -12,6 +12,4 @@ pub struct PhotosStatus {
   pub limited: bool,
   /// A pass is reading the library right now.
   pub collecting: bool,
-  /// Every photo's metadata has been sent once; only changes go now.
-  pub first_pass_done: bool,
 }

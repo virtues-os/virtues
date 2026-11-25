@@ -9,14 +9,13 @@
 //! ```text
 //! /usr/local/share/virtues/
 //!   releases/<slot-id>/        one whole release: virtues, llama-server?,
-//!                              virtues-qnnd?, web/, actions/, actions-bin/
+//!                              web/, actions/, actions-bin/
 //!   current  -> releases/<id>  THE flip point (atomic rename)
 //!   prepared -> releases/<id>  downloaded + preflighted, NOT yet activated
 //!   web      -> current/web    stable paths — env vars & unit files never
 //!   actions  -> current/actions change; they resolve through `current`
 //! /usr/local/bin/virtues       -> ../share/virtues/current/virtues
 //! /usr/local/bin/llama-server  -> ../share/virtues/current/llama-server  (if shipped)
-//! /usr/local/bin/virtues-qnnd  -> ../share/virtues/current/virtues-qnnd  (if shipped)
 //! /usr/local/libexec/virtues   -> ../share/virtues/current/actions-bin
 //! ```
 //!

@@ -252,10 +252,6 @@ pub struct ChatRequest {
     /// token counts, no content, no chat id.
     #[serde(default)]
     pub temporary: bool,
-    /// Local mode only: whether the small model reasons before answering.
-    /// Every other mode's thinking is the mode's own (`ChatMode::limits`).
-    #[serde(default)]
-    pub think: bool,
 }
 
 /// A ghost chat's history, as the client sent it. The box stores nothing for
@@ -608,10 +604,6 @@ pub enum StreamEvent {
         step: Option<crate::tools::WorkerStep>,
     },
 
-    // A local turn's own measurements, for the line under the reply.
-    #[serde(rename = "local-stats")]
-    LocalStats(crate::local_model::Stats),
-
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -811,7 +803,6 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
         ),
         // Transient: a local chat is never stored, so there is nothing to
         // reload it into.
-        StreamEvent::LocalStats(stats) => data_event("data-local-stats", None, stats, true),
         // All other events use standard serde serialization
         _ => serde_json::to_string(event).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize stream event: {}", e);
@@ -1141,17 +1132,10 @@ pub async fn next_turn_preview(
     chat_id: &str,
     request: NextTurnRequest,
 ) -> Result<NextTurnPreview, Response> {
-    let mode = ChatMode::resolve(pool, chat_id, &request.agent_mode).await;
-    if matches!(mode, ChatMode::Local) {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(ChatError {
-                error: "Nothing goes to a provider".to_string(),
-                details: Some("This chat runs on your server's own model.".to_string()),
-            }),
-        )
-            .into_response());
+    if request.agent_mode == LOCAL_MODE {
+        return Err(local_refused());
     }
+    let mode = ChatMode::resolve(pool, chat_id, &request.agent_mode).await;
     let model = match crate::api::model_choice::resolve_turn_model(pool, request.model.as_deref(), &mode).await {
         Ok(m) => m,
         Err(crate::error::Error::InvalidInput(detail)) => {
@@ -1716,6 +1700,10 @@ async fn chat_handler_inner(
     // The same moment, kept with the reply: its "Worked for" counts from here.
     let turn_started_at = crate::types::Timestamp::now();
 
+    if request.agent_mode == LOCAL_MODE {
+        return local_refused();
+    }
+
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
@@ -1729,12 +1717,6 @@ async fn chat_handler_inner(
             Ok(false) => return admin_refused(&request.agent_mode),
             Err(failed) => return failed,
         }
-    }
-
-    // A local turn has no cloud step, so it leaves before the first one: no
-    // model choice and no readiness check for a gateway it never calls.
-    if matches!(mode, ChatMode::Local) {
-        return crate::api::local_chat::run(pool, request, live_turns, cancel_state).await;
     }
 
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
@@ -1897,6 +1879,23 @@ fn internal(error: &str) -> Response {
 /// The refusal for an admin turn without a valid owner proof, in the shape
 /// the chat view reads (`ChatError.svelte`). An app from before admin was an
 /// applet asks for `sudo`, and it cannot sign, so it is told to update.
+/// What a client from when chat had a Local mode sends for it. That mode ran a
+/// model on the server's own hardware and sent nothing to a provider, so its
+/// turns are refused: answering them as ordinary chat would send the message
+/// to a provider the person did not choose.
+const LOCAL_MODE: &str = "local";
+
+fn local_refused() -> Response {
+    (
+        StatusCode::GONE,
+        Json(ChatError {
+            error: "Local mode was removed".to_string(),
+            details: Some("Start a new chat to talk to your assistant.".to_string()),
+        }),
+    )
+        .into_response()
+}
+
 fn admin_refused(agent_mode: &str) -> Response {
     let details = if agent_mode == "sudo" {
         "Update the Virtues app to use admin. This version can't sign the check your server asks for."

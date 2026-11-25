@@ -37,6 +37,7 @@
 		skill = $bindable(null),
 		mentionQuery = $bindable(null),
 		inline = false,
+		glass = false,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -60,6 +61,9 @@
 		 *  messages, where the composer is docked under the chat. The card
 		 *  goes back to two rows as soon as the text wraps. */
 		inline?: boolean;
+		/** The composer sits on the painting (home), so it is drawn in the
+		 *  app's glass and follows the Glass setting. */
+		glass?: boolean;
 	} = $props();
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
@@ -258,6 +262,8 @@
 	});
 	// A phone always starts on one row.
 	const phone = $derived(mobileLayout.isMobile);
+	// The phone's empty chat always sits on the painting.
+	const onGlass = $derived(glass || (phone && !inline));
 	const oneRow = $derived((inline || phone) && !wrapped);
 	// How tall one line of the field is, measured while it is empty. The
 	// font decides it, so a fixed number misreads a serif's taller line as
@@ -444,8 +450,8 @@
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
 		class:phone
-		class:glass={phone && !inline}
-		class:lq={phone && !inline}
+		class:glass={onGlass}
+		class:lq={onGlass}
 		class:tray-open={trayOpen}
 		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
@@ -494,7 +500,7 @@
 			</div>
 		</div>
 
-		<div class="composer-card" class:bg-surface={!phone} class:one-row={oneRow}>
+		<div class="composer-card" class:bg-surface={!phone && !onGlass} class:one-row={oneRow}>
 			{#if onAttach}
 				<input
 					bind:this={fileInputEl}
@@ -706,11 +712,12 @@
 	.chat-input-wrapper.phone:has(.one-row) {
 		--shell-radius: var(--radius-xl);
 	}
-	/* On the phone's empty chat the bar sits over the painting in the app's
-	   glass (.lq in app.css), the same as the + beside it, so it follows the
-	   Glass setting. The wrapper's own fill would win over .lq, so the glass
-	   is restated here. */
-	.chat-input-wrapper.phone.glass {
+	/* On the painting the composer is the app's glass (.lq in app.css), like
+	   the home cards and the corner buttons, so it follows the Glass setting.
+	   The wrapper's own fill would win over .lq, so the glass is restated
+	   here. */
+	.chat-input-wrapper.glass,
+	.chat-input-wrapper.glass:is(:hover, .focused):not(.mention-over) {
 		border-color: transparent;
 		background: var(--lq-sheen), var(--lq-fill);
 		/* design-ok: glass is lifted off the painting */

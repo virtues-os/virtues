@@ -13,13 +13,11 @@ itself against vectors from a model it was not built with. Code:
 **Virtues calls one HTTP API and protects its index from mismatched models.** An OpenAI-style
 `/v1/embeddings` endpoint. Search doesn't rerank: the fused dense + BM25 order
 is the ranking (`search::query` has the measurements). Where the endpoint comes
-from is decided once, at install (`InferenceMode`), and there are two answers,
-plus the Dragon setup older installs still run:
+from is decided once, at install (`InferenceMode`), and there are two answers:
 
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
-| **Dragon** (older installs only) | the Radxa Dragon Q6A | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, until its owner moves it to Bundled with `virtues configure-inference --recommended` ([model-migration.md](model-migration.md)). The installer no longer offers it: a Dragon detected from its device tree gets Bundled without a question, paced for a board with no fan (two threads on cores 4 to 6, `CPUWeight=20`) | no longer chosen |
-| **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
+| **Bundled** | any machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 
 We do not offer a **managed GPU/NPU mode for arbitrary hardware**: we
@@ -27,28 +25,22 @@ never install or babysit inference software on machines we cannot test. Either
 it is the CPU engine with zero hardware variance, or the user owns the endpoint
 and we validate it at install time. The
 bundled path is labelled "not for production" because it is slow on large
-corpora; the daily-use path off our board is Manual.
+corpora; the faster daily-use path is Manual.
 
-`virtues-qnnd` speaks the same contract as the llama-server pair, so core has
-no QNN-specific code path: Dragon gets the same probe and width guards as
-every other endpoint. Changing the local models is
-[model-migration.md](model-migration.md).
+Changing the local models is [model-migration.md](model-migration.md).
 
 ## The env contract
 
-Written by the installer into the box env file; read by core. The Dragon
-column is what installs before the move wrote, and what such a box keeps until
-it moves.
+Written by the installer into the box env file; read by core.
 
-| Variable | Dragon (older installs) | Bundled | Manual |
-|---|---|---|---|
-| `VIRTUES_INFERENCE` | `dragon` | `bundled` | `manual` |
-| `VIRTUES_EMBED_URL` | `http://127.0.0.1:18181` | same | user's |
-| `VIRTUES_EMBED_MODEL` | — | — | model name sent in every request |
-| `VIRTUES_EMBED_FINGERPRINT` | — | — | pinned at install |
-| `VIRTUES_EMBED_DIMS` | — | — (native 768) | probed native width |
-| `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` | — | Gemma's | resolved by the installer |
-| `VIRTUES_QNND_MODELS_DIR` | the QNN models dir | — | — |
+| Variable | Bundled | Manual |
+|---|---|---|
+| `VIRTUES_INFERENCE` | `bundled` | `manual` |
+| `VIRTUES_EMBED_URL` | `http://127.0.0.1:18181` | user's |
+| `VIRTUES_EMBED_MODEL` | — | model name sent in every request |
+| `VIRTUES_EMBED_FINGERPRINT` | — | pinned at install |
+| `VIRTUES_EMBED_DIMS` | — (native 768) | probed native width |
+| `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` | Gemma's | resolved by the installer |
 
 - **Local-only.** Manual mode refuses a public embedding endpoint
   (`mode.rs::ensure_local`: loopback, RFC1918, link-local, CGNAT `100.64/10`
@@ -126,8 +118,6 @@ instead of re-embedding.
   own advisory lock is what prevents a second concurrent run.
 - **`curl | sh` cannot prompt on stdin**; cliclack reads `/dev/tty` directly.
   No TTY and no env override is a clear error, not a hang.
-- **llama.cpp Vulkan on the Q6A's Adreno 643 GPU-hangs** (`vk::DeviceLost`).
-  The Q6A runs search on its CPU; do not route it through the GPU.
 - **EmbeddingGemma's activations overflow fp16**, so the bundled sidecar runs
   it on the CPU (`-ngl 0`). On the hardware we measured, a GPU was no faster.
   How a discrete GPU compares is unmeasured; the accelerator guide doesn't

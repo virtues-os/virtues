@@ -135,18 +135,16 @@ pub fn print_inference(r: &ResolutionReport, issues: &mut ui::Issues) {
 /// The liveness half of the Inference ledger: is anything actually SERVING?
 ///
 /// `print_inference` above reports on-disk model artifacts, which is a different
-/// question and was for a long time the only one doctor asked. A box whose NPU
-/// daemon had been crash-looping for ten days still printed two green ticks,
-/// because both context binaries were exactly where the installer had put them.
+/// question and was for a long time the only one doctor asked. A box whose
+/// embedding daemon had been crash-looping for ten days still printed green
+/// ticks, because its model files were exactly where the installer had put them.
 /// Files on disk are necessary and nowhere near sufficient, and a ✓ that can't
 /// tell the difference is worse than no row at all — it is what someone reads
 /// when they go looking for the cause of failing search.
 ///
-/// `/health` is the cheap signal, and it is uniform across both inference
-/// flavors we ship: llama-server returns 200 once the GGUF is loaded, and
-/// `virtues-qnnd` implements the same route by running a real embed through the
-/// Hexagon (`crates/virtues-qnnd/src/http.rs`). Either way 200 means "this
-/// endpoint can answer right now", which is the thing being claimed.
+/// `/health` is the cheap signal: llama-server returns 200 once the GGUF is
+/// loaded, which means "this endpoint can answer right now", the thing being
+/// claimed.
 ///
 /// It is not, however, the *only* signal, and treating it as one was a bug: the
 /// route is llama-server's, not part of the OpenAI shape. Ollama — which the

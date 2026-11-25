@@ -267,15 +267,8 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
 
     // Write + (re)start the unit. restart rather than just enable --now so an
     // installer re-run picks up unit/binary changes.
-    let (threads, pacing) = if dragon_pacing() {
-        (" -t 2", "CPUWeight=20\nCPUAffinity=4 5 6\n")
-    } else {
-        ("", "")
-    };
     let body = EMBED_UNIT_TEMPLATE
         .replace("__SUPP_GROUPS__", &supp_groups)
-        .replace("__THREADS__", threads)
-        .replace("__PACING__", pacing)
         .replace("__BIN__", &bin.display().to_string())
         .replace("__MODEL__", &models_dir.join(&cfg.embed_gguf).display().to_string());
     fs::write("/etc/systemd/system/virtues-embed.service", body)
@@ -285,73 +278,9 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     systemctl(&["restart", "virtues-embed"], "Start the inference sidecar").await
 }
 
-/// `env` with a leftover NPU setup removed: `VIRTUES_INFERENCE=dragon` and the
-/// keys that pointed at `virtues-qnnd`. Every other line stays as written.
-fn without_npu_setup(env: &str) -> String {
-    if !env.lines().any(|l| l.trim() == "VIRTUES_INFERENCE=dragon") {
-        return env.to_string();
-    }
-    let mut out: String = env
-        .lines()
-        .filter(|l| {
-            let k = l.trim().split_once('=').map(|(k, _)| k.trim()).unwrap_or("");
-            !matches!(k, "VIRTUES_INFERENCE" | "VIRTUES_QNND_MODELS_DIR" | "VIRTUES_RERANK_URL")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    out.push('\n');
-    out
-}
-
-/// Whether this box is a Dragon whose search still runs on `virtues-qnnd`,
-/// from an install before Dragons moved to the CPU. Its search keeps working
-/// on the NPU while the server builds the new model's index, so the installer
-/// leaves its inference alone and hands the move to [`move_off_npu`].
-pub fn npu_still_serving() -> bool {
-    Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
-}
-
-/// Start moving a Dragon's search from the NPU to the CPU: `virtues
-/// configure-inference --recommended` starts the model beside `virtues-qnnd`,
-/// and the server retires qnnd once the new index is live (`cli::model_set` in
-/// core). Re-running the installer is the owner asking for it, the same as
-/// running that command, which is the only other way a Dragon moves for now.
-/// Never fails the install.
-pub async fn move_off_npu(cfg: &InstallConfig) {
-    // Its own output shows: the model download takes minutes, and a silent
-    // installer reads as a hung one.
-    let mut cmd = Command::new(cfg.binary_path());
-    cmd.args(["configure-inference", "--recommended"]);
-    match cmd.status().await {
-        Ok(s) if s.success() => {}
-        Ok(_) => ui::warn(
-            "Couldn't start moving search to the CPU (see above). Try again with: \
-             sudo virtues configure-inference --recommended",
-        ),
-        Err(e) => ui::warn(&format!(
-            "Couldn't start moving search to the CPU ({e}). Try again with: \
-             sudo virtues configure-inference --recommended"
-        )),
-    }
-}
-
-/// Whether the embedding sidecar runs paced, on a Radxa Dragon Q6A, which has
-/// no fan. Must match core's `inference_report::is_dragon_board`, and the flags
-/// must match `cli::model_set::embed_unit_on`, which documents the
-/// measurements: two threads on the 2.4 GHz cores (4 to 6) kept the CPU near
-/// 75 °C where four reached its 90 °C throttle point, and `CPUWeight=20` gives
-/// the server the CPU first. A Dragon Q8B is a different chip with a different
-/// core layout, and other QCM6490 boards were never measured, so neither is
-/// matched.
-fn dragon_pacing() -> bool {
-    std::fs::read("/proc/device-tree/compatible")
-        .map(|c| c.split(|b| *b == 0).any(|s| s == b"radxa,dragon-q6a"))
-        .unwrap_or(false)
-}
-
 /// libpdfium — native PDF text extraction for the `document_extraction`
-/// action (agents/record/researcher.md D1). Mode-independent (CPU parse; runs the same on
-/// the Dragon and a DIY box), SHA-verified from the models bucket like every
+/// action (agents/record/researcher.md D1). Mode-independent (a CPU parse),
+/// SHA-verified from the models bucket like every
 /// other model asset, skipped when already present.
 pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
     crate::download::fetch_asset(cfg, &cfg.pdfium_asset(), cfg.pdfium_lib_path()).await?;
@@ -365,8 +294,7 @@ pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
 /// (`/dev/dri/*` and friends). The llama-server sidecars run unprivileged as
 /// `virtues`; without membership in these groups the GPU backend can't open
 /// its device nodes and init fails, so llama.cpp silently falls back to CPU.
-/// This exists for the Dragon image's GPU (offload via Vulkan/OpenCL — the
-/// mechanism is generic). We only wire up groups that actually exist on the
+/// The mechanism is generic (offload via Vulkan/OpenCL). We only wire up groups that actually exist on the
 /// host: a CPU-only host has neither and correctly stays on CPU.
 async fn gpu_access_groups() -> Vec<&'static str> {
     let mut groups = Vec::new();
@@ -406,8 +334,6 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
 /// entirely on a CPU-only host — an undefined supplementary group would make
 /// systemd fail the unit (216/GROUP), which is worse than CPU fallback.
-/// `__THREADS__` and `__PACING__` carry the Dragon's pacing, or nothing
-/// elsewhere (see `dragon_pacing`).
 const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues embedding sidecar (llama-server, embeddinggemma-2)
 Documentation=https://virtues.com/docs
@@ -422,10 +348,10 @@ StartLimitBurst=5
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0__THREADS__
+__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 Restart=on-failure
 RestartSec=5
-__PACING__
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -687,7 +613,7 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     migrate_applets_out_of_shipped_tree(cfg)?;
     // chown -R virtues:virtues, EXCEPT the Postgres cluster.
     //
-    // Boxes provisioned as Dragons by earlier installers keep their cluster at
+    // Appliance boxes from earlier installers keep their cluster at
     // `<data dir>/postgresql`, symlinked from `/var/lib/postgresql`. This
     // installer no longer moves the cluster there, but a reinstall over one of
     // those boxes still finds it, and it belongs to `postgres`. A recursive
@@ -944,19 +870,13 @@ fn inference_env_keys(
     mode: &InferenceMode,
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
-    // A Dragon whose search still runs on its NPU keeps its settings until the
-    // server moves it (`move_off_npu`): the bundled keys written now would
-    // hand qnnd's gte-small EmbeddingGemma's prompts.
-    if matches!(mode, InferenceMode::Bundled) && npu_still_serving() {
-        return Vec::new();
-    }
     match mode {
         // Bundled: the portable CPU llama-server sidecars on loopback, serving
         // EmbeddingGemma 2.
         //
         // Its settings are written HERE, as configuration, because they are facts
         // about a model — not about Virtues. They used to be constants inside the
-        // binary (`DRAGON_STORED_DIM = 256`, Gemma's prompt formats as the
+        // binary (a stored width of 256, Gemma's prompt formats as the
         // fallback for every endpoint), which meant the box could only ever run
         // the one model those constants described, and any other model silently
         // got Gemma's prompt glued onto its inputs.
@@ -1086,16 +1006,8 @@ async fn merge_env_file(
     mode: &InferenceMode,
     validation: Option<&ValidationReport>,
 ) -> Result<()> {
-    let mut existing = fs::read_to_string(path)
+    let existing = fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
-
-    // A Dragon whose older installer couldn't set up virtues-qnnd says `dragon`
-    // with no daemon behind it. This install gives it the CPU sidecar, so the
-    // setting has to say so too, or the server keeps treating it as an NPU box
-    // (no model updates, reports naming qnnd). Its NPU settings go with it.
-    if matches!(mode, InferenceMode::Bundled) && !npu_still_serving() {
-        existing = without_npu_setup(&existing);
-    }
 
     // Parse keys present (lines like KEY=...). Comment lines + blanks
     // are ignored.
@@ -1258,7 +1170,7 @@ StartLimitIntervalSec=600
 StartLimitBurst=5
 
 # The data directory may be its own filesystem (a separate data disk, as on
-# boxes provisioned as Dragons). The app must not start without it mounted.
+# appliance boxes from earlier installers). The app must not start without it mounted.
 # Otherwise Postgres initdb's a fresh empty cluster onto the boot disk and the
 # box looks healthy while being empty. When the data directory is a plain
 # directory on the root filesystem, this only orders the unit after that mount.
@@ -1355,29 +1267,7 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
         issues += 1;
     }
 
-    if matches!(mode, InferenceMode::Bundled) && npu_still_serving() {
-        // Search stays on virtues-qnnd until the new index is built, so that
-        // is what has to answer meanwhile. A qnnd that stopped working (the
-        // likeliest reason to re-run the installer on such a box) means no
-        // search by meaning until the move finishes, and the owner should know.
-        let mut up = false;
-        for _ in 0..5 {
-            if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
-                up = true;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        if up {
-            ui::ok("Search answers on the NPU until the new model's index is built");
-        } else {
-            ui::warn(
-                "virtues-qnnd isn't answering, so search by meaning is unavailable until the \
-                 move to the CPU finishes. Keyword search still works",
-            );
-            issues += 1;
-        }
-    } else if let InferenceMode::Bundled = mode {
+    if let InferenceMode::Bundled = mode {
         // The inference sidecar responding. /health returns 200 only once the
         // model is loaded, so this also catches a bad/missing GGUF. Model load
         // can take a few seconds after `systemctl start` — retry briefly.
@@ -1437,8 +1327,7 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 /// records what shape this install is (which inference profile, which sidecar
 /// units exist, where models live). `virtues upgrade`/`doctor` READ this
 /// instead of sniffing unit files, so what-to-restart is declared, not
-/// guessed (the guessing is what once restarted the wrong sidecars and never
-/// restarted qnnd). Rewritten on every install run — the installer is the
+/// guessed (the guessing is what once restarted the wrong sidecars). Rewritten on every install run — the installer is the
 /// only writer.
 ///
 /// ## Why `units` lives here
@@ -1555,18 +1444,3 @@ fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod npu_setup_tests {
-    use super::without_npu_setup;
-
-    #[test]
-    fn a_leftover_dragon_setting_goes_with_its_npu_keys() {
-        let env = "DATABASE_URL=postgres:///virtues\nVIRTUES_INFERENCE=dragon\nVIRTUES_QNND_MODELS_DIR=/m/qnn\nVIRTUES_EMBED_URL=http://127.0.0.1:18181\nVIRTUES_RERANK_URL=http://127.0.0.1:18182\n";
-        assert_eq!(
-            without_npu_setup(env),
-            "DATABASE_URL=postgres:///virtues\nVIRTUES_EMBED_URL=http://127.0.0.1:18181\n"
-        );
-        let manual = "VIRTUES_INFERENCE=manual\nVIRTUES_RERANK_URL=http://127.0.0.1:18182\n";
-        assert_eq!(without_npu_setup(manual), manual, "only a dragon setting is touched");
-    }
-}

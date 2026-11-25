@@ -22,6 +22,7 @@ model provider.
 |---|---|
 | A chat turn | the question, the retrieved records (message text, transcripts, calendar entries, transactions, anything `sql_query` returns), the narrative identity core and the standing rules |
 | The nightly day write-up | the day's evidence — message and transcript text, transactions with merchant and amount, calendar entries with attendee names, app and browser titles |
+| Photo favorites, after the owner turns them on in the iPhone app | one Omni-slot call per favorite photo, with **the picture itself** (at most 2048 pixels on its longest side; one frame of a video), the date and time it was taken, and the name of a place the owner has named. Coordinates are not sent. A changed picture is sent again. At most 100 a day (`virtues-core/src/photo_enrichment.rs`). The screen that turns photos on says a model provider describes each one |
 | Transcription | **the audio itself**, not a transcript |
 | Image generation | the prompt, and any image supplied to edit |
 | A web search | the query the assistant wrote and, when it gives one, the objective behind it; the gateway's search vendor receives the query |

@@ -73,6 +73,56 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
   }
 }
 
+/// How many records of `stream` wait in the outbox, or a negative code. A
+/// collector whose records are large (photos) asks before adding more.
+///
+/// # Safety
+/// `stream` must be a valid NUL-terminated C string for the call's duration.
+#[no_mangle]
+pub extern "C" fn virtues_outbox_queued(stream: *const c_char) -> i64 {
+  if stream.is_null() {
+    return -1;
+  }
+  let Ok(stream) = unsafe { CStr::from_ptr(stream) }.to_str() else {
+    return -2;
+  };
+  match outbox::stats(stream) {
+    Ok(s) => s.queued,
+    Err(_) => -4,
+  }
+}
+
+/// Write this phone's pairing into `buffer` as a NUL-terminated string: the
+/// device id the server gave it, or the server's node id for a pairing without
+/// one. It changes when the phone pairs again, which is how a collector that
+/// remembers what it sent knows to start over. Returns 0, -1 when the phone is
+/// not paired, and -5 when the buffer is too small.
+///
+/// # Safety
+/// `buffer` must be valid for `length` bytes of writes.
+#[no_mangle]
+pub extern "C" fn virtues_pairing_key(buffer: *mut c_char, length: usize) -> i32 {
+  if buffer.is_null() {
+    return -5;
+  }
+  let store = crate::FileStore::new();
+  let Some(rec) = store.load().ok().flatten() else {
+    return -1;
+  };
+  let Some(key) = rec.device_id.or(rec.box_node_id) else {
+    return -1;
+  };
+  let bytes = key.as_bytes();
+  if bytes.len() >= length {
+    return -5;
+  }
+  unsafe {
+    std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), buffer, bytes.len());
+    *buffer.add(bytes.len()) = 0;
+  }
+  0
+}
+
 /// Hand Rust the App Group container, where the widget reads the upload
 /// snapshot (`widget.rs`). Called once from Swift at plugin init; a build
 /// without the group never calls it and the snapshot is simply not written.
@@ -271,6 +321,8 @@ pub extern "C" fn virtues_report_push_address(address: *const c_char) -> i32 {
 /// pointer pulls this object out of the archive so Swift can find the symbol.
 pub(crate) fn keep_symbols() {
   let enqueue: extern "C" fn(*const c_char, *const c_char) -> i32 = virtues_enqueue;
+  let queued: extern "C" fn(*const c_char) -> i64 = virtues_outbox_queued;
+  let pairing: extern "C" fn(*mut c_char, usize) -> i32 = virtues_pairing_key;
   let drain: extern "C" fn(i32) -> i32 = virtues_drain_blocking;
   let recover: extern "C" fn() -> i32 = virtues_recover_connection;
   let app_bg: extern "C" fn(i32) = virtues_app_background;
@@ -279,6 +331,8 @@ pub(crate) fn keep_symbols() {
   let shared: extern "C" fn(*const c_char) = virtues_set_shared_dir;
   std::hint::black_box(enqueue as *const ());
   std::hint::black_box(shared as *const ());
+  std::hint::black_box(queued as *const ());
+  std::hint::black_box(pairing as *const ());
   std::hint::black_box(drain as *const ());
   std::hint::black_box(recover as *const ());
   std::hint::black_box(app_bg as *const ());
