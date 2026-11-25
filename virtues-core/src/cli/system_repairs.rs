@@ -105,7 +105,6 @@ enum Outcome {
 #[cfg(target_os = "linux")]
 const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("state-ownership", state_ownership),
-    ("dragon-watchdog", dragon_watchdog),
     ("db-logins", db_logins),
     ("retired-hardware", retired_hardware),
     ("console-socket", console_socket),
@@ -446,65 +445,6 @@ fn replace_keeping_owner(path: &std::path::Path, contents: &str) -> std::io::Res
     std::os::unix::fs::chown(&tmp, Some(meta.uid()), Some(meta.gid()))?;
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(meta.mode() & 0o7777))?;
     std::fs::rename(&tmp, path)
-}
-
-/// The systemd drop-in that arms a Dragon's hardware watchdog. This repair
-/// writes it, from the installer's `virtues migrate --check` and on upgrade;
-/// uninstall removes it.
-pub const WATCHDOG_DROPIN: &str = "/etc/systemd/system.conf.d/10-virtues-watchdog.conf";
-pub const WATCHDOG_CONF: &str = include_str!("watchdog.conf");
-
-/// Every Dragon has systemd pinging its hardware watchdog, so a hung kernel
-/// reboots the box instead of waiting for someone to pull the plug.
-///
-/// Not hypothetical: on 2026-09-24 a context binary too large for the cDSP to
-/// map crashed the cDSP, and this kernel's FastRPC driver (6.18.2-3-qcom) then
-/// freed reserved DMA pages as the process exited. `BUG: Bad page state` sixty
-/// times, and the box stopped answering on every interface. There was no OOM
-/// and no panic, so nothing rebooted it until someone power-cycled it. Local
-/// mode, and `qnnd` on a Dragon whose search hasn't moved to the CPU, share
-/// that cDSP, so every Dragon can hit it.
-///
-/// Keyed on the board (`inference_report::is_dragon_board`), with the
-/// manifest's `profile == "dragon"` for older installs. Search no longer runs
-/// on the NPU, but local mode does (`local_model`), and a Dragon installed
-/// since search moved to its CPU says `bundled` in its manifest. A server
-/// where we drive no NPU keeps its own systemd settings. Skipped on a board
-/// with no `/dev/watchdog0`.
-///
-/// `daemon-reload` is enough to apply a `system.conf.d` change (checked on the
-/// lab Dragon with `wdctl`); no re-exec. 30 s sits inside `qcom_wdt`'s 32 s
-/// hardware maximum, and systemd pings at half that.
-#[cfg(target_os = "linux")]
-fn dragon_watchdog(_data_dir: &std::path::Path) -> Outcome {
-    use std::path::Path;
-    use std::process::Command;
-
-    let is_dragon = crate::inference_report::is_dragon_board()
-        || crate::install_manifest::get().as_ref().is_some_and(|m| m.profile == "dragon");
-    if !is_dragon || !Path::new("/dev/watchdog0").exists() {
-        return Outcome::Converged;
-    }
-    if std::fs::read_to_string(WATCHDOG_DROPIN).ok().as_deref() == Some(WATCHDOG_CONF) {
-        return Outcome::Converged;
-    }
-    if let Err(e) = std::fs::create_dir_all("/etc/systemd/system.conf.d") {
-        return Outcome::Failed(format!("could not create system.conf.d: {e}"));
-    }
-    if let Err(e) = std::fs::write(WATCHDOG_DROPIN, WATCHDOG_CONF) {
-        return Outcome::Failed(format!("could not write {WATCHDOG_DROPIN}: {e}"));
-    }
-    match Command::new("systemctl").arg("daemon-reload").status() {
-        Ok(s) if s.success() => {
-            Outcome::Repaired("hardware watchdog on: a hung box reboots itself within 30 s".into())
-        }
-        Ok(s) => Outcome::Failed(format!(
-            "wrote {WATCHDOG_DROPIN} but daemon-reload exited {s}; it applies at next boot"
-        )),
-        Err(e) => Outcome::Failed(format!(
-            "wrote {WATCHDOG_DROPIN} but could not run daemon-reload ({e}); it applies at next boot"
-        )),
-    }
 }
 
 /// Everything under the data dir is written by the `virtues` service user and

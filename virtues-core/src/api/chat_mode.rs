@@ -73,13 +73,6 @@ pub enum ChatMode {
     /// ceilings shape the turn. Deep research and the owner's admin shell are
     /// the shipped applets `deep-research` and `admin`.
     Applet(AppletTurn),
-    /// A small model on the Dragon's NPU, and nowhere else. The handler hands
-    /// the whole turn to `local_model` before any cloud step: no slot, no
-    /// tools, no prompt from here, nothing stored. See `api::local_chat`.
-    // TODO(2026-10-27): the app no longer offers Local. Delete this mode,
-    // `api::local_chat` and `/api/local-model`, or reach them from a model
-    // picker; the owner has not decided which.
-    Local,
 }
 
 /// A turn's ceilings. See [`ChatMode::limits`].
@@ -107,7 +100,6 @@ impl ChatMode {
         let applet = match requested {
             "chat" => return Self::Chat,
             "interview" => return Self::Interview,
-            "local" => return Self::Local,
             getting_started::AGENT_MODE => return Self::GettingStarted,
             // What a client from before these were applets sends, and the
             // name the skill that writes skills had until 2026-11-22.
@@ -149,7 +141,6 @@ impl ChatMode {
             Self::Interview => "interview",
             Self::GettingStarted => getting_started::AGENT_MODE,
             Self::Applet(applet) => &applet.name,
-            Self::Local => "local",
         }
     }
 
@@ -179,9 +170,6 @@ impl ChatMode {
                 spend((applet.max_cost_usd * 1_000_000.0).round() as i64, applet.max_minutes),
                 Thinking::Default,
             ),
-            // One generation, no tools, no gateway, so no cost. The runner
-            // holds its own wall-clock limit (`local_model::TURN_TIME_LIMIT`).
-            Self::Local => (1, spend(0, 12), Thinking::Default),
             Self::Chat | Self::Interview | Self::GettingStarted => (
                 20,
                 TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
@@ -226,8 +214,6 @@ impl ChatMode {
                 tools.extend(crate::tools::use_applet::own_files_definition(&applet.name));
                 tools
             }
-            // A 0.6B model can't use tools, and a tool would reach the record.
-            Self::Local => Vec::new(),
         }
     }
 
@@ -339,14 +325,13 @@ pub(crate) mod tests {
 
     #[test]
     fn every_known_wire_name_round_trips() {
-        for name in ["chat", "admin", "deep-research", "interview", "getting_started", "local"] {
+        for name in ["chat", "admin", "deep-research", "interview", "getting_started"] {
             assert_eq!(ChatMode::from_wire(name).wire_name(), name);
         }
         // A client from before the two modes were applets.
         assert_eq!(ChatMode::from_wire("sudo").wire_name(), "admin");
         assert_eq!(ChatMode::from_wire("deep_research").wire_name(), "deep-research");
         assert!(matches!(ChatMode::from_wire("interview"), ChatMode::Interview));
-        assert!(matches!(ChatMode::from_wire("local"), ChatMode::Local));
         assert!(matches!(ChatMode::from_wire("getting_started"), ChatMode::GettingStarted));
         // Council was removed; a client that still sends it gets chat.
         assert!(matches!(ChatMode::from_wire("council"), ChatMode::Chat));
@@ -580,7 +565,6 @@ pub(crate) mod tests {
             ChatMode::Chat,
             ChatMode::Interview,
             ChatMode::GettingStarted,
-            ChatMode::Local,
         ];
         modes.extend(
             crate::applet_templates::chat_applets()

@@ -27,7 +27,6 @@ pub mod owner_proof;
 pub mod web_bundle;
 pub mod chat;
 pub mod chat_mode;
-pub mod local_chat;
 pub mod chat_permissions;
 pub mod chat_usage;
 pub mod chats;

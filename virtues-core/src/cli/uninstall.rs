@@ -78,6 +78,9 @@ const LEGACY_EXTRA_FILES: &[&str] = &[
     "/etc/systemd/logind.conf.d/10-virtues-power-key.conf",
 ];
 
+/// The systemd drop-in older releases wrote to arm a board's hardware watchdog.
+const WATCHDOG_DROPIN: &str = "/etc/systemd/system.conf.d/10-virtues-watchdog.conf";
+
 const BINARIES: &[&str] = &[
     "/usr/local/bin/virtues",
     "/usr/local/bin/virtues-wireguard",
@@ -164,10 +167,11 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     for f in &m.extra_files {
         report(std::fs::remove_file(f).is_ok(), &format!("removed {f}"));
     }
-    // Not in `extra_files`: boxes installed before it existed get it from an
-    // upgrade's repair pass, which doesn't rewrite the manifest. Removing it
-    // hands the watchdog back to the OS default (off) at the reload below.
-    let watchdog = crate::cli::system_repairs::WATCHDOG_DROPIN;
+    // Not in `extra_files`: older releases armed a board's hardware watchdog
+    // from an upgrade's repair pass, which doesn't rewrite the manifest.
+    // Removing it hands the watchdog back to the OS default (off) at the
+    // reload below.
+    let watchdog = WATCHDOG_DROPIN;
     let had_watchdog = std::path::Path::new(watchdog).exists();
     if had_watchdog {
         report(std::fs::remove_file(watchdog).is_ok(), &format!("removed {watchdog}"));

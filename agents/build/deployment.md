@@ -12,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** | `virtues` binary (+ the `virtues-embed` llama-server sidecar; a Dragon installed before search moved to its CPU runs `virtues-qnnd` until its owner moves it) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
+| **Home box** | `virtues` binary (+ the `virtues-embed` llama-server sidecar) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -37,7 +37,7 @@ Bootstrap downloads the platform-specific `virtues-installer` binary from the la
 2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000. When firewalld or ufw is running, open 8000/tcp, mDNS and the iroh port 51820/udp (`open_firewall`).
 3. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
 4. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
-5. **Local inference.** The CPU llama-server sidecar (`virtues-embed`) in bundled mode, paced on a Dragon, nothing for manual endpoints. On a Dragon still running `virtues-qnnd`, nothing here: the install ends with `virtues configure-inference --recommended`, which moves its search to the CPU. Then libpdfium.
+5. **Local inference.** The CPU llama-server sidecar (`virtues-embed`) in bundled mode, nothing for manual endpoints. Then libpdfium.
 6. **Config.** Write the install manifest and the env file `<data dir>/virtues.env` (generating `VIRTUES_ENCRYPTION_KEY` only if it is absent), run migrations, and write `/etc/systemd/system/virtues.service` (`User=virtues`, `EnvironmentFile=-<data dir>/virtues.env`, `server --port 8000`).
 7. **Start** with `systemctl enable` + `restart`, so a reinstall replaces a running old binary. Run the health check, then exec `virtues init` as the `virtues` user (skipped with `--no-init`).
 

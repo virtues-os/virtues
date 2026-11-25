@@ -516,7 +516,7 @@ export function searchLocal(
 
 /** Settings → Search. Mirrors `api::search_status::SearchStatus`. */
 export interface SearchStatus {
-	mode: 'dragon' | 'bundled' | 'manual' | 'unknown' | string;
+	mode: 'bundled' | 'manual' | 'unknown' | string;
 	embed_url: string;
 	/** Whether the embedding server is on your network. A public one receives
 	 *  the text of everything your server indexes. */

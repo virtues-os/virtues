@@ -20,13 +20,6 @@
 //! whatever its owner points it at. Which model produced a vector is *recorded*
 //! (`search_embeddings.model`, from `model_id()`), never assumed.
 //!
-//! **Dragon (NPU)**, until its search moves to the CPU (`cli::model_set`), is
-//! the same HTTP path: `virtues-qnnd` serves this exact contract
-//! (`/v1/embeddings` + `/v1/models`) on :18181, backed by the Hexagon NPU
-//! running **gte-small (384-d, native, untruncated)**. The box has no
-//! QNN-specific code path, and a Dragon gets the same probe/fingerprint/dim
-//! guards as every other endpoint.
-//!
 //! **Sidecar (default DIY/dev)** is the HTTP path below, and the installer's
 //! current GGUF is EmbeddingGemma 2 (Q8_0) — a Gemma-4-lineage bidirectional
 //! encoder, mean-pooled, stored at its native 768-d (truncating to 256 gave up
@@ -55,12 +48,7 @@ use tokio::sync::Mutex;
 
 mod thermal;
 
-// `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
-// `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
-// runs the NPU daemon serving gte-small at 384-d).
-//
-// A width is a property of a MODEL. Hardcoding one meant the box could only ever
-// run the model those numbers described. Both are gone: the width is probed at
+// A width is a property of a MODEL, so none is hardcoded: the width is probed at
 // startup and recorded in `search_index_meta`, and truncation is one opt-in env
 // var (`VIRTUES_EMBED_DIMS`) rather than a constant baked into the binary.
 
@@ -641,9 +629,8 @@ fn next_request_chars(budget: usize, chars: usize, took: std::time::Duration) ->
 }
 
 /// The embedder callers use. There is exactly one inference path, the HTTP
-/// contract: the endpoint behind `VIRTUES_EMBED_URL` is llama-server, a BYO
-/// server, or, on a Dragon that hasn't yet moved to its CPU, `virtues-qnnd`.
-/// The box can't tell the difference, which is the point.
+/// contract: the endpoint behind `VIRTUES_EMBED_URL` is llama-server or a BYO
+/// server, and the box can't tell the difference.
 ///
 /// Document embedding is background work (indexing, a model change, rescoring
 /// days), and it is paced here so that every caller is: each request waits
@@ -731,9 +718,7 @@ impl LocalEmbedder {
     /// silently: its vectors land in a different geometry from their neighbours,
     /// cosine between them means nothing, and the index degrades with no error
     /// anywhere. Recording the truth is what makes that detectable — and it is
-    /// what lets a user bring their own model at all. (On Dragon, `virtues-qnnd`
-    /// answers `/v1/models` with `gte-small` — the same stamp the old native
-    /// path wrote, so an existing index stays valid across the consolidation.)
+    /// what lets a user bring their own model at all.
     pub fn model_id(&self) -> String {
         self.inner.model_id()
     }

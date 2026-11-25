@@ -110,15 +110,6 @@
 					<p class="fold-text">Search keeps using {host} until the new index is built. Run this on your server:</p>
 					<Command command={RECOMMENDED} />
 				</Fold>
-			{:else if status.mode === 'dragon'}
-				{#if !status.model_change}
-					<Fold label="Move search to this server’s processor" sub="Virtues no longer maintains search on the Dragon’s NPU.">
-						<p class="fold-text">
-							Run this on your server. On a Dragon the new index takes a few days to build, and search switches to it when it’s done.
-						</p>
-						<Command command={RECOMMENDED} />
-					</Fold>
-				{/if}
 			{:else}
 				<Fold label="Run search on a graphics chip or another machine" sub="It’s faster on a GPU or an NPU. Moving it takes one command on your server.">
 					<p class="fold-text">

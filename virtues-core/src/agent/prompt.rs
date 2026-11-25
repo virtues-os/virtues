@@ -413,9 +413,7 @@ pub fn build_personalized_prompt(
         prompt.push_str(PAGE_TOOL_PROMPT);
     }
     match mode {
-        // A local turn's only system message is `local_model::SAFETY_PROMPT`;
-        // the handler hands it off before any prompt is built.
-        ChatMode::Applet(_) | ChatMode::Local => {}
+        ChatMode::Applet(_) => {}
         // The interview and getting started have prompts of their own and
         // never reach here (chat.rs `build_system_prompt`).
         ChatMode::Chat | ChatMode::Interview | ChatMode::GettingStarted => {

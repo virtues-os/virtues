@@ -155,8 +155,8 @@ tooling (`deprovision`, `image-check` and the imaging scripts) in
 security-only automatic updates (`c8f074c4e`, owner's call 2026-11-15). Existing Dragons have Postgres relocated to a
 data disk, so the code that reads a relocated cluster on upgrade stays.
 
-Not covered by the decision, so ask first: the NPU engine `virtues-qnnd`,
-which a Dragon already running uses for local inference.
+The NPU engine `virtues-qnnd` and the chat's Local mode were removed on
+2026-11-25 (owner: "rm dragon entirely"); every server runs search on its CPU.
 
 ### 6. Servers on a Mac or Windows machine
 

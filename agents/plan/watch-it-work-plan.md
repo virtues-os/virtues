@@ -469,8 +469,6 @@ has Replay.
   search provider."
 - **Older turns:** these have no trace, so beat 2 shows only the phrasing
   and beat 3 has no meaning or words marks.
-- **Local mode:** a local chat turn skips beat 4 and says "Nothing left your
-  server."
 - **Reduced motion:** under `prefers-reduced-motion`, each beat is a still
   frame with Next and Back. The information stays and the travel goes
   (`agents/build/design.md:371`).

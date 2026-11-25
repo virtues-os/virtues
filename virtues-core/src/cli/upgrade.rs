@@ -164,7 +164,6 @@ pub async fn run(
     // Which artifacts this tarball actually carries. Older releases ship a
     // subset — every member but `virtues` itself is optional.
     let new_llama = find_named(&extracted, "llama-server").ok();
-    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
     let actions_src = find_dir_named(&extracted, "applets")
         .or_else(|_| find_dir_named(&extracted, "actions"))
@@ -249,7 +248,6 @@ pub async fn run(
         &asset_path,
         &new_binary,
         &new_llama,
-        &new_qnnd,
         &web_src,
         &actions_src,
         &actions_bin_src,
@@ -264,7 +262,7 @@ pub async fn run(
         &target_tag,
         current,
         target,
-        new_llama.is_some() || new_qnnd.is_some(),
+        new_llama.is_some(),
         prior_slot,
     )
     .await
@@ -309,7 +307,6 @@ fn stage_and_preflight(
     asset_path: &Path,
     binary: &Path,
     llama: &Option<PathBuf>,
-    qnnd: &Option<PathBuf>,
     web: &Option<PathBuf>,
     actions: &Option<PathBuf>,
     applets_bin: &Option<PathBuf>,
@@ -327,7 +324,7 @@ fn stage_and_preflight(
     }
 
     ui::step(&format!("staging release into {}…", slot.display()));
-    stage_slot(slot, binary, llama, qnnd, web, actions, applets_bin, build_json)?;
+    stage_slot(slot, binary, llama, web, actions, applets_bin, build_json)?;
     preflight(slot, force)
 }
 
@@ -560,9 +557,7 @@ async fn activate(
     // provisioned separately. On the recommended setup the release's models
     // follow it: retire the reranker, and start a background move to a new
     // embedding model if this release recommends one (`model_set`). Never
-    // fails the upgrade. A box on its own server keeps its owner's models, and
-    // a Dragon still on its NPU moves only when its owner runs
-    // `virtues configure-inference --recommended`.
+    // fails the upgrade. A box on its own server keeps its owner's models.
     super::model_set::start_recommended_change().await;
 
     println!();
@@ -761,7 +756,6 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
     let new_binary = extract_binary(&asset_path, work_path)?;
     let extracted = work_path.join("extracted");
     let new_llama = find_named(&extracted, "llama-server").ok();
-    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
     let actions_src = find_dir_named(&extracted, "applets")
         .or_else(|_| find_dir_named(&extracted, "actions"))
@@ -791,7 +785,6 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
         &asset_path,
         &new_binary,
         &new_llama,
-        &new_qnnd,
         &web_src,
         &actions_src,
         &actions_bin_src,
@@ -886,7 +879,7 @@ pub async fn activate_prepared() -> Result<(), crate::Error> {
 
     // What the slot CONTAINS decides whether sidecars bounce — the download
     // that would otherwise have answered this happened in another process.
-    let replaces_sidecars = slot.join("llama-server").exists() || slot.join("virtues-qnnd").exists();
+    let replaces_sidecars = slot.join("llama-server").exists();
     let prior_slot = layout.current_slot();
 
     activate(
@@ -1021,7 +1014,6 @@ fn stage_slot(
     slot: &Path,
     binary: &Path,
     llama: &Option<PathBuf>,
-    qnnd: &Option<PathBuf>,
     web: &Option<PathBuf>,
     actions: &Option<PathBuf>,
     applets_bin: &Option<PathBuf>,
@@ -1043,9 +1035,6 @@ fn stage_slot(
     copy_bin(binary, "virtues")?;
     if let Some(p) = llama {
         copy_bin(p, "llama-server")?;
-    }
-    if let Some(p) = qnnd {
-        copy_bin(p, "virtues-qnnd")?;
     }
     for (src, name) in [(web, "web"), (actions, "applets"), (applets_bin, "applets-bin")] {
         if let Some(s) = src {
@@ -1098,7 +1087,7 @@ impl InstallDirs {
         // installed before the actions→applets rename only sets the ACTIONS_
         // vars; defaulting straight to /applets here would refresh into a dir
         // the runtime never reads (the bug that stranded document_extraction
-        // on the dragon). Falls through to the new default only when neither
+        // on a box). Falls through to the new default only when neither
         // is set.
         let env_dir_multi = |vars: &[&str], default: &str| {
             vars.iter()
@@ -1201,12 +1190,9 @@ fn in_unit_cgroup(proc_cgroup: &str, unit: &str) -> bool {
 /// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
 /// The inference sidecars actually installed on THIS box.
 ///
-/// We ship two backends: the llama.cpp sidecar (`virtues-embed`, plus
-/// `virtues-embed-next` during a model change and `virtues-rerank` on older
-/// installs) and the QNN NPU daemon (`virtues-qnnd`, on Q6A). Hardcoding either
-/// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
-/// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
-/// on every upgrade. So ask the filesystem instead of guessing.
+/// The llama.cpp sidecar (`virtues-embed`, plus `virtues-embed-next` during a
+/// model change and `virtues-rerank` on older installs), or none on a box whose
+/// search runs on its owner's server, so ask the filesystem instead of guessing.
 /// Inference sidecars to cycle around the swap — the installer's DECLARED
 /// topology, with a filesystem probe as the fallback for boxes older than the
 /// manifest. See `crate::install_manifest`.
@@ -1966,7 +1952,7 @@ impl AsRef<Path> for Stage {
 ///
 /// Deliberately NOT `std::env::temp_dir()`. On the boxes we ship, `/tmp` is
 /// frequently tmpfs — so the old path spooled a ~120MB tarball and its ~350MB
-/// unpacked tree through RAM, on exactly the hardware (Q6A, Jetson) with the
+/// unpacked tree through RAM, on exactly the small boards with the
 /// least of it to spare. That was survivable when an upgrade only ever ran
 /// because a human typed it and watched. It is not survivable unattended, which
 /// is what [`prepare`] does.

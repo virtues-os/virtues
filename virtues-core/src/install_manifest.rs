@@ -52,7 +52,8 @@ pub fn manifest_path() -> PathBuf {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InstallManifest {
-    /// `dragon` | `bundled` | `manual` — which inference topology.
+    /// `bundled` | `manual` — which inference topology. Older installs may
+    /// say `dragon`, which nothing reads any more.
     #[serde(default)]
     pub profile: String,
     /// Inference sidecar units, without the `.service` suffix.
@@ -109,13 +110,12 @@ pub fn load_from(path: &Path) -> Option<InstallManifest> {
 /// upgrade and for uninstall.
 ///
 /// The manifest says what the installer set up, but upgrades change it since:
-/// the reranker is retired on the recommended setup, a search model change
-/// runs `virtues-embed-next` until it finishes, and a Dragon trades
-/// `virtues-qnnd` for `virtues-embed` (`cli::model_set`). So the list is the
-/// manifest's units plus every sidecar Virtues can install, kept to those
-/// whose unit file exists.
+/// the reranker is retired on the recommended setup, and a search model change
+/// runs `virtues-embed-next` until it finishes (`cli::model_set`). So the
+/// list is the manifest's units plus every sidecar Virtues can install, kept to
+/// those whose unit file exists.
 pub fn sidecar_units() -> Vec<String> {
-    let known = ["virtues-embed", "virtues-rerank", "virtues-qnnd", "virtues-embed-next"];
+    let known = ["virtues-embed", "virtues-rerank", "virtues-embed-next"];
     let mut units: Vec<String> = get().as_ref().map(|m| m.sidecars.clone()).unwrap_or_default();
     for u in known {
         if !units.iter().any(|x| x == u) {
@@ -176,16 +176,16 @@ mod tests {
 
     #[test]
     fn reads_a_manifest() {
-        let d = tmp("dragon");
+        let d = tmp("bundled");
         let p = write(
             &d,
-            r#"{"profile":"dragon","appliance":true,
-                "sidecars":["virtues-qnnd"],
-                "units":["virtues-display","virtues","virtues-qnnd"],
+            r#"{"profile":"bundled",
+                "sidecars":["virtues-embed"],
+                "units":["virtues-display","virtues","virtues-embed"],
                 "extra_files":["/usr/local/lib/virtues/display.py"]}"#,
         );
         let m = load_from(&p).expect("parses");
-        assert_eq!(m.sidecars, vec!["virtues-qnnd"]);
+        assert_eq!(m.sidecars, vec!["virtues-embed"]);
         assert!(m.units.contains(&"virtues-display".to_string()));
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -201,7 +201,7 @@ mod tests {
         // that key forever (`virtues upgrade` does not rewrite the manifest),
         // so an unknown key must not make the manifest unreadable.
         let d = tmp("legacy");
-        let p = write(&d, r#"{"profile":"dragon","appliance":true,"sidecars":["virtues-qnnd"]}"#);
+        let p = write(&d, r#"{"profile":"bundled","appliance":true,"sidecars":["virtues-embed"]}"#);
         let m = load_from(&p).expect("parses");
         assert_eq!(m.sidecars.len(), 1);
         let _ = std::fs::remove_dir_all(&d);

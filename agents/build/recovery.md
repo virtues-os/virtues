@@ -220,7 +220,6 @@ Everything logs to the journal; there is no Virtues log file.
 | `virtues-embed` | embedding sidecar, `127.0.0.1:18181` |
 | `virtues-embed-next` | only during a search model change, `127.0.0.1:18183` |
 | `virtues-rerank` | older installs only; `virtues upgrade` retires it |
-| `virtues-qnnd` | on a Dragon until its search moves to the CPU (`cli/model_set.rs`); serves `:18181` and `:18182` |
 
 ---
 

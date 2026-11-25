@@ -109,10 +109,6 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     } else {
         ui::warn("llama-server not in tarball — inference sidecars unavailable from this release");
     }
-    let has_qnnd = tmpdir.path().join("virtues-qnnd").is_file();
-    if has_qnnd {
-        install_executable(&tmpdir.path().join("virtues-qnnd"), &slot.join("virtues-qnnd"))?;
-    }
     if tmpdir.path().join("BUILD.json").is_file() {
         let _ = fs::copy(tmpdir.path().join("BUILD.json"), slot.join("BUILD.json"));
     }
@@ -175,11 +171,6 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     force_symlink(&current.join("virtues"), &cfg.binary_path())?;
     if has_llama {
         force_symlink(&current.join("llama-server"), &cfg.llama_binary_path())?;
-    }
-    // A Dragon whose search hasn't left the NPU yet runs `virtues-qnnd` from
-    // this path until the server retires it (`cli::model_set` in core).
-    if has_qnnd {
-        force_symlink(&current.join("virtues-qnnd"), &cfg.install_prefix.join("bin/virtues-qnnd"))?;
     }
     if staged_bins {
         // The bin dir is a single filesystem path (libexec/virtues) regardless

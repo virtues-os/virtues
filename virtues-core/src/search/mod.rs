@@ -3,9 +3,8 @@
 //! All local ML leaves this module over loopback HTTP, to one embedding
 //! endpoint (:18181 by default). What is listening there is not this module's
 //! business: the `llama-server` sidecar the installer ships, pins and runs as a
-//! systemd unit; `virtues-qnnd` on the Hexagon NPU on Dragon; a BYO server
-//! anywhere else. One contract, several backings — the per-flavor detail lives
-//! in `embedder.rs`.
+//! systemd unit, or a BYO server anywhere else. One contract, several
+//! backings; the per-flavor detail lives in `embedder.rs`.
 //!
 //! The point of the seam is that it has zero inference dependencies in-process:
 //! whoever answers owns the model, the accelerator and the threading.
@@ -13,8 +12,8 @@
 //! # Architecture
 //!
 //! - `embedder.rs` - inference-contract client, :18181 (`/v1/embeddings`; the
-//!   endpoint may be llama-server + EmbeddingGemma, the Dragon NPU daemon
-//!   serving gte-small, or any BYO OpenAI-compatible server — one path for all)
+//!   endpoint may be llama-server + EmbeddingGemma or any BYO OpenAI-compatible
+//!   server — one path for all)
 //! - `indexer.rs`  - Background job that embeds new records
 //! - `next_index.rs` - Moves the index to another model in the background, so
 //!   search keeps working until the new vectors are complete

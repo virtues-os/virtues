@@ -9,8 +9,6 @@ members = [
     "crates/virtues-registry",
     "crates/virtues-document",
     "crates/virtues-document-wasm",
-    "crates/virtues-qnnd",
-    "crates/virtues-qairt",
     "applets",
     "services/virtues-api",
     "services/virtues-atlas",

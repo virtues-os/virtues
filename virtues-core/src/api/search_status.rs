@@ -9,8 +9,7 @@ use crate::error::{Error, Result};
 
 #[derive(Debug, Serialize)]
 pub struct SearchStatus {
-    /// Where search runs: `dragon` (the NPU daemon, including while a Dragon
-    /// moves to its CPU), `bundled` (the CPU engine), `manual` (the owner's
+    /// Where search runs: `bundled` (the CPU engine), `manual` (the owner's
     /// server), or `unknown` (dev, unset env).
     pub mode: String,
     /// Base URL of the embedding server.
@@ -43,7 +42,7 @@ pub struct SearchStatus {
 }
 
 pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
-    let mut mode = crate::box_env::var("VIRTUES_INFERENCE").unwrap_or_else(|| "unknown".to_string());
+    let mode = crate::box_env::var("VIRTUES_INFERENCE").unwrap_or_else(|| "unknown".to_string());
 
     let meta: Option<(Option<String>, Option<i32>)> =
         sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
@@ -67,12 +66,6 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         .map_err(|e| Error::Database(format!("counting the search index: {e}")))?;
 
     let cfg = crate::search::embedder::EndpointConfig::current();
-    // A Dragon moving to its CPU is on the recommended setup from the moment
-    // the move starts, but `virtues-qnnd` serves search until the swap. The
-    // page says where search runs, so it says the NPU until then.
-    if crate::inference_report::serving_unit(&cfg.base_url) == "virtues-qnnd" {
-        mode = "dragon".to_string();
-    }
     let started = std::time::Instant::now();
     let probe = tokio::time::timeout(
         std::time::Duration::from_secs(5),

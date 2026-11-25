@@ -29,14 +29,12 @@ function otherServer(s: SearchStatus): string {
 	return s.embed_locality === 'public' ? `${host}, outside your network` : `Your server at ${host}`;
 }
 
-/** The "Runs on" value: this server's processor or NPU, or another machine by its host. */
+/** The "Runs on" value: this server's processor, or another machine by its host. */
 export function runsOn(s: SearchStatus): string {
 	// Going back to the recommended setup: search uses the other server until
 	// the new index is ready.
 	if (s.mode === 'bundled' && !isOwnEngine(s.embed_url)) return otherServer(s);
 	switch (s.mode) {
-		case 'dragon':
-			return 'This server’s NPU';
 		case 'bundled':
 			return 'This server’s processor';
 		case 'manual':

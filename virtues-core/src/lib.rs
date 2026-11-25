@@ -30,7 +30,6 @@ pub mod image_reading;
 pub mod ids;
 pub mod inference_report;
 pub mod install_manifest;
-pub mod local_model;
 pub mod maps;
 pub mod maintenance;
 pub mod middleware;
