@@ -7,9 +7,13 @@
 //!   box  POST /init/start            -> { device_code, user_code, verification_uri… }
 //!   user opens  GET /init?code=…     -> sign-in page (email)
 //!   POST /init/login-web             -> magic link emailed to that address
-//!   user clicks GET /init/login/verify -> attach: mint api_key, mark ready
+//!   user clicks GET /init/login/verify -> confirm page; its POST approves the link
 //!   box  POST /init/poll {device_code} (loop) -> { status:"ready", api_key }
 //! ```
+//!
+//! The api_key is created by the poll that collects it
+//! (`redeem_granted_link`) and returned in that response. It is never stored
+//! here, only its hash in `box_key`.
 //!
 //! Paying is a separate step that starts from the linked box
 //! (`POST /billing/checkout/sessions`). The link flow has no checkout of its
@@ -109,8 +113,10 @@ async fn start(
     body: Option<Json<StartBody>>,
 ) -> axum::response::Response {
     let endpoint_id = body.and_then(|Json(b)| b.r#box.endpoint_id).filter(|s| !s.is_empty());
-    // A key a box never collected must not sit in the table in plaintext.
-    // A link is only live for 15 minutes, so a day-old 'ready' row is dead.
+    // TODO(2026-11-25): remove this and the 'ready' arm of `poll` a day after
+    // this image is deployed, then drop `device_link.api_key`. Nothing writes
+    // 'ready' or a stored key any more; these serve links approved by the
+    // image before it.
     if let Err(e) = sqlx::query(
         "UPDATE device_link SET status = 'expired', api_key = NULL \
          WHERE status = 'ready' AND expires_at < now() - interval '1 day'",
@@ -193,18 +199,20 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
         return Json(json!({ "status": "expired" })).into_response();
     }
 
-    // A granted link redeems ON THIS POLL: entitlement re-check, per-box key
-    // mint, register — the attach deferred to the moment the box can say who
-    // it is. Everything else is the classic RFC-8628 read.
+    // An approved link redeems ON THIS POLL: the key is created, registered
+    // and returned here, so it is never stored. Every door that approves a
+    // link (the emailed confirm page, `/init/approve`, `/init/grant`) leaves
+    // the row 'granted' for this.
     if status == "granted" {
         return redeem_granted_link(&state, &hash[..], body.endpoint_id.as_deref()).await;
     }
 
     match status.as_str() {
         "ready" => {
-            // One-time delivery, atomic: only the poll that flips the row
-            // from 'ready' gets the key, and the key leaves the table with it.
-            // Two polls in flight used to both read and return it.
+            // A link approved by an older image, which stored the key on the
+            // row (see the TODO in `start`). One-time delivery, atomic: only
+            // the poll that flips the row from 'ready' gets the key, and the
+            // key leaves the table with it.
             let taken: Option<Option<String>> = match sqlx::query_scalar(
                 "WITH taken AS ( \
                    SELECT device_code_hash, api_key FROM device_link \
@@ -661,7 +669,7 @@ async fn approve(
         );
     };
 
-    match attach_link_to_account(&state, &device_code_hash, &account_id).await {
+    match attach_link_to_account(&state.pool, &device_code_hash, &account_id).await {
         AttachOutcome::Attached => {
             (StatusCode::OK, Json(json!({ "approved": true }))).into_response()
         }
@@ -752,11 +760,13 @@ async fn grant(
         .into_response()
 }
 
-/// Redeem a granted link: the attach, deferred to the moment the box shows up
-/// with its endpoint. Returns the poll response to send.
+/// Redeem an approved link: create the box's key and hand it over. Returns
+/// the poll response to send.
 ///
-/// Ordering inside mirrors `attach_link_to_account`: claim the row first
-/// (granted → linking, so a double poll can't double-mint), register with
+/// The row is claimed first (granted → linking), so a double poll cannot
+/// create two keys, and so nothing is rotated for a link that lapsed:
+/// `register_device` and `mint_box_key` both replace the key with this label,
+/// which would strand a box still holding the old one. Then register with
 /// virtues-api, record the key, answer ready. Failures after the claim revert
 /// to 'granted' and answer pending — the box's poll loop IS the retry.
 /// (The entitlement re-check left with 0017: a refund empties the wallet,
@@ -795,9 +805,11 @@ async fn redeem_granted_link(
         .await;
     };
 
-    // The box self-reports its endpoint at redemption (the poll body); the
-    // grant-time row has none (the app minted it before the box was even
-    // online). Label, never an authorization input.
+    // The box self-reports its endpoint, at `/init/start` (on the row) or at
+    // redemption (the poll body, the only source for an app-made grant).
+    // virtues-api replaces only the key with this label, so a second box
+    // linking does not rotate the first box's key. Label, never an
+    // authorization input.
     let endpoint_id = poll_endpoint_id
         .map(str::to_string)
         .or(row_endpoint)
@@ -880,7 +892,7 @@ async fn redeem_granted_link(
     .bind(device_code_hash)
     .execute(&state.pool)
     .await;
-    tracing::info!("granted link redeemed — box attached at redemption");
+    tracing::info!("approved link redeemed: box attached");
     Json(json!({ "status": "ready", "api_key": api_key })).into_response()
 }
 
@@ -908,10 +920,10 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
 //   user opens magic link
 //        └→ GET /init/login/verify?token=…
 //           - hash + lookup login_attempt
-//           - mark used; flip the bound device_link → status='ready' with the api_key
-//           - render success HTML ("return to your terminal")
+//           - show the confirm page; its POST marks the attempt used and
+//             approves the bound device_link for the account
 //   box  POST /init/poll {device_code}
-//        └→ existing handler picks up status='ready' + api_key
+//        └→ redeems the approved link: creates the api_key and returns it
 //
 // Tokens are 32 random bytes; stored only as sha256. Sender rate-limit:
 // no more than 3 active attempts per email per hour (anti-spam).
@@ -1038,12 +1050,26 @@ async fn begin_login(
         return LoginOutcome::Failed;
     }
 
+    // The email names the link code, so the owner can match it against the
+    // code where they started linking before they open the link at all.
+    let user_code: String = match sqlx::query_scalar("SELECT user_code FROM device_link WHERE device_code_hash = $1")
+        .bind(device_code_hash)
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("login link code lookup failed: {e:#}");
+            return LoginOutcome::Failed;
+        }
+    };
+
     let base = state.public_url.trim_end_matches('/');
     let link = format!("{base}/init/login/verify?token={token}");
     let from =
         std::env::var("VIRTUES_LOGIN_FROM").unwrap_or_else(|_| LOGIN_FROM_DEFAULT.to_string());
 
-    match crate::email::send_login_magic_link(&state.resend_api_key, &from, email, &link).await {
+    match crate::email::send_login_magic_link(&state.resend_api_key, &from, email, &link, &user_code).await {
         Ok(_) => LoginOutcome::Sent,
         Err(e) => {
             tracing::warn!("magic link send failed: {e:#}");
@@ -1195,7 +1221,7 @@ async fn login_verify(
         }
     };
 
-    match attach_link_to_account(&state, &device_code_hash, &account_id).await {
+    match attach_link_to_account(&state.pool, &device_code_hash, &account_id).await {
         AttachOutcome::Attached => attached_page(&state, &account_id).await,
         AttachOutcome::LinkGone => page(
             "Link expired",
@@ -1256,148 +1282,107 @@ enum AttachOutcome {
     Failed,
 }
 
-/// Attach an in-flight device_link to an account: mint a fresh api_key,
-/// register it with virtues-api, rotate the stored hash, flip the link to
-/// ready for the box's poll. A free account attaches identically (0017);
-/// `mint_box_key` derives the key's customer from `accounts`.
+/// How long past its own expiry an approved link can still be collected. The
+/// box polls every few seconds, so this only covers an approval that lands
+/// in a link's last moments.
+const APPROVED_COLLECT_GRACE_SECS: f64 = 60.0;
+
+/// Approve an in-flight device_link for an account. The caller has already
+/// verified control of the account's email (the emailed confirm page, or an
+/// OTP session).
 ///
-/// Re-link recovery semantics: the caller has already verified control of the
-/// email (magic-link click or OTP session), so no Stripe call. We re-point to
-/// the SAME `account_id` and do NOT re-credit — the wallet is preserved (the
-/// recovery win).
+/// Nothing is created here. The row goes `pending → granted` and the box's
+/// next poll creates the key (`redeem_granted_link`). So the key is never
+/// stored, and a link the box never collects rotates nothing: creating the
+/// key replaces the one already under this box's label, which would strand a
+/// box still holding it.
 ///
-/// ## Why the link is CLAIMED before anything is rotated
-///
-/// `register_device` DELETEs the key with this label (and the account's
-/// legacy unlabeled key) and inserts the new one, and `mint_box_key` does the
-/// same in `box_key`. Both are destructive to a box already holding that key.
-/// The link flip used to be LAST — so a lost race (the code
-/// rotated, or the magic-link door and this one both fired) rotated the
-/// account key and then flipped ZERO rows, leaving an existing box holding a
-/// key neither virtues-api nor atlas would accept any more. Permanent, silent.
-/// Codes rotate every 15 minutes and the app offers one-tap retry, so that
-/// race is ordinary, not exotic.
-///
-/// So we CLAIM the row first — an atomic `pending → linking` guarded on
-/// expiry — and only touch virtues-api and `box_key` once the claim is ours.
-/// A lost race now costs nothing. `linking` reads as "keep polling" to the box
-/// (its poll handler maps every unknown status to pending), and no other door
-/// can re-claim it (both flip `WHERE status = 'pending'`).
-///
-/// Register-before-rotate still holds inside the claim: register the new key
-/// with virtues-api FIRST, then record it in `box_key`. If register
-/// fails, nothing in virtues-api changed and we release the claim back to
-/// pending so a retry (or the other door) can proceed cleanly.
+/// `expires_at > now()` matters: once its own link lapses the box starts a
+/// new one with a new device_code, and approving the abandoned row would
+/// tell the owner "attached" while their box polls a different code.
 async fn attach_link_to_account(
-    state: &AppState,
+    pool: &sqlx::PgPool,
     device_code_hash: &[u8],
     account_id: &str,
 ) -> AttachOutcome {
-    let api_key = super::claim::random_token();
-    let api_key_hash = sha256(api_key.as_bytes());
-
-    // CLAIM the link before any destructive write. `expires_at > now()` is
-    // load-bearing: once its own link lapses the box STARTS A NEW ONE with a
-    // new device_code, abandoning this row — claiming an abandoned row would
-    // render "attached" at someone whose box is polling a different code
-    // entirely (2026-08-13). 0 rows → the link is gone or already taken, and
-    // crucially NOTHING has been rotated yet, so an existing box is untouched.
-    // RETURNING endpoint_id: the box that started this link identified itself
-    // at /init/start (0015), and that label is what scopes the key we mint —
-    // a second box linking must not rotate the first box's credential.
-    let claim: Result<Option<Option<String>>, _> = sqlx::query_scalar(
-        "UPDATE device_link SET status = 'linking' \
-         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now() \
-         RETURNING endpoint_id",
+    let approved = sqlx::query(
+        "UPDATE device_link SET status = 'granted', account_id = $2, \
+                expires_at = GREATEST(expires_at, now() + make_interval(secs => $3)) \
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
     )
     .bind(device_code_hash)
-    .fetch_optional(&state.pool)
+    .bind(account_id)
+    .bind(APPROVED_COLLECT_GRACE_SECS)
+    .execute(pool)
     .await;
-    let endpoint_id: Option<String> = match claim {
-        Ok(Some(ep)) => ep,
-        Ok(None) => return AttachOutcome::LinkGone,
-        Err(e) => {
-            tracing::warn!("device_link claim failed: {e:#}");
-            return AttachOutcome::Failed;
-        }
-    };
-    // From here the row is 'linking' and ours. Any early return that is not a
-    // completed attach must release it back to 'pending' so the box (and a
-    // retry) can use it again — EXCEPT after register has already dropped the
-    // old key, where releasing would invite a second destructive register.
-    let release = || async {
-        let _ = sqlx::query(
-            "UPDATE device_link SET status = 'pending' \
-             WHERE device_code_hash = $1 AND status = 'linking'",
-        )
-        .bind(device_code_hash)
-        .execute(&state.pool)
-        .await;
-    };
-
-    // The endpoint_id the box self-reported at /init/start, carried on the
-    // device_link row (0015), or a fresh label when it reported none.
-    // virtues-api replaces only the key with this label. Label, never an
-    // authorization input.
-    let label = super::claim::key_label(endpoint_id.as_deref());
-    if let Err(e) = state
-        .virtues_api
-        .register_device(&crate::virtues_api_client::RegisterDevice {
-            box_id: Some(label.clone()),
-            api_key_hash: hex::encode(&api_key_hash),
-            account_id: account_id.to_string(),
-        })
-        .await
-    {
-        // register_device runs in a transaction, so a failure changed nothing
-        // in virtues-api — safe to release the claim and let the user retry.
-        tracing::warn!("re-link register_device failed: {e:#}");
-        release().await;
-        return AttachOutcome::Failed;
-    }
-
-    // Device registered (this label's old key is gone in virtues-api).
-    // Record the key atlas-side with the same scoping, via the shared
-    // mint_box_key so the two systems never disagree about rotation scope.
-    // On failure the claim is released: a retry registers a fresh key under
-    // the same label, which replaces this undelivered one in both systems.
-    // Leaving the row at 'linking' would wedge it, because no door claims a
-    // 'linking' row and the box would hear "pending" until it gave up.
-    if let Err(e) = super::claim::mint_box_key(
-        &state.pool,
-        account_id,
-        &label,
-        &api_key_hash[..],
-    )
-    .await
-    {
-        tracing::warn!("mint_box_key failed, releasing the link for a retry: {e:#}");
-        release().await;
-        return AttachOutcome::Failed;
-    }
-
-    // Finalize: publish the api_key on the claimed row so the box's poll
-    // collects it. Guarded on our own 'linking' claim, so this is a no-op if a
-    // retry already finalized.
-    let finalize = sqlx::query(
-        "UPDATE device_link SET status = 'ready', api_key = $2 \
-         WHERE device_code_hash = $1 AND status = 'linking'",
-    )
-    .bind(device_code_hash)
-    .bind(&api_key)
-    .execute(&state.pool)
-    .await;
-    match finalize {
+    match approved {
         Ok(r) if r.rows_affected() == 1 => AttachOutcome::Attached,
-        // 0 rows: the claim vanished under us (a concurrent finalize, or an
-        // admin reset). The key is registered and rotated, so the account is
-        // consistent; report Attached rather than sending the user to retry a
-        // link that is effectively done.
-        Ok(_) => AttachOutcome::Attached,
+        // The link lapsed, or another door approved it first.
+        Ok(_) => AttachOutcome::LinkGone,
         Err(e) => {
-            tracing::warn!("device_link finalize failed: {e:#}");
+            tracing::warn!("device_link approve failed: {e:#}");
             AttachOutcome::Failed
         }
+    }
+}
+
+#[cfg(test)]
+mod approve_tests {
+    use super::{attach_link_to_account, AttachOutcome};
+    use sqlx::PgPool;
+
+    async fn pending_link(pool: &PgPool, code: &[u8], expires_in_secs: f64) {
+        sqlx::query(
+            "INSERT INTO device_link (device_code_hash, user_code, status, expires_at) \
+             VALUES ($1, 'ABCD-EFGH', 'pending', now() + make_interval(secs => $2))",
+        )
+        .bind(code)
+        .bind(expires_in_secs)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn row(pool: &PgPool, code: &[u8]) -> (String, Option<String>, Option<String>, bool) {
+        sqlx::query_as(
+            "SELECT status, account_id, api_key, expires_at > now() + interval '30 seconds' \
+             FROM device_link WHERE device_code_hash = $1",
+        )
+        .bind(code)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// Approving stores no key: the row waits for the box's poll, which
+    /// creates one.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn approving_a_link_stores_no_key(pool: PgPool) {
+        pending_link(&pool, b"code-1", 600.0).await;
+        assert!(matches!(attach_link_to_account(&pool, b"code-1", "acct_a").await, AttachOutcome::Attached));
+        let (status, account, key, _) = row(&pool, b"code-1").await;
+        assert_eq!((status.as_str(), account.as_deref(), key), ("granted", Some("acct_a"), None));
+        let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM box_key").fetch_one(&pool).await.unwrap();
+        assert_eq!(keys, 0);
+        // A second approval, by any door, finds nothing to approve.
+        assert!(matches!(attach_link_to_account(&pool, b"code-1", "acct_b").await, AttachOutcome::LinkGone));
+        assert_eq!(row(&pool, b"code-1").await.1.as_deref(), Some("acct_a"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_lapsed_link_is_not_approved(pool: PgPool) {
+        pending_link(&pool, b"code-2", -1.0).await;
+        assert!(matches!(attach_link_to_account(&pool, b"code-2", "acct_a").await, AttachOutcome::LinkGone));
+        assert_eq!(row(&pool, b"code-2").await.0, "pending");
+    }
+
+    /// An approval in a link's last seconds still leaves the box time to
+    /// collect.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_late_approval_leaves_time_to_collect(pool: PgPool) {
+        pending_link(&pool, b"code-3", 2.0).await;
+        assert!(matches!(attach_link_to_account(&pool, b"code-3", "acct_a").await, AttachOutcome::Attached));
+        assert!(row(&pool, b"code-3").await.3);
     }
 }
 

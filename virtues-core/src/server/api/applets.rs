@@ -993,9 +993,15 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 // Developer API
 // ============================================================================
 
-/// Execute a read-only SQL query
+/// Execute a read-only SQL query.
+///
+/// Takes the owner proof (`api::owner_proof`): the query runs as the server's
+/// own database role and can read every table, the ones that authenticate
+/// the owner included, so a process that only reaches the app's loopback
+/// port must not be able to call it.
 pub async fn execute_sql_handler(
     State(state): State<AppState>,
+    _proof: crate::api::owner_proof::OwnerProven,
     Json(request): Json<crate::api::developer::ExecuteSqlRequest>,
 ) -> Response {
     match crate::api::developer::execute_sql(state.db.pool(), request).await {
