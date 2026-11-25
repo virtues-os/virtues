@@ -156,7 +156,17 @@ fn exchange_secret() -> Result<String, String> {
 /// Public addresses stay rejected, which is what keeps an attacker's own server
 /// out. Note the redirect is issued to the *browser* — the proxy never dials a
 /// private address itself, so widening this opens no SSRF surface.
+///
+/// A server on a public name is the exception, and it is named exactly: the
+/// hostnames in `OAUTH_RETURN_HOSTS` (comma-separated), over https only. A
+/// suffix rule such as "any name under our domain" would also accept a name
+/// someone else came to control, so there is none.
 pub(crate) fn is_valid_return_url(url: &str) -> bool {
+    return_url_allowed(url, &env("OAUTH_RETURN_HOSTS"))
+}
+
+/// [`is_valid_return_url`] with the listed public hostnames passed in.
+fn return_url_allowed(url: &str, listed_hosts: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
@@ -181,9 +191,10 @@ pub(crate) fn is_valid_return_url(url: &str) -> bool {
     }
 
     host == "localhost"
-        || host.ends_with(".virtues.com")
         || host.ends_with(".local")
         || host.ends_with(".localhost")
+        || (parsed.scheme() == "https"
+            && listed_hosts.split(',').map(str::trim).any(|h| !h.is_empty() && h.eq_ignore_ascii_case(host)))
 }
 
 /// IPv6 counterpart to `Ipv4Addr::is_private`: unique-local (`fc00::/7`) and
@@ -237,8 +248,8 @@ fn redirect_back(return_url: &str, rust_state: &str, key: &str, val: &str) -> ax
     // box, but we can stop dumping them into a blank page. Show an explanatory
     // "click to continue on your home network" page first; the click itself
     // still fails off-LAN, but the failure mode is explicit instead of
-    // mysterious. For everything else (dev, `*.virtues.com`, future
-    // remote-access shapes) we keep the seamless 302.
+    // mysterious. For everything else (loopback, a listed public name) we
+    // keep the seamless 302.
     //
     // A private IP needs this at least as much as `.local` does: off-network it
     // hangs on a TCP timeout rather than failing fast on DNS, so the unexplained
@@ -250,14 +261,33 @@ fn redirect_back(return_url: &str, rust_state: &str, key: &str, val: &str) -> ax
     }
 }
 
+/// One of this module's own HTML pages. They run no script and load nothing
+/// but their one inline style block, and the continue page's link carries
+/// the exchange token, so the policy also refuses framing, forms and a
+/// changed base URL.
+fn html_page(body: impl Into<String>) -> axum::response::Response {
+    use axum::http::header;
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        body.into(),
+    )
+        .into_response()
+}
+
 /// HTML intermediary page rendered between the provider callback and the
 /// final `.local` redirect. Pure HTML, no JS dependencies — the page works
 /// in any browser, including ones with strict CSP. Inline minimal styling
 /// so this is one file with zero asset deps.
 fn lan_continue_page(target: &str) -> axum::response::Response {
-    use axum::http::{header, StatusCode};
-    use axum::response::IntoResponse;
-
     // Escape the target href; it's already URL-encoded but we still need
     // to avoid injecting markup. Replacing the four characters that matter
     // in an attribute value is enough here.
@@ -334,15 +364,7 @@ fn lan_continue_page(target: &str) -> axum::response::Response {
 </html>"#
     );
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        body,
-    )
-        .into_response()
+    html_page(body)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1486,15 +1508,7 @@ fn plaid_session_lost_page() -> axum::response::Response {
   <p>Nothing was connected. Open Virtues and start the bank connection again.</p>
 </body>
 </html>"#;
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        body,
-    )
-        .into_response()
+    html_page(body)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1588,7 +1602,8 @@ async fn exchange(
 /// box release since v0.1.1 sends one, and a box without a live subscription
 /// cannot read bank data through `routes/plaid.rs` anyway. A failed lookup or
 /// insert also lets the bank through, because refusing would lose a bank the
-/// owner just linked over a fault of ours; it is logged.
+/// owner just linked over a fault of ours; it is logged. A bank that was not
+/// recorded here is recorded by its first data call (`banks::claim`).
 async fn admit_bank(
     state: &AppState,
     headers: &HeaderMap,
@@ -1608,10 +1623,10 @@ async fn admit_bank(
         tracing::warn!("plaid exchange without an item_id; bank not counted");
         return None;
     };
-    match crate::banks::admit(&state.db, &account, item_id, crate::banks::max_banks()).await {
+    let token = secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+    match crate::banks::admit(&state.db, &account, item_id, token, crate::banks::max_banks()).await {
         Ok(crate::banks::Admit::Admitted) => None,
         Ok(crate::banks::Admit::AtLimit { max }) => {
-            let token = secrets.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
             if !super::plaid::remove_refused(state, token).await {
                 tracing::error!("bank refused at the limit, but Plaid did not confirm removing it");
             }
@@ -1932,9 +1947,42 @@ mod tests {
             "http://virtues.local:7117/oauth/callback",
             "http://localhost:7117/oauth/callback",
             "http://127.0.0.1:7117/oauth/callback",
-            "https://app.virtues.com/oauth/callback",
         ] {
-            assert!(is_valid_return_url(url), "should accept {url}");
+            assert!(return_url_allowed(url, ""), "should accept {url}");
+        }
+    }
+
+    #[test]
+    fn a_public_name_passes_only_when_listed_and_over_https() {
+        let listed = " demo.example.com ,Second.Example.com,";
+        assert!(return_url_allowed("https://demo.example.com/oauth/callback", listed));
+        assert!(return_url_allowed("https://second.example.com:8443/oauth/callback", listed));
+        for url in [
+            // Plain http would carry the exchange token in the clear.
+            "http://demo.example.com/oauth/callback",
+            // The list holds exact names: no subdomain, no suffix, no prefix.
+            "https://a.demo.example.com/oauth/callback",
+            "https://demo.example.com.evil.example/oauth/callback",
+            "https://notdemo.example.com/oauth/callback",
+            "https://example.com/oauth/callback",
+        ] {
+            assert!(!return_url_allowed(url, listed), "should reject {url}");
+        }
+        // With nothing listed no public name passes, our own domain included.
+        for listed in ["", ",", " "] {
+            assert!(!return_url_allowed("https://demo.example.com/oauth/callback", listed));
+            assert!(!return_url_allowed("https://app.virtues.com/oauth/callback", listed));
+        }
+    }
+
+    #[test]
+    fn the_pages_refuse_script_framing_and_forms() {
+        for page in [lan_continue_page("http://virtues.local:7117/oauth/callback?exchange_token=t"), plaid_session_lost_page()] {
+            let csp = page.headers().get("content-security-policy").unwrap().to_str().unwrap();
+            for part in ["default-src 'none'", "frame-ancestors 'none'", "form-action 'none'", "base-uri 'none'"] {
+                assert!(csp.contains(part), "{csp}");
+            }
+            assert!(!csp.contains("script-src"), "{csp}");
         }
     }
 
@@ -1949,12 +1997,14 @@ mod tests {
             "http://172.32.0.1/oauth/callback",
             // 169.254/16 is link-local, not a LAN the box is served on.
             "http://169.254.1.1/oauth/callback",
-            // Suffix matching is not substring matching.
+            // Our own domain earns nothing: a public name passes only when
+            // `OAUTH_RETURN_HOSTS` lists it.
+            "https://app.virtues.com/oauth/callback",
             "https://virtues.com.evil.com/oauth/callback",
             "https://notvirtues.com/oauth/callback",
             "not a url",
         ] {
-            assert!(!is_valid_return_url(url), "should reject {url}");
+            assert!(!return_url_allowed(url, ""), "should reject {url}");
         }
     }
 
@@ -1972,19 +2022,19 @@ mod tests {
             "ftp://virtues.local/oauth/callback",
             "virtues://localhost/oauth/callback",
         ] {
-            assert!(!is_valid_return_url(url), "should reject {url}");
+            assert!(!return_url_allowed(url, ""), "should reject {url}");
         }
     }
 
     #[test]
     fn ip_encoding_tricks_do_not_bypass_the_guard() {
         // Userinfo: the host is `evil.com`, not the private-looking prefix.
-        assert!(!is_valid_return_url("http://192.168.1.1@evil.com/oauth/callback"));
+        assert!(!return_url_allowed("http://192.168.1.1@evil.com/oauth/callback", ""));
         // Integer-encoded IPv4 normalizes to 192.168.1.1 — an alias for an
         // address we deliberately allow, so accepting it is correct, not a hole.
-        assert!(is_valid_return_url("http://3232235777/oauth/callback"));
+        assert!(return_url_allowed("http://3232235777/oauth/callback", ""));
         // ...and the same encoding of a public address stays rejected.
-        assert!(!is_valid_return_url("http://134744072/oauth/callback")); // 8.8.8.8
+        assert!(!return_url_allowed("http://134744072/oauth/callback", "")); // 8.8.8.8
     }
 
     #[test]
@@ -1997,15 +2047,15 @@ mod tests {
         // Loopback and public hosts always work where the browser already is.
         assert!(!lan("http://localhost:7117/oauth/callback"));
         assert!(!lan("http://127.0.0.1:7117/oauth/callback"));
-        assert!(!lan("https://app.virtues.com/oauth/callback"));
+        assert!(!lan("https://demo.example.com/oauth/callback"));
     }
 
     #[test]
     fn ipv6_private_ranges_only() {
-        assert!(is_valid_return_url("http://[::1]:7117/oauth/callback"));
-        assert!(is_valid_return_url("http://[fd00::1]:7117/oauth/callback")); // unique-local
-        assert!(is_valid_return_url("http://[fe80::1]:7117/oauth/callback")); // link-local
-        assert!(!is_valid_return_url("http://[2001:4860:4860::8888]/oauth/callback"));
+        assert!(return_url_allowed("http://[::1]:7117/oauth/callback", ""));
+        assert!(return_url_allowed("http://[fd00::1]:7117/oauth/callback", "")); // unique-local
+        assert!(return_url_allowed("http://[fe80::1]:7117/oauth/callback", "")); // link-local
+        assert!(!return_url_allowed("http://[2001:4860:4860::8888]/oauth/callback", ""));
     }
 
     fn plaid_cfg() -> ProviderCfg {

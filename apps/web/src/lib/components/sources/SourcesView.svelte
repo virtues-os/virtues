@@ -1,6 +1,6 @@
 <!--
-	SourcesView: the Sources room, opened from its button in the window's
-	corner (HeaderCorner), beside Search and Settings.
+	SourcesView: the Sources room, opened from Settings' Server line
+	(LANDING in lib/settings) and from ⌘K.
 
 	`/sources` is one page (SourcesPage) and `/sources/<id>` one source
 	(SourceDetail), reached from it. A connection has no page of its own:

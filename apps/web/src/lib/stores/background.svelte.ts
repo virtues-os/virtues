@@ -23,12 +23,16 @@ import { isYours } from '$lib/applets/kind';
 import { getTheme, isThemeDark } from '$lib/utils/theme';
 import { BUILTIN_STYLES, isBuiltin } from '$lib/backgrounds/builtin';
 import {
+	DIM_LUMINANCE,
 	dayNumber,
+	filesOf,
 	find,
+	focusPoint,
 	formatAddress,
 	isDrawn,
 	parseSetting,
 	pickForDay,
+	inkOver,
 	pool,
 	srcset,
 	widest,
@@ -38,6 +42,7 @@ import {
 	type DrawnRenderer,
 	type DownloadProgress,
 	type Picture,
+	type SceneInk,
 	type StyleManifest,
 } from '$lib/backgrounds/resolve';
 
@@ -49,14 +54,26 @@ const PICTURE_KEY = 'virtues-background-picture';
  * `picture` is files from an image style, `dim` when it stands in for a dark
  * version it does not have; `drawn` is drawn by its renderer
  * (lib/backgrounds/renderers.ts); `site` is one of your sites, which home
- * draws itself.
+ * draws itself. `strip` and `focus` say where a picture goes (`isStrip`);
+ * `ink` and `sample`, its narrowest file, are for the words on it
+ * (lib/backgrounds/onScene.svelte.ts).
  */
 export type Shown =
 	| { kind: 'lake' }
 	| { kind: 'none' }
-	| { kind: 'picture'; key: string; avif: string; src: string; title: string; dim: boolean }
+	| { kind: 'picture'; key: string; avif: string; src: string; title: string; dim: boolean; strip: boolean; focus: [number, number]; ink: SceneInk; sample: string }
 	| { kind: 'drawn'; key: string; renderer: DrawnRenderer; params: unknown }
 	| { kind: 'site'; key: string; appletId: string };
+
+/**
+ * Whether it fades up out of the bottom of the window. Watercolors are
+ * painted for that, with their own top left unpainted, and drawn styles keep
+ * their marks clear of the words. Every other picture, the lake included,
+ * fills the window.
+ */
+export function isStrip(s: Shown): boolean {
+	return s.kind === 'drawn' || (s.kind === 'picture' && s.strip);
+}
 
 /** A site that can be the background: its applet id and its name. */
 export interface BackgroundSite {
@@ -133,6 +150,8 @@ class BackgroundStore {
 	catalogPending = $state(false);
 	/** Whether the last attempt to load the styles failed, before any loaded. */
 	stylesUnavailable = $state(false);
+	/** What is on screen: `shown` once it has loaded, or nothing if it could not. */
+	arrived = $state<Shown>({ kind: 'none' });
 	/** Your sites, then the ones that came with the server, once a picker asks. */
 	sites = $state<BackgroundSite[] | null>(null);
 	#cached = typeof window === 'undefined' ? null : readCachedPicture();
@@ -188,13 +207,18 @@ class BackgroundStore {
 		}
 		const v = today.picture[this.appearance];
 		const url = fileUrl(style);
+		const dim = this.appearance === 'dark' && !!v.dim;
 		return {
 			kind: 'picture',
 			key: `${today.address}:${this.appearance}`,
 			avif: srcset(v, 'avif', url),
 			src: widest(v, url),
 			title: v.title,
-			dim: this.appearance === 'dark' && !!v.dim,
+			dim,
+			strip: v.fade === 'top',
+			focus: focusPoint(v),
+			ink: inkOver(dim ? v.luminance * DIM_LUMINANCE : v.luminance),
+			sample: url(filesOf(v)[0].rel),
 		};
 	});
 

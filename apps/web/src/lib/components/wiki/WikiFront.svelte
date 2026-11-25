@@ -1,13 +1,15 @@
 <!--
 	WikiFront.svelte
 	The wiki's front page, at /wiki. A person comes here to look something up,
-	to read what was written about the last few days, to see who and where has
-	come up lately, and to go back in time. The page leads with those four, in
-	that order.
+	to see what the wiki holds, and to read what was written about the last
+	few days. The page leads with those, in that order: the finder, one row
+	of sections with what each holds, then the people, places, organizations
+	and things that come up most, each with when it last came up or what it
+	is, then this week's written days and the same date in earlier years.
 
-	The week's lines and the place swatches draw real records: a gray bar is
-	time away from home, a dot is a calendar item or a workout at its hour,
-	and a swatch's colors are the hours you spend at that place.
+	A day with no article has no line, so the page never opens on an empty
+	row. A lede is the article's own markdown and is drawn by DayLede, so
+	its names are links.
 -->
 <script lang="ts">
 	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
@@ -15,52 +17,55 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { WIKI_MODE } from '$lib/sidebar/modes';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { getSkyDay } from '$lib/api/client';
-	import { getChapters, listOnThisDay, type ChapterApi, type OnThisDayApi } from '$lib/wiki/api';
-	import { getLocalDateSlug } from '$lib/utils/dateUtils';
+	import DayLede from './DayLede.svelte';
+	import { thingsStore } from '$lib/stores/things.svelte';
 	import {
-		loadFront,
-		stripOf,
-		hourLight,
-		whenLabel,
-		type DayStrip,
-		type FrontData,
-	} from '$lib/wiki/front';
+		getChapters,
+		listOnThisDay,
+		listYears,
+		type ChapterApi,
+		type OnThisDayApi,
+		type ThingApi,
+		type YearSummaryApi,
+	} from '$lib/wiki/api';
+	import { getLocalDateSlug } from '$lib/utils/dateUtils';
+	import { loadFront, whenLabel, type FrontData } from '$lib/wiki/front';
 
 	interface Findable {
 		name: string;
 		route: string;
 		kind: string;
+		type: 'person' | 'place' | 'org';
+		subtitle: string | null;
+		isSelf: boolean;
 	}
 
-	let { entities }: { entities: Findable[] } = $props();
+	let { entities, entitiesLoaded = false }: { entities: Findable[]; entitiesLoaded?: boolean } = $props();
 
 	const width = usePageWidth(() => 'medium', { part: () => 'overview' });
 
 	const today = getLocalDateSlug();
 
 	let front = $state<FrontData | null>(null);
-	let chapters = $state<ChapterApi[]>([]);
-	let onThisDay = $state<(OnThisDayApi & { strip: DayStrip | null })[]>([]);
+	let chapters = $state<ChapterApi[] | null>(null);
+	let years = $state<YearSummaryApi[] | null>(null);
+	let onThisDay = $state<OnThisDayApi[]>([]);
 
 	onMount(async () => {
-		const [data, chs, otd] = await Promise.all([
+		void thingsStore.load();
+		const [data, chs, ys, otd] = await Promise.all([
 			loadFront(today).catch((e) => {
 				console.error('[WikiFront] week failed:', e);
 				return null;
 			}),
-			getChapters().catch(() => []),
+			getChapters().catch(() => null),
+			listYears().catch(() => null),
 			listOnThisDay().catch(() => []),
 		]);
 		front = data;
 		chapters = chs;
-		const written = otd.filter((d) => d.lede).slice(0, 2);
-		onThisDay = await Promise.all(
-			written.map(async (d) => {
-				const sky = await getSkyDay(d.date).catch(() => null);
-				return { ...d, strip: sky ? stripOf(sky, data?.homeId ?? null) : null };
-			})
-		);
+		years = ys;
+		onThisDay = otd.filter((d) => d.lede).slice(0, 2);
 	});
 
 	// --- Finding ---
@@ -92,19 +97,81 @@
 		open(`/day/day_${date}`);
 	}
 
-	/** Time and subjects, as the sidebar's wiki rows list them. Today is the
-	 *  first line of This week, so it has no link of its own here. */
+	// --- What the wiki holds ---
+
+	const people = $derived(entities.filter((e) => e.type === 'person' && !e.isSelf));
+	const places = $derived(entities.filter((e) => e.type === 'place'));
+	const orgs = $derived(entities.filter((e) => e.type === 'org'));
+	const things = $derived(thingsStore.things);
+
+	/** How much is behind each section link. Null until it is known, so a
+	 *  section never shows a 0 it has not counted. */
+	const counts = $derived<Record<string, number | null>>({
+		days: years ? years.reduce((n, y) => n + y.days_recorded, 0) : null,
+		years: years ? years.filter((y) => y.days_recorded > 0).length : null,
+		chapters: chapters ? chapters.filter((c) => c.kind === 'chapter').length : null,
+		people: entitiesLoaded ? people.length : null,
+		places: entitiesLoaded ? places.length : null,
+		orgs: entitiesLoaded ? orgs.length : null,
+		things: thingsStore.loaded ? things.length : null,
+	});
+
+	/** Time and subjects, as the sidebar's wiki rows list them. Today has a
+	 *  door of its own in the sidebar, and its line is the first of This week. */
 	const timeRows = WIKI_MODE.rows.filter((r) => r.group === 'Time' && r.id !== 'today');
 	const subjectRows = WIKI_MODE.rows.filter((r) => r.group === 'Subjects');
 
-	// --- Drawing ---
+	// --- The lists ---
 
-	const HOUR_TICKS = [
-		{ h: 0, label: '12a' },
-		{ h: 6, label: '6a' },
-		{ h: 12, label: '12p' },
-		{ h: 18, label: '6p' },
-	];
+	const LIST_MAX = 5;
+
+	interface ListRow {
+		name: string;
+		route: string;
+		meta: string;
+	}
+
+	function capitalized(s: string | null | undefined): string {
+		const t = (s ?? '').trim();
+		return t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+	}
+
+	/** When it last came up, in the two weeks the page can see, else what it is. */
+	function entityRows(list: Findable[], seenWord: string): ListRow[] {
+		return list.slice(0, LIST_MAX).map((e) => {
+			const last = front?.lastSeen.get(e.route);
+			const when = last ? whenLabel(last, today) : null;
+			// "Seen yesterday", "Seen Monday", "Seen Nov 3".
+			const said = when === 'Today' || when === 'Yesterday' ? when.toLowerCase() : when;
+			return { name: e.name, route: e.route, meta: said ? `${seenWord} ${said}` : capitalized(e.subtitle) };
+		});
+	}
+
+	function shortDate(iso: string): string {
+		const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+		const sameYear = iso.slice(0, 4) === today.slice(0, 4);
+		return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' });
+	}
+
+	function thingMeta(t: ThingApi): string {
+		if (t.ended_at) return `Until ${shortDate(t.ended_at)}`;
+		if (t.started_at) return `Since ${shortDate(t.started_at)}`;
+		return '';
+	}
+
+	const lists = $derived([
+		{ id: 'people', title: 'People', href: '/wiki/people', rows: entityRows(people, 'Seen') },
+		{ id: 'places', title: 'Places', href: '/wiki/places', rows: entityRows(places, 'Visited') },
+		{ id: 'orgs', title: 'Organizations', href: '/wiki/orgs', rows: entityRows(orgs, 'Came up') },
+		{
+			id: 'things',
+			title: 'Things',
+			href: '/wiki/things',
+			rows: things.slice(0, LIST_MAX).map((t) => ({ name: t.title, route: `/thing/${t.id}`, meta: thingMeta(t) })),
+		},
+	]);
+
+	// --- Days ---
 
 	function dayName(date: string): string {
 		if (date === today) return 'Today';
@@ -117,32 +184,6 @@
 			month: 'short',
 			day: 'numeric',
 		});
-	}
-
-	/** Chapters on one line, each as wide as its years. */
-	const life = $derived.by(() => {
-		const now = Date.now();
-		return chapters.map((c) => {
-			const start = new Date(c.started_at).getTime();
-			const end = c.ended_at ? new Date(c.ended_at).getTime() : now;
-			return {
-				id: c.id,
-				title: c.title ?? 'An unnamed stretch',
-				years: `${c.started_at.slice(0, 4)}–${c.ended_at ? c.ended_at.slice(0, 4) : 'now'}`,
-				weight: Math.max(0.5, (end - start) / (365.25 * 86_400_000)),
-				current: c.is_current || !c.ended_at,
-			};
-		});
-	});
-
-	/** A place's hours: the ones you keep most painted solid, the rest faint. */
-	function swatch(hours: number[]) {
-		const max = Math.max(...hours);
-		if (max <= 0) return [];
-		return hours
-			.map((m, h) => ({ h, strength: m / max }))
-			.filter((b) => b.strength >= 0.2)
-			.map((b) => ({ x: b.h, fill: hourLight(b.h + 0.5), opacity: b.strength >= 0.5 ? 1 : 0.55 }));
 	}
 </script>
 
@@ -177,151 +218,82 @@
 		{/if}
 	</div>
 
-	<nav class="doors" aria-label="Wiki sections">
-		{#each timeRows as row (row.id)}
-			<button type="button" class="door" onclick={() => go(row.href, row.label)}>
-				{#if row.glyph}<AtlasIcon name={row.glyph} size={16} bare />{/if}{row.label}
-			</button>
-		{/each}
-		<span class="doors-gap" aria-hidden="true"></span>
-		{#each subjectRows as row (row.id)}
-			<button type="button" class="door" onclick={() => go(row.href, row.label)}>
-				{#if row.glyph}<AtlasIcon name={row.glyph} size={16} bare />{/if}{row.label}
-			</button>
-		{/each}
-	</nav>
-
-	{#snippet strip(s: DayStrip)}
-		<svg class="strip" viewBox="0 0 120 14" aria-hidden="true">
-			<rect x="0" y="6.5" width={s.until * 5} height="1" class="strip-track" />
-			{#each s.stays as [a, b], i (i)}
-				<rect x={a * 5} y="5" width={Math.max(2, (b - a) * 5)} height="4" rx="2" class="strip-stay" />
-			{/each}
-			{#each s.moments as h, i (i)}
-				<circle cx={h * 5} cy="7" r="2.6" class="strip-moment" />
-			{/each}
-		</svg>
+	{#snippet door(row: (typeof WIKI_MODE.rows)[number])}
+		{@const n = counts[row.id]}
+		<button type="button" class="door" onclick={() => go(row.href, row.label)}>
+			{#if row.glyph}<AtlasIcon name={row.glyph} size={16} bare />{/if}{row.label}{#if n != null}<span class="door-count">{n.toLocaleString('en-US')}</span>{/if}
+		</button>
 	{/snippet}
 
-	<div class="cols">
-		<div class="main">
-			<section>
-				<h2>This week</h2>
-				<div class="row axis" aria-hidden="true">
-					<div class="ticks">
-						{#each HOUR_TICKS as t (t.h)}
-							<span style:left="{t.h * 5}px">{t.label}</span>
-						{/each}
-					</div>
-				</div>
-				{#if front}
-					<div class="days">
-					{#each front.week as d (d.date)}
-						<button type="button" class="row day" onclick={() => openDay(d.date)}>
-							<span class="when">
-								<span class="when-name">{dayName(d.date)}</span>
-								<span class="when-date">{dayDate(d.date, d.date === today)}</span>
-								{#if d.strip}{@render strip(d.strip)}{/if}
-							</span>
-							{#if d.lede}
-								<span class="lede">{d.lede}</span>
-							{:else if d.places.length}
-								<span class="lede faint">
-									{d.date === today ? 'So far: ' : ''}{d.places.join(', ')}.
-								</span>
-							{:else}
-								<span></span>
-							{/if}
-						</button>
-					{/each}
-					</div>
-				{/if}
-				<button type="button" class="more" onclick={() => go('/wiki/days', 'Days')}>All days →</button>
-			</section>
-
-			{#if life.length}
-				<section>
-					<h2>Your life</h2>
-					<div class="life">
-						{#each life as c (c.id)}
-							<button
-								type="button"
-								class="life-seg"
-								style:flex-grow={c.weight}
-								onclick={() => go('/wiki/chapters', 'Chapters')}
-							>
-								<span class="life-bar" class:current={c.current}></span>
-								<span class="life-name">{c.title}</span>
-								<span class="life-years">{c.years}</span>
-							</button>
-						{/each}
-					</div>
-					<div class="more-row">
-						<button type="button" class="more" onclick={() => go('/wiki/years', 'Years')}>Years →</button>
-					</div>
-				</section>
-			{/if}
-
-			{#if onThisDay.length}
-				<section>
-					<h2>On this day</h2>
-					<div class="days">
-					{#each onThisDay as d (d.date)}
-						<button type="button" class="row day" onclick={() => openDay(d.date)}>
-							<span class="when">
-								<span class="when-name">{d.date.slice(0, 4)}</span>
-								<span class="when-date">{dayDate(d.date, true)}</span>
-								{#if d.strip}{@render strip(d.strip)}{/if}
-							</span>
-							<span class="lede">{d.lede}</span>
-						</button>
-					{/each}
-					</div>
-				</section>
-			{/if}
+	<nav class="doors" aria-label="Wiki sections">
+		<div class="door-group">
+			{#each timeRows as row (row.id)}{@render door(row)}{/each}
 		</div>
+		<div class="door-group">
+			{#each subjectRows as row (row.id)}{@render door(row)}{/each}
+		</div>
+	</nav>
 
-		{#if front && (front.people.length || front.places.length)}
-			<aside>
-				<h2>Lately</h2>
-				{#if front.people.length}
-					<p class="sub">People</p>
-					{#each front.people as p (p.url)}
-						<button type="button" class="ent" onclick={() => open(p.url)}>
-							<span class="initials" aria-hidden="true">
-								{p.label
-									.split(/\s+/)
-									.map((w) => w[0])
-									.join('')
-									.slice(0, 2)
-									.toUpperCase()}
-							</span>
-							<span class="ent-name">{p.label}</span>
-							<span class="ent-when">{whenLabel(p.last, today)}</span>
-						</button>
-					{/each}
+	<div class="lists">
+		{#each lists as list (list.id)}
+			{@const n = counts[list.id]}
+			<section class="list">
+				<header class="list-head">
+					<h2>{list.title}{#if n != null}<span class="list-count">{n.toLocaleString('en-US')}</span>{/if}</h2>
+					<button type="button" class="see-all" onclick={() => go(list.href, list.title)}>See all</button>
+				</header>
+				{#if list.rows.length}
+					<ul>
+						{#each list.rows as row (row.route)}
+							<li>
+								<button type="button" class="ent" onclick={() => open(row.route)}>
+									<span class="ent-name">{row.name}</span>
+									{#if row.meta}<span class="ent-meta">{row.meta}</span>{/if}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{:else if n === 0}
+					<p class="list-empty">None yet.</p>
 				{/if}
-				{#if front.places.length}
-					<p class="sub">Places</p>
-					{#each front.places as p (p.url)}
-						<button type="button" class="ent" onclick={() => open(p.url)}>
-							<svg class="swatch" viewBox="0 0 24 16" aria-hidden="true">
-								<rect width="24" height="16" class="swatch-ground" />
-								{#each swatch(p.hours ?? []) as b (b.x)}
-									<rect x={b.x} y="0" width="1.02" height="16" fill={b.fill} opacity={b.opacity} />
-								{/each}
-							</svg>
-							<span class="ent-name">{p.label}</span>
-							<span class="ent-when">{whenLabel(p.last, today)}</span>
-						</button>
-					{/each}
-				{/if}
-				<button type="button" class="more" onclick={() => go('/wiki/entities', 'Entities')}>
-					All people and places →
-				</button>
-			</aside>
-		{/if}
+			</section>
+		{/each}
 	</div>
+
+	{#if front?.week.length}
+		<section class="recent">
+			<h2>This week</h2>
+			<div class="days">
+				{#each front.week as d (d.date)}
+					<div class="row day">
+						<button type="button" class="when" onclick={() => openDay(d.date)}>
+							<span class="when-name">{dayName(d.date)}</span>
+							<span class="when-date">{dayDate(d.date, d.date === today)}</span>
+						</button>
+						<p class="lede"><DayLede markdown={d.lede} /></p>
+					</div>
+				{/each}
+			</div>
+			<button type="button" class="more" onclick={() => go('/wiki/days', 'Days')}>All days →</button>
+		</section>
+	{/if}
+
+	{#if onThisDay.length}
+		<section class="recent">
+			<h2>On this day</h2>
+			<div class="days">
+				{#each onThisDay as d (d.date)}
+					<div class="row day">
+						<button type="button" class="when" onclick={() => openDay(d.date)}>
+							<span class="when-name">{d.date.slice(0, 4)}</span>
+							<span class="when-date">{dayDate(d.date, true)}</span>
+						</button>
+						<p class="lede"><DayLede markdown={d.lede ?? ''} /></p>
+					</div>
+				{/each}
+			</div>
+		</section>
+	{/if}
 
 	<footer>
 		<button type="button" class="more quiet-link" onclick={() => go('/wiki/history', 'History')}>
@@ -349,7 +321,7 @@
 		font-family: var(--font-serif);
 		font-weight: 400;
 		font-size: 1.5625rem;
-		margin: 0 0 0.375rem;
+		margin: 0;
 		color: var(--color-foreground);
 	}
 
@@ -361,6 +333,12 @@
 		padding: 0;
 		text-align: left;
 		cursor: pointer;
+	}
+
+	ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
 	}
 
 	/* Finding */
@@ -396,7 +374,6 @@
 	}
 
 	.find-results {
-		list-style: none;
 		margin: 0.375rem 0 0;
 		padding: 0.25rem;
 		border: 1px solid var(--color-border);
@@ -429,13 +406,19 @@
 		margin: 0.5rem 0 0 0.25rem;
 	}
 
-	/* Section links */
+	/* Section links: time, then subjects, each group on its own run so a
+	   wrap never strands one link of a group beside the other group. */
 	.doors {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.625rem 1.375rem;
+		gap: 0.625rem 2.25rem;
 		margin-top: 1.125rem;
+	}
+
+	.door-group {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.625rem 1.375rem;
 	}
 
 	.door {
@@ -450,50 +433,97 @@
 		color: var(--color-foreground);
 	}
 
-	.doors-gap {
-		width: 0.875rem;
+	.door-count,
+	.list-count {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
-	/* Columns */
-	.cols {
+	.door-count {
+		margin-left: 0.125rem;
+	}
+
+	/* People, places, organizations and things, two to a row. */
+	.lists {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 17rem;
-		gap: 4.5rem;
-		margin-top: 3.25rem;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 3rem 3.5rem;
+		margin-top: 3rem;
 	}
 
-	section + section {
-		margin-top: 3.5rem;
+	.list-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		padding-bottom: 0.5rem;
+		margin-bottom: 0.375rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.list-count {
+		margin-left: 0.625rem;
+		font-family: var(--font-sans);
+	}
+
+	.see-all {
+		font-size: 0.875rem;
+		color: var(--color-primary);
+	}
+
+	.see-all:hover {
+		text-decoration: underline;
+	}
+
+	.ent {
+		display: flex;
+		align-items: baseline;
+		gap: 1rem;
+		width: 100%;
+		padding: 0.5rem 0;
+	}
+
+	.ent-name {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.9375rem;
+		color: var(--color-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.ent:hover .ent-name {
+		text-decoration: underline;
+	}
+
+	.ent-meta {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+
+	.list-empty {
+		margin: 0.5rem 0 0;
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
 	}
 
 	/* Day rows */
+	.recent {
+		margin-top: 3.5rem;
+	}
+
+	.recent h2 {
+		margin-bottom: 0.375rem;
+	}
+
 	.row {
 		display: grid;
 		grid-template-columns: 7.5rem minmax(0, 1fr);
 		gap: 1.25rem;
 		width: 100%;
-	}
-
-	.axis {
-		margin-top: 0.25rem;
-	}
-
-	.ticks {
-		position: relative;
-		width: 120px;
-		height: 14px;
-	}
-
-	.ticks span {
-		position: absolute;
-		top: 0;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-		transform: translateX(-50%);
-	}
-
-	.ticks span:first-child {
-		transform: none;
 	}
 
 	.day {
@@ -507,6 +537,7 @@
 
 	.when {
 		display: block;
+		align-self: start;
 	}
 
 	.when-name {
@@ -514,6 +545,10 @@
 		font-size: 0.9375rem;
 		line-height: 1.3;
 		color: var(--color-foreground);
+	}
+
+	.when:hover .when-name {
+		color: var(--color-primary);
 	}
 
 	.when-date {
@@ -524,37 +559,11 @@
 	}
 
 	.lede {
+		margin: 0;
 		font-family: var(--font-serif);
 		font-size: 1.15625rem;
 		line-height: 1.42;
 		color: var(--color-foreground);
-	}
-
-	.lede.faint {
-		color: var(--color-foreground-subtle);
-	}
-
-	.day:hover .lede:not(.faint) {
-		color: var(--color-foreground-muted);
-	}
-
-	.strip {
-		display: block;
-		width: 120px;
-		height: 14px;
-		margin-top: 0.5625rem;
-	}
-
-	.strip-track {
-		fill: var(--color-border);
-	}
-
-	.strip-stay {
-		fill: var(--color-border-strong);
-	}
-
-	.strip-moment {
-		fill: var(--color-foreground-muted);
 	}
 
 	.more {
@@ -568,116 +577,6 @@
 
 	.more:hover {
 		color: var(--color-foreground);
-	}
-
-	.more-row {
-		display: flex;
-		gap: 1.5rem;
-	}
-
-	/* Lifeline */
-	.life {
-		display: flex;
-		gap: 4px;
-		margin-top: 1rem;
-	}
-
-	.life-seg {
-		display: block;
-		flex-basis: 0;
-		min-width: 0;
-	}
-
-	.life-bar {
-		display: block;
-		height: 10px;
-		border-radius: var(--radius-full);
-		background: var(--color-border-strong);
-	}
-
-	.life-bar.current {
-		background: var(--color-foreground);
-	}
-
-	.life-seg:hover .life-bar:not(.current) {
-		background: var(--color-foreground-subtle);
-	}
-
-	.life-name {
-		display: block;
-		margin-top: 0.625rem;
-		font-family: var(--font-serif);
-		font-size: 1.0625rem;
-		color: var(--color-foreground);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.life-years {
-		display: block;
-		font-size: 0.78125rem;
-		color: var(--color-foreground-subtle);
-		white-space: nowrap;
-	}
-
-	/* Lately */
-	.sub {
-		margin: 1.125rem 0 0.125rem;
-		font-size: 0.78125rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.ent {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		width: 100%;
-		height: 2.875rem;
-	}
-
-	.initials {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.875rem;
-		height: 1.875rem;
-		flex: none;
-		border-radius: 50%;
-		background: var(--color-border-subtle);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.swatch {
-		width: 1.875rem;
-		height: 1.25rem;
-		flex: none;
-		border-radius: var(--radius-sm);
-	}
-
-	.swatch-ground {
-		fill: var(--color-border-subtle);
-	}
-
-	.ent-name {
-		flex: 1;
-		min-width: 0;
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.ent:hover .ent-name {
-		color: var(--color-foreground-muted);
-	}
-
-	.ent-when {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		white-space: nowrap;
 	}
 
 	footer {
@@ -701,13 +600,14 @@
 	}
 
 	@media (max-width: 767px) {
-		.cols {
+		.lists {
 			grid-template-columns: minmax(0, 1fr);
-			gap: 3rem;
+			gap: 2.5rem;
 		}
 
-		.life-years {
-			display: none;
+		.row {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 0.375rem;
 		}
 	}
 </style>

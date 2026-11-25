@@ -15,6 +15,7 @@
 	import { search } from "$lib/stores/search.svelte";
 	import { trafficLights } from "$lib/tauri/trafficLights.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
+	import AtlasIcon, { ROW_GLYPH_PX } from "./AtlasIcon.svelte";
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { newPage, newTask } from "$lib/utils/newActions";
@@ -138,7 +139,7 @@
 				keys: "mod+,",
 				label: "Open Settings",
 				group: "Go to",
-				run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }),
+				run: openSettings,
 			},
 			{
 				id: "wiki.open",
@@ -159,6 +160,17 @@
 	function toggleSearch() {
 		search.toggle();
 	}
+
+	function openSettings() {
+		void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true });
+	}
+
+	// Settings lights while the focused pane shows a Settings page.
+	const inSettings = $derived.by(() => {
+		const pane = windowShellStore.activePane;
+		const path = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route?.split("?")[0];
+		return path === "/virtues" || !!path?.startsWith("/virtues/");
+	});
 
 	function handleWikiOverview() {
 		windowShellStore.openTabFromRoute("/wiki", { label: "Wiki", focusExisting: true });
@@ -513,7 +525,34 @@
 		</nav>
 
 		<SidebarFooter collapsed={isCollapsed} />
+		<!-- Room at the column's foot for Settings, which stands there. -->
+		<div class="settings-room" aria-hidden="true"></div>
 	</div>
+
+	<!-- Settings stands at the window's bottom left. Closed, it floats there
+	     on its own glass, apart from the rail. Open, the sidebar's glass
+	     reaches down around it and it widens into the column's last row. It
+	     is fixed to the window, like the glass. Closed, it rises to the
+	     height of the background button in the page's other corner. -->
+	<button
+		type="button"
+		class="sidebar-settings"
+		class:railed={isCollapsed}
+		class:selected={inSettings}
+		class:resizing
+		style:left="{SIDEBAR_INSET + 4}px"
+		style:width="{isCollapsed ? RAIL_GLASS_PX - 8 : panelWidth - 8}px"
+		onclick={openSettings}
+		aria-label="Settings"
+		aria-current={inSettings ? "page" : undefined}
+		data-tip={isCollapsed ? "Settings" : undefined}
+		data-tip-key={isCollapsed ? "mod+," : undefined}
+		data-tip-side="right"
+	>
+		<span class="settings-glass lq" aria-hidden="true"></span>
+		<AtlasIcon name="settings" size={ROW_GLYPH_PX} bare fillable />
+		<span class="settings-row-label">Settings</span>
+	</button>
 
 	{#if !isCollapsed}
 		<!-- The seam is the handle: the gap between the sidebar and the
@@ -811,6 +850,138 @@
 	.sidebar-column {
 		position: relative;
 		z-index: 1;
+	}
+
+	/* Settings' row, its 4px inset from the glass's bottom, and 4px of air
+	   above it. */
+	.settings-room {
+		flex: none;
+		height: calc(var(--sidebar-interactive-height) + 8px);
+	}
+
+	/* Laid out as a sidebar row (HomePanel's .panel-row): the glyph 10px in,
+	   then the label. Closed, it is a square as wide as a rail row with the
+	   glyph in the middle, on its own glass. */
+	.sidebar-settings {
+		position: fixed;
+		bottom: calc(var(--window-air) + 4px);
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		gap: var(--sidebar-interactive-gap);
+		height: var(--sidebar-interactive-height);
+		padding: 0 10px;
+		overflow: hidden;
+		border: none;
+		border-radius: var(--sidebar-interactive-radius);
+		background: transparent;
+		color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
+		font-size: var(--chrome-label-font-size);
+		white-space: nowrap;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			width var(--motion-sidebar) var(--ease-sidebar),
+			height var(--motion-sidebar) var(--ease-sidebar),
+			bottom var(--motion-sidebar) var(--ease-sidebar),
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-glass);
+	}
+
+	/* 10px in, as the rail's rows, so the glyph stands on their column.
+	   Closed, it stands level with the background button in the page's
+	   bottom right corner (BackgroundControl): that sits 16px inside the
+	   page card, whose edge is the window's air plus a 1px border in from
+	   the window's. */
+	.sidebar-settings.railed {
+		bottom: calc(var(--window-air) + 1px + 16px);
+		height: calc(var(--rail-w) - 8px);
+		border-radius: var(--radius-lg);
+	}
+
+	/* The glyph overhangs 1px each side, as a door's does (HomePanel), so
+	   the gear and the label line up with the rows above. */
+	.sidebar-settings :global(.atlas-icon) {
+		margin: 0 -1px;
+	}
+
+	.sidebar-settings:hover,
+	.sidebar-settings.selected {
+		color: var(--color-foreground);
+		transition-duration: var(--motion-sidebar), var(--motion-sidebar), var(--motion-sidebar), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.sidebar-settings:not(.railed):hover {
+		background: var(--hover-bg);
+	}
+
+	.sidebar-settings:not(.railed).selected {
+		background: var(--lq-row-selected);
+	}
+
+	.sidebar-settings :global(.glyph-solid) {
+		opacity: 0;
+	}
+
+	.sidebar-settings:is(:hover, .selected) :global(.glyph-solid) {
+		opacity: 1;
+	}
+
+	.sidebar-settings:is(:hover, .selected) :global(.glyph-outline) {
+		opacity: 0;
+	}
+
+	/* The square sinks under a press, as glass does. */
+	.sidebar-settings.railed:active {
+		transform: scale(0.92);
+	}
+
+	.sidebar-settings.resizing {
+		transition: none;
+	}
+
+	/* Its own glass shows only while it stands apart from the sidebar's.
+	   It goes quickly as the sidebar's glass comes down around it, and comes
+	   back once that glass has drawn up to the rail. */
+	.settings-glass {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 120ms var(--ease-premium);
+	}
+
+	.railed .settings-glass {
+		opacity: 1;
+		transition: opacity 200ms var(--ease-premium) 160ms;
+	}
+
+	.sidebar-settings.railed:hover .settings-glass {
+		box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
+	}
+
+	.sidebar-settings > :global(:not(.settings-glass)) {
+		position: relative;
+	}
+
+	/* The label comes and goes with the sidebar's words. Its own class name:
+	   the settings pages style a global `.settings-label`. */
+	.settings-row-label {
+		opacity: 1;
+		transform: none;
+		transition:
+			opacity 240ms var(--ease-premium) 130ms,
+			transform 280ms var(--ease-premium) 130ms;
+	}
+
+	.railed .settings-row-label {
+		opacity: 0;
+		transform: translateX(-4px);
+		transition:
+			opacity 100ms ease-in,
+			transform 100ms ease-in;
 	}
 
 	/* Rows stand 2px apart, open or closed. */

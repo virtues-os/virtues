@@ -13,6 +13,10 @@
 //! Bodies are strict pass-through — never logged, never stored. Bank data
 //! transits in-flight only, same posture as the AI proxy.
 //!
+//! Any subscriber's key reaches these routes, so a key alone does not say
+//! whose bank a token is. Each call is checked against the banks recorded for
+//! the caller's account ([`caller_owns_bank`]) before Plaid sees it.
+//!
 //! Cost model: bank data is included in the subscription, so these calls never
 //! touch the wallet. A data call needs a live subscription (`BearerAuth`) and
 //! keeps working when the month's AI credit is spent. Plaid bills a monthly fee
@@ -53,34 +57,34 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn transactions_sync(
     State(state): State<Arc<AppState>>,
-    BearerAuth(_ent): BearerAuth,
+    BearerAuth(wallet): BearerAuth,
     Json(body): Json<Value>,
 ) -> Response {
-    proxy(&state, "transactions/sync", &body).await
+    proxy(&state, &wallet.account_id, "transactions/sync", &body).await
 }
 
 async fn accounts_get(
     State(state): State<Arc<AppState>>,
-    BearerAuth(_ent): BearerAuth,
+    BearerAuth(wallet): BearerAuth,
     Json(body): Json<Value>,
 ) -> Response {
-    proxy(&state, "accounts/get", &body).await
+    proxy(&state, &wallet.account_id, "accounts/get", &body).await
 }
 
 async fn investments_holdings_get(
     State(state): State<Arc<AppState>>,
-    BearerAuth(_ent): BearerAuth,
+    BearerAuth(wallet): BearerAuth,
     Json(body): Json<Value>,
 ) -> Response {
-    proxy(&state, "investments/holdings/get", &body).await
+    proxy(&state, &wallet.account_id, "investments/holdings/get", &body).await
 }
 
 async fn liabilities_get(
     State(state): State<Arc<AppState>>,
-    BearerAuth(_ent): BearerAuth,
+    BearerAuth(wallet): BearerAuth,
     Json(body): Json<Value>,
 ) -> Response {
-    proxy(&state, "liabilities/get", &body).await
+    proxy(&state, &wallet.account_id, "liabilities/get", &body).await
 }
 
 /// Remove a linked bank from Plaid, which ends its monthly fee, and free its
@@ -93,6 +97,11 @@ pub(crate) async fn remove_item(state: &AppState, account_id: &str, access_token
         return err(StatusCode::BAD_REQUEST, "missing_access_token", "access_token is required");
     }
     let only_token = json!({ "access_token": access_token });
+    let owner = match banks::token_owner(&state.db, account_id, access_token).await {
+        Ok(banks::TokenOwner::Another) => return not_your_bank(),
+        Ok(owner) => owner,
+        Err(e) => return lookup_failed(e),
+    };
 
     let item_id = match call(state, "item/get", &only_token).await {
         Ok((status, v)) if status.is_success() => v
@@ -105,6 +114,13 @@ pub(crate) async fn remove_item(state: &AppState, account_id: &str, access_token
         Ok((status, v)) => return passthrough(status, v),
         Err(resp) => return resp,
     };
+    // A token this table did not know: the bank must be the caller's, or no
+    // account's, before it is removed.
+    if owner == banks::TokenOwner::Unknown {
+        if let Err(refusal) = claim_bank(state, account_id, item_id.as_deref(), access_token).await {
+            return refusal;
+        }
+    }
 
     match call(state, "item/remove", &only_token).await {
         Ok((status, _)) if status.is_success() => {}
@@ -131,6 +147,66 @@ pub(crate) async fn remove_refused(state: &AppState, access_token: &str) -> bool
         Ok((status, _)) => status.is_success(),
         Err(_) => false,
     }
+}
+
+/// Refuse a bank call whose access token is not one of the caller's banks.
+/// `Err` is the response to return.
+///
+/// A token the table does not know costs one extra Plaid call, `item/get`,
+/// to learn which bank it is; the answer is recorded, so later calls with
+/// that token are a single lookup here.
+async fn caller_owns_bank(state: &AppState, account_id: &str, access_token: &str) -> Result<(), Response> {
+    if access_token.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "missing_access_token", "access_token is required"));
+    }
+    match banks::token_owner(&state.db, account_id, access_token).await {
+        Ok(banks::TokenOwner::Caller) => return Ok(()),
+        Ok(banks::TokenOwner::Another) => return Err(not_your_bank()),
+        Ok(banks::TokenOwner::Unknown) => {}
+        Err(e) => return Err(lookup_failed(e)),
+    }
+    let item_id = match call(state, "item/get", &json!({ "access_token": access_token })).await? {
+        (status, v) if status.is_success() => v.pointer("/item/item_id").and_then(|x| x.as_str()).map(String::from),
+        // Plaid's own refusal (a dead or malformed token) goes back as the
+        // data call's would have.
+        (status, v) => return Err(passthrough(status, v)),
+    };
+    claim_bank(state, account_id, item_id.as_deref(), access_token).await
+}
+
+/// Record a bank Plaid just named as the caller's, unless another account
+/// has it (`banks::claim`). `Err` is the response to return.
+async fn claim_bank(
+    state: &AppState,
+    account_id: &str,
+    item_id: Option<&str>,
+    access_token: &str,
+) -> Result<(), Response> {
+    let Some(item_id) = item_id else {
+        tracing::error!("plaid item/get succeeded without an item_id");
+        return Err(err(StatusCode::BAD_GATEWAY, "upstream_error", "Plaid did not name the bank"));
+    };
+    match banks::claim(&state.db, account_id, item_id, access_token).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(not_your_bank()),
+        Err(e) => Err(lookup_failed(e)),
+    }
+}
+
+fn not_your_bank() -> Response {
+    tracing::warn!(code = "bank_not_yours", "plaid call refused");
+    err(
+        StatusCode::FORBIDDEN,
+        "bank_not_yours",
+        "This bank is linked to a different Virtues account. Disconnect it and connect it again from this server.",
+    )
+}
+
+/// The ownership lookup failed. The call is refused: serving it would skip
+/// the check.
+fn lookup_failed(e: anyhow::Error) -> Response {
+    tracing::error!(error = %e, "linked bank lookup failed; plaid call refused");
+    err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "Could not check this bank. Try again.")
 }
 
 fn removed() -> Response {
@@ -179,7 +255,11 @@ async fn call(state: &AppState, plaid_path: &str, body: &Value) -> Result<(reqwe
 }
 
 /// A data call: forward it and return Plaid's answer, success or error, as is.
-async fn proxy(state: &AppState, plaid_path: &str, body: &Value) -> Response {
+async fn proxy(state: &AppState, account_id: &str, plaid_path: &str, body: &Value) -> Response {
+    let token = body.get("access_token").and_then(|v| v.as_str()).unwrap_or_default();
+    if let Err(refusal) = caller_owns_bank(state, account_id, token).await {
+        return refusal;
+    }
     match call(state, plaid_path, body).await {
         Ok((status, v)) => passthrough(status, v),
         Err(resp) => resp,

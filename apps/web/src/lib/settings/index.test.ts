@@ -109,14 +109,13 @@ describe('matchSettings', () => {
 });
 
 describe('the landing page', () => {
-	it("opens Your server's page from its name", () => {
-		expect(LANDING.find((g) => g.title === 'Your server')?.route).toBe('/virtues/system');
+	it("links Server's status page as Status", () => {
+		expect(LANDING.find((g) => g.title === 'Server')?.links.find((l) => l.label === 'Status')?.route).toBe('/virtues/system');
 	});
 
 	it("links This device's parts to settings that exist on its page", () => {
 		for (const here of ['mac-app', 'ios-app', 'desktop-app', 'browser'] as const) {
 			const group = deviceLanding(here);
-			expect(group.route, here).toBe('/virtues/devices/this');
 			for (const link of group.links) {
 				expect(link.route, `${here} ${link.label}`).toBe('/virtues/devices/this');
 				expect(findSetting(link.setting ?? '')?.route, `${here} ${link.label}`).toBe('/virtues/devices/this');

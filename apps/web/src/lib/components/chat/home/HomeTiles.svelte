@@ -13,6 +13,7 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import { fade } from '$lib/utils/transitions';
+	import { onScene } from '$lib/backgrounds/onScene.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
@@ -219,7 +220,7 @@
 
 {#if tiles.length || lead}
 	<div class="home-tiles">
-		<div class="tiles-head">
+		<div class="tiles-head" use:onScene>
 		{@render lead?.()}
 		{#if tiles.length}
 		<div class="layout-switch" role="radiogroup" aria-label="How home shows these" tabindex="-1" bind:this={switchEl} onkeydown={onSwitchKey}>
@@ -267,7 +268,7 @@
 						{/each}
 					</div>
 				{:else}
-					<p class="sentence">
+					<p class="sentence" use:onScene>
 						{#each tiles as t, i (t.key)}{#if i > 0}{' '}{/if}{t.before}{#if t.open && t.url}<a
 									class="link"
 									href={t.url}
@@ -313,6 +314,10 @@
 		outline: none;
 	}
 
+	.tiles-head[data-on-scene] .layout-switch {
+		background: color-mix(in srgb, var(--on-scene) 22%, transparent);
+	}
+
 	.layout-switch button {
 		width: 26px;
 		height: 22px;
@@ -321,14 +326,14 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--color-foreground-subtle);
+		color: var(--on-scene-muted, var(--color-foreground-subtle));
 		background: transparent;
 		cursor: pointer;
 		transition: color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.layout-switch button:hover {
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 		transition-duration: var(--motion-hover-in);
 	}
 
@@ -511,14 +516,15 @@
 		font-family: var(--font-serif);
 		font-size: 20px;
 		line-height: 1.55;
-		color: var(--color-foreground-muted);
+		color: var(--on-scene-muted, var(--color-foreground-muted));
+		text-shadow: var(--on-scene-shade, none);
 		overflow-wrap: break-word;
 	}
 
 	.link,
 	.named {
 		font-weight: 500;
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 	}
 
 	/* Links, so a long name wraps with the sentence. No underline: the
@@ -530,7 +536,7 @@
 	}
 
 	.link:hover {
-		color: var(--color-primary);
+		color: var(--on-scene, var(--color-primary));
 		transition-duration: var(--motion-hover-in);
 	}
 

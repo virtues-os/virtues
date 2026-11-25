@@ -8,7 +8,7 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     Create, Inbox, Pages, Applets, Wiki. The verb,
+	 *   doors     Create, Inbox, Pages, Wiki, Bookmarks. The verb,
 	 *             then the places. Each place is one row that opens its
 	 *             overview; none of them lists its contents here. Search is
 	 *             not a door: it is the ⌘K palette, reached from anywhere.
@@ -262,7 +262,6 @@
 		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
 		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
 		{ id: 'thread', label: 'Threads', plural: 'threads', seeAll: () => openProjects() },
-		{ id: 'applet', label: 'Sites', plural: 'sites', seeAll: () => openApplets() },
 	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
 	let recentFilter = $state<RecentFilter>(readRecentFilter());
@@ -288,8 +287,9 @@
 		}
 	}
 
+	// Sites are out of the sidebar for now, Recent included.
 	const recentsFiltered = $derived(
-		recentFilter === 'all' ? recents : recents.filter((r) => r.kind === recentFilter),
+		recentFilter === 'all' ? recents.filter((r) => r.kind !== 'applet') : recents.filter((r) => r.kind === recentFilter),
 	);
 	// The sidebar does not scroll. Recent shows as many whole rows as fit
 	// below the doors and pins, up to RECENTS_CAP, and "See all" takes a row
@@ -503,31 +503,26 @@
 		windowShellStore.openTabFromRoute('/inbox', { label: 'Inbox', focusExisting: true });
 	}
 
-	function openApplets() {
-		windowShellStore.openTabFromRoute('/sites', { label: 'Sites', focusExisting: true });
-	}
-
 	function openWiki() {
 		windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true });
 	}
 
-	function openStorage() {
-		windowShellStore.openTabFromRoute('/storage', { label: 'Storage', focusExisting: true });
+	function openBookmarks() {
+		windowShellStore.openTabFromRoute('/bookmarks', { label: 'Bookmarks', focusExisting: true });
 	}
 
 	/**
 	 * What each door does. Pages carries a + on hover: the word
 	 * is the list, the plus is a new one. The Inbox never shows a count: the
-	 * tasks on its page do not nag from the sidebar. The Wiki and Storage open
-	 * their front pages, whose links reach their sections.
+	 * tasks on its page do not nag from the sidebar. The Wiki opens its front
+	 * page, whose links reach its sections.
 	 */
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: openCreateMenu },
 		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
 		threads: { open: openInbox },
-		applets: { open: openApplets },
 		wiki: { open: openWiki },
-		storage: { open: openStorage },
+		storage: { open: openBookmarks },
 	};
 
 	// ── arranging the doors ────────────────────────────────────────────────

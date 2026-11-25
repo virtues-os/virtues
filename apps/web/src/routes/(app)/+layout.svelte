@@ -45,7 +45,13 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader, setShellAppVersion } from "$lib/build";
-	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
+	import {
+		otaCheckNow,
+		bundleUpdateReady,
+		shellIdentity,
+		canDictate,
+	} from "$lib/tauri/bridge";
+	import { beginDictation, endDictation, dictationListening } from "$lib/tauri/dictation";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { prefetchConverter } from "$lib/document/converter";
@@ -290,6 +296,37 @@
 			},
 		);
 
+		// ⌘D starts the Mac's dictation in the focused field, or in the chat
+		// field when nothing is focused, and a second ⌘D stops it. It binds
+		// only in a shell that can dictate, so a browser keeps ⌘D for its own
+		// bookmark key.
+		void canDictate().then((yes) => {
+			if (!yes) return;
+			shortcuts.register({
+				id: "dictation.start",
+				keys: "mod+d",
+				label: "Dictate",
+				group: "Chat",
+				run: () => {
+					if (dictationListening()) {
+						endDictation();
+						return;
+					}
+					const active = document.activeElement as HTMLElement | null;
+					const typing =
+						active?.isContentEditable ||
+						active?.tagName === "TEXTAREA" ||
+						active?.tagName === "INPUT";
+					if (!typing) {
+						document
+							.querySelector<HTMLElement>('#chat-input [contenteditable="true"]')
+							?.focus();
+					}
+					beginDictation();
+				},
+			});
+		});
+
 		// Hold-⌘ reveals the per-tab ⌘N badges.
 		modifierHint.start();
 
@@ -468,8 +505,8 @@
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
 >
-	<!-- The painting along the bottom of the whole window, behind the
-	     sidebar and the panes alike. It does not move between pages: the
+	<!-- The picture behind the whole window, the sidebar and the panes
+	     alike. It does not move between pages: the
 	     glass floats over it and the paper covers it. -->
 	{#if !mobileLayout.isMobile}
 		<div class="window-scene" aria-hidden="true">
@@ -714,17 +751,13 @@
 	}
 
 	.window-scene {
+		--strip-height: 52%;
+		--strip-mask: var(--window-scene-mask);
 		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		inset: 0;
 		z-index: -1;
-		width: 100%;
-		height: 52%;
 		pointer-events: none;
 		user-select: none;
-		-webkit-mask-image: var(--window-scene-mask);
-		mask-image: var(--window-scene-mask);
 		/* When the window opens the painting settles into place out of a
 		   slight zoom and haze, once. The fill is backwards only, so once it
 		   settles the opacity below can transition. */

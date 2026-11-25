@@ -1,8 +1,8 @@
 /**
  * The sidebar's doors, as the owner arranged them.
  *
- * The doors are the places every box has (Create, Inbox, Pages,
- * Applets, Wiki, Storage). Tasks and threads have no door of their own: the Inbox door holds them. Their arrangement is the owner's: an order and a set of
+ * The doors are the places every box has (Create, Inbox, Pages, Wiki,
+ * Bookmarks). Tasks and threads have no door of their own: the Inbox door holds them. Their arrangement is the owner's: an order and a set of
  * hidden doors, saved on the profile (`sidebar_doors`, migration 0058) so
  * every device shows the same sidebar. Setup is not a door here: it shows
  * while setup is unfinished and leaves when it is done.
@@ -16,7 +16,7 @@
  */
 import { getProfile, updateProfile, type Profile } from '$lib/api/client';
 
-export type DoorId = 'new-chat' | 'pages' | 'threads' | 'applets' | 'wiki' | 'storage';
+export type DoorId = 'new-chat' | 'pages' | 'threads' | 'wiki' | 'storage';
 
 export interface Door {
 	id: DoorId;
@@ -31,9 +31,11 @@ export const DOORS: readonly Door[] = [
 	// Its id predates the Inbox: saved arrangements name it 'threads'.
 	{ id: 'threads', label: 'Inbox', glyph: 'inbox' },
 	{ id: 'pages', label: 'Pages', glyph: 'pages' },
-	{ id: 'applets', label: 'Sites', glyph: 'applets' },
+	// Sites has no door for now; /sites still opens from ⌘K and links.
 	{ id: 'wiki', label: 'Wiki', glyph: 'wiki' },
-	{ id: 'storage', label: 'Storage', glyph: 'drive' },
+	// Its id predates Bookmarks: saved arrangements name it 'storage'. The
+	// door opens Bookmarks; the rest of Storage is reached from its pages.
+	{ id: 'storage', label: 'Bookmarks', glyph: 'bookmarks' },
 ];
 
 const byId = new Map(DOORS.map((d) => [d.id, d]));

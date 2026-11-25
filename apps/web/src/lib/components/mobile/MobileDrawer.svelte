@@ -78,9 +78,8 @@
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages") },
 		threads: { open: () => go("/inbox", "Inbox") },
-		applets: { open: () => go("/sites", "Sites") },
 		wiki: { open: () => go("/wiki", "Wiki") },
-		storage: { open: () => go("/storage", "Storage") },
+		storage: { open: () => go("/bookmarks", "Bookmarks") },
 	};
 
 	function openPin(pin: Pin, title: string) {

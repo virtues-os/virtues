@@ -5,15 +5,18 @@
 	 * At the left is the ∴, a glass button that shows and hides the sidebar
 	 * (HeaderMark), standing directly over the rail. In the Mac app, where
 	 * the traffic lights take the row's start, it sits at the open sidebar's
-	 * right end and beside the lights when closed. At the right end are
-	 * search and Settings (HeaderCorner). Over the panes it holds each pane's tab strip, lined up with the pane below
-	 * it, so a tab always sits on top of its own content. Back and forward
-	 * are on each page's action toolbar (ActionToolbar), since they act on
-	 * that page's tab.
+	 * right end and beside the lights when closed. While the sidebar is open,
+	 * Search (⌘K) stands at the right end of the sidebar's first row, on its
+	 * glass; closed, ⌘K is the way in. Settings stands at the sidebar's foot
+	 * (UnifiedSidebar). Over the panes the row holds each pane's tab strip,
+	 * lined up with the pane below it, so a tab always sits on top of its own
+	 * content. Back and forward are on each page's action toolbar
+	 * (ActionToolbar), since they act on that page's tab.
 	 */
 	import HeaderMark from './HeaderMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
-	import HeaderCorner from './HeaderCorner.svelte';
+	import AtlasIcon, { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { search } from '$lib/stores/search.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET, RAIL_GLASS_PX, CHROME_TAB_PX } from '$lib/stores/sidebarState.svelte';
 	import { trafficLights } from '$lib/tauri/trafficLights.svelte';
@@ -24,6 +27,10 @@
 	const LIGHTS_GAP_PX = 12;
 	/** How far a sidebar row stands in from the glass's edge, open or closed (UnifiedSidebar). */
 	const ROW_INSET_PX = 4;
+	/** Between the ∴ and Search, on the sidebar's first row. */
+	const SEARCH_GAP_PX = 4;
+	/** The room Search takes at the end of the open sidebar's first row. */
+	const SEARCH_ROOM_PX = CHROME_TAB_PX + SEARCH_GAP_PX;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
@@ -50,14 +57,16 @@
 	const leadLeft = $derived(
 		besideLights
 			? sidebarOpen
-				? SIDEBAR_INSET + sidebarState.width - ROW_INSET_PX - CHROME_TAB_PX
+				? SIDEBAR_INSET + sidebarState.width - ROW_INSET_PX - CHROME_TAB_PX - SEARCH_ROOM_PX
 				: trafficLights.end + LIGHTS_GAP_PX
 			: SIDEBAR_INSET + ROW_INSET_PX
 	);
 	const markWidth = $derived(
 		besideLights
 			? CHROME_TAB_PX
-			: (sidebarOpen ? sidebarState.width : RAIL_GLASS_PX) - 2 * ROW_INSET_PX
+			: sidebarOpen
+				? sidebarState.width - 2 * ROW_INSET_PX - SEARCH_ROOM_PX
+				: RAIL_GLASS_PX - 2 * ROW_INSET_PX
 	);
 
 	let leadWidth = $state(0);
@@ -81,6 +90,22 @@
 		bind:clientWidth={leadWidth}
 	>
 		<HeaderMark width={markWidth} standalone={besideLights && !sidebarOpen} named={!besideLights} />
+		<!-- Search is part of the open sidebar. It folds away with it, staying
+		     mounted so it can fade on the sidebar's clock. -->
+		<button
+			type="button"
+			class="sidebar-search"
+			class:shown={sidebarOpen}
+			style:--search-gap="{SEARCH_GAP_PX}px"
+			onclick={() => search.show()}
+			aria-label="Search"
+			aria-hidden={!sidebarOpen}
+			tabindex={sidebarOpen ? 0 : -1}
+			data-tip="Search"
+			data-tip-key="mod+k"
+		>
+			<AtlasIcon name="search" size={SHELL_GLYPH_PX} bare />
+		</button>
 	</div>
 
 	<div class="strips" data-tauri-drag-region>
@@ -100,9 +125,6 @@
 				<WindowTabBar paneId="right" />
 			{/if}
 		</div>
-	</div>
-	<div class="corner">
-		<HeaderCorner />
 	</div>
 </header>
 
@@ -151,29 +173,60 @@
 			width var(--motion-layout) var(--ease-premium);
 	}
 
-	/* The strips end where the panes do, the window's air in from the
-	   edge. The last one's tabs stop short of the corner (HeaderCorner): its
-	   three buttons, the two 8px gaps between them, and the 8px gap before
-	   them. The tab bar paints above the corner, so a button it overlaps
-	   cannot be clicked; change this when the corner gains or loses one. */
-	.strip:last-child {
-		padding-right: calc(3 * var(--chrome-tab-h) + 24px);
+	/* Search: a square the size of a tab at the end of the open sidebar's
+	   first row. It has no glass of its own, since it sits on the sidebar's,
+	   and it tints under the pointer as a row's own button does. Closed, it
+	   has no width, so the ∴ stands alone on the rail. */
+	.sidebar-search {
+		flex: none;
+		width: 0;
+		height: var(--chrome-tab-h);
+		margin-left: 0;
+		padding: 0;
+		overflow: hidden;
+		border: none;
+		border-radius: var(--sidebar-interactive-radius);
+		background: transparent;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0;
+		pointer-events: none;
+		transition:
+			width var(--motion-sidebar) var(--ease-sidebar),
+			margin-left var(--motion-sidebar) var(--ease-sidebar),
+			opacity 100ms ease-in,
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.corner {
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: var(--window-air);
-		z-index: 3;
-		display: flex;
-		align-items: center;
+	.sidebar-search.shown {
+		width: var(--chrome-tab-h);
+		margin-left: var(--search-gap);
+		opacity: 1;
+		pointer-events: auto;
+		/* In with the sidebar's words, after the glass has partly opened. */
+		transition:
+			width var(--motion-sidebar) var(--ease-sidebar),
+			margin-left var(--motion-sidebar) var(--ease-sidebar),
+			opacity 240ms var(--ease-premium) 130ms,
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.sidebar-search.shown:hover {
+		color: var(--color-foreground);
+		background: var(--hover-bg);
+		transition-duration: var(--motion-sidebar), var(--motion-sidebar), 240ms, var(--motion-hover-in), var(--motion-hover-in);
 	}
 
 	.resizing .strips,
 	.resizing .strip,
 	.resizing .gutter,
-	.resizing .lead {
+	.resizing .lead,
+	.resizing .sidebar-search {
 		transition: none;
 	}
 
@@ -185,7 +238,8 @@
 	@media (prefers-reduced-motion: reduce) {
 		.lead,
 		.strips,
-		.strip {
+		.strip,
+		.sidebar-search {
 			transition: none;
 		}
 	}

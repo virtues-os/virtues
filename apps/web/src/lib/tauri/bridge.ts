@@ -902,6 +902,20 @@ export async function startDictation(): Promise<void> {
 	}
 }
 
+/** The surface that added `stop_dictation`. */
+export const DICTATION_STOP_SURFACE = 22;
+
+/** Stop the Mac's dictation. Silent on shells that cannot. */
+export async function stopDictation(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await shellSupports(DICTATION_STOP_SURFACE))) return;
+	try {
+		await invoke('stop_dictation');
+	} catch (e) {
+		console.error('[Tauri] Failed to stop dictation:', e);
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Global summon shortcut
 // ─────────────────────────────────────────────────────────────────────────────

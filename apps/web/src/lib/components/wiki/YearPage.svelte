@@ -27,6 +27,7 @@
 	import { onMount } from 'svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import WikiCrumbs from './WikiCrumbs.svelte';
+	import DayLede from './DayLede.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { getYear, updateYear, writeYearArticle, type YearApi } from '$lib/wiki/api';
 
@@ -209,7 +210,7 @@
 					{#each narratedDays as d}
 						<li>
 							<a href="/day/day_{d.date}">{when(d.date)}</a>
-							{#if d.lede}<span class="lede">{d.lede}</span>{/if}
+							{#if d.lede}<span class="lede"><DayLede markdown={d.lede} /></span>{/if}
 						</li>
 					{/each}
 				</ul>

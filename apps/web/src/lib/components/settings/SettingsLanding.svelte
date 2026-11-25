@@ -2,12 +2,12 @@
 	import { usePageWidth } from '$lib/stores/pageWidth.svelte';
 	import { DEFAULT_ASSISTANT_NAME } from '$lib/settings';
 	/**
-	 * Settings' landing page: the question, the search field, a site map with
-	 * a button for every page, one line each for your assistant, your profile
+	 * Settings' landing page: the title, the search field, a site map with
+	 * a button for every page, one line each for your assistant, your account
 	 * and your server (`LANDING` in lib/settings), plus this device where it
 	 * has a page of its own (`deviceLanding`), and what changed lately. It
-	 * fits on one screen. Your server's and this device's names open their
-	 * own pages.
+	 * fits on one screen. Each line's name is a title; its pages are its
+	 * links.
 	 *
 	 * Typing lists the matching settings from every page in place of the
 	 * rest, grouped by the page each lives on. ↑ and ↓ pick one and Return
@@ -33,6 +33,7 @@
 	} from '$lib/settings';
 	import { isIOS, isMacOS, isTauri } from '$lib/utils/platform';
 	import { openSetting, openSettingsPage } from '$lib/settings/focus';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	let name = $state(DEFAULT_ASSISTANT_NAME);
 
@@ -66,12 +67,10 @@
 	const siteMap: readonly LandingGroup[] = $derived(here ? [...LANDING, deviceLanding(here)] : LANDING);
 	const searchPlatform = $derived(here === 'ios-app' ? 'ios' : here === 'mac-app' || here === 'browser' ? 'mac' : null);
 
-	function openGroup(group: LandingGroup) {
-		if (group.route) openSettingsPage(group.route, spoken);
-	}
-
 	function openLink(link: LandingLink) {
 		if (link.setting) openSetting(link.setting, spoken);
+		// Sources has its own page outside Settings, named after itself.
+		else if (!link.route.startsWith('/virtues')) windowShellStore.navigate(link.route, { label: link.label });
 		else openSettingsPage(link.route, spoken);
 	}
 
@@ -159,14 +158,14 @@
 </script>
 
 <div class="page" style:max-width={width.css}>
-	<h1>What do you want to change?</h1>
+	<h1>Settings</h1>
 	<!-- Once you type, Esc clears. The wrapper keeps the field its own
 	     height in this column. -->
 	<div class="search">
 	<SearchField
 		bind:value={query}
 		size="lg"
-		placeholder="Find a setting, or say what you want changed"
+		placeholder="Search settings"
 		label="Search settings"
 		role="combobox"
 		aria-expanded={typing && !draftText}
@@ -224,30 +223,7 @@
 		<div class="map">
 			{#each siteMap as group (group.title)}
 				<nav aria-label={group.title}>
-					{#if group.route}
-						<h2>
-							<a
-								class="opens"
-								href={group.route}
-								onclick={(e) => {
-									e.preventDefault();
-									openGroup(group);
-								}}
-								>{group.title}<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"
-									><path
-										d="m9 18l6-6-6-6"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="2"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									/></svg
-								></a
-							>
-						</h2>
-					{:else}
-						<h2>{group.title}</h2>
-					{/if}
+					<h2>{group.title}</h2>
 					<div class="buttons">
 						{#each group.links as link (link.label)}
 							<a
@@ -375,25 +351,6 @@
 		font-weight: 400;
 		letter-spacing: normal;
 		color: var(--color-foreground-subtle);
-	}
-
-	/* A party with a page of its own: its name is a link, drawn in ink with a
-	   chevron so it reads as one beside the plain labels. */
-	.map h2 .opens {
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		color: var(--color-foreground);
-		text-decoration: none;
-	}
-
-	.map h2 .opens svg {
-		flex: none;
-		color: var(--color-foreground-muted);
-	}
-
-	.map h2 .opens:hover svg {
-		color: var(--color-foreground);
 	}
 
 	.buttons {

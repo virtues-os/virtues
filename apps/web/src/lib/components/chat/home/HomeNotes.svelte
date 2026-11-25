@@ -99,7 +99,8 @@
 		align-items: baseline;
 		gap: 8px;
 		font-size: 14px;
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
+		text-shadow: var(--on-scene-shade, none);
 	}
 
 	.dot {
@@ -107,7 +108,7 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: var(--color-primary);
+		background: var(--on-scene, var(--color-primary));
 		transform: translateY(-1px);
 	}
 
@@ -121,6 +122,7 @@
 	.act,
 	.later {
 		flex-shrink: 0;
+		text-shadow: inherit;
 		border: 0;
 		padding: 0;
 		background: none;
@@ -131,11 +133,11 @@
 	.act {
 		margin-left: 4px;
 		font-weight: 500;
-		color: var(--color-foreground);
+		color: inherit;
 	}
 
 	.later {
-		color: var(--color-foreground-subtle);
+		color: var(--on-scene-muted, var(--color-foreground-subtle));
 	}
 
 	.act:hover,

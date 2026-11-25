@@ -2927,16 +2927,12 @@
 	   painting: the window's on a computer (routes/(app)/+layout.svelte),
 	   this one along the bottom of the page on the phone. */
 	.home-scene {
+		--strip-height: 46%;
+		--strip-mask: var(--window-scene-mask);
 		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		width: 100%;
-		height: min(42%, 380px);
+		inset: 0;
 		z-index: 0;
 		pointer-events: none;
-		-webkit-mask-image: var(--window-scene-mask);
-		mask-image: var(--window-scene-mask);
 	}
 
 	/* A site of yours as the background: under the headline and tiles
@@ -3262,9 +3258,6 @@
 	@media (max-width: 768px), (pointer: coarse) {
 		.messages-container {
 			padding-top: calc(1.5rem + var(--shell-bar-inset, 0px));
-		}
-		.home-scene {
-			height: 46%;
 		}
 		.init-hero {
 			bottom: calc(46% + 24px);

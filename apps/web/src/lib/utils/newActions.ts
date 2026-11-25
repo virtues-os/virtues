@@ -46,8 +46,8 @@ export function inNewTab(paneId?: 'left' | 'right'): Opener {
 const DOOR_ROUTES: Partial<Record<DoorId, string>> = {
 	pages: '/page',
 	threads: '/inbox',
-	applets: '/sites',
 	wiki: '/wiki',
+	storage: '/bookmarks',
 };
 
 /**

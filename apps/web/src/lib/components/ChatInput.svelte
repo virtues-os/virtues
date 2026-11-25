@@ -16,7 +16,8 @@
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { COMPOSER_OVERLAY_ATTR } from "$lib/components/chat/state/composerReserve";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
-	import { canDictate, startDictation } from "$lib/tauri/bridge";
+	import { canDictate } from "$lib/tauri/bridge";
+	import { beginDictation, endDictation } from "$lib/tauri/dictation";
 	import { inComposition } from "$lib/utils/ime";
 	import { dndManager, MENTION_DROP_ATTR, MENTION_DROP_EVENT } from "$lib/stores/dndManager.svelte";
 	import { droppedMention, isMentionDrag } from "$lib/utils/projectActions";
@@ -359,6 +360,8 @@
 		const content = skill ? `/${skill.name}${typed ? ` ${typed}` : ""}` : typed;
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
+		// Sending ends the dictation that was writing the message.
+		endDictation();
 		onSubmit?.(content);
 		docText = "";
 		value = "";
@@ -377,7 +380,7 @@
 	let showMic = $state(false);
 	function dictate() {
 		editor?.focus();
-		void startDictation();
+		beginDictation();
 	}
 
 	function handleWrapperClick(e: MouseEvent) {
@@ -592,7 +595,7 @@
 						{disabled}
 						class="pill-btn mic-button"
 						aria-label="Dictate"
-						title="Dictate"
+						title="Dictate (⌘D)"
 					>
 						<Icon icon="mynaui:microphone" width="17" />
 					</button>
