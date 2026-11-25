@@ -198,11 +198,6 @@ jobs:
       # box has manifest rows it can never run — resolve_program finds nothing
       # on PATH and every webhook 5xxs. `--bins` builds every [[bin]] in
       # applets/Cargo.toml from one source of truth.
-      #
-      # `virtues-client` stays OUT of this on purpose — it is a preview whose
-      # compile is allowed to fail (`continue-on-error` below), and folding it
-      # in here would make its breakage gate the box and the installer, which
-      # is the exact thing that step's separation exists to prevent.
       - name: Build box, installer + action binaries
         env:
           SQLX_OFFLINE: 'true'
@@ -212,16 +207,6 @@ jobs:
             -p virtues-installer --bin virtues-installer \
             -p virtues-applets --bins \
             -p virtues-door --bin virtues-door
-
-      # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
-      # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
-      # compile must NOT gate shipping the box (`virtues`) + installer, so this
-      # step is non-fatal and packaging/upload below include it only when it
-      # actually built this run. The build break is tracked separately.
-      - name: Build virtues-client binary (preview, non-fatal)
-        continue-on-error: true
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
       # llama-server — the engine behind the virtues-embed sidecar
       # (one CPU binary per arch — the universal floor for Manual mode and the
@@ -354,11 +339,8 @@ jobs:
           mkdir -p dist staging
           BIN_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues"
           INSTALLER_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-installer"
-          CLIENT_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-client"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
-          # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
-          # (its build step is non-fatal); it's packaged below only if present.
 
           LLAMA_PATH="/tmp/llama-bin/llama-server"
           test -x "$LLAMA_PATH" || (echo "llama-server not built" >&2 && exit 1)
@@ -455,20 +437,6 @@ jobs:
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
 
-          # Desktop daemon ships as a standalone binary too — but it's a v0.2
-          # PREVIEW and may not have built (non-fatal step above). Package +
-          # advertise it ONLY when the binary exists this run; its absence must
-          # never fail the release. Testers download it directly, `sudo setcap
-          # cap_net_admin+ep` it, and run `virtues-client up`.
-          if [ -x "$CLIENT_PATH" ]; then
-            CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
-            cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
-            (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
-            echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::virtues-client (preview daemon) did not build for ${{ matrix.arch }}; releasing box + installer without it"
-          fi
-
       # `draft: true` on EVERY upload, including this one. The other two steps
       # in this job already said it and this one did not, so whichever leg won
       # the create race also decided whether the release was born published or
@@ -523,19 +491,6 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.version }}
           files: dist/bootstrap.sh
-          fail_on_unmatched_files: true
-          draft: true
-
-      # Preview daemon — separate, optional upload so a missing client asset
-      # (it may not have built) can't fail the strict core upload above.
-      - name: Upload virtues-client (preview, optional)
-        if: steps.tarball.outputs.client_name != ''
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: ${{ steps.tag.outputs.version }}
-          files: |
-            dist/${{ steps.tarball.outputs.client_name }}
-            dist/${{ steps.tarball.outputs.client_name }}.sha256
           fail_on_unmatched_files: true
           draft: true
 

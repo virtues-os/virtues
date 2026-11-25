@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 #
-# build-mac-app.sh — build the one-DMG macOS app: Virtues.app bundling both
-# helper sidecars (virtues-client, virtues-collector), signed + notarized.
+# build-mac-app.sh — build the one-DMG macOS app: Virtues.app bundling the
+# virtues-collector sidecar, signed + notarized.
 #
 # Produces:  <cargo target dir>/<triple>/release/bundle/dmg/Virtues_*.dmg
 #            (the target dir is whatever `.cargo/config.toml` says — printed at
 #            the end of the run; it is NOT ./target in this repo)
 #
 # Steps:
-#   1. cargo build -p virtues-client --release   -> sidecar
-#   2. swift build -c release (apps/mac-source)  -> sidecar
-#   3. tauri build (signs + notarizes via env)
+#   1. swift build -c release (apps/mac-source)  -> sidecar
+#   2. tauri build (signs + notarizes via env)
 #
 # Signing + notarization are driven by environment variables so no Developer ID
 # identity or Apple credentials live in the repo. Set these for a release build:
@@ -51,13 +50,7 @@ if [[ -z "$TARGET" ]]; then
 fi
 echo "→ target triple: $TARGET"
 
-# ── 1. virtues-client (Rust) sidecar ────────────────────────────────────────
-echo "→ building virtues-client (release)…"
-cargo build -p virtues-client --release --manifest-path "$REPO_ROOT/Cargo.toml"
-CLIENT_BIN="$(target_dir_for "$REPO_ROOT/Cargo.toml")/release/virtues-client"
-[[ -x "$CLIENT_BIN" ]] || { echo "error: $CLIENT_BIN not found"; exit 1; }
-
-# ── 2. virtues-collector (Swift) sidecar ────────────────────────────────────
+# ── 1. virtues-collector (Swift) sidecar ────────────────────────────────────
 # The collector links VirtuesIrohMac.xcframework (uniffi FFI) to reach the box
 # over iroh. It's gitignored (a build artifact), so (re)generate it first —
 # idempotent; safe on every build.
@@ -75,14 +68,13 @@ echo "→ building virtues-collector (release)…"
 COLLECTOR_BIN="$(cd "$SWIFT_DIR" && swift build -c release --show-bin-path)/virtues-collector"
 [[ -x "$COLLECTOR_BIN" ]] || { echo "error: $COLLECTOR_BIN not found"; exit 1; }
 
-# ── stage sidecars with the target-triple suffix tauri expects ──────────────
+# ── stage the sidecar with the target-triple suffix tauri expects ───────────
 mkdir -p "$BINARIES_DIR"
-cp "$CLIENT_BIN"    "$BINARIES_DIR/virtues-client-$TARGET"
 cp "$COLLECTOR_BIN" "$BINARIES_DIR/virtues-collector-$TARGET"
-chmod +x "$BINARIES_DIR/virtues-client-$TARGET" "$BINARIES_DIR/virtues-collector-$TARGET"
-echo "✓ staged sidecars in $BINARIES_DIR"
+chmod +x "$BINARIES_DIR/virtues-collector-$TARGET"
+echo "✓ staged the sidecar in $BINARIES_DIR"
 
-# ── 3. tauri build (sign + notarize via env) ────────────────────────────────
+# ── 2. tauri build (sign + notarize via env) ────────────────────────────────
 TAURI_BIN="$REPO_ROOT/apps/web/node_modules/.bin/tauri"
 [[ -x "$TAURI_BIN" ]] || { echo "error: tauri CLI not found — run pnpm install in apps/web"; exit 1; }
 

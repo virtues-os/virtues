@@ -12,7 +12,6 @@ members = [
     "crates/virtues-qnnd",
     "crates/virtues-qairt",
     "applets",
-    "apps/desktop",
     "services/virtues-api",
     "services/virtues-atlas",
     "tools/virtues-installer",
