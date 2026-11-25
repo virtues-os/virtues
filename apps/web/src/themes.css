@@ -195,8 +195,8 @@
 	/* Where you are inside glass: a flat tint, never a second pane of
 	   glass with its own rim and shadow. */
 	--lq-row-selected: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-	/* The painting along the bottom of the window, behind everything,
-	   fading up into the desk. */
+	/* The picture behind the window. The mask is for the ones that stand
+	   along the bottom and fade up into the desk (Background.svelte). */
 	--window-scene-filter: none;
 	--window-scene-mask: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 0.7) 32%, #000 60%);
 
@@ -816,4 +816,25 @@
 	   label, help and control side by side. A page that holds a table uses
 	   medium. */
 	--page-settings: 42.5rem;
+}
+
+/* Words straight on a picture that fills the window
+   (lib/backgrounds/onScene.svelte.ts): an ink for the part of the picture
+   behind them, over a soft shade of the other tone. The tab strip takes it
+   only while home shows the picture in full; over a page the picture is faint
+   and its labels take the theme's full ink. */
+.tab-bar[data-on-scene] {
+	--on-scene-muted: var(--color-foreground);
+}
+.page-container.home [data-on-scene="light"],
+.app-shell:has(.tab-slot[data-active] .page-container.home) .tab-bar[data-on-scene="light"] {
+	--on-scene: #ffffff;
+	--on-scene-muted: rgb(255 255 255 / 0.86);
+	--on-scene-shade: 0 0 2px rgb(0 0 0 / 0.35), 0 1px 14px rgb(0 0 0 / 0.5);
+}
+.page-container.home [data-on-scene="dark"],
+.app-shell:has(.tab-slot[data-active] .page-container.home) .tab-bar[data-on-scene="dark"] {
+	--on-scene: #1a2030;
+	--on-scene-muted: rgb(26 32 48 / 0.82);
+	--on-scene-shade: 0 0 14px rgb(255 255 255 / 0.5);
 }

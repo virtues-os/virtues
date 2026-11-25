@@ -6,6 +6,7 @@
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import { onScene } from "$lib/backgrounds/onScene.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
@@ -758,6 +759,7 @@
 <div
 	data-tauri-drag-region
 	class="tab-bar"
+	use:onScene
 	class:compact={tabsCompact}
 	bind:clientWidth={barWidth}
 	role="toolbar"
@@ -990,7 +992,8 @@
 		border-radius: var(--radius-lg);
 		/* No background of its own: the tab you are on takes the glass's
 		   (`.lq`), which a background here would override. */
-		color: var(--color-foreground-muted);
+		color: var(--on-scene-muted, var(--color-foreground-muted));
+		text-shadow: var(--on-scene-shade, none);
 		/* The sidebar rows' size, so the header and the column read as one. */
 		font-size: 13px;
 		/* The arrow, as a browser tab has. The drag library sets an inline
@@ -1017,7 +1020,7 @@
 	}
 
 	.tab:hover {
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 	}
 
 	.tab:not(.active):hover {
@@ -1046,6 +1049,7 @@
 		   minimum, it lost its label and its × ran into the next tab. */
 		flex-shrink: 0;
 		color: var(--color-foreground);
+		text-shadow: none;
 		/* Lit in one frame when you switch to it; the page under it is what
 		   arrives ($lib/tabs/arrive). */
 		transition-duration: 0s, 0s, var(--motion-release);
@@ -1395,7 +1399,7 @@
 		border: none;
 		border-radius: var(--radius-lg);
 		background: transparent;
-		color: var(--color-foreground-muted);
+		color: var(--on-scene-muted, var(--color-foreground-muted));
 		font-size: 16px;
 		cursor: pointer;
 		flex-shrink: 0;
@@ -1411,14 +1415,14 @@
 	   of depending on two surface tokens staying far enough apart. */
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
 	/* Lit while its menu is open, as a hovered + is. */
 	.new-tab-btn.open {
 		background: var(--hover-bg);
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 	}
 
 	.new-tab-btn:active {
@@ -1428,7 +1432,7 @@
 	}
 
 	.new-tab-btn:focus-visible {
-		color: var(--color-foreground);
+		color: var(--on-scene, var(--color-foreground));
 	}
 
 	/* The slot a dragged tab will take. The library keeps the tab's own

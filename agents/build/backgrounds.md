@@ -70,8 +70,9 @@ A renderer must:
 
 - **Draw both appearances.** Follow `appearance` from the store; a theme
   change must redraw at once.
-- **Fill its parent.** The parent (`.window-scene` on a computer,
-  `.home-scene` on the phone) owns the size, the top mask and the fade.
+- **Fill its layer.** Background.svelte sizes it: a drawn style stands along
+  the bottom of the window and fades up into the desk ("Where a picture
+  goes").
 - **Cost little while it moves.** The window's glass blurs whatever is
   under it, and a frame that changes makes the blur redraw. Draw at most
   20 frames a second, nothing while `document.hidden`, and one still frame
@@ -81,6 +82,20 @@ A renderer must:
   as `DotsField.svelte` and `AsciiField.svelte` do.
 - **Draw a thumbnail** for the pickers, in the current appearance. A drawn
   style draws a still of the same function (`dotsPreview`, `asciiPreview`).
+
+## Where a picture goes
+
+A picture whose manifest says `fade: top` (Watercolors, painted with the top
+unpainted) and a drawn style stand along the bottom of the window, under
+`--window-scene-mask`. Every other picture, the lake included, fills the
+window with no mask, cropped around its `focus`. `isStrip` in
+`stores/background.svelte.ts` decides.
+
+Words straight on the background (the headline, the notes line, the
+unselected tabs) use `use:onScene` (`lib/backgrounds/onScene.svelte.ts`),
+which measures the part of a full picture behind them and sets the ink that
+reads over it. Give it to anything new that stands on the background without
+glass.
 
 ## Adding a style
 

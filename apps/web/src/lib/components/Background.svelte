@@ -3,7 +3,9 @@
 	 * The home background, filling its parent: the picture the background
 	 * setting resolves to today in the current appearance, the bundled lake
 	 * by default, or nothing under Plain (lib/stores/background.svelte.ts).
-	 * The parent places and sizes it, and owns its mask and animation.
+	 * The parent places and sizes it. Watercolors and drawn styles stand
+	 * along the parent's bottom edge, `--strip-height` tall under
+	 * `--strip-mask`; every other picture fills the parent (`isStrip`).
 	 *
 	 * A picture from a style has its own dark version. The lake, and a
 	 * picture from a pack with one version of each, are dimmed in Dark
@@ -21,7 +23,7 @@
 	 * them.
 	 */
 	import { onMount, untrack } from "svelte";
-	import { background, type Shown } from "$lib/stores/background.svelte";
+	import { background, isStrip, type Shown } from "$lib/stores/background.svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { loadRenderer } from "$lib/backgrounds/renderers";
 
@@ -29,7 +31,7 @@
 		position = "50% 100%",
 		dimLake = true,
 	}: {
-		/** `object-position` for the picture. */
+		/** `object-position` for the lake and for a picture along the bottom. */
 		position?: string;
 		/** Dim the lake in Dark. Off where the parent animates its own filter. */
 		dimLake?: boolean;
@@ -68,11 +70,15 @@
 		});
 	});
 
-	/** Fade a layer in, and drop the layers under it once the fade is done. */
-	function settle(id: number) {
+	/**
+	 * Fade a layer in, and drop the layers under it once the fade is done.
+	 * `drew` is false for a picture that could not load.
+	 */
+	function settle(id: number, drew = true) {
 		const layer = layers.find((l) => l.id === id);
 		if (!layer || layer.ready) return;
 		layer.ready = true;
+		if (layers.at(-1)?.id === id) background.arrived = drew ? layer.shown : { kind: "none" };
 		setTimeout(
 			() => (layers = layers.filter((l) => l.id >= id)),
 			reducedMotion() ? 0 : FADE_MS,
@@ -85,7 +91,7 @@
 		const finish = () => {
 			if (done) return;
 			done = true;
-			img.decode().catch(() => {}).finally(() => settle(id));
+			img.decode().catch(() => {}).finally(() => settle(id, img.naturalWidth > 0));
 		};
 		if (img.complete && img.naturalWidth > 0) finish();
 		img.addEventListener("load", finish);
@@ -109,6 +115,7 @@
 		{@const shown = layer.shown}
 		<div
 			class="layer"
+			class:strip={isStrip(shown)}
 			class:in={layer.ready && !(clearUnder && top && layer.id < top.id)}
 		>
 			{#if shown.kind === "lake"}
@@ -128,7 +135,7 @@
 				     WebP only for a style built before AVIF only. -->
 				<picture>
 					<source srcset={shown.avif} sizes="100vw" type="image/avif" />
-					<img use:loaded={layer.id} class:dim={shown.dim} src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={position} />
+					<img use:loaded={layer.id} class:dim={shown.dim} src={shown.src} alt="" aria-hidden="true" decoding="async" style:object-position={shown.strip ? position : `${shown.focus[0] * 100}% ${shown.focus[1] * 100}%`} />
 				</picture>
 			{/if}
 		</div>
@@ -138,15 +145,23 @@
 <style>
 	.stack {
 		display: grid;
+		grid-template: 100% / 100%;
 		width: 100%;
 		height: 100%;
 	}
 	.layer {
 		grid-area: 1 / 1;
+		height: 100%;
 		min-width: 0;
 		min-height: 0;
 		opacity: 0;
 		transition: opacity var(--fade) cubic-bezier(0.33, 0, 0.2, 1);
+	}
+	.layer.strip {
+		align-self: end;
+		height: var(--strip-height, 100%);
+		-webkit-mask-image: var(--strip-mask, none);
+		mask-image: var(--strip-mask, none);
 	}
 	.layer.in {
 		opacity: 1;

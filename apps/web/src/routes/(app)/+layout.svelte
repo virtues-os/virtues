@@ -505,8 +505,8 @@
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
 >
-	<!-- The painting along the bottom of the whole window, behind the
-	     sidebar and the panes alike. It does not move between pages: the
+	<!-- The picture behind the whole window, the sidebar and the panes
+	     alike. It does not move between pages: the
 	     glass floats over it and the paper covers it. -->
 	{#if !mobileLayout.isMobile}
 		<div class="window-scene" aria-hidden="true">
@@ -751,17 +751,13 @@
 	}
 
 	.window-scene {
+		--strip-height: 52%;
+		--strip-mask: var(--window-scene-mask);
 		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		inset: 0;
 		z-index: -1;
-		width: 100%;
-		height: 52%;
 		pointer-events: none;
 		user-select: none;
-		-webkit-mask-image: var(--window-scene-mask);
-		mask-image: var(--window-scene-mask);
 		/* When the window opens the painting settles into place out of a
 		   slight zoom and haze, once. The fill is backwards only, so once it
 		   settles the opacity below can transition. */

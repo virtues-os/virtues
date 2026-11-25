@@ -473,9 +473,10 @@ The window has three materials: the desk, paper and glass.
 
 ### Desk
 
-`--desk` is the ground. The window header and the sidebar sit on it. Along
-the bottom of the whole window, behind everything, is the painting
-(`routes/(app)/+layout.svelte`). It is in full color in Light; Dark dims it
+`--desk` is the ground. The window header and the sidebar sit on it. Behind
+everything is the picture (`routes/(app)/+layout.svelte`), which fills the
+window, or stands along its bottom edge when it is painted to fade up into
+the desk ([backgrounds.md](backgrounds.md), "Where a picture goes"). It is in full color in Light; Dark dims it
 through `--window-scene-filter`. The panes cover most of it.
 
 ### Paper

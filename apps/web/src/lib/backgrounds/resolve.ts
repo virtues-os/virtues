@@ -48,6 +48,24 @@ export function filesOf(v: Variant): { width: number; rel: string }[] {
 		.sort((a, b) => a.width - b.width);
 }
 
+/** The middle of the subject, as fractions: where a crop of the picture centers. */
+export function focusPoint(v: Variant): [number, number] {
+	const [x, y, w, h] = v.focus;
+	return [x + w / 2, y + h / 2];
+}
+
+/** The ink for words on a picture: pale or dark. */
+export type SceneInk = 'light' | 'dark';
+
+/** The brightness `--window-scene-filter` leaves in Dark, and what that does to luminance. */
+export const DIM_BRIGHTNESS = 0.55;
+export const DIM_LUMINANCE = DIM_BRIGHTNESS ** 2.2;
+
+/** The ink that reads over a relative luminance. Pale ink carries a shadow, so it is kept a little past even. */
+export function inkOver(luminance: number): SceneInk {
+	return luminance > 0.3 ? 'dark' : 'light';
+}
+
 /** A picture of an image style: one file set per appearance. */
 export interface ImagePicture {
 	id: string;
