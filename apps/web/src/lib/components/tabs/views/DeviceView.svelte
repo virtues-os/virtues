@@ -21,6 +21,7 @@
 	import SettingsPage from "$lib/components/settings/SettingsPage.svelte";
 	import LoadError from "$lib/components/settings/LoadError.svelte";
 	import LinkRow from "$lib/components/settings/LinkRow.svelte";
+	import Fold from "$lib/components/settings/Fold.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
@@ -105,9 +106,11 @@
 		upd = await appUpdateState();
 	}
 
-	onMount(() => {
+	onMount(() => lightPendingSetting());
+
+	// Which device this is arrives with the device list, after mount.
+	$effect(() => {
 		if (local) void shellIdentity().then((s) => (shell = s));
-		return lightPendingSetting();
 	});
 
 	// Each reading starts the collector CLI as a process, so read only while
@@ -154,13 +157,15 @@
 
 	const queued = $derived((status?.pendingEvents ?? 0) + (status?.pendingMessages ?? 0));
 
+	// The count covers app activity and messages. Websites and bookmarks have
+	// queues the collector doesn't report, so an empty one is said of those two
+	// alone. The collector doesn't say when it last sent.
 	const collecting = $derived.by(() => {
-		if (!status) return "Checking…";
-		if (!status.running) return "Not running.";
-		const state = status.paused ? "Paused." : "Collecting.";
-		const waiting = queued > 0 ? ` ${queued} waiting to send.` : "";
-		const synced = status.lastSync ? ` Synced ${status.lastSync}.` : "";
-		return `${state}${waiting}${synced}`;
+		if (!status) return { state: "Checking…", note: "" };
+		if (!status.running) return { state: "Not running", note: "" };
+		const items = `${queued} ${queued === 1 ? "item" : "items"}`;
+		if (status.paused) return { state: "Paused", note: queued > 0 ? `${items} waiting to send.` : "" };
+		return { state: "Collecting", note: queued > 0 ? `Sending ${items}.` : "App activity and messages are all sent." };
 	});
 
 	const appVersion = $derived((local ? shell?.appVersion : device?.app_version) ?? null);
@@ -175,15 +180,15 @@
 	 * failed check: it is a different fact from "up to date".
 	 */
 	const appState = $derived.by(() => {
-		if (upd?.stagedVersion) return { value: appVersion ?? "", note: `Version ${upd.stagedVersion} is downloaded. Relaunch to use it.`, warn: false };
-		if (upd?.lastCheck?.outcome === "failed") return { value: appVersion ?? "", note: "It couldn't check for a newer version.", warn: true };
-		if (upd?.lastCheck?.outcome === "up_to_date") return { value: `${appVersion ?? ""}, up to date`, note: "", warn: false };
-		return { value: appVersion ?? "Not reported", note: "", warn: false };
+		if (upd?.stagedVersion) return { note: `Version ${upd.stagedVersion} is downloaded. Relaunch to use it.`, warn: false };
+		if (upd?.lastCheck?.outcome === "failed") return { note: "It couldn't check for a newer version.", warn: true };
+		if (upd?.lastCheck?.outcome === "up_to_date") return { note: "Up to date", warn: false };
+		return { note: "", warn: false };
 	});
 
 	const lede = $derived.by(() => {
 		if (!device) return "";
-		if (localMac) return "The Mac you're using: what it collects, what it may read, and its app.";
+		if (localMac) return "What this Mac sends to your server, what it may read, and its app.";
 		if (local) return "The computer you're using: its app, and how it looks here.";
 		if (platform === "console") return `${kindSentence(device, devices)}.`;
 		return `${kindSentence(device, devices)}, paired ${pairedOn(device.paired_at)}.`;
@@ -252,58 +257,58 @@
 		<LoadError message="Your server couldn't list your devices." onretry={() => void res.reload()} />
 	</SettingsPage>
 {:else if res.loading && !res.data}
-	<SettingsPage title={deviceId === "this" ? "This device" : "Devices"} {back}>
+	<SettingsPage title={deviceId === "this" ? (isTauri && isMacOS ? "This Mac" : "This device") : "Devices"} {back}>
 		<p class="quiet">Loading…</p>
 	</SettingsPage>
 {:else if !device}
 	<SettingsPage title="No such device" lede="It may have been unpaired." {back} />
 {:else}
-	<SettingsPage title={deviceName(device)} {lede} {back}>
+	<SettingsPage title={localMac ? "This Mac" : deviceName(device)} {lede} {back}>
 		{#if localMac}
 			<!-- ── This Mac: what only the app can read ──────────────────── -->
 			<section class="group" id="setting-collecting">
 				<h2 class="settings-label">Collecting</h2>
-				<div class="fact">
-					<span class="label">This Mac</span>
-					<span class="value-cell">
-						<span class="with-action">
-							<span class="value">{collecting}</span>
-							<Button variant="secondary" disabled={!status?.running || toggling} onclick={togglePause}>
-								{status?.paused ? "Resume" : "Pause"}
-							</Button>
-						</span>
-						<span class="note">Pause stops this Mac collecting until you resume it.</span>
+				<p class="lead-note body">
+					Virtues collects the apps you use on this Mac, the websites you visit, your bookmarks, and your messages with
+					their attachments. It also notes when you're at the Mac. It sends these to your server, which builds your days
+					and your wiki from them.
+				</p>
+				<div class="row">
+					<span>
+						{collecting.state}
+						{#if collecting.note}<span class="note">{collecting.note}</span>{/if}
 					</span>
+					<Button variant="secondary" disabled={!status?.running || toggling} onclick={togglePause}>
+						{status?.paused ? "Resume" : "Pause"}
+					</Button>
 				</div>
 			</section>
 
 			<section class="group" id="setting-permissions">
 				<h2 class="settings-label">What it may read</h2>
-				<p class="lead-note">Checked on this Mac, and again when you come back from System Settings.</p>
+				<p class="lead-note body">macOS decides what Virtues may read. Virtues checks again when you come back from System Settings.</p>
 				<div class="mac-permissions"><MacPermissions {status} onRecheck={recheck} /></div>
 			</section>
 
 			<section class="group" id="setting-the-app">
 				<h2 class="settings-label">The app</h2>
-				<div class="fact">
-					<span class="label">App</span>
-					<span class="value-cell">
-						<span class="with-action">
-							<span class="value">{appState.value}</span>
-							{#if upd?.stagedVersion}
-								<Button variant="secondary" onclick={relaunch}>Relaunch</Button>
-							{:else}
-								<Button variant="secondary" loading={checking} onclick={checkApp}>Check again</Button>
-							{/if}
-						</span>
+				<div class="row">
+					<span>
+						Virtues {appVersion ?? ""}
 						{#if appState.note}<span class="note" class:warn-note={appState.warn}>{appState.note}</span>{/if}
+						{#if collectorBehind}<span class="note warn-note">Its collector is older than the app. Relaunch the app to update it.</span>{/if}
 					</span>
+					{#if upd?.stagedVersion}
+						<Button variant="secondary" onclick={relaunch}>Relaunch</Button>
+					{:else}
+						<Button variant="secondary" loading={checking} onclick={checkApp}>Check again</Button>
+					{/if}
 				</div>
-				{#if collectorVersion}
-					{@render fact("Collector", collectorVersion, collectorBehind ? "Older than the app. Relaunch the app to update it." : "", collectorBehind)}
-				{/if}
-				{@render fact("Screens", buildLabel(BUILD))}
-				<LinkRow id="appearance-here" label="Appearance on this Mac" help="Glass, reading font, text size and motion, for this device only." href="/virtues/appearance" />
+				<Fold label="Version details">
+					{#if collectorVersion}{@render fact("Collector", collectorVersion)}{/if}
+					{@render fact("Screens", `${BUILD.version} (${BUILD.sha})`)}
+					{@render fact("Channel", BUILD.channel)}
+				</Fold>
 			</section>
 		{:else if local}
 			<!-- ── This Windows or Linux computer: no collector, no updater ── -->
@@ -343,7 +348,7 @@
 							{@render fact(
 								p.label,
 								p.granted === true ? "Allowed" : p.granted === false ? "Off" : "Not reported",
-								p.granted === false ? `${p.costs.charAt(0).toUpperCase()}${p.costs.slice(1)}.` : "",
+								p.granted === false ? `${p.costs.charAt(0).toUpperCase()}${p.costs.slice(1)}.` : p.granted === true ? p.reads : undefined,
 								p.granted === false,
 							)}
 						{/each}
@@ -433,11 +438,14 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.with-action {
-		display: flex;
+	.row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
+		gap: 24px;
+		min-height: 56px;
+		padding: 8px 0;
+		font-size: 15px;
 	}
 
 	.lead-note {
