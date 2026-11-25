@@ -1,15 +1,14 @@
 ---
 title: How sources work
 description: Connect the accounts and devices your Virtues server reads from - iPhone, Mac, Google, Outlook, Notion, Strava, banks, meeting notes from Fathom, Fireflies.ai and Granola, GitHub stars, X bookmarks, Instagram saves, past chats, and downloads from Spotify, Amazon, Discord and Slack - and the tools your assistant can use, from the Sources page.
-updated: 2026-11-21
+updated: 2026-11-25
 ---
 
 A source is something your server reads from: a device, an account, or an
 export you bring in once. Your server keeps what each one sends, and your
 assistant answers from it.
 
-1. Open **Sources**, the button in the top right corner of the window, beside
-   Search and Settings.
+1. Open **Settings**, then **Sources** on the **Server** line.
 2. Under **Add a source**, choose **Connect** beside the one you want. A
    device shows **Pair**, and past chats show **Import**.
 3. For an account, the window says what your server will read and what your
