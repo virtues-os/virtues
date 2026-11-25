@@ -19,7 +19,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Redirect},
     routing::{get, post},
     Json, Router,
@@ -131,7 +131,7 @@ fn page(status: StatusCode, message: &str) -> axum::response::Response {
          <body style=\"font:16px system-ui;margin:3rem auto;max-width:32rem;padding:0 1rem\">\
          <p>{message}</p></body></html>"
     );
-    (status, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+    super::oauth::html_page(status, html)
 }
 
 #[cfg(test)]

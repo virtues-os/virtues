@@ -39,8 +39,11 @@ pub struct LoginStartRequest {
 }
 
 /// `POST /api/setup/login/start` — begin the existing-account branch: send a
-/// magic link to `email`. Ensures a device link is in flight first (the email
-/// click flips that same link to `ready`, picked up by the shared poll).
+/// magic link to `email`. Ensures a device link is in flight first (the email's
+/// confirm page approves that same link, and the shared poll collects it).
+///
+/// Answers with the link's `user_code`, which the email names too, so the page
+/// can show the owner what to match.
 pub async fn login_start_handler(
     _user: AuthUser,
     State(state): State<AppState>,
@@ -62,17 +65,22 @@ pub async fn login_start_handler(
     // The login call binds to an in-flight device link; mint one if absent.
     // (Idempotent from the wizard's perspective — re-starting just rotates
     // the pending link.)
-    if let Err(e) = link::start(pool, &http, &atlas).await {
-        tracing::warn!(error = %e, "setup login: link start failed");
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "atlas_unreachable", "detail": e.to_string()})),
-        )
-            .into_response();
-    }
+    let user_code = match link::start(pool, &http, &atlas).await {
+        Ok(started) => started.user_code,
+        Err(e) => {
+            tracing::warn!(error = %e, "setup login: link start failed");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "atlas_unreachable", "detail": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
 
     match link::login(pool, &http, &atlas, &email).await {
-        Ok(LoginStart::Sent) => (StatusCode::OK, Json(json!({"status": "sent"}))).into_response(),
+        Ok(LoginStart::Sent) => {
+            (StatusCode::OK, Json(json!({"status": "sent", "user_code": user_code}))).into_response()
+        }
         Ok(LoginStart::RateLimited) => {
             (StatusCode::OK, Json(json!({"status": "rate_limited"}))).into_response()
         }
@@ -88,7 +96,7 @@ pub async fn login_start_handler(
 }
 
 /// `POST /api/setup/link/poll` — one poll tick for whichever branch is in
-/// flight. On `ready` the api_key is stored (atlas funds the wallet); the
+/// flight. On `ready` the api_key is stored; the
 /// page sees `ready` and advances.
 pub async fn link_poll_handler(
     _user: AuthUser,

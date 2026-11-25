@@ -255,9 +255,9 @@ struct LinkRequest {
 /// Ask Truto for a one-time sign-in link.
 async fn link(p: &Provider, state: &AppState, token: &str, mut body: Value, redirect_uri: Option<String>) -> Response {
     if let Some(uri) = redirect_uri {
-        // The same rule as the OAuth proxy: only a box or a Virtues page.
+        // The same rule as the OAuth proxy.
         if !super::oauth::is_valid_return_url(&uri) {
-            return err(StatusCode::BAD_REQUEST, "invalid_redirect", "redirect_uri must be a private address or a virtues.com page");
+            return err(StatusCode::BAD_REQUEST, "invalid_redirect", "redirect_uri must be your server's own address. Start the connection again from Virtues.");
         }
         body["redirect_uri"] = Value::from(uri);
     }

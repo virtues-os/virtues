@@ -10,6 +10,8 @@
 //!   `error` | `revoked`). Only `active` credentials are usable. A revoked
 //!   row keeps its id, because run history points at it, but its payload is
 //!   replaced with [`emptied_secrets`] in the same statement that revokes it.
+//!   The one exception is a grant a provider bills for: its token is kept as
+//!   a box secret until the provider releases it ([`pending_release`]).
 //!   Rows revoked before that are emptied at server start
 //!   ([`empty_revoked_at_start`]).
 
@@ -20,6 +22,7 @@ use crate::error::{Error, Result};
 
 pub mod jar;
 pub mod lapse;
+pub mod pending_release;
 
 /// The payload a revoked row keeps: `{}`, sealed under the box key.
 ///

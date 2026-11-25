@@ -1050,3 +1050,58 @@ pub async fn device_applet_ids_handler(
             .into_response(),
     }
 }
+
+/// Sends the SQL console a request through the whole app the box serves, as
+/// a paired Mac with no owner proof, and expects the refusal.
+// TODO(2026-11-25): move this route into `owner_proof_route_tests::GATED`
+// (server/mod.rs) and delete this module.
+#[cfg(test)]
+mod sql_console_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::sync::Arc;
+    use tower::Service;
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_sql_console_needs_the_owner_proof(pool: sqlx::PgPool) {
+        let mac = virtues_iroh::SecretKey::from_bytes(&[43; 32]);
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_sql_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac.public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dir = std::env::temp_dir().join(format!("virtues-sql-console-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Arc::new(crate::storage::Storage::file(dir.to_string_lossy().into_owned()).unwrap());
+        let mut app = crate::server::build_app(AppState {
+            db: Arc::new(crate::database::Database::from_pool(pool.clone())),
+            storage: storage.clone(),
+            drive_config: crate::api::drive::DriveConfig::new(storage),
+            tool_executor: None,
+            yjs_state: crate::server::yjs::YjsState::new(pool.clone()),
+            chat_cancel_state: crate::api::chat::ChatCancellationState::new(),
+            ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
+            live_turns: crate::api::live_turn::LiveTurns::new(),
+            day_rewrites: crate::api::day_rewrites::DayRewrites::new(),
+        });
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/developer/sql")
+            .header("host", "127.0.0.1:7117")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"sql":"SELECT 1"}"#))
+            .unwrap();
+        req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac.public()));
+        let res = app.call(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["code"], "owner_proof_required");
+    }
+}

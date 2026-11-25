@@ -286,20 +286,21 @@ pub(crate) fn key_label(endpoint_id: Option<&str>) -> String {
 /// The key's customer is derived here from `accounts`, never passed in: a
 /// session frozen before payment carries no customer, so a passed-in value
 /// would leave keys unlabeled for everyone who signed in free and paid later.
+///
+/// Runs in the caller's transaction: a failure between the DELETE and the
+/// INSERT must not leave the box with no key in atlas while virtues-api holds
+/// a new one, and the key and its link must be recorded together.
 pub(crate) async fn mint_box_key(
-    pool: &sqlx::PgPool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: &str,
     label: &str,
     api_key_hash: &[u8],
 ) -> Result<(), sqlx::Error> {
-    // One transaction: a failure between the DELETE and the INSERT must not
-    // leave the box with no key in atlas while virtues-api holds a new one.
-    let mut tx = pool.begin().await?;
     let stripe_customer_id: Option<String> = sqlx::query_scalar(
         "SELECT stripe_customer_id FROM accounts WHERE account_id = $1",
     )
     .bind(account_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .flatten();
     let stripe_customer_id = stripe_customer_id.as_deref();
@@ -313,7 +314,7 @@ pub(crate) async fn mint_box_key(
     )
     .bind(account_id)
     .bind(label)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query(
         "INSERT INTO box_key (api_key_hash, account_id, stripe_customer_id, endpoint_id) \
@@ -323,9 +324,9 @@ pub(crate) async fn mint_box_key(
     .bind(account_id)
     .bind(stripe_customer_id)
     .bind(label)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    tx.commit().await
+    Ok(())
 }
 
 /// A random 32-byte hex token (api_key / device_code shape).
@@ -384,6 +385,12 @@ mod key_label_tests {
         assert_ne!(a, b, "each unlabeled link gets its own label");
     }
 
+    async fn mint(pool: &sqlx::PgPool, account: &str, label: &str, hash: &[u8]) {
+        let mut tx = pool.begin().await.unwrap();
+        mint_box_key(&mut tx, account, label, hash).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+
     async fn labels(pool: &sqlx::PgPool, account: &str) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT coalesce(endpoint_id, '<null>') FROM box_key WHERE account_id = $1 ORDER BY 1",
@@ -403,11 +410,11 @@ mod key_label_tests {
             .execute(&pool)
             .await
             .unwrap();
-        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k1").await.unwrap();
-        mint_box_key(&pool, "acct_a", "ep_office", b"k2").await.unwrap();
+        mint(&pool, "acct_a", "ep_kitchen", b"k1").await;
+        mint(&pool, "acct_a", "ep_office", b"k2").await;
 
         let label = key_label(None);
-        mint_box_key(&pool, "acct_a", &label, b"k3").await.unwrap();
+        mint(&pool, "acct_a", &label, b"k3").await;
 
         let got = labels(&pool, "acct_a").await;
         assert_eq!(got.len(), 3, "{got:?}");
@@ -426,8 +433,8 @@ mod key_label_tests {
             .execute(&pool)
             .await
             .unwrap();
-        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k1").await.unwrap();
-        mint_box_key(&pool, "acct_a", "ep_kitchen", b"k2").await.unwrap();
+        mint(&pool, "acct_a", "ep_kitchen", b"k1").await;
+        mint(&pool, "acct_a", "ep_kitchen", b"k2").await;
         assert_eq!(labels(&pool, "acct_a").await, vec!["ep_kitchen".to_string()]);
     }
 }

@@ -14,6 +14,7 @@
 
 use sqlx::PgPool;
 
+use crate::credentials::pending_release;
 use crate::error::{Error, Result};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,7 +206,8 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 ///    and in the same statement replace the sealed tokens or session with
 ///    an empty payload and clear the refresh schedule. The provider still
 ///    honors the grant until the owner revokes it there; the box no longer
-///    holds it.
+///    holds it. A grant the provider bills for is kept sealed until the
+///    provider releases it (`credentials::pending_release`).
 /// 2. Nullify `applet_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
@@ -241,6 +243,14 @@ pub async fn revoke_credential_because(db: &PgPool, credential_id: &str, reason:
     // it exists (a linked bank). Read it before the row is emptied so the
     // proxy can release it below.
     let proxy_grant = proxied_grant(db, credential_id).await?;
+    // Keep a billed grant until the proxy confirms its release, before the
+    // row that holds it is emptied (`credentials::pending_release`).
+    let kept = match &proxy_grant {
+        Some((source_id, grant)) if pending_release::needs_release(source_id) => {
+            Some(pending_release::keep(db, credential_id, source_id, grant).await?)
+        }
+        _ => None,
+    };
     let emptied = crate::credentials::emptied_secrets()?;
     let affected = sqlx::query(
         r#"UPDATE credentials
@@ -284,18 +294,26 @@ pub async fn revoke_credential_because(db: &PgPool, credential_id: &str, reason:
             tracing::warn!(credential_id, source_id, error = %e, "revoked here, but virtues-api did not remove the connection");
         }
     }
-    if let Some((source_id, secrets)) = proxy_grant {
-        // The proxy releases only for a box key it issued, so an unlinked box
-        // has nothing to ask for.
-        match virtues_helpers::auth::read_box_api_key(db).await {
-            Ok(Some(api_key)) => {
-                if let Err(e) = virtues_helpers::auth::proxy_revoke(&source_id, &secrets, Some(&api_key)).await {
-                    tracing::warn!(credential_id, source_id, error = %e, "revoked here, but the OAuth proxy did not release the grant");
-                }
+    match (kept, proxy_grant) {
+        (Some(kept), _) => {
+            if let Err(e) = pending_release::release(db, &kept).await {
+                tracing::warn!(credential_id, error = %e, "revoked here; the grant is kept for another try at releasing it");
             }
-            Ok(None) => {}
-            Err(e) => tracing::warn!(credential_id, error = %e, "could not read box api_key; the OAuth proxy was not asked to release the grant"),
         }
+        (None, Some((source_id, secrets))) => {
+            // The proxy releases only for a box key it issued, so an unlinked
+            // box has nothing to ask for.
+            match virtues_helpers::auth::read_box_api_key(db).await {
+                Ok(Some(api_key)) => {
+                    if let Err(e) = virtues_helpers::auth::proxy_revoke(&source_id, &secrets, Some(&api_key)).await {
+                        tracing::warn!(credential_id, source_id, error = %e, "revoked here, but the OAuth proxy did not release the grant");
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(credential_id, error = %e, "could not read box api_key; the OAuth proxy was not asked to release the grant"),
+            }
+        }
+        (None, None) => {}
     }
 
     Ok(())
@@ -400,6 +418,37 @@ mod tests {
 
         // An id that is not a source row is still an error.
         assert!(matches!(revoke_credential(&pool, "cred_missing").await, Err(Error::NotFound(_))));
+    }
+
+    /// A bank's token leaves the credential and is kept sealed until its
+    /// release is confirmed (here the box is unlinked, so nobody is asked).
+    /// Any other source's token is kept nowhere.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn disconnecting_keeps_only_a_billed_grant(pool: PgPool) {
+        ensure_test_key();
+        let enc = crate::crypto::TokenEncryptor::from_env().unwrap();
+        for (id, key) in [("cred_bank", "plaid"), ("cred_mail", "google")] {
+            sqlx::query("INSERT INTO credentials (id, key, name, status, secrets_ciphertext) VALUES ($1, $2, 'Example', 'active', $3)")
+                .bind(id)
+                .bind(key)
+                .bind(enc.encrypt(r#"{"access_token":"at-example"}"#).unwrap())
+                .execute(&pool)
+                .await
+                .unwrap();
+            revoke_credential(&pool, id).await.unwrap();
+            let sealed: String = sqlx::query_scalar("SELECT secrets_ciphertext FROM credentials WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(enc.decrypt(&sealed).unwrap(), "{}", "{key}");
+        }
+        let kept = crate::secrets::list(&pool, crate::secrets::Kind::Box).await.unwrap();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].metadata["source_id"], "plaid");
+        assert_eq!(kept[0].metadata["credential_id"], "cred_bank");
+        let (value, _) = crate::secrets::get(&pool, crate::secrets::Kind::Box, &kept[0].key).await.unwrap().unwrap();
+        assert_eq!(value, r#"{"access_token":"at-example"}"#);
     }
 
     /// The subscription key and the BYO key are removed from Billing only.

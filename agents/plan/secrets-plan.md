@@ -297,7 +297,9 @@ each item to its commit and says which are still open.
   through the folder it opened (`6d4a408df`).
 - Per-box secret files in one list, and leftover run files swept at the
   first run in each server process (`aaf3d7b9f`, `f6e541881`).
-- Revoking empties the payload, including rows revoked earlier, and a link
+- Revoking empties the payload (a billed grant's token is kept as a sealed
+  box secret until its release is confirmed, `credentials/pending_release.rs`),
+  including rows revoked earlier, and a link
   is Ready only once the key is stored (`78aba6abc`, `955df8b38`).
 - Refused grants become `reauth_required`, refreshes lock across
   processes, and Reconnect repairs the row it was pressed on
