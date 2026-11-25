@@ -8,6 +8,7 @@
 	 * picker (agents/plan/backgrounds-plan.md, "The home control").
 	 */
 	import Icon from '$lib/components/Icon.svelte';
+	import AtlasIcon, { ROW_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { Popover } from '$lib/floating';
 	import { background } from '$lib/stores/background.svelte';
 	import { parseSetting } from '$lib/backgrounds/resolve';
@@ -189,7 +190,7 @@
 					aria-haspopup="dialog"
 					onclick={toggle}
 				>
-					<Icon icon="mynaui:image" width="18" />
+					<AtlasIcon name="media" size={ROW_GLYPH_PX} bare />
 				</button>
 			{/snippet}
 			{#snippet children()}
@@ -208,14 +209,45 @@
 	}
 
 
+	/* The closed sidebar's Settings square (UnifiedSidebar's
+	   .sidebar-settings.railed), so the window's two bottom corners match:
+	   a rail row's width, its radius, a row's glyph and ink, and glass that
+	   brightens under the pointer and sinks under a press. */
 	.corner-button {
 		display: grid;
 		place-items: center;
-		width: 34px;
-		height: 34px;
-		border-radius: var(--radius-full);
-		color: var(--color-foreground);
+		width: calc(var(--rail-w) - 8px);
+		height: calc(var(--rail-w) - 8px);
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-lg);
+		color: color-mix(in srgb, var(--color-foreground) 84%, transparent);
 		cursor: pointer;
+		transition:
+			color var(--motion-hover-out) var(--ease-premium),
+			box-shadow var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-glass);
+	}
+
+	.corner-button:hover,
+	.corner-button[aria-expanded='true'] {
+		color: var(--color-foreground);
+		box-shadow: var(--lq-rim), var(--lq-hover-wash), var(--lq-lift); /* design-ok: glass under the pointer */
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.corner-button:active {
+		transform: scale(0.92);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.corner-button {
+			transition: none;
+		}
+
+		.corner-button:active {
+			transform: none;
+		}
 	}
 
 	.panel {

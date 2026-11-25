@@ -11,8 +11,8 @@
 	 * open, pointing at another segment opens its menu instead, as in the
 	 * Mac's menu bar. The last segment is the page itself: double-click to
 	 * rename it in place, right-click for its actions. Search is not here:
-	 * it searches everything, so it sits in the window header's corner
-	 * (HeaderCorner). The right end holds the page's status mark
+	 * it searches everything, so it sits at the end of the open sidebar's
+	 * first row (WindowHeader) and on ⌘K. The right end holds the page's status mark
 	 * (`usePageStatus`), then what the page lets you do: the controls a
 	 * view hands over with `usePageActions`, then the buttons it publishes
 	 * with `paneActions.set`, two inline and the rest behind a `···`, since a

@@ -3,8 +3,9 @@
 	The wiki room. Its sections are route-driven and deep-linkable, and this
 	view renders whatever the route names.
 
-	  /wiki           The front page (WikiFront): find, this week, your life,
-	                  on this day and lately. Its links reach the sections.
+	  /wiki           The front page (WikiFront): find, the sections with what
+	                  each holds, people, places, organizations and things,
+	                  this week's written days, and on this day.
 	  /wiki/days      Days: a year's heatmap and the chronicle.
 	  /wiki/entities  One index; person, place and organization are filters.
 	  /wiki/identity  Narrative identity, written by you.
@@ -362,12 +363,16 @@
 		entityTypePreset ? allEntities.filter((e) => e.entityType === entityTypePreset) : allEntities
 	);
 
-	// What the front page's finder looks through.
+	// What the front page's finder looks through, and what its lists of
+	// people, places and organizations show (in mention order).
 	const findable = $derived(
 		allEntities.map((e) => ({
 			name: e.name,
 			route: e.route,
 			kind: e.isSelf ? 'You' : typeConfig[e.entityType].label,
+			type: e.entityType,
+			subtitle: e.subtitle,
+			isSelf: e.isSelf,
 		}))
 	);
 
@@ -449,7 +454,7 @@
 <div class="wiki-view" style:--page-width={width.css}>
 	<main class="content">
 		{#if section === 'overview'}
-			<WikiFront entities={findable} />
+			<WikiFront entities={findable} entitiesLoaded={!loading && !error} />
 		{:else if section === 'history'}
 			<div class="measure">
 				<WikiHistory />

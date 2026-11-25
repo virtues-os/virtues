@@ -71,11 +71,13 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 	'/virtues/assistant/tools': { icon: 'mynaui:tag' },
 	'/virtues/assistant/skills': { icon: 'mynaui:zap' },
 	'/virtues/assistant/spending': { icon: 'mynaui:dollar-circle' },
+	'/virtues/assistant/spending/cost': { icon: 'mynaui:chart-bar' },
 	'/virtues/data': { icon: 'mynaui:database' },
 	'/virtues/profile': { icon: 'mynaui:user', glyph: 'profile' },
 	'/virtues/appearance': { icon: 'mynaui:sun' },
 	'/virtues/billing': { icon: 'mynaui:credit-card', glyph: 'billing' },
 	'/virtues/system': { icon: 'mynaui:servers', glyph: 'system' },
+	'/sources': { icon: 'atlas:sources', glyph: 'sources' },
 	'/virtues/devices': { icon: 'mynaui:mobile', glyph: 'devices' },
 	'/virtues/updates': { icon: 'mynaui:refresh' },
 	'/virtues/devices/this': { icon: 'mynaui:desktop' },
@@ -86,17 +88,18 @@ const SETTINGS_ICONS: Record<string, { icon: string; glyph?: string }> = {
 };
 
 function settingsRow(href: string, label: string, group: string): ModeRow {
-	return { id: href.slice('/virtues/'.length).replace(/\//g, '-'), label, href, group, ...(SETTINGS_ICONS[href] ?? { icon: 'mynaui:cog' }) };
+	// Sources sits outside /virtues, so its id is its own path.
+	const id = href.replace(/^\/(virtues\/)?/, '').replace(/\//g, '-');
+	return { id, label, href, group, ...(SETTINGS_ICONS[href] ?? { icon: 'mynaui:cog' }) };
 }
 
 /**
  * Settings' pages, for the crumbs on those pages and the menus the crumbs
  * open. They come from the landing page's site map (LANDING in lib/settings),
- * so a page sits under the same heading in both: Your assistant, Your
- * profile, Your server, This device.
+ * so a page sits under the same heading in both: Assistant, Account,
+ * Server, This device.
  *
- * One row per page. A group with a page of its own (Your server) is a row
- * under its own name, and its links sit under it. A site-map link that names
+ * One row per page, under its line's name. A site-map link that names
  * a row on a page points at a page another link already lists, so the page
  * goes under its plain link where it has one, and otherwise under its
  * group's name.
@@ -104,7 +107,6 @@ function settingsRow(href: string, label: string, group: string): ModeRow {
 function settingsRows(): ModeRow[] {
 	const rows: ModeRow[] = [];
 	for (const group of LANDING) {
-		if (group.route) rows.push(settingsRow(group.route, group.title, group.title));
 		for (const { route } of group.links) {
 			if (rows.some((r) => r.href === route)) continue;
 			const plain = LANDING.flatMap((g) => g.links.filter((l) => l.route === route && !l.setting).map((l) => ({ g, l })))[0];
@@ -113,14 +115,14 @@ function settingsRows(): ModeRow[] {
 		}
 	}
 	// Pages another page links to rather than the site map: Skills (from
-	// What it can do), and Search, Server tasks and Terminal (from Your
-	// server). This device's line appears only on a device with a page of
+	// Tools), and Search, Server tasks and Terminal (from
+	// Server). This device's line appears only on a device with a page of
 	// its own, so its row is here rather than in LANDING.
 	rows.push(
-		settingsRow('/virtues/assistant/skills', 'Skills', 'Your assistant'),
-		settingsRow('/virtues/search', 'Search', 'Your server'),
-		settingsRow('/virtues/server-tasks', 'Server tasks', 'Your server'),
-		settingsRow('/virtues/developer/terminal', 'Terminal', 'Your server'),
+		settingsRow('/virtues/assistant/skills', 'Skills', 'Assistant'),
+		settingsRow('/virtues/search', 'Search', 'Server'),
+		settingsRow('/virtues/server-tasks', 'Server tasks', 'Server'),
+		settingsRow('/virtues/developer/terminal', 'Terminal', 'Server'),
 		settingsRow('/virtues/devices/this', 'This device', 'This device'),
 	);
 	return rows;

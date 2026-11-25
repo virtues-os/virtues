@@ -10,7 +10,6 @@
  */
 
 import { SETTINGS_MODE, STORAGE_MODE, WIKI_MODE, rowForRoute, type ModeRow } from '$lib/sidebar/modes';
-import { LANDING } from '$lib/settings';
 
 export interface Crumb {
 	label: string;
@@ -107,14 +106,13 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		const page = title.replace(/^Settings(?: · )?/, '');
 		const crumbs = inRow(root, settingsRow, path, page);
 		// The landing page's heading sits between Settings and the page
-		// (Settings / Your server / Devices). It links to the heading's own
-		// page where it has one (Your server), else to the landing page,
-		// where that heading's links are.
+		// (Settings / Server / Devices). It links to the landing page, where
+		// that heading's links are.
 		const group = settingsRow.group;
 		if (group && group !== settingsRow.label) {
 			crumbs.splice(1, 0, {
 				label: group,
-				route: LANDING.find((g) => g.title === group)?.route ?? '/virtues',
+				route: '/virtues',
 				menu: { kind: 'mode', mode: 'settings', group },
 			});
 		}

@@ -15,7 +15,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import FocusVeil, { cardIn, cardOut } from "$lib/components/FocusVeil.svelte";
 	import SearchList from "$lib/components/search/SearchList.svelte";
-	import SearchPreview from "$lib/components/search/SearchPreview.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { SearchRow } from "$lib/search/results";
@@ -83,7 +82,10 @@
 					<SearchList bind:this={list} bind:query bind:mode bind:selected {here} {onClose} />
 				</div>
 				<div class="side" aria-live="polite">
-					<SearchPreview row={selected} {query} />
+					<!-- Loaded with the first search, so it is not part of the launch. -->
+					{#await import("$lib/components/search/SearchPreview.svelte") then { default: SearchPreview }}
+						<SearchPreview row={selected} {query} />
+					{/await}
 				</div>
 			</div>
 			<div class="footer" aria-hidden="true">

@@ -557,7 +557,7 @@ export async function updateChapter(
 	}
 }
 
-/** Unname a chapter. The years it covered stay, as an unnamed stretch. */
+/** Remove a chapter's name. The years it covered stay, as an unnamed stretch. */
 export async function deleteChapter(id: string, fetchFn: FetchFn = fetch): Promise<void> {
 	const res = await fetchFn(`/api/wiki/chapter/${id}`, { method: 'DELETE' });
 	if (!res.ok) throw new Error('Could not remove that');

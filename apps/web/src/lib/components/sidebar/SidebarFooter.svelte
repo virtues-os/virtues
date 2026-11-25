@@ -116,9 +116,9 @@
 		};
 	});
 
-	// Sources and Developer are headings in Settings, and Settings is the
-	// row above this footer. A second door to either here would be the same
-	// destination twice on one screen.
+	// Sources and Developer are reached from Settings, which stands just
+	// below this footer (UnifiedSidebar). A second door to either here would
+	// be the same destination twice on one screen.
 	//
 	// There is no "Sign Out" — auth is the device's proven iroh key, not a
 	// server session; to drop this device use Settings → Devices → Unpair.
@@ -186,8 +186,8 @@
 			transform var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms);
 	}
 
-	/* With no chip to show, the footer takes no room, so Settings sits at the
-	   foot of the sidebar instead of 24px above it. */
+	/* With no chip to show, the footer takes no room, so the last row above
+	   it sits right over Settings instead of 24px above it. */
 	.footer:not(:has(> *)) {
 		padding-block: 0;
 	}

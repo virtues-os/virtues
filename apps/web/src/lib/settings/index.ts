@@ -72,7 +72,7 @@ export const SECTIONS: readonly Section[] = [
 	{ id: 'data', title: 'Your data', lede: "Copies of your data, what your server keeps, and what you've shared.", route: '/virtues/data' },
 	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks and how your pages read.', route: '/virtues/appearance' },
 	{ id: 'billing', title: 'Billing', lede: "Your subscription, your balance, and what you've paid.", route: '/virtues/billing' },
-	{ id: 'server', title: 'Your server', lede: 'Whether your server is all right, what it runs, and the machine itself.', route: null },
+	{ id: 'server', title: 'Server', lede: 'Whether your server is all right, what it runs, and the machine itself.', route: null },
 	{ id: 'updates', title: 'Updates', lede: 'New releases of your server, and which ones it takes.', route: '/virtues/updates' },
 	{ id: 'devices', title: 'Devices', lede: 'Everything paired to your server, and how each one reaches it.', route: '/virtues/devices' },
 	// This device's line on the landing page appears only on a device with a
@@ -210,29 +210,28 @@ export interface LandingLink {
 /** One line of the landing page's site map. */
 export interface LandingGroup {
 	/** Labels the line on the landing page and names it in crumbs and search
-	 *  results, so a page is under the same name in all three. */
+	 *  results, so a page is under the same name in all three. A title, not a
+	 *  link: every page on the line has a link of its own. */
 	title: string;
-	/** The page the title opens, for a party with a page of its own: your
-	 *  server, this device. */
-	route?: string;
 	links: readonly LandingLink[];
 }
 
 /**
- * The landing page's site map, one line per party: the assistant, you, and
- * your server. This device joins them where there is one (`deviceLanding`).
+ * The landing page's site map, one line per party: the assistant, your
+ * account, and your server. This device joins them where there is one (`deviceLanding`).
  */
 export const LANDING: readonly LandingGroup[] = [
 	{
-		title: 'Your assistant',
+		title: 'Assistant',
 		links: [
-			{ label: 'How it talks', route: '/virtues/assistant' },
-			{ label: 'What it can do', route: '/virtues/assistant/tools' },
-			{ label: 'Models and spending', route: '/virtues/assistant/spending' },
+			{ label: 'Name and style', route: '/virtues/assistant' },
+			{ label: 'Tools', route: '/virtues/assistant/tools' },
+			{ label: 'Models', route: '/virtues/assistant/spending' },
+			{ label: 'Usage', route: '/virtues/assistant/spending/cost' },
 		],
 	},
 	{
-		title: 'Your profile',
+		title: 'Account',
 		links: [
 			{ label: 'Profile', route: '/virtues/profile' },
 			{ label: 'Appearance', route: '/virtues/appearance' },
@@ -240,13 +239,16 @@ export const LANDING: readonly LandingGroup[] = [
 		],
 	},
 	{
-		title: 'Your server',
-		route: '/virtues/system',
+		title: 'Server',
 		links: [
+			{ label: 'Status', route: '/virtues/system' },
+			// Sources has its own page outside Settings. Settings links to it
+			// because where your data comes from is something you set up.
+			{ label: 'Sources', route: '/sources' },
 			{ label: 'Devices', route: '/virtues/devices' },
 			{ label: 'Updates', route: '/virtues/updates' },
 			{ label: 'Backup', route: '/virtues/backup' },
-			{ label: 'Your data', route: '/virtues/data' },
+			{ label: 'Data', route: '/virtues/data' },
 		],
 	},
 ];
@@ -271,22 +273,23 @@ export function deviceLanding(here: DeviceHere): LandingGroup {
 	const route = '/virtues/devices/this';
 	const links: Record<DeviceHere, LandingLink[]> = {
 		'mac-app': [
-			{ label: 'Collecting', route, setting: 'collecting' },
+			{ label: 'Data collection', route, setting: 'collecting' },
 			{ label: 'Permissions', route, setting: 'permissions' },
-			{ label: 'The app', route, setting: 'the-app' },
+			{ label: 'About', route, setting: 'the-app' },
 		],
 		'ios-app': [
 			{ label: 'What it sends', route, setting: 'what-it-sends' },
 			{ label: 'Notifications', route, setting: 'notifications' },
-			{ label: 'The app', route, setting: 'the-app' },
+			{ label: 'About', route, setting: 'the-app' },
 		],
-		'desktop-app': [{ label: 'The app', route, setting: 'the-app' }],
+		'desktop-app': [{ label: 'About', route, setting: 'the-app' }],
 		browser: [
 			{ label: 'Permissions', route, setting: 'permissions' },
-			{ label: 'The app', route, setting: 'the-app' },
+			{ label: 'About', route, setting: 'the-app' },
 		],
 	};
-	return { title: 'This device', route, links: links[here] };
+	// The Mac app can name the machine. Elsewhere it stays "This device".
+	return { title: here === 'mac-app' ? 'This Mac' : 'This device', links: links[here] };
 }
 
 /**
