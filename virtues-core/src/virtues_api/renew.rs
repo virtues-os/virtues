@@ -199,8 +199,17 @@ pub enum Entitlement {
     KeyUnknown,
 }
 
+/// What Billing shows about the account. Nothing is gated on these.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountLabels {
+    /// The email the account signed in with.
+    pub email: Option<String>,
+    /// When Stripe bills next, as atlas sent it (RFC 3339).
+    pub renews_at: Option<String>,
+}
+
 /// `POST {atlas}/account/entitlement` — read-only, Stripe-free, safe to poll.
-/// Also returns the email the account signed in with, when atlas sends one.
+/// Also returns what atlas says about the account, which is for display only.
 ///
 /// Err means we did not get an answer (transport, 5xx, malformed body). The
 /// caller must hold its last known answer rather than render "unsubscribed"
@@ -209,7 +218,7 @@ pub async fn fetch_entitlement(
     http: &reqwest::Client,
     atlas_url: &str,
     api_key: &str,
-) -> Result<(Entitlement, Option<String>)> {
+) -> Result<(Entitlement, AccountLabels)> {
     let resp = http
         .post(format!(
             "{}/account/entitlement",
@@ -222,7 +231,7 @@ pub async fn fetch_entitlement(
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Ok((Entitlement::KeyUnknown, None));
+        return Ok((Entitlement::KeyUnknown, AccountLabels::default()));
     }
     if !status.is_success() {
         let b = resp.text().await.unwrap_or_default();
@@ -240,9 +249,12 @@ pub async fn fetch_entitlement(
     } else {
         Entitlement::Free
     };
-    // Optional: an atlas older than the email field omits it.
-    let email = v["email"].as_str().map(str::to_owned);
-    Ok((entitlement, email))
+    // Optional: an atlas older than a field omits it.
+    let label = |key: &str| v[key].as_str().map(str::to_owned);
+    Ok((
+        entitlement,
+        AccountLabels { email: label("email"), renews_at: label("renews_at") },
+    ))
 }
 
 /// What atlas said when this linked box asked to buy a subscription.

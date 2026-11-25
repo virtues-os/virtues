@@ -375,6 +375,24 @@ pub async fn usage_summary(
     .await
     .context("month-to-date spend")?;
 
+    // Everything that moved the balance since the last renewal, apart from
+    // top-ups. Ordered by id, not ts: credits and charges both lock the wallet
+    // row before they write here, so ids follow the order they took effect,
+    // while ts is when each transaction began.
+    let period: Option<(DateTime<Utc>, i64)> = sqlx::query_as(
+        "SELECT g.ts, (SELECT COALESCE(-SUM(l.micros), 0)::bigint FROM ledger l \
+                       WHERE l.account_id = $1 AND l.id > g.id AND l.kind <> 'topup') \
+         FROM (SELECT id, ts FROM ledger \
+               WHERE account_id = $1 AND kind = 'grant' ORDER BY id DESC LIMIT 1) g",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+    .context("usage since renewal")?;
+    // A wallet that has only been topped up has no renewal row.
+    let period_start = period.map(|(ts, _)| ts);
+    let period_used_micros = period.map(|(_, used)| used);
+
     let entries = sqlx::query_as::<_, LedgerEntry>(
         "SELECT ts, micros, kind, real_micros FROM ledger \
          WHERE account_id = $1 ORDER BY ts DESC LIMIT $2",
@@ -389,6 +407,8 @@ pub async fn usage_summary(
         balance_micros: acct.balance_micros,
         topup_micros: acct.topup_micros,
         month_to_date_micros: mtd.unwrap_or(0),
+        period_start,
+        period_used_micros,
         expires_at: Some(acct.expires_at),
         entries,
     })
@@ -401,6 +421,13 @@ pub struct UsageSummary {
     /// keeps. The rest is this month's allotment.
     pub topup_micros: i64,
     pub month_to_date_micros: i64,
+    /// When the monthly allotment was last set. None without a renewal.
+    pub period_start: Option<DateTime<Utc>>,
+    /// What has come off the balance since `period_start`. While allotment is
+    /// left, `allotment = balance - topup + period_used`.
+    pub period_used_micros: Option<i64>,
+    /// When the wallet lapses without a renewal: the first of a month, UTC.
+    /// It is not the billing date, which atlas holds (`renews_at`).
     pub expires_at: Option<DateTime<Utc>>,
     pub entries: Vec<LedgerEntry>,
 }
@@ -577,6 +604,33 @@ mod tests {
             10_000_000 - acct.balance_micros,
             "month-to-date is what the charges took off the credit"
         );
+    }
+
+    /// The Billing page's breakdown: usage since the renewal, plus what is
+    /// left, is the allotment the renewal set. Usage before the renewal and
+    /// top-ups after it stay out of it.
+    #[sqlx::test]
+    async fn usage_since_renewal_explains_the_balance(pool: PgPool) {
+        let a = "acct-period";
+        credit(&pool, a, 5_000_000, CreditMode::Add, None).await.unwrap();
+        let no_renewal = usage_summary(&pool, a, 10).await.unwrap();
+        assert_eq!((no_renewal.period_start, no_renewal.period_used_micros), (None, None));
+
+        credit(&pool, a, 20_000_000, CreditMode::Set, None).await.unwrap();
+        let unused = usage_summary(&pool, a, 10).await.unwrap();
+        assert!(unused.period_start.is_some());
+        assert_eq!(unused.period_used_micros, Some(0));
+
+        settle(&pool, a, 3_000_000).await.expect("settle");
+        credit(&pool, a, 20_000_000, CreditMode::Set, None).await.unwrap();
+        settle(&pool, a, 2_000_000).await.expect("settle");
+        credit(&pool, a, 10_000_000, CreditMode::Add, None).await.unwrap();
+
+        let u = usage_summary(&pool, a, 10).await.unwrap();
+        assert_eq!(u.period_used_micros, Some(2_000_000), "only since the last renewal");
+        assert_eq!(u.month_to_date_micros, 5_000_000, "the calendar month counts both");
+        assert_eq!(u.topup_micros, 15_000_000);
+        assert_eq!(u.balance_micros - u.topup_micros + u.period_used_micros.unwrap(), 20_000_000);
     }
 
     /// Rotating the device key (recovery) preserves the balance: the same

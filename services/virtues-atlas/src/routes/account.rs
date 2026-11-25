@@ -658,6 +658,27 @@ pub(crate) async fn account_is_entitled(
     .await
 }
 
+/// When Stripe next bills this account's active subscription, over the same
+/// customers as [`account_is_entitled`]. `None` when there is no active
+/// subscription or its period already ended, so a missed webhook never shows
+/// a date in the past.
+pub(crate) async fn account_renews_at(
+    pool: &sqlx::PgPool,
+    account_id: &str,
+) -> Result<Option<chrono::DateTime<Utc>>, sqlx::Error> {
+    sqlx::query_scalar::<_, Option<chrono::DateTime<Utc>>>(
+        "SELECT MAX(s.current_period_end) FROM subscriptions s \
+         WHERE s.status = 'active' AND s.current_period_end > now() \
+           AND s.stripe_customer_id IN ( \
+           SELECT stripe_customer_id FROM customers WHERE account_id = $1 \
+           UNION SELECT stripe_customer_id FROM accounts \
+             WHERE account_id = $1 AND stripe_customer_id IS NOT NULL)",
+    )
+    .bind(account_id)
+    .fetch_one(pool)
+    .await
+}
+
 /// Six digits. Uniform over 000000..=999999 — no modulo bias, and leading zeros
 /// preserved, because a code that renders as five characters confuses people.
 fn gen_code() -> String {
@@ -779,7 +800,7 @@ mod attach_tests {
 
 #[cfg(test)]
 mod entitlement_tests {
-    use super::account_is_entitled;
+    use super::{account_is_entitled, account_renews_at};
 
     /// An owner who re-subscribed under a second Stripe customer is entitled
     /// through it, even though the account's own customer is the first,
@@ -802,5 +823,27 @@ mod entitlement_tests {
             .unwrap();
         assert!(account_is_entitled(&pool, "acct_a").await.unwrap());
         assert!(!account_is_entitled(&pool, "acct_b").await.unwrap());
+    }
+
+    /// The renewal date is the active subscription's, never a cancelled one's
+    /// or a period that already ended.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn renews_when_the_active_subscription_does(pool: sqlx::PgPool) {
+        for q in [
+            "INSERT INTO accounts (account_id, email, stripe_customer_id) VALUES ('acct_a', 'owner@example.com', 'cus_first')",
+            "INSERT INTO customers (stripe_customer_id, email, account_id) VALUES ('cus_first', 'owner@example.com', 'acct_a')",
+            "INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end) VALUES ('sub_1', 'cus_first', 'canceled', now() + interval '300 days')",
+            "INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end) VALUES ('sub_2', 'cus_first', 'active', now() - interval '1 day')",
+        ] {
+            sqlx::query(q).execute(&pool).await.unwrap();
+        }
+        assert_eq!(account_renews_at(&pool, "acct_a").await.unwrap(), None);
+        sqlx::query("UPDATE subscriptions SET current_period_end = now() + interval '30 days' WHERE stripe_subscription_id = 'sub_2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let at = account_renews_at(&pool, "acct_a").await.unwrap().expect("an active subscription renews");
+        assert_eq!((at - chrono::Utc::now()).num_days(), 29);
+        assert_eq!(account_renews_at(&pool, "acct_none").await.unwrap(), None);
     }
 }

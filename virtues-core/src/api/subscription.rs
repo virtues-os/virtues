@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::virtues_api::renew::Entitlement;
+use crate::virtues_api::renew::{AccountLabels, Entitlement};
 
 /// How long an answer from atlas is reused. The store polls this endpoint every
 /// 60s from every open tab; entitlement changes at most a few times in a box's
@@ -38,12 +38,12 @@ fn cache() -> &'static Mutex<Option<(Instant, Entitlement)>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
-/// The account email from atlas's last answer. Written with `CACHE` and kept
-/// through an outage the same way.
-static EMAIL: Mutex<Option<String>> = Mutex::new(None);
+/// The account's email and renewal date from atlas's last answer. Written with
+/// `CACHE` and kept through an outage the same way.
+static LABELS: Mutex<Option<AccountLabels>> = Mutex::new(None);
 
-fn last_known_email() -> Option<String> {
-    EMAIL.lock().ok().and_then(|e| e.clone())
+fn last_known_labels() -> AccountLabels {
+    LABELS.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
 }
 
 /// Drop the cached answer. Called when the box links or re-links, so the UI
@@ -52,8 +52,8 @@ pub fn invalidate() {
     if let Ok(mut c) = cache().lock() {
         *c = None;
     }
-    if let Ok(mut e) = EMAIL.lock() {
-        *e = None;
+    if let Ok(mut l) = LABELS.lock() {
+        *l = None;
     }
 }
 
@@ -82,12 +82,12 @@ async fn entitlement(api_key: &str, fresh: bool) -> Option<Entitlement> {
     let http = crate::http_client::virtues_api_client();
     let atlas_url = crate::virtues_api::atlas_url();
     match crate::virtues_api::renew::fetch_entitlement(&http, &atlas_url, api_key).await {
-        Ok((e, email)) => {
+        Ok((e, labels)) => {
             if let Ok(mut c) = cache().lock() {
                 *c = Some((Instant::now(), e));
             }
-            if let Ok(mut m) = EMAIL.lock() {
-                *m = email;
+            if let Ok(mut l) = LABELS.lock() {
+                *l = Some(labels);
             }
             Some(e)
         }
@@ -107,8 +107,8 @@ async fn entitlement(api_key: &str, fresh: bool) -> Option<Entitlement> {
 /// case reported `active`, which is the bug this file exists to close.
 /// `entitlement_known` is false when atlas could not be reached and we have no
 /// cached answer — the UI shows neither standing in that case. `email` is the
-/// account's sign-in email, or null when atlas has not sent one or rejected
-/// the key.
+/// account's sign-in email and `renews_at` is when Stripe bills next; each is
+/// null when atlas has not sent one or rejected the key.
 ///
 /// Fully-local dev (`ENVIRONMENT=dev` + a verbatim `VIRTUES_API_KEY`, i.e. the
 /// seeded local virtues-api) reports subscribed unconditionally: billing is
@@ -119,7 +119,7 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     if crate::middleware::auth::is_dev()
         && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
     {
-        return Ok(payload("active", true, true, true, None));
+        return Ok(payload("active", true, true, true, AccountLabels::default()));
     }
 
     // `?`, not `unwrap_or(false)`: a vault read error is not "no api_key", and
@@ -127,20 +127,19 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     let api_key = crate::virtues_api::renew::read_api_key(pool).await?;
     let Some(api_key) = api_key else {
         // Not linked. Nothing to ask atlas about, and the answer is certain.
-        return Ok(payload("none", false, false, true, None));
+        return Ok(payload("none", false, false, true, AccountLabels::default()));
     };
 
     let standing = entitlement(&api_key, fresh).await;
-    let email = last_known_email();
-    let email = email.as_deref();
+    let labels = last_known_labels();
     Ok(match standing {
-        Some(Entitlement::Subscribed) => payload("active", true, true, true, email),
-        Some(Entitlement::Free) => payload("linked", true, false, true, email),
+        Some(Entitlement::Subscribed) => payload("active", true, true, true, labels),
+        Some(Entitlement::Free) => payload("linked", true, false, true, labels),
         // The key is dead: linked in name only. Reported as unknown rather than
         // unsubscribed — "you have no subscription" is the wrong instruction
         // when the fix is to link again.
-        Some(Entitlement::KeyUnknown) => payload("linked", true, false, false, None),
-        None => payload("linked", true, false, false, email),
+        Some(Entitlement::KeyUnknown) => payload("linked", true, false, false, AccountLabels::default()),
+        None => payload("linked", true, false, false, labels),
     })
 }
 
@@ -221,7 +220,7 @@ fn payload(
     linked: bool,
     subscribed: bool,
     known: bool,
-    email: Option<&str>,
+    labels: AccountLabels,
 ) -> serde_json::Value {
     serde_json::json!({
         "status": status,
@@ -229,7 +228,9 @@ fn payload(
         "subscribed": subscribed,
         "entitlement_known": known,
         // The Virtues account this box is linked to, as atlas last reported it.
-        "email": email,
+        "email": labels.email,
+        // When Stripe bills next.
+        "renews_at": labels.renews_at,
         // Kept for older clients (the iOS bundle ships its own SPA build).
         // Means subscribed, which is what every consumer used it for.
         "is_active": subscribed,
