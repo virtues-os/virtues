@@ -30,6 +30,9 @@
 		trigger: Snippet<[{ open: boolean; toggle: () => void }]>;
 		/** Popover content */
 		children: Snippet<[{ close: () => void }]>;
+		/** Drawn in the app's glass, for a popover that opens over the
+		 *  painting. Menus over pages stay solid. */
+		glass?: boolean;
 	}
 
 	let {
@@ -41,7 +44,8 @@
 		offset = 8,
 		onClose,
 		trigger,
-		children
+		children,
+		glass = false
 	}: Props = $props();
 
 	let triggerEl: HTMLElement | null = $state(null);
@@ -78,7 +82,7 @@
 	<FloatingContent
 		anchor={triggerEl}
 		options={{ placement, offset, arrow, flip: true, shift: true }}
-		class="popover"
+		class={glass ? 'popover lq glass' : 'popover'}
 	>
 		<div bind:this={contentEl} class="popover-content">
 			{@render children({ close })}
@@ -93,6 +97,15 @@
 
 	:global(.popover) {
 		--z-floating: calc(var(--z-overlay) + 100);
+	}
+
+	/* FloatingContent's own surface would win over .lq, so the glass is
+	   restated, as ChatInput does for the composer. */
+	:global(.floating-content.popover.glass) {
+		border-color: transparent;
+		background: var(--lq-sheen), var(--lq-fill);
+		/* design-ok: glass is lifted off the painting */
+		box-shadow: var(--lq-rim), var(--lq-lift);
 	}
 
 	.popover-content {

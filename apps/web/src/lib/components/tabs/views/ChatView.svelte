@@ -2773,6 +2773,7 @@
 							isStreaming={turnPhase.working}
 							maxWidth="max-w-full"
 							inline={!isEmpty}
+							glass={showsHome}
 							placeholder={isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
