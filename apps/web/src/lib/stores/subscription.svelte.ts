@@ -30,6 +30,8 @@ class SubscriptionStore {
 	entitlementKnown = $state(false);
 	/** The Virtues account email the box is linked to, when atlas reported one. */
 	email = $state<string | null>(null);
+	/** When Stripe bills next, when atlas reported it. */
+	renewsAt = $state<string | null>(null);
 
 	private intervalId: ReturnType<typeof setInterval> | null = null;
 	private visibilityHandler: (() => void) | null = null;
@@ -84,6 +86,7 @@ class SubscriptionStore {
 				subscribed?: boolean;
 				entitlement_known?: boolean;
 				email?: string | null;
+				renews_at?: string | null;
 			}>(fresh);
 
 			this.status = data.status ?? 'unknown';
@@ -92,6 +95,7 @@ class SubscriptionStore {
 			this.subscribed = data.subscribed ?? data.is_active ?? false;
 			this.entitlementKnown = data.entitlement_known ?? false;
 			this.email = data.email ?? null;
+			this.renewsAt = data.renews_at ?? null;
 		} catch {
 			// Non-2xx (incl. 402/401) or network error - ignore, will retry next interval
 		}

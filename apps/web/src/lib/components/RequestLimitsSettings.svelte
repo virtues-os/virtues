@@ -52,21 +52,23 @@
 </script>
 
 <section>
-	<h2 class="settings-label">What tasks may spend</h2>
-	<p class="sec-hint">
-		For tasks you assign to {assistantName} to work on in the background. A task that reaches its
-		limit stops and shows you what it has so far. When the last 24 hours reach the day's limit,
-		tasks wait until spending drops below it. Chats have no limit, a site or a task that repeats has its own, and no limit applies to
-		anything that runs on your own AI provider.
-	</p>
+	<h2 class="settings-label">Spending limits</h2>
+	<p class="lead">Set the most {assistantName} may spend on tasks it runs in the background. Chats have no limit.</p>
 	<div class="limit">
-		<label for="limit-run-field">One task</label>
+		<div>
+			<label for="limit-run-field">One task</label>
+			<p class="hint">If a task reaches this limit, {assistantName} stops it and shows you what it has so far.</p>
+		</div>
 		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-run-field" bind:value={run} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_run_limit_micros', v)} /></div>
 	</div>
 	<div class="limit">
-		<label for="limit-day-field">All tasks in a day</label>
+		<div>
+			<label for="limit-day-field">All tasks in a day</label>
+			<p class="hint">If spending in the last 24 hours reaches this limit, new tasks wait until it drops below.</p>
+		</div>
 		<div class="field"><span class="unit" aria-hidden="true">$</span><Input id="limit-day-field" bind:value={day} disabled={!loaded} autoSave onSave={(v: string | number) => save('request_day_limit_micros', v)} /></div>
 	</div>
+	<p class="hint">Sites and repeating tasks have their own limits. These limits don't apply to calls to your own AI provider.</p>
 	{#if error}
 		<p class="field-error" role="alert">{error}</p>
 	{/if}
@@ -102,15 +104,26 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.sec-hint,
+	.lead,
+	.hint,
 	.field-error {
 		margin: 0;
 		max-width: 60ch;
-		font-size: 12px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
 	}
 
-	.sec-hint {
-		color: var(--color-foreground-subtle);
+	.lead {
+		font-size: 15px;
+	}
+
+	.hint,
+	.field-error {
+		font-size: 13px;
+	}
+
+	.limit .hint {
+		margin-top: 4px;
 	}
 
 	.field-error {
